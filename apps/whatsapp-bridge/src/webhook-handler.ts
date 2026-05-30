@@ -113,8 +113,11 @@ export function validateSender(
  * Extract phone number from WhatsApp JID
  */
 export function extractPhone(remoteJid: string): string {
-  // Remove @s.whatsapp.net or @g.us suffix
-  return remoteJid.replace(/@(?:s\.)?whatsapp\.net|g\.us$/, '');
+  // Remove @s.whatsapp.net for personal JIDs
+  // Remove @g.us for group JIDs (keeping the number before @)
+  return remoteJid
+    .replace(/@s\.whatsapp\.net$/, '')
+    .replace(/@g\.us$/, '');
 }
 
 /**
