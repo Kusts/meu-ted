@@ -395,6 +395,160 @@ describe('API Fastify', () => {
     expect(getResponse.json().data[0].status).toBe('cancelled');
   });
 
+  // ─── POST /records/:id/undo ─────────────────────────────────────────────────
+
+  test('POST /records/:id/undo reverses expense creating income', async () => {
+    const app = await buildSeededApp();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 5000, description: 'Despesa', date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+    });
+    const recordId = created.json().data.id;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/records/${recordId}/undo`,
+      payload: { householdId },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().success).toBe(true);
+    expect(response.json().data.originalRecord.status).toBe('cancelled');
+    expect(response.json().data.reversalRecord.type).toBe('income');
+    expect(response.json().data.reversalRecord.amountCents).toBe(5000);
+    expect(response.json().data.reversalRecord.relatedRecordId).toBe(recordId);
+  });
+
+  test('POST /records/:id/undo reverses income creating expense', async () => {
+    const app = await buildSeededApp();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/records/income',
+      payload: { householdId, accountId, amountCents: 3000, description: 'Receita', date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+    });
+    const recordId = created.json().data.id;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/records/${recordId}/undo`,
+      payload: { householdId },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().success).toBe(true);
+    expect(response.json().data.reversalRecord.type).toBe('expense');
+  });
+
+  test('POST /records/:id/undo reverses transfer swapping from/to', async () => {
+    const app = await buildSeededApp();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/records/transfer',
+      payload: { householdId, fromAccountId: accountId, toAccountId: secondAccountId, amountCents: 1000, description: 'Transferência', date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+    });
+    const recordId = created.json().data.id;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/records/${recordId}/undo`,
+      payload: { householdId },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().success).toBe(true);
+    expect(response.json().data.reversalRecord.type).toBe('transfer');
+    expect(response.json().data.reversalRecord.fromAccountId).toBe(secondAccountId);
+    expect(response.json().data.reversalRecord.toAccountId).toBe(accountId);
+  });
+
+  test('POST /records/:id/undo returns error for already cancelled record', async () => {
+    const app = await buildSeededApp();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 5000, description: 'Despesa', date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+    });
+    const recordId = created.json().data.id;
+
+    // First undo
+    await app.inject({
+      method: 'POST',
+      url: `/records/${recordId}/undo`,
+      payload: { householdId },
+    });
+
+    // Try to undo again
+    const response = await app.inject({
+      method: 'POST',
+      url: `/records/${recordId}/undo`,
+      payload: { householdId },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().success).toBe(false);
+    expect(response.json().reason).toBe('Registro já está cancelado');
+  });
+
+  test('POST /records/:id/undo returns 404 for non-existent record', async () => {
+    const app = createApp();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/records/99999999-9999-4999-8999-999999999999/undo',
+      payload: { householdId },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().success).toBe(false);
+  });
+
+  test('POST /records/:id/undo generates audit logs', async () => {
+    const app = await buildSeededApp();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 5000, description: 'Despesa', date: '2026-05-10T12:00:000.000Z', source: 'dashboard' },
+    });
+    const recordId = created.json().data.id;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/records/${recordId}/undo`,
+      payload: { householdId },
+    });
+
+    expect(response.statusCode).toBe(200);
+    // Verify by checking original is cancelled and reversal exists
+    const getResponse = await app.inject({ method: 'GET', url: `/records?householdId=${householdId}` });
+    expect(getResponse.json().data.some((r: any) => r.status === 'cancelled')).toBe(true);
+    expect(getResponse.json().data.some((r: any) => r.relatedRecordId === recordId)).toBe(true);
+  });
+
+  test('POST /records/:id/undo reversal has relatedRecordId pointing to original', async () => {
+    const app = await buildSeededApp();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 5000, description: 'Despesa', date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+    });
+    const recordId = created.json().data.id;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/records/${recordId}/undo`,
+      payload: { householdId },
+    });
+
+    expect(response.json().data.reversalRecord.relatedRecordId).toBe(recordId);
+  });
+
   // ─── GET /cards ─────────────────────────────────────────────────────────────
 
   test('GET /cards returns empty list when no cards exist', async () => {

@@ -437,6 +437,34 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     return reply.status(200).send({ success: true, data: result.record });
   });
 
+  app.post('/records/:id/undo', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+
+    if (!body.householdId || typeof body.householdId !== 'string') {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+
+    const result = await financialRecordService.undoRecord({
+      householdId: body.householdId as string,
+      recordId: id,
+      userId: body.userId as string | undefined,
+      source: (body.source as 'whatsapp' | 'dashboard' | 'cron' | 'agent') || 'dashboard',
+    });
+
+    if (!result.success) {
+      return reply.status(404).send({ success: false, reason: result.reason });
+    }
+
+    return reply.status(200).send({
+      success: true,
+      data: {
+        originalRecord: result.originalRecord,
+        reversalRecord: result.reversalRecord,
+      },
+    });
+  });
+
   // ─────────────────────────────────────────────────────────────────────────
   // Cards
   // ─────────────────────────────────────────────────────────────────────────

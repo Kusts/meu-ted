@@ -644,4 +644,172 @@ export class FinancialRecordService {
 
     return { success: true, record: updated };
   }
+
+  /**
+   * Undo a financial record by creating a reversal and cancelling the original (REQ-026)
+   * - Expense → creates Income
+   * - Income → creates Expense
+   * - Transfer → creates Transfer with swapped from/to
+   */
+  async undoRecord(params: {
+    householdId: string;
+    recordId: string;
+    userId?: string;
+    source?: 'whatsapp' | 'dashboard' | 'cron' | 'agent';
+  }): Promise<{
+    success: boolean;
+    originalRecord?: FinancialRecord;
+    reversalRecord?: FinancialRecord;
+    reason?: string;
+  }> {
+    const { householdId, recordId, source = 'dashboard', userId } = params;
+
+    // Find existing record
+    const existing = await this.deps.recordRepository.findById(recordId);
+    if (!existing || existing.householdId !== householdId) {
+      return { success: false, reason: 'Registro não encontrado' };
+    }
+
+    // Check if record is already cancelled
+    if (existing.status === 'cancelled') {
+      return { success: false, reason: 'Registro já está cancelado' };
+    }
+
+    const now = new Date().toISOString();
+
+    // Determine reversal type
+    let reversalType: 'income' | 'expense' | 'transfer';
+    let reversalFromAccountId: string | null = null;
+    let reversalToAccountId: string | null = null;
+
+    if (existing.type === 'expense') {
+      reversalType = 'income';
+      reversalToAccountId = existing.accountId;
+    } else if (existing.type === 'income') {
+      reversalType = 'expense';
+      reversalFromAccountId = existing.accountId;
+    } else if (existing.type === 'transfer') {
+      reversalType = 'transfer';
+      // Swap from and to for reversal
+      reversalFromAccountId = existing.toAccountId;
+      reversalToAccountId = existing.fromAccountId;
+    } else {
+      return { success: false, reason: 'Tipo de registro não suportado para undo' };
+    }
+
+    // Create the reversal record
+    const reversalRecordData: FinancialRecord = {
+      id: crypto.randomUUID(),
+      householdId: existing.householdId,
+      type: reversalType,
+      amountCents: existing.amountCents,
+      date: now,
+      description: `[REVERSAL] ${existing.description}`,
+      accountId: reversalType === 'transfer' ? null : (reversalType === 'income' ? reversalToAccountId! : reversalFromAccountId!),
+      fromAccountId: reversalType === 'transfer' ? reversalFromAccountId! : null,
+      toAccountId: reversalType === 'transfer' ? reversalToAccountId! : null,
+      cardId: null,
+      invoiceId: null,
+      categoryId: existing.categoryId,
+      createdByUserId: userId ?? null,
+      source: source,
+      sourceMessageId: null,
+      idempotencyKey: null,
+      status: 'posted',
+      recurrenceId: null,
+      installmentGroupId: null,
+      relatedRecordId: existing.id, // Link to original record
+      merchantId: null,
+      confirmedAt: now,
+      metadataJson: { originalRecordId: existing.id, isReversal: true },
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    // Create reversal record via repository
+    const reversalRecord = await this.deps.recordRepository.create(reversalRecordData);
+
+    // Cancel the original record
+    const cancelledRecord = await this.deps.recordRepository.softDelete(recordId);
+    if (!cancelledRecord) {
+      return { success: false, reason: 'Falha ao cancelar registro original' };
+    }
+
+    // Create audit logs
+    // Audit log for cancelling original
+    await this.createAuditLog({
+      householdId,
+      action: 'delete',
+      entityType: 'financial_record',
+      entityId: recordId,
+      beforeJson: existing as unknown as Record<string, unknown>,
+      afterJson: cancelledRecord as unknown as Record<string, unknown>,
+      source,
+      actorUserId: userId,
+    });
+
+    // Audit log for creating reversal
+    await this.createAuditLog({
+      householdId,
+      action: 'create',
+      entityType: 'financial_record',
+      entityId: reversalRecord.id,
+      beforeJson: null,
+      afterJson: reversalRecord as unknown as Record<string, unknown>,
+      source,
+      actorUserId: userId,
+    });
+
+    // Create ledger entry for reversal record
+    if (reversalRecord.type !== 'transfer') {
+      const accountId = reversalRecord.type === 'income' ? reversalRecord.accountId! : reversalRecord.accountId!;
+      await this.deps.ledgerRepository.create({
+        id: crypto.randomUUID(),
+        householdId,
+        recordId: reversalRecord.id,
+        accountId: accountId,
+        cardId: null,
+        invoiceId: null,
+        direction: reversalRecord.type === 'income' ? 'credit' : 'debit',
+        amountCents: reversalRecord.amountCents,
+        effectiveDate: reversalRecord.date,
+        entryType: 'cash',
+        createdAt: now,
+      });
+    } else {
+      // For transfers, create two ledger entries
+      await this.deps.ledgerRepository.create({
+        id: crypto.randomUUID(),
+        householdId,
+        recordId: reversalRecord.id,
+        accountId: reversalRecord.fromAccountId!,
+        cardId: null,
+        invoiceId: null,
+        direction: 'debit',
+        amountCents: reversalRecord.amountCents,
+        effectiveDate: reversalRecord.date,
+        entryType: 'transfer',
+        createdAt: now,
+      });
+      await this.deps.ledgerRepository.create({
+        id: crypto.randomUUID(),
+        householdId,
+        recordId: reversalRecord.id,
+        accountId: reversalRecord.toAccountId!,
+        cardId: null,
+        invoiceId: null,
+        direction: 'credit',
+        amountCents: reversalRecord.amountCents,
+        effectiveDate: reversalRecord.date,
+        entryType: 'transfer',
+        createdAt: now,
+      });
+    }
+
+    return {
+      success: true,
+      originalRecord: cancelledRecord,
+      reversalRecord,
+    };
+  }
 }
