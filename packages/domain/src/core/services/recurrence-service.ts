@@ -126,6 +126,34 @@ export class RecurrenceService {
   }
 
   /**
+   * Add one month to an ISO date string, avoiding timezone issues.
+   * Parses the date string manually and returns in same format.
+   */
+  private addOneMonth(dateStr: string): string {
+    const [datePart] = dateStr.split('T');
+    const [yearStr, monthStr, dayStr] = datePart.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10); // 1-indexed
+    const day = parseInt(dayStr, 10);
+
+    // Calculate next month
+    let nextYear = year;
+    let nextMonth = month + 1;
+    if (nextMonth > 12) {
+      nextMonth = 1;
+      nextYear = year + 1;
+    }
+
+    // Clamp day to max days in target month
+    const maxDay = new Date(Date.UTC(nextYear, nextMonth, 0)).getUTCDate();
+    const targetDay = Math.min(day, maxDay);
+
+    // Return in same format as input
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${nextYear}-${pad(nextMonth)}-${pad(targetDay)}T00:00:00.000Z`;
+  }
+
+  /**
    * Create recurrence with 12 future occurrences (REQ-014)
    */
   async createRecurrence(input: CreateRecurrenceInput): Promise<CreateRecurrenceResult> {
@@ -574,5 +602,61 @@ export class RecurrenceService {
     }
 
     return { success: true, record, interestRecord };
+  }
+
+  /**
+   * Roll over overdue bills to next month (REQ-016)
+   * - Bills with status 'overdue' are rolled to next month
+   * - New bill is created with same description, amount, recurrenceId
+   * - Original bill keeps 'overdue' status
+   * - Due date adjusted to same day next month (capped at month end)
+   */
+  async rollOverOverdueBills(householdId: string): Promise<{
+    success: boolean;
+    rolledCount: number;
+    rolledBills: import('../entities/bill.js').Bill[];
+    reason?: string;
+  }> {
+    const overdueBills = await this.deps.billRepository.findOverdueByHouseholdId(householdId);
+    
+    if (overdueBills.length === 0) {
+      return { success: true, rolledCount: 0, rolledBills: [] };
+    }
+
+    const rolledBills: import('../entities/bill.js').Bill[] = [];
+    const now = new Date().toISOString();
+
+    for (const bill of overdueBills) {
+      // Calculate next month due date using UTC-safe method
+      const nextMonthDueDate = this.addOneMonth(bill.dueDate);
+
+      // Create new bill
+      const newBill: import('../entities/bill.js').Bill = {
+        id: crypto.randomUUID(),
+        householdId: bill.householdId,
+        recurrenceId: bill.recurrenceId,
+        occurrenceId: null, // New bill, not tied to occurrence
+        description: bill.description,
+        amountCents: bill.amountCents,
+        dueDate: nextMonthDueDate,
+        status: 'pending',
+        paidAt: null,
+        recordId: null,
+        paidAmountCents: null,
+        interestRecordId: null,
+        originalAmountCents: bill.originalAmountCents ?? bill.amountCents,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const createdBill = await this.deps.billRepository.create(newBill);
+      rolledBills.push(createdBill);
+    }
+
+    return {
+      success: true,
+      rolledCount: rolledBills.length,
+      rolledBills,
+    };
   }
 }

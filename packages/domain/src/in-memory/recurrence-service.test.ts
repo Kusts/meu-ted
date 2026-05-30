@@ -399,6 +399,161 @@ describe('RecurrenceService - Process Occurrence', () => {
     expect(overdueBills[0].status).toBe('overdue');
   });
 
+  it('REQ-016: rollOverOverdueBills creates new bill with next month dueDate', async () => {
+    // Create recurrence
+    const createResult = await service.createRecurrence({
+      householdId: 'household-1',
+      description: 'Internet',
+      amountCents: 12000,
+      period: 'monthly',
+      targetType: 'payable_bill',
+      firstDate: new Date('2026-05-01').toISOString(),
+    });
+
+    const occurrence = (await occurrenceRepo.findByRecurrenceId(createResult.recurrence!.id))
+      .find(o => o.occurrenceDate.includes('2026-05'));
+
+    // Process it to create bill
+    await service.processOccurrence(occurrence!.id);
+
+    // Mark bill as overdue
+    const bills = await billRepo.findByRecurrenceId(createResult.recurrence!.id);
+    await billRepo.update(bills[0].id, { status: 'overdue' });
+
+    // Roll over
+    const rolloverResult = await service.rollOverOverdueBills('household-1');
+
+    expect(rolloverResult.success).toBe(true);
+    expect(rolloverResult.rolledCount).toBe(1);
+    expect(rolloverResult.rolledBills.length).toBe(1);
+    
+    // New bill should be in June (next month)
+    const newBill = rolloverResult.rolledBills[0];
+    expect(newBill.dueDate).toContain('2026-06');
+    expect(newBill.amountCents).toBe(12000);
+    expect(newBill.status).toBe('pending');
+  });
+
+  it('REQ-016: rollOverOverdueBills marks original bill as overdue', async () => {
+    const createResult = await service.createRecurrence({
+      householdId: 'household-1',
+      description: 'Internet',
+      amountCents: 12000,
+      period: 'monthly',
+      targetType: 'payable_bill',
+      firstDate: new Date('2026-05-01').toISOString(),
+    });
+
+    const occurrence = (await occurrenceRepo.findByRecurrenceId(createResult.recurrence!.id))
+      .find(o => o.occurrenceDate.includes('2026-05'));
+
+    await service.processOccurrence(occurrence!.id);
+
+    // Mark as overdue first
+    const bills = await billRepo.findByRecurrenceId(createResult.recurrence!.id);
+    await billRepo.update(bills[0].id, { status: 'overdue' });
+
+    // Roll over
+    await service.rollOverOverdueBills('household-1');
+
+    // Original bill should still be overdue
+    const originalBill = await billRepo.findById(bills[0].id);
+    expect(originalBill!.status).toBe('overdue');
+  });
+
+  it('REQ-016: rollOverOverdueBills does not roll paid bills', async () => {
+    const createResult = await service.createRecurrence({
+      householdId: 'household-1',
+      description: 'Internet',
+      amountCents: 12000,
+      period: 'monthly',
+      targetType: 'payable_bill',
+      firstDate: new Date('2026-05-01').toISOString(),
+    });
+
+    const occurrence = (await occurrenceRepo.findByRecurrenceId(createResult.recurrence!.id))
+      .find(o => o.occurrenceDate.includes('2026-05'));
+
+    await service.processOccurrence(occurrence!.id);
+
+    // Mark as paid
+    const bills = await billRepo.findByRecurrenceId(createResult.recurrence!.id);
+    await billRepo.update(bills[0].id, { status: 'paid', paidAt: new Date().toISOString() });
+
+    // Roll over - should not create new bill
+    const rolloverResult = await service.rollOverOverdueBills('household-1');
+
+    expect(rolloverResult.rolledCount).toBe(0);
+    expect(rolloverResult.rolledBills.length).toBe(0);
+  });
+
+  it('REQ-016: rollOverOverdueBills handles multiple overdue bills', async () => {
+    // Create two recurrences
+    const result1 = await service.createRecurrence({
+      householdId: 'household-1',
+      description: 'Internet',
+      amountCents: 12000,
+      period: 'monthly',
+      targetType: 'payable_bill',
+      firstDate: new Date('2026-05-01').toISOString(),
+    });
+
+    const result2 = await service.createRecurrence({
+      householdId: 'household-1',
+      description: 'Luz',
+      amountCents: 20000,
+      period: 'monthly',
+      targetType: 'payable_bill',
+      firstDate: new Date('2026-05-01').toISOString(),
+    });
+
+    // Process both
+    for (const rec of [result1.recurrence!, result2.recurrence!]) {
+      const occ = (await occurrenceRepo.findByRecurrenceId(rec.id))
+        .find(o => o.occurrenceDate.includes('2026-05'));
+      await service.processOccurrence(occ!.id);
+    }
+
+    // Mark both as overdue
+    for (const rec of [result1.recurrence!, result2.recurrence!]) {
+      const bills = await billRepo.findByRecurrenceId(rec.id);
+      await billRepo.update(bills[0].id, { status: 'overdue' });
+    }
+
+    // Roll over - should create 2 new bills
+    const rolloverResult = await service.rollOverOverdueBills('household-1');
+
+    expect(rolloverResult.rolledCount).toBe(2);
+    expect(rolloverResult.rolledBills.length).toBe(2);
+  });
+
+  it('REQ-016: bill with dueDate day 31 rolls to day 30 in shorter months', async () => {
+    // Create bill with dueDate on 31st
+    await billRepo.create({
+      id: crypto.randomUUID(),
+      householdId: 'household-1',
+      recurrenceId: null,
+      occurrenceId: null,
+      description: 'Monthly subscription',
+      amountCents: 9999,
+      dueDate: '2026-01-31T00:00:00.000Z',
+      status: 'overdue',
+      paidAt: null,
+      recordId: null,
+      paidAmountCents: null,
+      interestRecordId: null,
+      originalAmountCents: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const rolloverResult = await service.rollOverOverdueBills('household-1');
+
+    expect(rolloverResult.rolledCount).toBe(1);
+    // February has 28/29 days, so should roll to Feb 28 or 29
+    expect(rolloverResult.rolledBills[0].dueDate).toMatch(/2026-02-(28|29)/);
+  });
+
   it('REQ-017: late payment with extra creates interest record', async () => {
     const createResult = await service.createRecurrence({
       householdId: 'household-1',
