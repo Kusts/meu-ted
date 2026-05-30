@@ -12,6 +12,8 @@ const navItems = [
   { href: '/records', icon: '📝', label: 'Registros' },
   { href: '/accounts', icon: '🏦', label: 'Contas' },
   { href: '/cards', icon: '💳', label: 'Cartões & Faturas' },
+  { href: '/loans', icon: '💰', label: 'Empréstimos' },
+  { href: '/budgets', icon: '🎯', label: 'Orçamentos' },
   { href: '/recurrences', icon: '🔄', label: 'Recorrências' },
   { href: '/categories', icon: '🏷️', label: 'Categorias' },
   { href: '/review', icon: '⚠️', label: 'Revisão' },

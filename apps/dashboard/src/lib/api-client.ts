@@ -146,6 +146,47 @@ export interface ReviewEntry {
   updatedAt: string;
 }
 
+export interface Loan {
+  id: string;
+  householdId: string;
+  name: string;
+  principalCents: number;
+  mode: 'fixed' | 'price' | 'sac' | 'custom';
+  interestRate: number | null;
+  startDate: string;
+  installmentsCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LoanInstallment {
+  id: string;
+  householdId: string;
+  loanId: string;
+  dueDate: string;
+  principalCents: number;
+  interestCents: number;
+  totalCents: number;
+  status: 'pending' | 'paid' | 'overdue';
+  paidAt: string | null;
+  createdAt: string;
+}
+
+export interface Budget {
+  id: string;
+  householdId: string;
+  name: string;
+  budgetType: 'category_monthly' | 'account_goal' | 'custom';
+  targetId: string | null;
+  targetType: 'category' | 'account' | null;
+  amountCents: number;
+  periodStart: string | null;
+  periodEnd: string | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // API Client Factory
 // ─────────────────────────────────────────────────────────────────────────────
@@ -210,6 +251,11 @@ export function createApiClient(
   getReviewCount: (householdId: string) => Promise<ApiResponse<{ count: number }>>;
   approveReview: (entryId: string, userId: string) => Promise<ApiResponse<ReviewEntry>>;
   rejectReview: (entryId: string, userId: string, cancelRecord?: boolean) => Promise<ApiResponse<ReviewEntry>>;
+  createLoan: (input: CreateLoanInput) => Promise<ApiResponse<{ loan: Loan; installments: LoanInstallment[] }>>;
+  listLoans: (householdId: string) => Promise<ApiResponse<Loan[]>>;
+  payLoanInstallment: (loanId: string, householdId: string) => Promise<ApiResponse<{ success: boolean; installment?: LoanInstallment }>>;
+  createBudget: (input: CreateBudgetInput) => Promise<ApiResponse<Budget>>;
+  listBudgets: (householdId: string) => Promise<ApiResponse<Budget[]>>;
 } {
   const api = async <T>(path: string, options?: RequestInit): Promise<T> => {
     const url = `${baseUrl}${path}`;
@@ -433,6 +479,43 @@ export function createApiClient(
     },
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Loans
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async createLoan(input: CreateLoanInput) {
+      return api<ApiResponse<{ loan: Loan; installments: LoanInstallment[] }>>('/loans', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async listLoans(householdId: string) {
+      return api<ApiResponse<Loan[]>>(`/loans?householdId=${encodeURIComponent(householdId)}`);
+    },
+
+    async payLoanInstallment(loanId: string, householdId: string) {
+      return api<ApiResponse<{ success: boolean; installment?: LoanInstallment }>>(`/loans/${loanId}/pay-installment`, {
+        method: 'POST',
+        body: JSON.stringify({ householdId, paidAt: new Date().toISOString() }),
+      });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Budgets
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async createBudget(input: CreateBudgetInput) {
+      return api<ApiResponse<Budget>>('/budgets', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async listBudgets(householdId: string) {
+      return api<ApiResponse<Budget[]>>(`/budgets?householdId=${encodeURIComponent(householdId)}`);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Auth
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -595,4 +678,23 @@ export interface CreateRecurrenceInput {
   accountId?: string;
   cardId?: string;
   categoryId?: string;
+}
+
+export interface CreateLoanInput {
+  householdId: string;
+  name: string;
+  principalCents: number;
+  mode: 'fixed' | 'price' | 'sac' | 'custom';
+  interestRate?: number | null;
+  startDate: string;
+  installmentsCount: number;
+}
+
+export interface CreateBudgetInput {
+  householdId: string;
+  name: string;
+  budgetType: 'category_monthly' | 'account_goal' | 'custom';
+  amountCents: number;
+  targetId?: string;
+  targetType?: 'category' | 'account';
 }

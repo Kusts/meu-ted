@@ -17,6 +17,9 @@ import type {
   IRecurrenceOccurrenceRepository,
   IBillRepository,
   IReviewQueueRepository,
+  ILoanRepository,
+  ILoanInstallmentRepository,
+  IBudgetRepository,
 } from '@pi-financeiro/domain';
 import {
   InMemoryAccountRepository,
@@ -32,6 +35,9 @@ import {
   InMemoryRecurrenceOccurrenceRepository,
   InMemoryBillRepository,
   InMemoryReviewQueueRepository,
+  InMemoryLoanRepository,
+  InMemoryLoanInstallmentRepository,
+  InMemoryBudgetRepository,
 } from '@pi-financeiro/domain';
 
 export interface ApiDependencies {
@@ -48,6 +54,9 @@ export interface ApiDependencies {
   recurrenceOccurrenceRepository: IRecurrenceOccurrenceRepository;
   billRepository: IBillRepository;
   reviewQueueRepository: IReviewQueueRepository;
+  loanRepository: ILoanRepository;
+  loanInstallmentRepository: ILoanInstallmentRepository;
+  budgetRepository: IBudgetRepository;
 }
 
 export type DepsMode = 'memory' | 'drizzle';
@@ -129,6 +138,9 @@ function createMemoryDependencies(): ApiDependencies {
     recurrenceOccurrenceRepository: new InMemoryRecurrenceOccurrenceRepository(),
     billRepository: new InMemoryBillRepository(),
     reviewQueueRepository: new InMemoryReviewQueueRepository(),
+    loanRepository: new InMemoryLoanRepository(),
+    loanInstallmentRepository: new InMemoryLoanInstallmentRepository(),
+    budgetRepository: new InMemoryBudgetRepository(),
   };
 }
 

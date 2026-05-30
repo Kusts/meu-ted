@@ -9,6 +9,8 @@ import {
   CardInvoiceService,
   RecurrenceService,
   ReviewService,
+  LoanService,
+  BudgetService,
 } from '@pi-financeiro/domain';
 import type { Account, AccountType, AccountScope, CategoryKind } from '@pi-financeiro/domain';
 import type { CreditCard } from '@pi-financeiro/domain';
@@ -50,6 +52,9 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     recurrenceOccurrenceRepository,
     billRepository,
     reviewQueueRepository,
+    loanRepository,
+    loanInstallmentRepository,
+    budgetRepository,
   } = deps;
 
   // Alias for historical naming
@@ -101,6 +106,12 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     installmentGroupRepository,
     accountRepository,
   });
+
+  // Loan Service
+  const loanService = new LoanService(loanRepository, loanInstallmentRepository);
+
+  // Budget Service
+  const budgetService = new BudgetService(budgetRepository);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Source Message Store for WhatsApp webhook (in-memory)
@@ -838,6 +849,127 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     }
 
     return reply.send(result);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Loans
+  // ─────────────────────────────────────────────────────────────────────────
+
+  app.post('/loans', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as {
+      householdId: string;
+      name: string;
+      principalCents: number;
+      mode: 'fixed' | 'price' | 'sac' | 'custom';
+      interestRate?: number | null;
+      startDate: string;
+      installmentsCount: number;
+    };
+
+    if (!body.householdId || !body.name || !body.principalCents || !body.startDate || !body.installmentsCount) {
+      return reply.status(400).send({ success: false, reason: 'Parâmetros obrigatórios faltando' });
+    }
+
+    try {
+      const result = await loanService.createLoan({
+        householdId: body.householdId,
+        name: body.name,
+        principalCents: body.principalCents,
+        mode: body.mode,
+        interestRate: body.interestRate ?? null,
+        startDate: body.startDate,
+        installmentsCount: body.installmentsCount,
+      });
+
+      return reply.status(201).send({ success: true, data: result });
+    } catch (error) {
+      return reply.status(500).send({ success: false, reason: String(error) });
+    }
+  });
+
+  app.get('/loans', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId } = request.query as { householdId?: string };
+
+    if (!householdId) {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+
+    const loans = await loanService.listByHousehold(householdId);
+    return reply.send({ success: true, data: loans });
+  });
+
+  app.post('/loans/:id/pay-installment', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    const { id } = request.params;
+    const body = request.body as { householdId: string; paidAt: string };
+
+    if (!body.householdId || !body.paidAt) {
+      return reply.status(400).send({ success: false, reason: 'Parâmetros obrigatórios faltando' });
+    }
+
+    // Find the installment
+    const installments = await loanService.listInstallmentsByLoanId(id);
+    const installment = installments.find(i => !i.paidAt);
+
+    if (!installment) {
+      return reply.status(404).send({ success: false, reason: 'Nenhuma parcela pendente encontrada' });
+    }
+
+    const result = await loanService.payInstallment({
+      householdId: body.householdId,
+      installmentId: installment.id,
+      paidAt: body.paidAt,
+    });
+
+    if (!result.success) {
+      return reply.status(400).send(result);
+    }
+
+    return reply.send(result);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Budgets
+  // ─────────────────────────────────────────────────────────────────────────
+
+  app.post('/budgets', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as {
+      householdId: string;
+      name: string;
+      budgetType: 'category_monthly' | 'account_goal' | 'custom';
+      amountCents: number;
+      targetId?: string;
+      targetType?: 'category' | 'account';
+    };
+
+    if (!body.householdId || !body.name || !body.budgetType || !body.amountCents) {
+      return reply.status(400).send({ success: false, reason: 'Parâmetros obrigatórios faltando' });
+    }
+
+    try {
+      const budget = await budgetService.createBudget({
+        householdId: body.householdId,
+        name: body.name,
+        budgetType: body.budgetType,
+        amountCents: body.amountCents,
+        targetId: body.targetId,
+        targetType: body.targetType,
+      });
+
+      return reply.status(201).send({ success: true, data: budget });
+    } catch (error) {
+      return reply.status(500).send({ success: false, reason: String(error) });
+    }
+  });
+
+  app.get('/budgets', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId } = request.query as { householdId?: string };
+
+    if (!householdId) {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+
+    const budgets = await budgetService.listByHousehold(householdId);
+    return reply.send({ success: true, data: budgets });
   });
 
   // ─────────────────────────────────────────────────────────────────────────
