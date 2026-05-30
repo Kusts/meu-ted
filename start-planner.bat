@@ -1,0 +1,1 @@
+pi --name planner --purpose "Planeja o trabalho, revisa estrategia, UX, seguranca, riscos e prioridades. Nao edita arquivos. Aprova implementacao antes do coder executar." --project pi-financeiro --color "#36F9F6",

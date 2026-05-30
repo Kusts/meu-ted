@@ -1,0 +1,32 @@
+{
+  "name": "@pi-financeiro/db",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./migrations": "./src/migrations/index.ts",
+    "./schema": "./src/schema/index.ts",
+    "./client": "./src/client.ts",
+    "./repositories": "./src/repositories/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --outDir ./dist --noEmit",
+    "typecheck": "tsc --noEmit",
+    "migrate": "drizzle-kit migrate",
+    "push": "drizzle-kit push",
+    "studio": "drizzle-kit studio",
+    "generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@pi-financeiro/domain": "workspace:*",
+    "drizzle-orm": "^0.39.0",
+    "postgres": "^3.4.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.30.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

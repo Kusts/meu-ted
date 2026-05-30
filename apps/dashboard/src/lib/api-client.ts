@@ -1,0 +1,481 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Typed API Client for pi-financeiro Fastify API
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+
+export interface ApiClientOptions {
+  baseUrl?: string;
+  fetch?: typeof fetch;
+}
+
+interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  reason?: string;
+}
+
+export interface Account {
+  id: string;
+  householdId: string;
+  name: string;
+  type: 'checking' | 'savings' | 'cash' | 'credit_card' | 'investment';
+  scope: 'shared' | 'personal';
+  ownerUserId?: string | null;
+  initialBalanceCents?: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Category {
+  id: string;
+  householdId: string;
+  name: string;
+  parentId?: string | null;
+  kind: 'income' | 'expense';
+  normalizedName: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FinancialRecord {
+  id: string;
+  householdId: string;
+  type: 'income' | 'expense' | 'transfer' | 'interest' | 'adjustment';
+  amountCents: number;
+  date: string;
+  description: string;
+  accountId?: string | null;
+  fromAccountId?: string | null;
+  toAccountId?: string | null;
+  cardId?: string | null;
+  invoiceId?: string | null;
+  categoryId?: string | null;
+  source: 'whatsapp' | 'dashboard' | 'cron' | 'agent';
+  status: 'posted' | 'scheduled' | 'paid' | 'overdue' | 'cancelled' | 'review';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreditCard {
+  id: string;
+  householdId: string;
+  name: string;
+  ownerUserId?: string | null;
+  scope: 'shared' | 'personal';
+  limitCents?: number | null;
+  closingDay: number;
+  dueDay: number;
+  paymentAccountId?: string | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Invoice {
+  id: string;
+  householdId: string;
+  cardId: string;
+  periodMonth: number;
+  periodYear: number;
+  status: 'open' | 'closed' | 'paid';
+  closesAt: string;
+  dueAt: string;
+  totalCents: number;
+  paidAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Recurrence {
+  id: string;
+  householdId: string;
+  description: string;
+  amountCents: number;
+  period: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly';
+  targetType: 'payable_bill' | 'account_debit' | 'card_charge';
+  accountId?: string | null;
+  cardId?: string | null;
+  categoryId?: string | null;
+  firstDate: string;
+  horizonMonths: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecurrenceOccurrence {
+  id: string;
+  householdId: string;
+  recurrenceId: string;
+  occurrenceDate: string;
+  amountCents: number;
+  description: string;
+  recordId?: string | null;
+  billId?: string | null;
+  status: 'pending' | 'processed' | 'cancelled';
+  editedPolicy: 'none' | 'single' | 'future' | 'all';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InstallmentGroup {
+  id: string;
+  householdId: string;
+  description: string;
+  totalCents: number;
+  installmentsCount: number;
+  firstDate: string;
+  cardId?: string | null;
+  accountId?: string | null;
+  createdAt: string;
+}
+
+export interface ReviewEntry {
+  id: string;
+  householdId: string;
+  recordId: string | null;
+  reason: 'high_value' | 'duplicate' | 'account_not_found' | 'category_conflict' | 'manual_review';
+  status: 'pending' | 'approved' | 'rejected';
+  originalPayload: Record<string, unknown>;
+  reviewedByUserId: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API Client Factory
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function createApiClient(
+  baseUrl: string = DEFAULT_BASE_URL,
+  fetchFn: typeof fetch = fetch
+): {
+  health: () => Promise<{ ok: boolean }>;
+  listAccounts: (householdId: string) => Promise<ApiResponse<Account[]>>;
+  createAccount: (input: CreateAccountInput) => Promise<ApiResponse<Account>>;
+  listCategories: (householdId: string) => Promise<ApiResponse<Category[]>>;
+  findOrCreateCategory: (input: FindOrCreateCategoryInput) => Promise<ApiResponse<{ category: Category; created: boolean }>>;
+  createExpense: (input: CreateRecordInput) => Promise<ApiResponse<FinancialRecord>>;
+  createIncome: (input: CreateRecordInput) => Promise<ApiResponse<FinancialRecord>>;
+  createTransfer: (input: CreateTransferInput) => Promise<ApiResponse<FinancialRecord>>;
+  createCard: (input: CreateCardInput) => Promise<ApiResponse<CreditCard>>;
+  createCardPurchase: (input: CreateCardPurchaseInput) => Promise<ApiResponse<{ record: FinancialRecord; invoiceId: string }>>;
+  createCardInstallments: (input: CreateInstallmentsInput) => Promise<ApiResponse<{ installmentGroup: InstallmentGroup }>>;
+  closeInvoice: (input: CloseInvoiceInput) => Promise<ApiResponse<Invoice>>;
+  payInvoice: (input: PayInvoiceInput) => Promise<ApiResponse<FinancialRecord>>;
+  createRecurrence: (input: CreateRecurrenceInput) => Promise<ApiResponse<{ recurrence: Recurrence; occurrences: RecurrenceOccurrence[] }>>;
+  maintainRecurrenceHorizon: (recurrenceId: string) => Promise<ApiResponse<{ success: boolean; createdCount: number }>>;
+  requestCode: (phone: string) => Promise<ApiResponse<void>>;
+  verifyCode: (phone: string, code: string) => Promise<ApiResponse<{ token: string; user: { id: string; name: string; phone: string } }>>;
+  seed: (householdName: string, userName: string, phone: string) => Promise<ApiResponse<{ householdId: string; userId: string; idempotent?: boolean }>>;
+  revoke: () => Promise<ApiResponse<void>>;
+  listReviewItems: (householdId: string, status?: 'pending' | 'all') => Promise<ApiResponse<{ entries: ReviewEntry[]; pendingCount: number }>>;
+  getReviewCount: (householdId: string) => Promise<ApiResponse<{ count: number }>>;
+  approveReview: (entryId: string, userId: string) => Promise<ApiResponse<ReviewEntry>>;
+  rejectReview: (entryId: string, userId: string, cancelRecord?: boolean) => Promise<ApiResponse<ReviewEntry>>;
+} {
+  const api = async <T>(path: string, options?: RequestInit): Promise<T> => {
+    const url = `${baseUrl}${path}`;
+    const response = await fetchFn(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+      ...options,
+    });
+
+    const data = await response.json();
+    return data as T;
+  };
+
+  return {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Health
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async health() {
+      return api<{ ok: boolean }>('/health');
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Accounts
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async listAccounts(householdId: string) {
+      return api<ApiResponse<Account[]>>(`/accounts?householdId=${encodeURIComponent(householdId)}`);
+    },
+
+    async createAccount(input: CreateAccountInput) {
+      return api<ApiResponse<Account>>('/accounts', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Categories
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async listCategories(householdId: string) {
+      return api<ApiResponse<Category[]>>(`/categories?householdId=${encodeURIComponent(householdId)}`);
+    },
+
+    async findOrCreateCategory(input: FindOrCreateCategoryInput) {
+      return api<ApiResponse<{ category: Category; created: boolean }>>('/categories/find-or-create', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Records
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async createExpense(input: CreateRecordInput) {
+      return api<ApiResponse<FinancialRecord>>('/records/expense', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async createIncome(input: CreateRecordInput) {
+      return api<ApiResponse<FinancialRecord>>('/records/income', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async createTransfer(input: CreateTransferInput) {
+      return api<ApiResponse<FinancialRecord>>('/records/transfer', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Cards
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async createCard(input: CreateCardInput) {
+      return api<ApiResponse<CreditCard>>('/cards', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async createCardPurchase(input: CreateCardPurchaseInput) {
+      return api<ApiResponse<{ record: FinancialRecord; invoiceId: string }>>('/cards/purchase', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async createCardInstallments(input: CreateInstallmentsInput) {
+      return api<ApiResponse<{ installmentGroup: InstallmentGroup }>>('/cards/installments', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Invoices
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async closeInvoice(input: CloseInvoiceInput) {
+      return api<ApiResponse<Invoice>>(`/invoices/${input.invoiceId}/close`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async payInvoice(input: PayInvoiceInput) {
+      return api<ApiResponse<FinancialRecord>>(`/invoices/${input.invoiceId}/pay`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Recurrences
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async createRecurrence(input: CreateRecurrenceInput) {
+      return api<ApiResponse<{ recurrence: Recurrence; occurrences: RecurrenceOccurrence[] }>>('/recurrences', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async maintainRecurrenceHorizon(recurrenceId: string) {
+      return api<ApiResponse<{ success: boolean; createdCount: number }>>(`/recurrences/${recurrenceId}/maintain-horizon`, {
+        method: 'POST',
+      });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Auth
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async requestCode(phone: string) {
+      return api<ApiResponse<void>>('/auth/request-code', {
+        method: 'POST',
+        body: JSON.stringify({ phone }),
+      });
+    },
+
+    async verifyCode(phone: string, code: string) {
+      return api<ApiResponse<{ token: string; user: { id: string; name: string; phone: string } }>>('/auth/verify-code', {
+        method: 'POST',
+        body: JSON.stringify({ phone, code }),
+      });
+    },
+
+    async seed(householdName: string, userName: string, phone: string) {
+      return api<ApiResponse<{ householdId: string; userId: string; idempotent?: boolean }>>('/auth/seed', {
+        method: 'POST',
+        body: JSON.stringify({ householdName, userName, phone }),
+      });
+    },
+
+    async revoke() {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+      return api<ApiResponse<void>>('/auth/revoke', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Review Queue
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async listReviewItems(householdId: string, status: 'pending' | 'all' = 'pending') {
+      return api<ApiResponse<{ entries: ReviewEntry[]; pendingCount: number }>>(
+        `/review?householdId=${encodeURIComponent(householdId)}&status=${status}`
+      );
+    },
+
+    async getReviewCount(householdId: string) {
+      return api<ApiResponse<{ count: number }>>(
+        `/review/count?householdId=${encodeURIComponent(householdId)}`
+      );
+    },
+
+    async approveReview(entryId: string, userId: string) {
+      return api<ApiResponse<ReviewEntry>>(`/review/${entryId}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ userId }),
+      });
+    },
+
+    async rejectReview(entryId: string, userId: string, cancelRecord = false) {
+      return api<ApiResponse<ReviewEntry>>(`/review/${entryId}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ userId, cancelRecord }),
+      });
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Input Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CreateAccountInput {
+  householdId: string;
+  name: string;
+  type: 'checking' | 'savings' | 'cash' | 'credit_card' | 'investment';
+  scope: 'shared' | 'personal';
+  ownerUserId?: string;
+  initialBalanceCents?: number;
+}
+
+export interface FindOrCreateCategoryInput {
+  householdId: string;
+  name: string;
+  kind: 'income' | 'expense';
+}
+
+export interface CreateRecordInput {
+  householdId: string;
+  accountId: string;
+  amountCents: number;
+  description: string;
+  date: string;
+  source: 'whatsapp' | 'dashboard' | 'cron' | 'agent';
+  categoryId?: string;
+  idempotencyKey?: string;
+}
+
+export interface CreateTransferInput {
+  householdId: string;
+  fromAccountId: string;
+  toAccountId: string;
+  amountCents: number;
+  description: string;
+  date: string;
+  source: 'whatsapp' | 'dashboard' | 'cron' | 'agent';
+  idempotencyKey?: string;
+}
+
+export interface CreateCardInput {
+  householdId: string;
+  name: string;
+  scope: 'shared' | 'personal';
+  closingDay: number;
+  dueDay: number;
+  ownerUserId?: string;
+  limitCents?: number;
+  paymentAccountId?: string;
+}
+
+export interface CreateCardPurchaseInput {
+  householdId: string;
+  cardId: string;
+  amountCents: number;
+  description: string;
+  purchaseDate: string;
+  source: 'whatsapp' | 'dashboard' | 'cron' | 'agent';
+  categoryId?: string;
+}
+
+export interface CreateInstallmentsInput {
+  householdId: string;
+  cardId: string;
+  amountCents: number;
+  description: string;
+  installmentsCount: number;
+  firstDate: string;
+  source: 'whatsapp' | 'dashboard' | 'cron' | 'agent';
+  categoryId?: string;
+}
+
+export interface CloseInvoiceInput {
+  householdId: string;
+  invoiceId: string;
+}
+
+export interface PayInvoiceInput {
+  householdId: string;
+  invoiceId: string;
+  amountCents: number;
+  paymentDate: string;
+  source: 'whatsapp' | 'dashboard' | 'cron' | 'agent';
+  paymentAccountId?: string;
+}
+
+export interface CreateRecurrenceInput {
+  householdId: string;
+  description: string;
+  amountCents: number;
+  period: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly';
+  targetType: 'payable_bill' | 'account_debit' | 'card_charge';
+  firstDate: string;
+  accountId?: string;
+  cardId?: string;
+  categoryId?: string;
+}
