@@ -14,9 +14,12 @@ export function toDbReviewQueue(entry: ReviewEntry): DbReviewQueueRow {
   return {
     id: entry.id,
     householdId: entry.householdId,
+    recordId: entry.recordId,
     reason: entry.reason,
     payloadJson: entry.originalPayload,
     status: entry.status,
+    reviewedByUserId: entry.reviewedByUserId,
+    reviewedAt: entry.reviewedAt ? new Date(entry.reviewedAt) : null,
     createdAt: new Date(entry.createdAt),
     updatedAt: new Date(entry.updatedAt),
   };
@@ -29,12 +32,12 @@ export function fromDbReviewQueue(row: typeof reviewQueue.$inferSelect): ReviewE
   return {
     id: row.id,
     householdId: row.householdId,
-    recordId: null,
+    recordId: row.recordId,
     reason: row.reason as ReviewEntry['reason'],
     status: row.status,
     originalPayload: row.payloadJson as Record<string, unknown>,
-    reviewedByUserId: null,
-    reviewedAt: null,
+    reviewedByUserId: row.reviewedByUserId,
+    reviewedAt: row.reviewedAt instanceof Date ? row.reviewedAt.toISOString() : (row.reviewedAt ? String(row.reviewedAt) : null),
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
     updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt),
   };

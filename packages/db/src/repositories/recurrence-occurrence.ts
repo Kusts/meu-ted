@@ -83,7 +83,7 @@ export class DrizzleRecurrenceOccurrenceRepository implements IRecurrenceOccurre
     const [updated] = await this.dbClient.db
       .update(recurrenceOccurrences)
       .set({
-        status: update.status as 'pending' | 'created' | 'skipped',
+        status: update.status,
         recordId: update.recordId,
       })
       .where(eq(recurrenceOccurrences.id, id))

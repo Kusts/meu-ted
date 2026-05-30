@@ -21,7 +21,7 @@ export class DrizzleUserRepository implements IUserRepository {
       householdId: user.householdId,
       name: user.name,
       phone: user.phone,
-      role: user.role as 'owner' | 'member',
+      role: user.role,
       active: true,
       createdAt: now,
       updatedAt: now,

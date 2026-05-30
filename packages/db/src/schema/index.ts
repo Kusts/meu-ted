@@ -4,7 +4,7 @@ import { relations } from 'drizzle-orm';
 // Enums
 export const householdCurrencyEnum = pgEnum('household_currency', ['BRL']);
 export const householdTimezoneEnum = pgEnum('household_timezone', ['America/Sao_Paulo']);
-export const userRoleEnum = pgEnum('user_role', ['owner', 'member']);
+export const userRoleEnum = pgEnum('user_role', ['owner', 'member', 'viewer']);
 export const accountTypeEnum = pgEnum('account_type', ['checking', 'savings', 'credit', 'investment', 'cash']);
 export const accountScopeEnum = pgEnum('account_scope', ['shared', 'personal']);
 export const recordTypeEnum = pgEnum('record_type', ['income', 'expense', 'transfer', 'interest', 'adjustment']);
@@ -15,8 +15,9 @@ export const ledgerEntryTypeEnum = pgEnum('ledger_entry_type', ['cash', 'card_ch
 export const cardScopeEnum = pgEnum('card_scope', ['shared', 'personal']);
 export const invoiceStatusEnum = pgEnum('invoice_status', ['open', 'closed', 'paid']);
 export const recurrencePeriodEnum = pgEnum('recurrence_period', ['daily', 'weekly', 'biweekly', 'monthly', 'yearly']);
-export const recurrenceOccurrenceStatusEnum = pgEnum('recurrence_occurrence_status', ['pending', 'created', 'skipped']);
-export const recurrenceEditedPolicyEnum = pgEnum('recurrence_edited_policy', ['single', 'future', 'all']);
+export const recurrenceOccurrenceStatusEnum = pgEnum('recurrence_occurrence_status', ['pending', 'processed', 'overdue', 'cancelled']);
+export const recurrenceEditedPolicyEnum = pgEnum('recurrence_edited_policy', ['none', 'single', 'future', 'all']);
+export const recurrenceTargetTypeEnum = pgEnum('recurrence_target_type', ['payable_bill', 'account_debit', 'card_charge']);
 export const billStatusEnum = pgEnum('bill_status', ['pending', 'paid', 'overdue', 'cancelled']);
 export const loanModeEnum = pgEnum('loan_mode', ['fixed', 'price', 'sac', 'custom']);
 export const loanInstallmentStatusEnum = pgEnum('loan_installment_status', ['pending', 'paid', 'overdue']);
@@ -253,7 +254,7 @@ export const recurrences = pgTable('recurrences', {
   description: varchar('description', { length: 500 }).notNull(),
   amountCents: integer('amount_cents').notNull(),
   period: recurrencePeriodEnum('period').notNull(),
-  targetType: recordTypeEnum('target_type').notNull(),
+  targetType: recurrenceTargetTypeEnum('target_type').notNull(),
   accountId: uuid('account_id').references(() => accounts.id),
   cardId: uuid('card_id'),
   categoryId: uuid('category_id').references(() => categories.id),
@@ -271,10 +272,14 @@ export const recurrenceOccurrences = pgTable('recurrence_occurrences', {
   householdId: uuid('household_id').notNull().references(() => households.id, { onDelete: 'cascade' }),
   recurrenceId: uuid('recurrence_id').notNull().references(() => recurrences.id, { onDelete: 'cascade' }),
   occurrenceDate: timestamp('occurrence_date', { withTimezone: true }).notNull(),
+  amountCents: integer('amount_cents').notNull(),
+  description: varchar('description', { length: 500 }).notNull(),
   recordId: uuid('record_id').references(() => financialRecords.id),
+  billId: uuid('bill_id').references(() => bills.id),
   status: recurrenceOccurrenceStatusEnum('status').default('pending').notNull(),
-  editedPolicy: recurrenceEditedPolicyEnum('edited_policy').default('single').notNull(),
+  editedPolicy: recurrenceEditedPolicyEnum('edited_policy').default('none').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_recurrence_occurrences_household_id').on(table.householdId),
   index('idx_recurrence_occurrences_recurrence_id').on(table.recurrenceId),
@@ -405,9 +410,12 @@ export const idempotencyKeys = pgTable('idempotency_keys', {
 export const reviewQueue = pgTable('review_queue', {
   id: uuid('id').primaryKey().defaultRandom(),
   householdId: uuid('household_id').notNull().references(() => households.id, { onDelete: 'cascade' }),
+  recordId: uuid('record_id').references(() => financialRecords.id),
   reason: varchar('reason', { length: 255 }).notNull(),
   payloadJson: jsonb('payload_json').notNull(),
   status: reviewQueueStatusEnum('status').default('pending').notNull(),
+  reviewedByUserId: uuid('reviewed_by_user_id').references(() => users.id),
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -516,4 +524,17 @@ export const recurrencesRelations = relations(recurrences, ({ one, many }) => ({
   account: one(accounts, { fields: [recurrences.accountId], references: [accounts.id] }),
   category: one(categories, { fields: [recurrences.categoryId], references: [categories.id] }),
   occurrences: many(recurrenceOccurrences),
+}));
+
+export const recurrenceOccurrencesRelations = relations(recurrenceOccurrences, ({ one }) => ({
+  household: one(households, { fields: [recurrenceOccurrences.householdId], references: [households.id] }),
+  recurrence: one(recurrences, { fields: [recurrenceOccurrences.recurrenceId], references: [recurrences.id] }),
+  record: one(financialRecords, { fields: [recurrenceOccurrences.recordId], references: [financialRecords.id] }),
+  bill: one(bills, { fields: [recurrenceOccurrences.billId], references: [bills.id] }),
+}));
+
+export const reviewQueueRelations = relations(reviewQueue, ({ one }) => ({
+  household: one(households, { fields: [reviewQueue.householdId], references: [households.id] }),
+  record: one(financialRecords, { fields: [reviewQueue.recordId], references: [financialRecords.id] }),
+  reviewedBy: one(users, { fields: [reviewQueue.reviewedByUserId], references: [users.id] }),
 }));

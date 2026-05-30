@@ -20,7 +20,7 @@ export function toDbUser(user: User): DbUserRow {
     householdId: user.householdId,
     name: user.name,
     phone: user.phone,
-    role: user.role as 'owner' | 'member',
+    role: user.role,
     active: user.active,
     createdAt: new Date(user.createdAt),
     updatedAt: new Date(user.updatedAt),

@@ -687,7 +687,7 @@ describe('Recurrence Mapper', () => {
       description: 'Aluguel',
       amountCents: 150000,
       period: 'monthly' as const,
-      targetType: 'expense' as const,
+      targetType: 'account_debit' as const,
       accountId: '0192a1b3-0000-0000-0000-000000000010',
       cardId: null,
       categoryId: null,
@@ -897,6 +897,9 @@ describe('Review Queue Mapper', () => {
       reason: 'duplicate' as const,
       payloadJson: { amountCents: 5000, description: 'Teste' },
       status: 'approved' as const,
+      recordId: null,
+      reviewedByUserId: null,
+      reviewedAt: null,
       createdAt: new Date('2026-05-29T10:00:00.000Z'),
       updatedAt: new Date('2026-05-29T10:00:00.000Z'),
     };

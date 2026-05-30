@@ -65,7 +65,7 @@ export class DrizzleRecurrenceRepository implements IRecurrenceRepository {
     if (update.description !== undefined) updateData.description = update.description;
     if (update.amountCents !== undefined) updateData.amountCents = update.amountCents;
     if (update.period !== undefined) updateData.period = update.period;
-    if (update.targetType !== undefined) updateData.targetType = update.targetType as 'income' | 'expense' | 'transfer' | 'interest' | 'adjustment';
+    if (update.targetType !== undefined) updateData.targetType = update.targetType;
     if (update.accountId !== undefined) updateData.accountId = update.accountId;
     if (update.cardId !== undefined) updateData.cardId = update.cardId;
     if (update.categoryId !== undefined) updateData.categoryId = update.categoryId;
