@@ -549,4 +549,99 @@ export class FinancialRecordService {
       createdAt: new Date().toISOString(),
     });
   }
+
+  /**
+   * Update a financial record (REQ-XXX)
+   */
+  async updateRecord(params: {
+    householdId: string;
+    recordId: string;
+    userId?: string;
+    updates: {
+      description?: string;
+      amountCents?: number;
+      date?: string;
+      categoryId?: string | null;
+      status?: 'posted' | 'scheduled' | 'paid' | 'overdue' | 'cancelled' | 'review';
+    };
+    source?: 'whatsapp' | 'dashboard' | 'cron' | 'agent';
+  }): Promise<ServiceResult> {
+    const { householdId, recordId, updates, source = 'dashboard', userId } = params;
+
+    // Find existing record
+    const existing = await this.deps.recordRepository.findById(recordId);
+    if (!existing || existing.householdId !== householdId) {
+      return { success: false, reason: 'Registro não encontrado' };
+    }
+
+    // Apply updates
+    const updateData: Record<string, unknown> = {};
+    if (updates.description !== undefined) updateData.description = updates.description;
+    if (updates.amountCents !== undefined) updateData.amountCents = updates.amountCents;
+    if (updates.date !== undefined) updateData.date = updates.date;
+    if (updates.categoryId !== undefined) updateData.categoryId = updates.categoryId;
+    if (updates.status !== undefined) updateData.status = updates.status;
+
+    // Update record
+    const updated = await this.deps.recordRepository.update(recordId, updateData as any);
+    if (!updated) {
+      return { success: false, reason: 'Falha ao atualizar registro' };
+    }
+
+    // Create audit log
+    await this.createAuditLog({
+      householdId,
+      action: 'update',
+      entityType: 'financial_record',
+      entityId: recordId,
+      beforeJson: existing as unknown as Record<string, unknown>,
+      afterJson: updated as unknown as Record<string, unknown>,
+      source,
+      actorUserId: userId,
+    });
+
+    // Note: If amountCents changed, ledger entries would need to be updated too.
+    // Ledger entries are typically immutable, so in production this might require
+    // creating reversal entries and new entries. For now, we just update the record.
+
+    return { success: true, record: updated };
+  }
+
+  /**
+   * Soft delete a financial record (change status to cancelled)
+   */
+  async softDeleteRecord(params: {
+    householdId: string;
+    recordId: string;
+    userId?: string;
+    source?: 'whatsapp' | 'dashboard' | 'cron' | 'agent';
+  }): Promise<ServiceResult> {
+    const { householdId, recordId, source = 'dashboard', userId } = params;
+
+    // Find existing record
+    const existing = await this.deps.recordRepository.findById(recordId);
+    if (!existing || existing.householdId !== householdId) {
+      return { success: false, reason: 'Registro não encontrado' };
+    }
+
+    // Soft delete - change status to cancelled
+    const updated = await this.deps.recordRepository.softDelete(recordId);
+    if (!updated) {
+      return { success: false, reason: 'Falha ao excluir registro' };
+    }
+
+    // Create audit log
+    await this.createAuditLog({
+      householdId,
+      action: 'delete',
+      entityType: 'financial_record',
+      entityId: recordId,
+      beforeJson: existing as unknown as Record<string, unknown>,
+      afterJson: updated as unknown as Record<string, unknown>,
+      source,
+      actorUserId: userId,
+    });
+
+    return { success: true, record: updated };
+  }
 }

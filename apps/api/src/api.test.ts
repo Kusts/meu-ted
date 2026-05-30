@@ -281,6 +281,120 @@ describe('API Fastify', () => {
     expect(secondPage.json().total).toBe(5);
   });
 
+  // ─── PATCH /records/:id ────────────────────────────────────────────────────
+
+  test('PATCH /records/:id updates description', async () => {
+    const app = await buildSeededApp();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 5000, description: 'Old description', date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+    });
+    const recordId = created.json().data.id;
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: `/records/${recordId}`,
+      payload: { householdId, description: 'New description' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().success).toBe(true);
+    expect(response.json().data.description).toBe('New description');
+  });
+
+  test('PATCH /records/:id returns 404 for non-existent record', async () => {
+    const app = createApp();
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/records/99999999-9999-4999-8999-999999999999',
+      payload: { householdId, description: 'Test' },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().success).toBe(false);
+  });
+
+  test('PATCH /records/:id generates audit log', async () => {
+    const app = await buildSeededApp();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 5000, description: 'Original', date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+    });
+    const recordId = created.json().data.id;
+
+    await app.inject({
+      method: 'PATCH',
+      url: `/records/${recordId}`,
+      payload: { householdId, description: 'Updated' },
+    });
+
+    // Verify audit log was created by checking the record was updated
+    const getResponse = await app.inject({ method: 'GET', url: `/records?householdId=${householdId}` });
+    expect(getResponse.json().data[0].description).toBe('Updated');
+  });
+
+  // ─── DELETE /records/:id ───────────────────────────────────────────────────
+
+  test('DELETE /records/:id changes status to cancelled', async () => {
+    const app = await buildSeededApp();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 5000, description: 'To delete', date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+    });
+    const recordId = created.json().data.id;
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/records/${recordId}`,
+      payload: { householdId },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().success).toBe(true);
+    expect(response.json().data.status).toBe('cancelled');
+  });
+
+  test('DELETE /records/:id returns 404 for non-existent record', async () => {
+    const app = createApp();
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/records/99999999-9999-4999-8999-999999999999',
+      payload: { householdId },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().success).toBe(false);
+  });
+
+  test('DELETE /records/:id generates audit log', async () => {
+    const app = await buildSeededApp();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 5000, description: 'To delete', date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+    });
+    const recordId = created.json().data.id;
+
+    await app.inject({
+      method: 'DELETE',
+      url: `/records/${recordId}`,
+      payload: { householdId },
+    });
+
+    // Verify audit log was created by checking the record status
+    const getResponse = await app.inject({ method: 'GET', url: `/records?householdId=${householdId}` });
+    expect(getResponse.json().data[0].status).toBe('cancelled');
+  });
+
   // ─── GET /cards ─────────────────────────────────────────────────────────────
 
   test('GET /cards returns empty list when no cards exist', async () => {

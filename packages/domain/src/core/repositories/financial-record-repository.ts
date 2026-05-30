@@ -17,6 +17,7 @@ export interface IFinancialRecordRepository {
   ): Promise<FinancialRecord | null>;
   findByAccountId(accountId: string): Promise<FinancialRecord[]>;
   update(id: string, update: RecordUpdate): Promise<FinancialRecord | null>;
+  softDelete(id: string): Promise<FinancialRecord | null>;
   findByHouseholdIdFiltered(
     householdId: string,
     filters: {

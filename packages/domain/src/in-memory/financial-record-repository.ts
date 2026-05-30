@@ -62,6 +62,19 @@ export class InMemoryFinancialRecordRepository implements IFinancialRecordReposi
     return { ...updated };
   }
 
+  async softDelete(id: string): Promise<FinancialRecord | null> {
+    const existing = this.records.get(id);
+    if (!existing) return null;
+
+    const updated: FinancialRecord = {
+      ...existing,
+      status: 'cancelled',
+      updatedAt: new Date().toISOString(),
+    };
+    this.records.set(id, updated);
+    return { ...updated };
+  }
+
   async findByHouseholdIdFiltered(
     householdId: string,
     filters: {

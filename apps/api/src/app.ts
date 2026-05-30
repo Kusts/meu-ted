@@ -386,6 +386,57 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     return reply.status(200).send({ success: true, data: records, total });
   });
 
+  app.patch('/records/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+
+    if (!body.householdId || typeof body.householdId !== 'string') {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+
+    const result = await financialRecordService.updateRecord({
+      householdId: body.householdId as string,
+      recordId: id,
+      userId: body.userId as string | undefined,
+      updates: {
+        description: body.description as string | undefined,
+        amountCents: body.amountCents as number | undefined,
+        date: body.date as string | undefined,
+        categoryId: body.categoryId as string | null | undefined,
+        status: body.status as 'posted' | 'scheduled' | 'paid' | 'overdue' | 'cancelled' | 'review' | undefined,
+      },
+      source: (body.source as 'whatsapp' | 'dashboard' | 'cron' | 'agent') || 'dashboard',
+    });
+
+    if (!result.success) {
+      return reply.status(404).send({ success: false, reason: result.reason });
+    }
+
+    return reply.status(200).send({ success: true, data: result.record });
+  });
+
+  app.delete('/records/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+
+    if (!body.householdId || typeof body.householdId !== 'string') {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+
+    const result = await financialRecordService.softDeleteRecord({
+      householdId: body.householdId as string,
+      recordId: id,
+      userId: body.userId as string | undefined,
+      source: (body.source as 'whatsapp' | 'dashboard' | 'cron' | 'agent') || 'dashboard',
+    });
+
+    if (!result.success) {
+      return reply.status(404).send({ success: false, reason: result.reason });
+    }
+
+    return reply.status(200).send({ success: true, data: result.record });
+  });
+
   // ─────────────────────────────────────────────────────────────────────────
   // Cards
   // ─────────────────────────────────────────────────────────────────────────

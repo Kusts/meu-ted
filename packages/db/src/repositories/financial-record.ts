@@ -113,6 +113,16 @@ export class DrizzleFinancialRecordRepository implements IFinancialRecordReposit
     return updated ? fromDbFinancialRecord(updated) : null;
   }
 
+  async softDelete(id: string): Promise<FinancialRecord | null> {
+    const [updated] = await this.dbClient.db
+      .update(financialRecords)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(eq(financialRecords.id, id))
+      .returning();
+    
+    return updated ? fromDbFinancialRecord(updated) : null;
+  }
+
   async findByHouseholdIdFiltered(
     householdId: string,
     filters: {
