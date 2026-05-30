@@ -11,6 +11,7 @@ import {
   ReviewService,
   LoanService,
   BudgetService,
+  ReportService,
 } from '@pi-financeiro/domain';
 import type { Account, AccountType, AccountScope, CategoryKind } from '@pi-financeiro/domain';
 import type { CreditCard } from '@pi-financeiro/domain';
@@ -112,6 +113,17 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
   // Budget Service
   const budgetService = new BudgetService(budgetRepository);
+
+  // Report Service
+  const reportService = new ReportService({
+    recordRepository: financialRecordRepository,
+    ledgerRepository,
+    accountRepository,
+    categoryRepository,
+    budgetRepository,
+    invoiceRepository,
+    billRepository,
+  });
 
   // ─────────────────────────────────────────────────────────────────────────
   // Source Message Store for WhatsApp webhook (in-memory)
@@ -970,6 +982,57 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
     const budgets = await budgetService.listByHousehold(householdId);
     return reply.send({ success: true, data: budgets });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Reports (REQ-023)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  app.get('/reports/current-month', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId } = request.query as { householdId?: string };
+    if (!householdId) return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+
+    const summary = await reportService.currentMonthSummary(householdId);
+    return reply.send({ success: true, data: summary });
+  });
+
+  app.get('/reports/category-breakdown', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId, dateFrom, dateTo, type } = request.query as { 
+      householdId?: string; 
+      dateFrom?: string; 
+      dateTo?: string; 
+      type?: 'income' | 'expense' 
+    };
+    if (!householdId || !dateFrom || !dateTo || !type) {
+      return reply.status(400).send({ success: false, reason: 'householdId, dateFrom, dateTo e type são obrigatórios' });
+    }
+
+    const breakdown = await reportService.categoryBreakdown(householdId, { dateFrom, dateTo, type });
+    return reply.send({ success: true, data: breakdown });
+  });
+
+  app.get('/reports/account-balances', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId } = request.query as { householdId?: string };
+    if (!householdId) return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+
+    const balances = await reportService.accountBalances(householdId);
+    return reply.send({ success: true, data: balances });
+  });
+
+  app.get('/reports/budget-vs-actual', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId } = request.query as { householdId?: string };
+    if (!householdId) return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+
+    const comparison = await reportService.budgetVsActual(householdId);
+    return reply.send({ success: true, data: comparison });
+  });
+
+  app.get('/reports/invoices-due', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId } = request.query as { householdId?: string };
+    if (!householdId) return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+
+    const invoices = await reportService.invoicesDue(householdId);
+    return reply.send({ success: true, data: invoices });
   });
 
   // ─────────────────────────────────────────────────────────────────────────

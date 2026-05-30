@@ -58,6 +58,7 @@ export * from './core/services/auto-categorization-service.js';
 export * from './core/services/review-service.js';
 export * from './core/services/loan-service.js';
 export * from './core/services/budget-service.js';
+export * from './core/services/report-service.js';
 
 // In-memory implementations (for tests)
 export { InMemoryAccountRepository } from './in-memory/account-repository.js';

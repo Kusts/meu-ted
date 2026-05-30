@@ -187,6 +187,56 @@ export interface Budget {
   updatedAt: string;
 }
 
+export interface MonthSummary {
+  householdId: string;
+  month: string;
+  incomeCents: number;
+  expenseCents: number;
+  transferCents: number;
+  netCents: number;
+  recordCount: number;
+}
+
+export interface CategoryBreakdown {
+  categoryId: string;
+  categoryName: string;
+  parentCategoryName?: string;
+  amountCents: number;
+  recordCount: number;
+  percentage: number;
+}
+
+export interface AccountBalance {
+  accountId: string;
+  accountName: string;
+  initialBalanceCents: number;
+  debitCents: number;
+  creditCents: number;
+  currentBalanceCents: number;
+}
+
+export interface BudgetComparison {
+  budgetId: string;
+  budgetName: string;
+  budgetType: string;
+  limitCents: number;
+  spentCents: number;
+  remainingCents: number;
+  percentage: number;
+  status: 'under_budget' | 'warning' | 'over_budget';
+}
+
+export interface InvoiceDue {
+  invoiceId: string;
+  cardName: string;
+  periodMonth: number;
+  periodYear: number;
+  totalCents: number;
+  dueAt: string;
+  status: string;
+  daysUntilDue: number;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // API Client Factory
 // ─────────────────────────────────────────────────────────────────────────────
@@ -256,6 +306,11 @@ export function createApiClient(
   payLoanInstallment: (loanId: string, householdId: string) => Promise<ApiResponse<{ success: boolean; installment?: LoanInstallment }>>;
   createBudget: (input: CreateBudgetInput) => Promise<ApiResponse<Budget>>;
   listBudgets: (householdId: string) => Promise<ApiResponse<Budget[]>>;
+  getCurrentMonthSummary: (householdId: string) => Promise<ApiResponse<MonthSummary>>;
+  getCategoryBreakdown: (householdId: string, dateFrom: string, dateTo: string, type: 'income' | 'expense') => Promise<ApiResponse<CategoryBreakdown[]>>;
+  getAccountBalances: (householdId: string) => Promise<ApiResponse<AccountBalance[]>>;
+  getBudgetVsActual: (householdId: string) => Promise<ApiResponse<BudgetComparison[]>>;
+  getInvoicesDue: (householdId: string) => Promise<ApiResponse<InvoiceDue[]>>;
 } {
   const api = async <T>(path: string, options?: RequestInit): Promise<T> => {
     const url = `${baseUrl}${path}`;
@@ -513,6 +568,31 @@ export function createApiClient(
 
     async listBudgets(householdId: string) {
       return api<ApiResponse<Budget[]>>(`/budgets?householdId=${encodeURIComponent(householdId)}`);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Reports (REQ-023)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async getCurrentMonthSummary(householdId: string) {
+      return api<ApiResponse<MonthSummary>>(`/reports/current-month?householdId=${encodeURIComponent(householdId)}`);
+    },
+
+    async getCategoryBreakdown(householdId: string, dateFrom: string, dateTo: string, type: 'income' | 'expense') {
+      const params = new URLSearchParams({ householdId, dateFrom, dateTo, type });
+      return api<ApiResponse<CategoryBreakdown[]>>(`/reports/category-breakdown?${params.toString()}`);
+    },
+
+    async getAccountBalances(householdId: string) {
+      return api<ApiResponse<AccountBalance[]>>(`/reports/account-balances?householdId=${encodeURIComponent(householdId)}`);
+    },
+
+    async getBudgetVsActual(householdId: string) {
+      return api<ApiResponse<BudgetComparison[]>>(`/reports/budget-vs-actual?householdId=${encodeURIComponent(householdId)}`);
+    },
+
+    async getInvoicesDue(householdId: string) {
+      return api<ApiResponse<InvoiceDue[]>>(`/reports/invoices-due?householdId=${encodeURIComponent(householdId)}`);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
