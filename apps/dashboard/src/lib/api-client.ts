@@ -162,6 +162,37 @@ export function createApiClient(
   createExpense: (input: CreateRecordInput) => Promise<ApiResponse<FinancialRecord>>;
   createIncome: (input: CreateRecordInput) => Promise<ApiResponse<FinancialRecord>>;
   createTransfer: (input: CreateTransferInput) => Promise<ApiResponse<FinancialRecord>>;
+  getRecords: (params: {
+    householdId: string;
+    type?: string;
+    accountId?: string;
+    cardId?: string;
+    categoryId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    source?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }) => Promise<ApiResponse<{ records: FinancialRecord[]; total: number }>>;
+  updateRecord: (recordId: string, input: {
+    householdId: string;
+    description?: string;
+    amountCents?: number;
+    date?: string;
+    categoryId?: string | null;
+    status?: string;
+    userId?: string;
+    source?: string;
+  }) => Promise<ApiResponse<FinancialRecord>>;
+  deleteRecord: (recordId: string, input: {
+    householdId: string;
+    userId?: string;
+  }) => Promise<ApiResponse<FinancialRecord>>;
+  undoRecord: (recordId: string, input: {
+    householdId: string;
+    userId?: string;
+  }) => Promise<ApiResponse<{ originalRecord: FinancialRecord; reversalRecord: FinancialRecord }>>;
   createCard: (input: CreateCardInput) => Promise<ApiResponse<CreditCard>>;
   createCardPurchase: (input: CreateCardPurchaseInput) => Promise<ApiResponse<{ record: FinancialRecord; invoiceId: string }>>;
   createCardInstallments: (input: CreateInstallmentsInput) => Promise<ApiResponse<{ installmentGroup: InstallmentGroup }>>;
@@ -251,6 +282,79 @@ export function createApiClient(
 
     async createTransfer(input: CreateTransferInput) {
       return api<ApiResponse<FinancialRecord>>('/records/transfer', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async getRecords(params: {
+      householdId: string;
+      type?: string;
+      accountId?: string;
+      cardId?: string;
+      categoryId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      source?: string;
+      status?: string;
+      limit?: number;
+      offset?: number;
+    }): Promise<ApiResponse<{ records: FinancialRecord[]; total: number }>> {
+      const searchParams = new URLSearchParams();
+      searchParams.append('householdId', params.householdId);
+      if (params.type) searchParams.append('type', params.type);
+      if (params.accountId) searchParams.append('accountId', params.accountId);
+      if (params.cardId) searchParams.append('cardId', params.cardId);
+      if (params.categoryId) searchParams.append('categoryId', params.categoryId);
+      if (params.dateFrom) searchParams.append('dateFrom', params.dateFrom);
+      if (params.dateTo) searchParams.append('dateTo', params.dateTo);
+      if (params.source) searchParams.append('source', params.source);
+      if (params.status) searchParams.append('status', params.status);
+      if (params.limit) searchParams.append('limit', String(params.limit));
+      if (params.offset) searchParams.append('offset', String(params.offset));
+
+      return api<ApiResponse<{ records: FinancialRecord[]; total: number }>>(
+        `/records?${searchParams.toString()}`
+      );
+    },
+
+    async updateRecord(recordId: string, input: {
+      householdId: string;
+      description?: string;
+      amountCents?: number;
+      date?: string;
+      categoryId?: string | null;
+      status?: string;
+      userId?: string;
+      source?: string;
+    }): Promise<ApiResponse<FinancialRecord>> {
+      return api<ApiResponse<FinancialRecord>>(`/records/${recordId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async deleteRecord(recordId: string, input: {
+      householdId: string;
+      userId?: string;
+    }): Promise<ApiResponse<FinancialRecord>> {
+      return api<ApiResponse<FinancialRecord>>(`/records/${recordId}`, {
+        method: 'DELETE',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async undoRecord(recordId: string, input: {
+      householdId: string;
+      userId?: string;
+    }): Promise<ApiResponse<{
+      originalRecord: FinancialRecord;
+      reversalRecord: FinancialRecord;
+    }>> {
+      return api<ApiResponse<{
+        originalRecord: FinancialRecord;
+        reversalRecord: FinancialRecord;
+      }>>(`/records/${recordId}/undo`, {
         method: 'POST',
         body: JSON.stringify(input),
       });

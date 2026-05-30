@@ -2,8 +2,11 @@
 // Dashboard Layout - Next.js App Router
 // ─────────────────────────────────────────────────────────────────────────────
 
+'use client';
+
 import type { Metadata } from 'next';
 import './globals.css';
+import { Navigation } from './navigation';
 
 export const metadata: Metadata = {
   title: 'TED Finance - Dashboard',
@@ -17,7 +20,14 @@ export default function RootLayout({
 }) {
   return (
     <html lang="pt-BR">
-      <body>{children}</body>
+      <body>
+        <div className="app-layout">
+          <Navigation />
+          <main className="app-main">
+            {children}
+          </main>
+        </div>
+      </body>
     </html>
   );
 }

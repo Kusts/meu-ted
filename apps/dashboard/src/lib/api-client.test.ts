@@ -212,6 +212,136 @@ describe('API Client', () => {
       expect(result.success).toBe(true);
       expect(result.data?.type).toBe('transfer');
     });
+
+    test('getRecords returns paginated records', async () => {
+      const { client, mockFetch } = createMockClient();
+      const records = [
+        { id: 'r1', type: 'expense', amountCents: 5000 },
+        { id: 'r2', type: 'income', amountCents: 10000 },
+      ];
+      mockFetch.mockResolvedValueOnce({
+        json: async () => ({ success: true, data: { records, total: 50 } }),
+      } as any);
+
+      const result = await client.getRecords({
+        householdId,
+        type: 'expense',
+        limit: 20,
+        offset: 0,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data?.records).toHaveLength(2);
+      expect(result.data?.total).toBe(50);
+    });
+
+    test('getRecords with date filters', async () => {
+      const { client, mockFetch } = createMockClient();
+      mockFetch.mockResolvedValueOnce({
+        json: async () => ({ success: true, data: { records: [], total: 0 } }),
+      } as any);
+
+      const result = await client.getRecords({
+        householdId,
+        dateFrom: '2026-05-01',
+        dateTo: '2026-05-31',
+        source: 'whatsapp',
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('dateFrom=2026-05-01'),
+        expect.any(Object)
+      );
+    });
+
+    test('updateRecord returns updated record', async () => {
+      const { client, mockFetch } = createMockClient();
+      const record = { id: 'r1', description: 'Updated description' };
+      mockFetch.mockResolvedValueOnce({
+        json: async () => ({ success: true, data: record }),
+      } as any);
+
+      const result = await client.updateRecord('r1', {
+        householdId,
+        description: 'Updated description',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data?.description).toBe('Updated description');
+    });
+
+    test('updateRecord returns 404 for non-existent record', async () => {
+      const { client, mockFetch } = createMockClient();
+      mockFetch.mockResolvedValueOnce({
+        status: 404,
+        json: async () => ({ success: false, reason: 'Registro não encontrado' }),
+      } as any);
+
+      const result = await client.updateRecord('invalid-id', {
+        householdId,
+        description: 'Test',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('Registro não encontrado');
+    });
+
+    test('deleteRecord returns cancelled record', async () => {
+      const { client, mockFetch } = createMockClient();
+      const record = { id: 'r1', status: 'cancelled' };
+      mockFetch.mockResolvedValueOnce({
+        json: async () => ({ success: true, data: record }),
+      } as any);
+
+      const result = await client.deleteRecord('r1', { householdId });
+
+      expect(result.success).toBe(true);
+      expect(result.data?.status).toBe('cancelled');
+    });
+
+    test('deleteRecord returns 404 for non-existent record', async () => {
+      const { client, mockFetch } = createMockClient();
+      mockFetch.mockResolvedValueOnce({
+        status: 404,
+        json: async () => ({ success: false, reason: 'Registro não encontrado' }),
+      } as any);
+
+      const result = await client.deleteRecord('invalid-id', { householdId });
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('Registro não encontrado');
+    });
+
+    test('undoRecord returns original and reversal records', async () => {
+      const { client, mockFetch } = createMockClient();
+      const data = {
+        originalRecord: { id: 'r1', status: 'cancelled' },
+        reversalRecord: { id: 'r2', type: 'income', amountCents: 5000 },
+      };
+      mockFetch.mockResolvedValueOnce({
+        json: async () => ({ success: true, data }),
+      } as any);
+
+      const result = await client.undoRecord('r1', { householdId });
+
+      expect(result.success).toBe(true);
+      expect(result.data?.originalRecord.status).toBe('cancelled');
+      expect(result.data?.reversalRecord.type).toBe('income');
+    });
+
+    test('undoRecord returns 404 for already cancelled record', async () => {
+      const { client, mockFetch } = createMockClient();
+      mockFetch.mockResolvedValueOnce({
+        status: 404,
+        json: async () => ({ success: false, reason: 'Registro já está cancelado' }),
+      } as any);
+
+      const result = await client.undoRecord('r1', { householdId });
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('Registro já está cancelado');
+    });
   });
 
   describe('cards', () => {
