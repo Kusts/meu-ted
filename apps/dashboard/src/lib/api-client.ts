@@ -198,6 +198,8 @@ export function createApiClient(
   createCardInstallments: (input: CreateInstallmentsInput) => Promise<ApiResponse<{ installmentGroup: InstallmentGroup }>>;
   closeInvoice: (input: CloseInvoiceInput) => Promise<ApiResponse<Invoice>>;
   payInvoice: (input: PayInvoiceInput) => Promise<ApiResponse<FinancialRecord>>;
+  listCards: (householdId: string) => Promise<ApiResponse<CreditCard[]>>;
+  listInvoices: (householdId: string, cardId?: string) => Promise<ApiResponse<Invoice[]>>;
   createRecurrence: (input: CreateRecurrenceInput) => Promise<ApiResponse<{ recurrence: Recurrence; occurrences: RecurrenceOccurrence[] }>>;
   maintainRecurrenceHorizon: (recurrenceId: string) => Promise<ApiResponse<{ success: boolean; createdCount: number }>>;
   requestCode: (phone: string) => Promise<ApiResponse<void>>;
@@ -403,6 +405,16 @@ export function createApiClient(
       });
     },
 
+    async listCards(householdId: string) {
+      return api<ApiResponse<CreditCard[]>>(`/cards?householdId=${encodeURIComponent(householdId)}`);
+    },
+
+    async listInvoices(householdId: string, cardId?: string) {
+      const params = new URLSearchParams({ householdId });
+      if (cardId) params.append('cardId', cardId);
+      return api<ApiResponse<Invoice[]>>(`/invoices?${params.toString()}`);
+    },
+
     // ─────────────────────────────────────────────────────────────────────────
     // Recurrences
     // ─────────────────────────────────────────────────────────────────────────
@@ -502,6 +514,7 @@ export interface FindOrCreateCategoryInput {
   householdId: string;
   name: string;
   kind: 'income' | 'expense';
+  parentId?: string;
 }
 
 export interface CreateRecordInput {
