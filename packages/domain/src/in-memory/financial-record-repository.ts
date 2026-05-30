@@ -61,4 +61,76 @@ export class InMemoryFinancialRecordRepository implements IFinancialRecordReposi
     this.records.set(id, updated);
     return { ...updated };
   }
+
+  async findByHouseholdIdFiltered(
+    householdId: string,
+    filters: {
+      type?: string;
+      accountId?: string;
+      cardId?: string;
+      categoryId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      source?: string;
+      status?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<{ records: FinancialRecord[]; total: number }> {
+    const limit = filters.limit ?? 50;
+    const offset = filters.offset ?? 0;
+
+    let results = Array.from(this.records.values())
+      .filter(r => r.householdId === householdId)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    // Filter by type (expense, income, transfer)
+    if (filters.type) {
+      results = results.filter(r => r.type === filters.type);
+    }
+
+    // Filter by accountId (matches accountId, fromAccountId, or toAccountId)
+    if (filters.accountId) {
+      results = results.filter(r =>
+        r.accountId === filters.accountId ||
+        r.fromAccountId === filters.accountId ||
+        r.toAccountId === filters.accountId
+      );
+    }
+
+    // Filter by cardId
+    if (filters.cardId) {
+      results = results.filter(r => r.cardId === filters.cardId);
+    }
+
+    // Filter by categoryId
+    if (filters.categoryId) {
+      results = results.filter(r => r.categoryId === filters.categoryId);
+    }
+
+    // Filter by date range
+    if (filters.dateFrom) {
+      const from = new Date(filters.dateFrom);
+      results = results.filter(r => new Date(r.date) >= from);
+    }
+    if (filters.dateTo) {
+      const to = new Date(filters.dateTo);
+      results = results.filter(r => new Date(r.date) <= to);
+    }
+
+    // Filter by source
+    if (filters.source) {
+      results = results.filter(r => r.source === filters.source);
+    }
+
+    // Filter by status
+    if (filters.status) {
+      results = results.filter(r => r.status === filters.status);
+    }
+
+    const total = results.length;
+    const paginated = results.slice(offset, offset + limit);
+
+    return { records: paginated, total };
+  }
 }

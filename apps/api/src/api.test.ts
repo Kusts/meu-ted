@@ -165,6 +165,122 @@ describe('API Fastify', () => {
     expect(maintained.json().data.success).toBe(true);
   });
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // GET /records with filters
+  // ─────────────────────────────────────────────────────────────────────────
+
+  test('GET /records returns empty list when no records exist', async () => {
+    const app = createApp();
+
+    const response = await app.inject({ method: 'GET', url: `/records?householdId=${householdId}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ success: true, data: [], total: 0 });
+  });
+
+  test('GET /records returns created records', async () => {
+    const app = await buildSeededApp();
+
+    await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 5000, description: 'Mercado', date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/records/income',
+      payload: { householdId, accountId, amountCents: 10000, description: 'Pix', date: '2026-05-15T12:00:00.000Z', source: 'dashboard' },
+    });
+
+    const response = await app.inject({ method: 'GET', url: `/records?householdId=${householdId}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().success).toBe(true);
+    expect(response.json().data).toHaveLength(2);
+    expect(response.json().total).toBe(2);
+  });
+
+  test('GET /records filters by type', async () => {
+    const app = await buildSeededApp();
+
+    await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 5000, description: 'Mercado', date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/records/income',
+      payload: { householdId, accountId, amountCents: 10000, description: 'Pix', date: '2026-05-15T12:00:00.000Z', source: 'dashboard' },
+    });
+
+    const expenseOnly = await app.inject({ method: 'GET', url: `/records?householdId=${householdId}&type=expense` });
+    const incomeOnly = await app.inject({ method: 'GET', url: `/records?householdId=${householdId}&type=income` });
+
+    expect(expenseOnly.statusCode).toBe(200);
+    expect(expenseOnly.json().data).toHaveLength(1);
+    expect(expenseOnly.json().data[0].type).toBe('expense');
+    expect(incomeOnly.json().data).toHaveLength(1);
+    expect(incomeOnly.json().data[0].type).toBe('income');
+  });
+
+  test('GET /records filters by dateFrom and dateTo', async () => {
+    const app = await buildSeededApp();
+
+    await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 5000, description: 'Mercado', date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 3000, description: 'Farmácia', date: '2026-05-20T12:00:00.000Z', source: 'dashboard' },
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/records/expense',
+      payload: { householdId, accountId, amountCents: 7000, description: 'Viagem', date: '2026-06-01T12:00:00.000Z', source: 'dashboard' },
+    });
+
+    const mayOnly = await app.inject({ method: 'GET', url: `/records?householdId=${householdId}&dateFrom=2026-05-01&dateTo=2026-05-31` });
+
+    expect(mayOnly.statusCode).toBe(200);
+    expect(mayOnly.json().data).toHaveLength(2);
+    expect(mayOnly.json().total).toBe(2);
+  });
+
+  test('GET /records returns 400 without householdId', async () => {
+    const app = createApp();
+
+    const response = await app.inject({ method: 'GET', url: '/records' });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().success).toBe(false);
+    expect(response.json().reason).toBe('householdId é obrigatório');
+  });
+
+  test('GET /records supports limit and offset', async () => {
+    const app = await buildSeededApp();
+
+    for (let i = 0; i < 5; i++) {
+      await app.inject({
+        method: 'POST',
+        url: '/records/expense',
+        payload: { householdId, accountId, amountCents: 1000 + i, description: `Despesa ${i}`, date: '2026-05-10T12:00:00.000Z', source: 'dashboard' },
+      });
+    }
+
+    const firstPage = await app.inject({ method: 'GET', url: `/records?householdId=${householdId}&limit=2&offset=0` });
+    const secondPage = await app.inject({ method: 'GET', url: `/records?householdId=${householdId}&limit=2&offset=2` });
+
+    expect(firstPage.statusCode).toBe(200);
+    expect(firstPage.json().data).toHaveLength(2);
+    expect(firstPage.json().total).toBe(5);
+    expect(secondPage.json().data).toHaveLength(2);
+    expect(secondPage.json().total).toBe(5);
+  });
+
   test('webhook endpoint validates and forwards Evolution messages', async () => {
     const app = createApp({
       webhookSecret: 'secret',

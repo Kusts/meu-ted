@@ -17,4 +17,19 @@ export interface IFinancialRecordRepository {
   ): Promise<FinancialRecord | null>;
   findByAccountId(accountId: string): Promise<FinancialRecord[]>;
   update(id: string, update: RecordUpdate): Promise<FinancialRecord | null>;
+  findByHouseholdIdFiltered(
+    householdId: string,
+    filters: {
+      type?: string;
+      accountId?: string;
+      cardId?: string;
+      categoryId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      source?: string;
+      status?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<{ records: FinancialRecord[]; total: number }>;
 }

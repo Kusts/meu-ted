@@ -348,6 +348,44 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     return reply.status(201).send({ success: true, data: result.record });
   });
 
+  app.get('/records', async (request: FastifyRequest, reply: FastifyReply) => {
+    const query = request.query as {
+      householdId?: string;
+      type?: string;
+      accountId?: string;
+      cardId?: string;
+      categoryId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      source?: string;
+      status?: string;
+      limit?: string;
+      offset?: string;
+    };
+
+    if (!query.householdId) {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+
+    const limit = query.limit ? parseInt(query.limit, 10) : 50;
+    const offset = query.offset ? parseInt(query.offset, 10) : 0;
+
+    const { records, total } = await recordRepository.findByHouseholdIdFiltered(query.householdId, {
+      type: query.type,
+      accountId: query.accountId,
+      cardId: query.cardId,
+      categoryId: query.categoryId,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+      source: query.source,
+      status: query.status,
+      limit,
+      offset,
+    });
+
+    return reply.status(200).send({ success: true, data: records, total });
+  });
+
   // ─────────────────────────────────────────────────────────────────────────
   // Cards
   // ─────────────────────────────────────────────────────────────────────────
