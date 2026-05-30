@@ -15,6 +15,7 @@ import type {
   IRecurrenceRepository,
   IRecurrenceOccurrenceRepository,
   IBillRepository,
+  IReviewQueueRepository,
 } from '@pi-financeiro/domain';
 import {
   InMemoryAccountRepository,
@@ -29,6 +30,7 @@ import {
   InMemoryRecurrenceRepository,
   InMemoryRecurrenceOccurrenceRepository,
   InMemoryBillRepository,
+  InMemoryReviewQueueRepository,
 } from '@pi-financeiro/domain';
 
 import type { DbClient } from '../client.js';
@@ -42,6 +44,10 @@ import { DrizzleAuditLogRepository } from './audit-log.js';
 import { DrizzleCreditCardRepository } from './credit-card.js';
 import { DrizzleInvoiceRepository } from './invoice.js';
 import { DrizzleInstallmentGroupRepository } from './installment-group.js';
+import { DrizzleRecurrenceRepository } from './recurrence.js';
+import { DrizzleRecurrenceOccurrenceRepository } from './recurrence-occurrence.js';
+import { DrizzleBillRepository } from './bill.js';
+import { DrizzleReviewQueueRepository } from './review-queue.js';
 
 // Re-export Drizzle repositories for direct use
 export { DrizzleAccountRepository } from './account.js';
@@ -54,6 +60,11 @@ export { DrizzleAuditLogRepository } from './audit-log.js';
 export { DrizzleCreditCardRepository } from './credit-card.js';
 export { DrizzleInvoiceRepository } from './invoice.js';
 export { DrizzleInstallmentGroupRepository } from './installment-group.js';
+export { DrizzleRecurrenceRepository } from './recurrence.js';
+export { DrizzleRecurrenceOccurrenceRepository } from './recurrence-occurrence.js';
+export { DrizzleBillRepository } from './bill.js';
+export { DrizzleReviewQueueRepository } from './review-queue.js';
+export { DrizzleUserRepository, DrizzleSessionRepository, DrizzleLoginCodeRepository } from './auth.js';
 
 /**
  * Repository set interface - all repositories an app needs
@@ -71,6 +82,7 @@ export interface RepositorySet {
   recurrenceRepository: IRecurrenceRepository;
   recurrenceOccurrenceRepository: IRecurrenceOccurrenceRepository;
   billRepository: IBillRepository;
+  reviewQueueRepository: IReviewQueueRepository;
 }
 
 /**
@@ -105,6 +117,7 @@ function createMemoryRepositories(): RepositorySet {
     recurrenceRepository: new InMemoryRecurrenceRepository(),
     recurrenceOccurrenceRepository: new InMemoryRecurrenceOccurrenceRepository(),
     billRepository: new InMemoryBillRepository(),
+    reviewQueueRepository: new InMemoryReviewQueueRepository(),
   };
 }
 
@@ -124,9 +137,10 @@ function createDrizzleRepositories(databaseUrl?: string): RepositorySet {
     creditCardRepository: new DrizzleCreditCardRepository(dbClient),
     invoiceRepository: new DrizzleInvoiceRepository(dbClient),
     installmentGroupRepository: new DrizzleInstallmentGroupRepository(dbClient),
-    recurrenceRepository: new InMemoryRecurrenceRepository(), // Fallback: in-memory
-    recurrenceOccurrenceRepository: new InMemoryRecurrenceOccurrenceRepository(), // Fallback: in-memory
-    billRepository: new InMemoryBillRepository(), // Fallback: in-memory
+    recurrenceRepository: new DrizzleRecurrenceRepository(dbClient),
+    recurrenceOccurrenceRepository: new DrizzleRecurrenceOccurrenceRepository(dbClient),
+    billRepository: new DrizzleBillRepository(dbClient),
+    reviewQueueRepository: new DrizzleReviewQueueRepository(dbClient),
   };
 }
 
@@ -147,9 +161,10 @@ function createDrizzleRepositoriesWithClient(databaseUrl?: string): DrizzleRepos
     creditCardRepository: new DrizzleCreditCardRepository(dbClient),
     invoiceRepository: new DrizzleInvoiceRepository(dbClient),
     installmentGroupRepository: new DrizzleInstallmentGroupRepository(dbClient),
-    recurrenceRepository: new InMemoryRecurrenceRepository(), // Fallback: in-memory
-    recurrenceOccurrenceRepository: new InMemoryRecurrenceOccurrenceRepository(), // Fallback: in-memory
-    billRepository: new InMemoryBillRepository(), // Fallback: in-memory
+    recurrenceRepository: new DrizzleRecurrenceRepository(dbClient),
+    recurrenceOccurrenceRepository: new DrizzleRecurrenceOccurrenceRepository(dbClient),
+    billRepository: new DrizzleBillRepository(dbClient),
+    reviewQueueRepository: new DrizzleReviewQueueRepository(dbClient),
   };
 }
 

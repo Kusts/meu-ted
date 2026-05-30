@@ -13,6 +13,10 @@ import { toDbAuditLog, fromDbAuditLog } from './audit-log.js';
 import { toDbCreditCard, fromDbCreditCard } from './credit-card.js';
 import { toDbInvoice, fromDbInvoice } from './invoice.js';
 import { toDbInstallmentGroup, fromDbInstallmentGroup } from './installment-group.js';
+import { toDbRecurrence, fromDbRecurrence } from './recurrence.js';
+import { toDbBill, fromDbBill } from './bill.js';
+import { toDbUser, fromDbUser, toDbSession, fromDbSession, toDbLoginCode, fromDbLoginCode } from './auth.js';
+import { toDbReviewQueue, fromDbReviewQueue } from './review-queue.js';
 import type { Account } from '@pi-financeiro/domain';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -644,5 +648,262 @@ describe('Installment Group Mapper', () => {
     expect(group.description).toBe('TV Samsung');
     expect(group.installmentsCount).toBe(10);
     expect(group.accountId).toBeTruthy();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recurrence Mapper Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Recurrence Mapper', () => {
+  test('toDbRecurrence maps domain entity to DB row', () => {
+    const recurrence = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      description: 'Internet mensal',
+      amountCents: 10000,
+      period: 'monthly' as const,
+      targetType: 'account_debit' as const,
+      accountId: '0192a1b3-0000-0000-0000-000000000010',
+      cardId: null,
+      categoryId: null,
+      firstDate: '2026-06-10T12:00:00.000Z',
+      horizonMonths: 12,
+      active: true,
+      createdAt: '2026-05-29T10:00:00.000Z',
+      updatedAt: '2026-05-29T10:00:00.000Z',
+    };
+    
+    const dbRow = toDbRecurrence(recurrence);
+    
+    expect(dbRow.description).toBe('Internet mensal');
+    expect(dbRow.amountCents).toBe(10000);
+  });
+  
+  test('fromDbRecurrence maps DB row to domain entity', () => {
+    const dbRow = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      description: 'Aluguel',
+      amountCents: 150000,
+      period: 'monthly' as const,
+      targetType: 'expense' as const,
+      accountId: '0192a1b3-0000-0000-0000-000000000010',
+      cardId: null,
+      categoryId: null,
+      nextDate: new Date('2026-06-01T12:00:00.000Z'),
+      horizonMonths: 12,
+      active: true,
+      createdAt: new Date('2026-05-29T10:00:00.000Z'),
+      updatedAt: new Date('2026-05-29T10:00:00.000Z'),
+    };
+    
+    const recurrence = fromDbRecurrence(dbRow);
+    
+    expect(recurrence.description).toBe('Aluguel');
+    expect(recurrence.firstDate).toBe('2026-06-01T12:00:00.000Z');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bill Mapper Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Bill Mapper', () => {
+  test('toDbBill maps domain entity to DB row', () => {
+    const bill = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      description: 'Condomínio',
+      amountCents: 80000,
+      dueDate: '2026-06-05T12:00:00.000Z',
+      paidAt: null,
+      status: 'pending' as const,
+      recordId: null,
+      recurrenceId: null,
+      occurrenceId: null,
+      interestRecordId: null,
+      originalAmountCents: null,
+      paidAmountCents: null,
+      createdAt: '2026-05-29T10:00:00.000Z',
+      updatedAt: '2026-05-29T10:00:00.000Z',
+    };
+    
+    const dbRow = toDbBill(bill);
+    
+    expect(dbRow.description).toBe('Condomínio');
+    expect(dbRow.status).toBe('pending');
+  });
+  
+  test('fromDbBill maps DB row to domain entity', () => {
+    const dbRow = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      description: 'IPTU',
+      amountCents: 500000,
+      dueDate: new Date('2026-06-10T12:00:00.000Z'),
+      paidAt: null,
+      status: 'paid' as const,
+      recordId: '0192a1b3-0000-0000-0000-000000000010',
+      recurrenceId: null,
+      createdAt: new Date('2026-05-29T10:00:00.000Z'),
+      updatedAt: new Date('2026-05-29T10:00:00.000Z'),
+    };
+    
+    const bill = fromDbBill(dbRow);
+    
+    expect(bill.description).toBe('IPTU');
+    expect(bill.status).toBe('paid');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth Mapper Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Auth Mapper', () => {
+  test('toDbUser maps domain entity to DB row', () => {
+    const user = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      name: 'Walis',
+      phone: '5511999999999',
+      role: 'owner' as const,
+      active: true,
+      createdAt: '2026-05-29T10:00:00.000Z',
+      updatedAt: '2026-05-29T10:00:00.000Z',
+    };
+    
+    const dbRow = toDbUser(user);
+    
+    expect(dbRow.name).toBe('Walis');
+    expect(dbRow.role).toBe('owner');
+  });
+  
+  test('fromDbUser maps DB row to domain entity', () => {
+    const dbRow = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      name: 'João',
+      phone: '5511888888888',
+      role: 'member' as const,
+      active: true,
+      createdAt: new Date('2026-05-29T10:00:00.000Z'),
+      updatedAt: new Date('2026-05-29T10:00:00.000Z'),
+    };
+    
+    const user = fromDbUser(dbRow);
+    
+    expect(user.name).toBe('João');
+    expect(user.role).toBe('member');
+  });
+  
+  test('toDbSession maps domain entity to DB row', () => {
+    const session = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      userId: '0192a1b3-0000-0000-0000-000000000010',
+      tokenHash: 'hash123',
+      createdAt: '2026-05-29T10:00:00.000Z',
+      revokedAt: null,
+    };
+    
+    const dbRow = toDbSession(session);
+    
+    expect(dbRow.tokenHash).toBe('hash123');
+    expect(dbRow.revokedAt).toBeNull();
+  });
+  
+  test('fromDbSession maps DB row to domain entity', () => {
+    const dbRow = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      userId: '0192a1b3-0000-0000-0000-000000000010',
+      tokenHash: 'hash456',
+      revokedAt: null,
+      createdAt: new Date('2026-05-29T10:00:00.000Z'),
+    };
+    
+    const session = fromDbSession(dbRow);
+    
+    expect(session.tokenHash).toBe('hash456');
+    expect(session.revokedAt).toBeNull();
+  });
+  
+  test('toDbLoginCode maps domain entity to DB row', () => {
+    const code = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      phone: '5511999999999',
+      codeHash: 'codehash',
+      attempts: 0,
+      expiresAt: '2026-05-29T20:00:00.000Z',
+      createdAt: '2026-05-29T10:00:00.000Z',
+    };
+    
+    const dbRow = toDbLoginCode(code);
+    
+    expect(dbRow.phone).toBe('5511999999999');
+    expect(dbRow.codeHash).toBe('codehash');
+  });
+  
+  test('fromDbLoginCode maps DB row to domain entity', () => {
+    const dbRow = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      phone: '5511888888888',
+      codeHash: 'hashabc',
+      attempts: 2,
+      expiresAt: new Date('2026-05-29T20:00:00.000Z'),
+      createdAt: new Date('2026-05-29T10:00:00.000Z'),
+    };
+    
+    const loginCode = fromDbLoginCode(dbRow);
+    
+    expect(loginCode.phone).toBe('5511888888888');
+    expect(loginCode.attempts).toBe(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Review Queue Mapper Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Review Queue Mapper', () => {
+  test('toDbReviewQueue maps domain entity to DB row', () => {
+    const entry = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      recordId: null,
+      reason: 'high_value' as const,
+      status: 'pending' as const,
+      originalPayload: { amountCents: 100000 },
+      reviewedByUserId: null,
+      reviewedAt: null,
+      createdAt: '2026-05-29T10:00:00.000Z',
+      updatedAt: '2026-05-29T10:00:00.000Z',
+    };
+    
+    const dbRow = toDbReviewQueue(entry);
+    
+    expect(dbRow.reason).toBe('high_value');
+    expect(dbRow.status).toBe('pending');
+  });
+  
+  test('fromDbReviewQueue maps DB row to domain entity', () => {
+    const dbRow = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      reason: 'duplicate' as const,
+      payloadJson: { amountCents: 5000, description: 'Teste' },
+      status: 'approved' as const,
+      createdAt: new Date('2026-05-29T10:00:00.000Z'),
+      updatedAt: new Date('2026-05-29T10:00:00.000Z'),
+    };
+    
+    const entry = fromDbReviewQueue(dbRow);
+    
+    expect(entry.reason).toBe('duplicate');
+    expect(entry.status).toBe('approved');
   });
 });

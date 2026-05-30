@@ -12,3 +12,7 @@ export { toDbAuditLog, fromDbAuditLog } from './audit-log.js';
 export { toDbCreditCard, fromDbCreditCard } from './credit-card.js';
 export { toDbInvoice, fromDbInvoice } from './invoice.js';
 export { toDbInstallmentGroup, fromDbInstallmentGroup } from './installment-group.js';
+export { toDbRecurrence, fromDbRecurrence, toDbRecurrenceOccurrence, fromDbRecurrenceOccurrence } from './recurrence.js';
+export { toDbBill, fromDbBill } from './bill.js';
+export { toDbUser, fromDbUser, toDbSession, fromDbSession, toDbLoginCode, fromDbLoginCode } from './auth.js';
+export { toDbReviewQueue, fromDbReviewQueue } from './review-queue.js';
