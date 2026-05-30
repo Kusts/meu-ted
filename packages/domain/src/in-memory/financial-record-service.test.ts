@@ -193,12 +193,17 @@ describe('FinancialRecordService - Idempotency', () => {
     const account = makeAccount({ id: 'account-1' });
     await accountRepo.create(account);
 
-    const first = makeExpenseInput({ idempotencyKey: 'key-1', amountCents: 5000 });
-    const second = makeExpenseInput({ idempotencyKey: 'key-2', amountCents: 5000 });
+    const first = makeExpenseInput({ idempotencyKey: 'key-1', amountCents: 5000, description: 'despesa supermercado' });
+    const second = makeExpenseInput({ idempotencyKey: 'key-2', amountCents: 6000, description: 'outra despesa diferente' }); // Different amount to avoid duplicate detection
     
     const firstResult = await service.createExpense(first);
     const secondResult = await service.createExpense(second);
     
+    expect(firstResult.success).toBe(true);
+    expect(secondResult.success).toBe(true);
+    // Both should be posted (not blocked by duplicate detection)
+    expect(firstResult.record!.status).toBe('posted');
+    expect(secondResult.record!.status).toBe('posted');
     expect(firstResult.record!.id).not.toBe(secondResult.record!.id);
   });
 });
@@ -237,15 +242,15 @@ describe('FinancialRecordService - Duplicate Detection', () => {
     // Create first expense
     const first = makeExpenseInput({ 
       amountCents: 10000,
-      description: 'supermercado', // lowercase for exact match
+      description: 'supermercado shopping', // Not exact match for MEDIUM confidence
     });
     const firstResult = await service.createExpense(first);
     expect(firstResult.success).toBe(true);
 
-    // Try duplicate within 5 minutes - same amount, same description
+    // Try duplicate within 5 minutes - similar description goes to review
     const duplicate = makeExpenseInput({ 
       amountCents: 10000,
-      description: 'supermercado', // exact match
+      description: 'supermercado shopping center', // Similar but not exact - MEDIUM confidence
     });
     const dupResult = await service.createExpense(duplicate);
 
@@ -268,6 +273,106 @@ describe('FinancialRecordService - Duplicate Detection', () => {
     // Different amount - should go through
     const result = await service.createExpense(makeExpenseInput({ amountCents: 15000 }));
     expect(result.needsReview).toBeUndefined();
+  });
+
+  it('REQ-006: blocks high-confidence duplicate (same value, account, description, < 5min)', async () => {
+    const account = makeAccount({ id: 'account-1' });
+    await accountRepo.create(account);
+
+    // Create first expense with exact description
+    const first = makeExpenseInput({ 
+      amountCents: 10000,
+      description: 'supermercado pão de açúcar',
+    });
+    await service.createExpense(first);
+
+    // Try exact duplicate within 3 minutes
+    const duplicate = makeExpenseInput({ 
+      amountCents: 10000,
+      description: 'supermercado pão de açúcar',
+    });
+    const dupResult = await service.createExpense(duplicate);
+
+    // Should be blocked as high-confidence duplicate
+    expect(dupResult.success).toBe(false);
+    expect(dupResult.reason).toContain('bloqueado');
+  });
+
+  it('REQ-006: sends medium-confidence duplicate to review (same value, account, < 30min)', async () => {
+    const account = makeAccount({ id: 'account-1' });
+    await accountRepo.create(account);
+
+    // Create first expense
+    const first = makeExpenseInput({ 
+      amountCents: 10000,
+      description: 'supermercado',
+    });
+    await service.createExpense(first);
+
+    // Try duplicate with similar description but not exact (within 30 min window)
+    const duplicate = makeExpenseInput({ 
+      amountCents: 10000,
+      description: 'supermercado shopping',
+    });
+    const dupResult = await service.createExpense(duplicate);
+
+    // Should go to review (not blocked)
+    expect(dupResult.needsReview).toBe(true);
+    expect(dupResult.record?.status).toBe('review');
+  });
+
+  it('REQ-006: creates normally when only amount matches but account differs', async () => {
+    const account1 = makeAccount({ id: 'account-1' });
+    const account2 = makeAccount({ id: 'account-2' });
+    await accountRepo.create(account1);
+    await accountRepo.create(account2);
+
+    await service.createExpense(makeExpenseInput({ accountId: 'account-1', amountCents: 10000 }));
+    
+    // Different account - should go through
+    const result = await service.createExpense(makeExpenseInput({ accountId: 'account-2', amountCents: 10000 }));
+    expect(result.needsReview).toBeUndefined();
+    expect(result.success).toBe(true);
+  });
+
+  it('REQ-006: creates normally when window > 30 minutes', async () => {
+    const account = makeAccount({ id: 'account-1' });
+    await accountRepo.create(account);
+
+    // Create old expense directly in repo
+    const oldDate = new Date(Date.now() - 60 * 60 * 1000); // 1 hour ago
+    await recordRepo.create({
+      id: crypto.randomUUID(),
+      householdId: 'household-1',
+      type: 'expense',
+      amountCents: 10000,
+      date: oldDate.toISOString(),
+      description: 'supermercado',
+      accountId: 'account-1',
+      fromAccountId: null,
+      toAccountId: null,
+      cardId: null,
+      invoiceId: null,
+      categoryId: null,
+      createdByUserId: null,
+      source: 'whatsapp',
+      sourceMessageId: null,
+      idempotencyKey: null,
+      status: 'posted',
+      recurrenceId: null,
+      installmentGroupId: null,
+      relatedRecordId: null,
+      merchantId: null,
+      confirmedAt: oldDate.toISOString(),
+      metadataJson: null,
+      createdAt: oldDate.toISOString(),
+      updatedAt: oldDate.toISOString(),
+    });
+
+    // Same amount, same account but old - should go through
+    const result = await service.createExpense(makeExpenseInput({ amountCents: 10000, description: 'supermercado' }));
+    expect(result.needsReview).toBeUndefined();
+    expect(result.success).toBe(true);
   });
 });
 

@@ -31,16 +31,67 @@ export class InMemoryFinancialRecordRepository implements IFinancialRecordReposi
     accountId: string,
     amountCents: number,
     description: string,
-    withinMinutes: number
+    withinMinutes: number,
+    minSimilarity: number = 0.7
   ): Promise<FinancialRecord | null> {
     const cutoff = new Date(Date.now() - withinMinutes * 60 * 1000);
+    const normalizedInput = this.normalizeDescription(description);
+    
     return Array.from(this.records.values()).find(r => {
       if (r.householdId !== householdId) return false;
       if (r.accountId !== accountId) return false;
       if (r.amountCents !== amountCents) return false;
-      if (!r.description.toLowerCase().includes(description.toLowerCase())) return false;
-      return new Date(r.createdAt) >= cutoff;
+      if (new Date(r.createdAt) < cutoff) return false;
+      
+      const normalizedExisting = this.normalizeDescription(r.description);
+      const similarity = this.calculateSimilarity(normalizedInput, normalizedExisting);
+      return similarity >= minSimilarity; // Use dynamic threshold
     }) ?? null;
+  }
+
+  private normalizeDescription(desc: string): string {
+    return desc
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, '')
+      .trim()
+      .replace(/\s+/g, ' ');
+  }
+
+  private calculateSimilarity(a: string, b: string): number {
+    // Exact match
+    if (a === b) return 1;
+    // One contains the other
+    if (a.includes(b) || b.includes(a)) return 0.85;
+    // Levenshtein distance
+    const distance = this.levenshteinDistance(a, b);
+    const maxLen = Math.max(a.length, b.length);
+    return maxLen === 0 ? 1 : 1 - distance / maxLen;
+  }
+
+  private levenshteinDistance(a: string, b: string): number {
+    const matrix: number[][] = [];
+    for (let i = 0; i <= b.length; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= a.length; j++) {
+      matrix[0][j] = j;
+    }
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        if (b.charAt(i - 1) === a.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1,
+            matrix[i][j - 1] + 1,
+            matrix[i - 1][j] + 1
+          );
+        }
+      }
+    }
+    return matrix[b.length][a.length];
   }
 
   async findByAccountId(accountId: string): Promise<FinancialRecord[]> {
@@ -145,5 +196,11 @@ export class InMemoryFinancialRecordRepository implements IFinancialRecordReposi
     const paginated = results.slice(offset, offset + limit);
 
     return { records: paginated, total };
+  }
+
+  async findRecentByHouseholdId(householdId: string, since: Date): Promise<FinancialRecord[]> {
+    return Array.from(this.records.values())
+      .filter(r => r.householdId === householdId && new Date(r.createdAt) >= since)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 }

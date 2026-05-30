@@ -13,7 +13,8 @@ export interface IFinancialRecordRepository {
     accountId: string, 
     amountCents: number, 
     description: string,
-    withinMinutes: number
+    withinMinutes: number,
+    minSimilarity?: number
   ): Promise<FinancialRecord | null>;
   findByAccountId(accountId: string): Promise<FinancialRecord[]>;
   update(id: string, update: RecordUpdate): Promise<FinancialRecord | null>;
@@ -33,4 +34,5 @@ export interface IFinancialRecordRepository {
       offset?: number;
     }
   ): Promise<{ records: FinancialRecord[]; total: number }>;
+  findRecentByHouseholdId(householdId: string, since: Date): Promise<FinancialRecord[]>;
 }

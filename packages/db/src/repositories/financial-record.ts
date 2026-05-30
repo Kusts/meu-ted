@@ -52,7 +52,8 @@ export class DrizzleFinancialRecordRepository implements IFinancialRecordReposit
     accountId: string,
     amountCents: number,
     description: string,
-    withinMinutes: number
+    withinMinutes: number,
+    minSimilarity: number = 0.7
   ): Promise<FinancialRecord | null> {
     const cutoff = new Date(Date.now() - withinMinutes * 60 * 1000);
     
@@ -68,18 +69,63 @@ export class DrizzleFinancialRecordRepository implements IFinancialRecordReposit
       )
       .limit(10);
     
-    // Fuzzy match on description
-    const lowerDesc = description.toLowerCase();
+    // Fuzzy match on description with similarity threshold
+    const normalizedInput = this.normalizeDescription(description);
     for (const row of rows) {
-      if (row.description.toLowerCase().includes(lowerDesc)) {
-        const createdAt = new Date(row.createdAt);
-        if (createdAt >= cutoff) {
-          return fromDbFinancialRecord(row);
-        }
+      const createdAt = new Date(row.createdAt);
+      if (createdAt < cutoff) continue;
+      
+      const normalizedExisting = this.normalizeDescription(row.description);
+      const similarity = this.calculateSimilarity(normalizedInput, normalizedExisting);
+      
+      if (similarity >= minSimilarity) {
+        return fromDbFinancialRecord(row);
       }
     }
     
     return null;
+  }
+
+  private normalizeDescription(desc: string): string {
+    return desc
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s]/g, '')
+      .trim()
+      .replace(/\s+/g, ' ');
+  }
+
+  private calculateSimilarity(a: string, b: string): number {
+    if (a === b) return 1;
+    if (a.includes(b) || b.includes(a)) return 0.85;
+    const distance = this.levenshteinDistance(a, b);
+    const maxLen = Math.max(a.length, b.length);
+    return maxLen === 0 ? 1 : 1 - distance / maxLen;
+  }
+
+  private levenshteinDistance(a: string, b: string): number {
+    const matrix: number[][] = [];
+    for (let i = 0; i <= b.length; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= a.length; j++) {
+      matrix[0][j] = j;
+    }
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        if (b.charAt(i - 1) === a.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1,
+            matrix[i][j - 1] + 1,
+            matrix[i - 1][j] + 1
+          );
+        }
+      }
+    }
+    return matrix[b.length][a.length];
   }
 
   async findByAccountId(accountId: string): Promise<FinancialRecord[]> {
@@ -199,5 +245,18 @@ export class DrizzleFinancialRecordRepository implements IFinancialRecordReposit
       .offset(offset);
 
     return { records: rows.map(fromDbFinancialRecord), total };
+  }
+
+  async findRecentByHouseholdId(householdId: string, since: Date): Promise<FinancialRecord[]> {
+    const rows = await this.dbClient.db
+      .select()
+      .from(financialRecords)
+      .where(and(
+        eq(financialRecords.householdId, householdId),
+        gte(financialRecords.createdAt, since)
+      ))
+      .orderBy(desc(financialRecords.createdAt));
+    
+    return rows.map(fromDbFinancialRecord);
   }
 }

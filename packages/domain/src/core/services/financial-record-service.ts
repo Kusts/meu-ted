@@ -16,6 +16,7 @@ export interface ServiceResult<T = FinancialRecord> {
   record?: T;
   reason?: string;
   needsReview?: boolean;
+  duplicateCandidates?: FinancialRecord[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,6 +98,21 @@ export class FinancialRecordService {
     }
   }
 
+  private async submitForDuplicateReview(
+    householdId: string,
+    recordId: string,
+    payload: Record<string, unknown>
+  ): Promise<void> {
+    if (this.deps.reviewService) {
+      await this.deps.reviewService.submitForReview({
+        householdId,
+        recordId,
+        reason: 'duplicate',
+        payload,
+      });
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Create Expense
   // ─────────────────────────────────────────────────────────────────────────
@@ -131,25 +147,51 @@ export class FinancialRecordService {
       }
     }
 
-    // Check for duplicate candidate (REQ-006)
-    const duplicate = await this.deps.recordRepository.findDuplicateCandidate(
+    // Check for duplicate candidate (REQ-006) - HIGH confidence block (exact match < 5 min)
+    const highConfidenceDuplicate = await this.deps.recordRepository.findDuplicateCandidate(
       input.householdId,
       input.accountId,
       input.amountCents,
       input.description,
-      5
+      5,
+      0.9 // 90% similarity for high confidence
     );
-    if (duplicate) {
+    if (highConfidenceDuplicate) {
+      return { 
+        success: false, 
+        reason: 'Possivel duplicata detectada - registro bloqueado',
+        duplicateCandidates: [highConfidenceDuplicate]
+      };
+    }
+
+    // MEDIUM confidence - fuzzy match within 30 minutes
+    const mediumConfidenceDuplicate = await this.deps.recordRepository.findDuplicateCandidate(
+      input.householdId,
+      input.accountId,
+      input.amountCents,
+      input.description,
+      30,
+      0.7 // 70% similarity for medium confidence
+    );
+    if (mediumConfidenceDuplicate) {
       const record = await this.createRecord({
         ...input,
         type: 'expense',
         status: 'review',
       });
+      // Submit for duplicate review
+      await this.submitForDuplicateReview(input.householdId, record.id, {
+        amountCents: input.amountCents,
+        description: input.description,
+        accountId: input.accountId,
+        duplicateOfId: mediumConfidenceDuplicate.id,
+        duplicateOfDate: mediumConfidenceDuplicate.createdAt,
+      });
       return { 
         success: true, 
         record, 
         needsReview: true,
-        reason: 'Duplicidade detectada - requer revisao manual' 
+        reason: 'Possivel duplicata detectada - registro em revisao' 
       };
     }
 
@@ -249,6 +291,53 @@ export class FinancialRecordService {
       if (existingRecord) {
         return { success: true, record: existingRecord };
       }
+    }
+
+    // Check for duplicate candidate (REQ-006) - HIGH confidence block
+    const highConfidenceDuplicate = await this.deps.recordRepository.findDuplicateCandidate(
+      input.householdId,
+      input.accountId,
+      input.amountCents,
+      input.description,
+      5,
+      0.9
+    );
+    if (highConfidenceDuplicate) {
+      return { 
+        success: false, 
+        reason: 'Possivel duplicata detectada - registro bloqueado',
+        duplicateCandidates: [highConfidenceDuplicate]
+      };
+    }
+
+    // MEDIUM confidence - fuzzy match within 30 minutes
+    const mediumConfidenceDuplicate = await this.deps.recordRepository.findDuplicateCandidate(
+      input.householdId,
+      input.accountId,
+      input.amountCents,
+      input.description,
+      30,
+      0.7
+    );
+    if (mediumConfidenceDuplicate) {
+      const record = await this.createRecord({
+        ...input,
+        type: 'income',
+        status: 'review',
+      });
+      await this.submitForDuplicateReview(input.householdId, record.id, {
+        amountCents: input.amountCents,
+        description: input.description,
+        accountId: input.accountId,
+        duplicateOfId: mediumConfidenceDuplicate.id,
+        duplicateOfDate: mediumConfidenceDuplicate.createdAt,
+      });
+      return { 
+        success: true, 
+        record, 
+        needsReview: true,
+        reason: 'Possivel duplicata detectada - registro em revisao' 
+      };
     }
 
     // Check high-value threshold - only applies when reviewService is available
