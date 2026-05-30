@@ -58,6 +58,12 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   const occurrenceRepository = recurrenceOccurrenceRepository;
   const auditRepository = auditLogRepository;
 
+  // Initialize Review Service first (needed by FinancialRecordService)
+  const reviewService = options.reviewService ?? new ReviewService({
+    reviewQueueRepository,
+    recordRepository,
+  });
+
   // Initialize services
   const financialRecordService = new FinancialRecordService({
     accountRepository,
@@ -65,6 +71,10 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     ledgerRepository,
     auditRepository,
     idempotencyRepository,
+    reviewService,
+    highValueThresholdCents: process.env.HIGH_VALUE_THRESHOLD_CENTS 
+      ? parseInt(process.env.HIGH_VALUE_THRESHOLD_CENTS, 10) 
+      : undefined,
   });
 
   const categoryService = new CategoryService({ categoryRepository });
@@ -90,12 +100,6 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     invoiceRepository,
     installmentGroupRepository,
     accountRepository,
-  });
-
-  // Initialize Review Service
-  const reviewService = options.reviewService ?? new ReviewService({
-    reviewQueueRepository,
-    recordRepository,
   });
 
   // ─────────────────────────────────────────────────────────────────────────

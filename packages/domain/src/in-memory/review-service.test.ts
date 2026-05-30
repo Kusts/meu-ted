@@ -163,6 +163,99 @@ describe('ReviewService', () => {
     expect(updatedRecord!.confirmedAt).not.toBeNull();
   });
 
+  test('approve of high_value entry confirms the record with confirmedAt', async () => {
+    const record = await recordRepo.create({
+      id: crypto.randomUUID(),
+      householdId,
+      type: 'expense',
+      amountCents: 60000, // R$600 - above threshold
+      date: new Date().toISOString(),
+      description: 'High value expense',
+      accountId: null,
+      fromAccountId: null,
+      toAccountId: null,
+      cardId: null,
+      invoiceId: null,
+      categoryId: null,
+      createdByUserId: null,
+      source: 'dashboard',
+      sourceMessageId: null,
+      idempotencyKey: null,
+      status: 'review',
+      recurrenceId: null,
+      installmentGroupId: null,
+      relatedRecordId: null,
+      merchantId: null,
+      confirmedAt: null,
+      metadataJson: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const entry = await reviewRepo.create({
+      householdId,
+      recordId: record.id,
+      reason: 'high_value',
+      originalPayload: { amountCents: 60000 },
+    });
+
+    const userId = crypto.randomUUID();
+    const result = await service.approve(entry.id, userId);
+
+    expect(result.success).toBe(true);
+    expect(result.entry!.status).toBe('approved');
+
+    const updatedRecord = await recordRepo.findById(record.id);
+    expect(updatedRecord!.status).toBe('posted');
+    expect(updatedRecord!.confirmedAt).toBeDefined();
+  });
+
+  test('reject of high_value entry with cancelRecord cancels the record', async () => {
+    const record = await recordRepo.create({
+      id: crypto.randomUUID(),
+      householdId,
+      type: 'expense',
+      amountCents: 60000,
+      date: new Date().toISOString(),
+      description: 'High value to reject',
+      accountId: null,
+      fromAccountId: null,
+      toAccountId: null,
+      cardId: null,
+      invoiceId: null,
+      categoryId: null,
+      createdByUserId: null,
+      source: 'dashboard',
+      sourceMessageId: null,
+      idempotencyKey: null,
+      status: 'review',
+      recurrenceId: null,
+      installmentGroupId: null,
+      relatedRecordId: null,
+      merchantId: null,
+      confirmedAt: null,
+      metadataJson: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const entry = await reviewRepo.create({
+      householdId,
+      recordId: record.id,
+      reason: 'high_value',
+      originalPayload: { amountCents: 60000 },
+    });
+
+    const userId = crypto.randomUUID();
+    const result = await service.reject(entry.id, userId, true);
+
+    expect(result.success).toBe(true);
+    expect(result.entry!.status).toBe('rejected');
+
+    const updatedRecord = await recordRepo.findById(record.id);
+    expect(updatedRecord!.status).toBe('cancelled');
+  });
+
   test('approve returns error for non-existent entry', async () => {
     const result = await service.approve('non-existent-id', crypto.randomUUID());
     expect(result.success).toBe(false);
