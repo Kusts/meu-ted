@@ -9,6 +9,8 @@ services:
       POSTGRES_PASSWORD: pi_financeiro_dev_secret
       POSTGRES_DB: pi_financeiro
       PGDATA: /var/lib/postgresql/data/pgdata
+      # DATABASE_URL for pg-boss (cron jobs) - constructed from other vars
+      DATABASE_URL: postgresql://postgres:pi_financeiro_dev_secret@postgres:5433/pi_financeiro
     ports:
       - "5433:5432"  # Use 5433 since 5432 is taken
     volumes:
@@ -18,6 +20,19 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # Future: Cron worker container for pg-boss jobs
+  # Uncomment when ready to deploy cron workers separately
+  # cron-worker:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.jobs
+  #   container_name: pi-financeiro-cron
+  #   environment:
+  #     - DATABASE_URL=postgresql://postgres:pi_financeiro_dev_secret@postgres:5433/pi_financeiro
+  #     - NODE_ENV=production
+  #   depends_on:
+  #     - postgres
 
   # Evolution API for WhatsApp (placeholder for future)
   # evolution-api:

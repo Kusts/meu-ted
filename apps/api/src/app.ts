@@ -1036,6 +1036,71 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Cron Trigger (manual job execution)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  app.post('/cron/trigger', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as { job?: string; householdId?: string };
+
+    if (!body.householdId) {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+
+    const validJobs = ['recurrence-horizon', 'invoice-close', 'overdue-rollover', 'daily-summary', 'weekly-backup'];
+    if (!body.job || !validJobs.includes(body.job)) {
+      return reply.status(400).send({ 
+        success: false, 
+        reason: `job inválido. Valores válidos: ${validJobs.join(', ')}` 
+      });
+    }
+
+    // Get RecurrenceJobService for handlers
+    const { RecurrenceJobService } = await import('@pi-financeiro/jobs');
+    const { createRecurrenceHorizonHandler, createInvoiceCloseHandler, createOverdueRolloverHandler, createDailySummaryHandler, createWeeklyBackupHandler } = await import('@pi-financeiro/jobs');
+
+    // Build a minimal job service with current dependencies
+    const jobService = new RecurrenceJobService({
+      recurrenceRepository: recurrenceRepository,
+      invoiceRepository: invoiceRepository,
+      occurrenceRepository: recurrenceOccurrenceRepository,
+      recurrenceService,
+      cardInvoiceService,
+    });
+
+    // Select handler
+    let handler;
+    switch (body.job) {
+      case 'recurrence-horizon':
+        handler = createRecurrenceHorizonHandler(jobService);
+        break;
+      case 'invoice-close':
+        handler = createInvoiceCloseHandler(jobService);
+        break;
+      case 'overdue-rollover':
+        handler = createOverdueRolloverHandler();
+        break;
+      case 'daily-summary':
+        handler = createDailySummaryHandler();
+        break;
+      case 'weekly-backup':
+        handler = createWeeklyBackupHandler();
+        break;
+      default:
+        return reply.status(400).send({ success: false, reason: 'job inválido' });
+    }
+
+    try {
+      const result = await handler.execute(body.householdId);
+      return reply.send({ success: true, job: body.job, result });
+    } catch (error) {
+      return reply.status(500).send({ 
+        success: false, 
+        reason: error instanceof Error ? error.message : 'erro desconhecido' 
+      });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // WhatsApp Webhook (Evolution API)
   // ─────────────────────────────────────────────────────────────────────────
 

@@ -15,7 +15,8 @@
     "@pi-financeiro/domain": "workspace:*",
     "@pi-financeiro/ledger": "workspace:*",
     "@pi-financeiro/idempotency": "workspace:*",
-    "@pi-financeiro/whatsapp-bridge": "workspace:*"
+    "@pi-financeiro/whatsapp-bridge": "workspace:*",
+    "@pi-financeiro/jobs": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

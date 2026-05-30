@@ -41,6 +41,9 @@ importers:
       '@pi-financeiro/idempotency':
         specifier: workspace:*
         version: link:../../packages/idempotency
+      '@pi-financeiro/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
       '@pi-financeiro/ledger':
         specifier: workspace:*
         version: link:../../packages/ledger
