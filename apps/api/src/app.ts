@@ -429,6 +429,17 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     return reply.status(201).send({ success: true, data: created });
   });
 
+  app.get('/cards', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId } = request.query as { householdId?: string };
+
+    if (!householdId) {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+
+    const cards = await cardRepository.findByHouseholdId(householdId);
+    return reply.status(200).send({ success: true, data: cards });
+  });
+
   app.post('/cards/purchase', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = request.body as Record<string, unknown>;
 
@@ -520,6 +531,22 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   // ─────────────────────────────────────────────────────────────────────────
   // Invoices
   // ─────────────────────────────────────────────────────────────────────────
+
+  app.get('/invoices', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId, cardId } = request.query as { householdId?: string; cardId?: string };
+
+    if (!householdId) {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+
+    let invoices = await invoiceRepository.findByHouseholdId(householdId);
+    
+    if (cardId) {
+      invoices = invoices.filter(inv => inv.cardId === cardId);
+    }
+
+    return reply.status(200).send({ success: true, data: invoices });
+  });
 
   app.post('/invoices/:id/close', async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };

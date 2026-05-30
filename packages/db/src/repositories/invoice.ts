@@ -27,6 +27,15 @@ export class DrizzleInvoiceRepository implements IInvoiceRepository {
     return row ? fromDbInvoice(row) : null;
   }
 
+  async findByHouseholdId(householdId: string): Promise<Invoice[]> {
+    const rows = await this.dbClient.db
+      .select()
+      .from(invoices)
+      .where(eq(invoices.householdId, householdId))
+      .orderBy(desc(invoices.periodYear), desc(invoices.periodMonth));
+    return rows.map(fromDbInvoice);
+  }
+
   async findByCardId(cardId: string): Promise<Invoice[]> {
     const rows = await this.dbClient.db
       .select()

@@ -13,6 +13,12 @@ export class InMemoryInvoiceRepository implements IInvoiceRepository {
     return this.invoices.get(id) ?? null;
   }
 
+  async findByHouseholdId(householdId: string): Promise<Invoice[]> {
+    return Array.from(this.invoices.values())
+      .filter(i => i.householdId === householdId)
+      .sort((a, b) => a.periodYear - b.periodYear || a.periodMonth - b.periodMonth);
+  }
+
   async findByCardId(cardId: string): Promise<Invoice[]> {
     return Array.from(this.invoices.values())
       .filter(i => i.cardId === cardId)

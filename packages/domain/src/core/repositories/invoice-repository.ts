@@ -7,6 +7,7 @@ import type { Invoice } from '../entities/invoice.js';
 export interface IInvoiceRepository {
   create(invoice: Invoice): Promise<Invoice>;
   findById(id: string): Promise<Invoice | null>;
+  findByHouseholdId(householdId: string): Promise<Invoice[]>;
   findByCardId(cardId: string): Promise<Invoice[]>;
   findByCardAndPeriod(cardId: string, periodMonth: number, periodYear: number): Promise<Invoice | null>;
   findOpenByCardId(cardId: string): Promise<Invoice | null>;

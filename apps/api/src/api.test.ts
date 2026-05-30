@@ -281,6 +281,84 @@ describe('API Fastify', () => {
     expect(secondPage.json().total).toBe(5);
   });
 
+  // ─── GET /cards ─────────────────────────────────────────────────────────────
+
+  test('GET /cards returns empty list when no cards exist', async () => {
+    const app = createApp();
+
+    const response = await app.inject({ method: 'GET', url: `/cards?householdId=${householdId}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ success: true, data: [] });
+  });
+
+  test('GET /cards returns created cards', async () => {
+    const app = await buildSeededApp();
+
+    const response = await app.inject({ method: 'GET', url: `/cards?householdId=${householdId}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().success).toBe(true);
+    expect(response.json().data).toHaveLength(1);
+    expect(response.json().data[0].name).toBe('Nubank crédito');
+  });
+
+  test('GET /cards returns 400 without householdId', async () => {
+    const app = createApp();
+
+    const response = await app.inject({ method: 'GET', url: '/cards' });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().success).toBe(false);
+  });
+
+  // ─── GET /invoices ─────────────────────────────────────────────────────────
+
+  test('GET /invoices returns empty list', async () => {
+    const app = await buildSeededApp();
+
+    const response = await app.inject({ method: 'GET', url: `/invoices?householdId=${householdId}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ success: true, data: [] });
+  });
+
+  test('GET /invoices returns invoices for specific card', async () => {
+    const app = await buildSeededApp();
+
+    // Create a card purchase which creates an invoice
+    await app.inject({
+      method: 'POST',
+      url: '/cards/purchase',
+      payload: {
+        householdId,
+        cardId,
+        amountCents: 5000,
+        description: 'Compras no mercado',
+        purchaseDate: '2026-05-15T12:00:00.000Z',
+        source: 'dashboard',
+      },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/invoices?householdId=${householdId}&cardId=${cardId}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().success).toBe(true);
+    expect(response.json().data.length).toBeGreaterThan(0);
+  });
+
+  test('GET /invoices returns 400 without householdId', async () => {
+    const app = createApp();
+
+    const response = await app.inject({ method: 'GET', url: '/invoices' });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().success).toBe(false);
+  });
+
   test('webhook endpoint validates and forwards Evolution messages', async () => {
     const app = createApp({
       webhookSecret: 'secret',
