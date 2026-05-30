@@ -8,6 +8,11 @@ import { toDbCategory, fromDbCategory, toDbCategoryAlias, fromDbCategoryAlias } 
 import { toDbFinancialRecord, fromDbFinancialRecord } from './financial-record.js';
 import { toDbLedgerEntry, fromDbLedgerEntry } from './ledger.js';
 import { toDbIdempotencyKey, fromDbIdempotencyKey } from './idempotency.js';
+import { toDbHousehold, fromDbHousehold } from './household.js';
+import { toDbAuditLog, fromDbAuditLog } from './audit-log.js';
+import { toDbCreditCard, fromDbCreditCard } from './credit-card.js';
+import { toDbInvoice, fromDbInvoice } from './invoice.js';
+import { toDbInstallmentGroup, fromDbInstallmentGroup } from './installment-group.js';
 import type { Account } from '@pi-financeiro/domain';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -398,5 +403,246 @@ describe('Idempotency Mapper', () => {
     const key = fromDbIdempotencyKey(dbRow);
     
     expect(key.expiresAt).toBeTruthy();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Household Mapper Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Household Mapper', () => {
+  test('toDbHousehold maps domain entity to DB row', () => {
+    const household = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      name: 'Casa',
+      currency: 'BRL',
+      timezone: 'America/Sao_Paulo',
+      createdAt: '2026-05-29T10:00:00.000Z',
+      updatedAt: '2026-05-29T10:00:00.000Z',
+    };
+    
+    const dbRow = toDbHousehold(household);
+    
+    expect(dbRow.id).toBe(household.id);
+    expect(dbRow.name).toBe('Casa');
+    expect(dbRow.currency).toBe('BRL');
+    expect(dbRow.timezone).toBe('America/Sao_Paulo');
+  });
+  
+  test('fromDbHousehold maps DB row to domain entity', () => {
+    const dbRow = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      name: 'Escritório',
+      currency: 'BRL' as const,
+      timezone: 'America/Sao_Paulo' as const,
+      highValueThresholdCents: 50000,
+      createdAt: new Date('2026-05-29T10:00:00.000Z'),
+      updatedAt: new Date('2026-05-29T10:00:00.000Z'),
+    };
+    
+    const household = fromDbHousehold(dbRow);
+    
+    expect(household.id).toBe(dbRow.id);
+    expect(household.name).toBe('Escritório');
+    expect(household.currency).toBe('BRL');
+    expect(household.createdAt).toBe('2026-05-29T10:00:00.000Z');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit Log Mapper Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Audit Log Mapper', () => {
+  test('toDbAuditLog maps domain entity to DB row', () => {
+    const log = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      actorUserId: null,
+      action: 'create' as const,
+      entityType: 'financial_record' as const,
+      entityId: '0192a1b3-0000-0000-0000-000000000010',
+      beforeJson: null,
+      afterJson: { amount: 5000 },
+      source: 'dashboard' as const,
+      createdAt: '2026-05-29T10:00:00.000Z',
+    };
+    
+    const dbRow = toDbAuditLog(log);
+    
+    expect(dbRow.action).toBe('create');
+    expect(dbRow.entityType).toBe('financial_record');
+    expect(dbRow.afterJson).toEqual({ amount: 5000 });
+  });
+  
+  test('fromDbAuditLog maps DB row to domain entity', () => {
+    const dbRow = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      actorUserId: null,
+      action: 'update' as const,
+      entityType: 'account' as const,
+      entityId: '0192a1b3-0000-0000-0000-000000000010',
+      beforeJson: { name: 'Old' },
+      afterJson: { name: 'New' },
+      source: 'dashboard' as const,
+      createdAt: new Date('2026-05-29T10:00:00.000Z'),
+    };
+    
+    const log = fromDbAuditLog(dbRow);
+    
+    expect(log.action).toBe('update');
+    expect(log.entityType).toBe('account');
+    expect(log.afterJson).toEqual({ name: 'New' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Credit Card Mapper Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Credit Card Mapper', () => {
+  test('toDbCreditCard maps domain entity to DB row', () => {
+    const card = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      name: 'Nubank',
+      ownerUserId: null,
+      scope: 'shared' as const,
+      limitCents: 100000,
+      closingDay: 20,
+      dueDay: 27,
+      paymentAccountId: null,
+      active: true,
+      createdAt: '2026-05-29T10:00:00.000Z',
+      updatedAt: '2026-05-29T10:00:00.000Z',
+    };
+    
+    const dbRow = toDbCreditCard(card);
+    
+    expect(dbRow.name).toBe('Nubank');
+    expect(dbRow.closingDay).toBe(20);
+    expect(dbRow.scope).toBe('shared');
+  });
+  
+  test('fromDbCreditCard maps DB row to domain entity', () => {
+    const dbRow = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      name: 'Inter',
+      ownerUserId: null,
+      scope: 'personal' as const,
+      limitCents: 50000,
+      closingDay: 15,
+      dueDay: 22,
+      paymentAccountId: null,
+      active: true,
+      createdAt: new Date('2026-05-29T10:00:00.000Z'),
+      updatedAt: new Date('2026-05-29T10:00:00.000Z'),
+    };
+    
+    const card = fromDbCreditCard(dbRow);
+    
+    expect(card.name).toBe('Inter');
+    expect(card.scope).toBe('personal');
+    expect(card.limitCents).toBe(50000);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Invoice Mapper Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Invoice Mapper', () => {
+  test('toDbInvoice maps domain entity to DB row', () => {
+    const invoice = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      cardId: '0192a1b3-0000-0000-0000-000000000010',
+      periodMonth: 5,
+      periodYear: 2026,
+      status: 'open' as const,
+      closesAt: '2026-05-20T12:00:00.000Z',
+      dueAt: '2026-05-27T12:00:00.000Z',
+      totalCents: 0,
+      paidAt: null,
+      createdAt: '2026-05-29T10:00:00.000Z',
+      updatedAt: '2026-05-29T10:00:00.000Z',
+    };
+    
+    const dbRow = toDbInvoice(invoice);
+    
+    expect(dbRow.periodMonth).toBe(5);
+    expect(dbRow.periodYear).toBe(2026);
+    expect(dbRow.status).toBe('open');
+  });
+  
+  test('fromDbInvoice maps DB row to domain entity', () => {
+    const dbRow = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      cardId: '0192a1b3-0000-0000-0000-000000000010',
+      periodMonth: 4,
+      periodYear: 2026,
+      status: 'closed' as const,
+      closesAt: new Date('2026-04-20T12:00:00.000Z'),
+      dueAt: new Date('2026-04-27T12:00:00.000Z'),
+      totalCents: 15000,
+      paidAt: new Date('2026-04-27T12:00:00.000Z'),
+      createdAt: new Date('2026-05-29T10:00:00.000Z'),
+      updatedAt: new Date('2026-05-29T10:00:00.000Z'),
+    };
+    
+    const invoice = fromDbInvoice(dbRow);
+    
+    expect(invoice.status).toBe('closed');
+    expect(invoice.totalCents).toBe(15000);
+    expect(invoice.paidAt).toBeTruthy();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Installment Group Mapper Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Installment Group Mapper', () => {
+  test('toDbInstallmentGroup maps domain entity to DB row', () => {
+    const group = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      description: 'Tênis Nike',
+      totalCents: 30000,
+      installmentsCount: 3,
+      firstDate: '2026-05-10T12:00:00.000Z',
+      cardId: '0192a1b3-0000-0000-0000-000000000010',
+      accountId: null,
+      createdAt: '2026-05-29T10:00:00.000Z',
+    };
+    
+    const dbRow = toDbInstallmentGroup(group);
+    
+    expect(dbRow.description).toBe('Tênis Nike');
+    expect(dbRow.installmentsCount).toBe(3);
+    expect(dbRow.totalCents).toBe(30000);
+  });
+  
+  test('fromDbInstallmentGroup maps DB row to domain entity', () => {
+    const dbRow = {
+      id: '0192a1b3-0000-0000-0000-000000000001',
+      householdId: '0192a1b3-0000-0000-0000-000000000000',
+      description: 'TV Samsung',
+      totalCents: 120000,
+      installmentsCount: 10,
+      firstDate: new Date('2026-03-01T12:00:00.000Z'),
+      cardId: null,
+      accountId: '0192a1b3-0000-0000-0000-000000000010',
+      createdAt: new Date('2026-05-29T10:00:00.000Z'),
+    };
+    
+    const group = fromDbInstallmentGroup(dbRow);
+    
+    expect(group.description).toBe('TV Samsung');
+    expect(group.installmentsCount).toBe(10);
+    expect(group.accountId).toBeTruthy();
   });
 });

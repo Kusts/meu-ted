@@ -38,6 +38,10 @@ import { DrizzleCategoryRepository } from './category.js';
 import { DrizzleFinancialRecordRepository } from './financial-record.js';
 import { DrizzleLedgerRepository } from './ledger.js';
 import { DrizzleIdempotencyRepository } from './idempotency.js';
+import { DrizzleAuditLogRepository } from './audit-log.js';
+import { DrizzleCreditCardRepository } from './credit-card.js';
+import { DrizzleInvoiceRepository } from './invoice.js';
+import { DrizzleInstallmentGroupRepository } from './installment-group.js';
 
 // Re-export Drizzle repositories for direct use
 export { DrizzleAccountRepository } from './account.js';
@@ -45,6 +49,11 @@ export { DrizzleCategoryRepository } from './category.js';
 export { DrizzleFinancialRecordRepository } from './financial-record.js';
 export { DrizzleLedgerRepository } from './ledger.js';
 export { DrizzleIdempotencyRepository } from './idempotency.js';
+export { DrizzleHouseholdRepository } from './household.js';
+export { DrizzleAuditLogRepository } from './audit-log.js';
+export { DrizzleCreditCardRepository } from './credit-card.js';
+export { DrizzleInvoiceRepository } from './invoice.js';
+export { DrizzleInstallmentGroupRepository } from './installment-group.js';
 
 /**
  * Repository set interface - all repositories an app needs
@@ -110,11 +119,11 @@ function createDrizzleRepositories(databaseUrl?: string): RepositorySet {
     categoryRepository: new DrizzleCategoryRepository(dbClient),
     financialRecordRepository: new DrizzleFinancialRecordRepository(dbClient),
     ledgerRepository: new DrizzleLedgerRepository(dbClient),
-    auditLogRepository: new InMemoryAuditLogRepository(), // Fallback: in-memory
+    auditLogRepository: new DrizzleAuditLogRepository(dbClient),
     idempotencyRepository: new DrizzleIdempotencyRepository(dbClient),
-    creditCardRepository: new InMemoryCreditCardRepository(), // Fallback: in-memory
-    invoiceRepository: new InMemoryInvoiceRepository(), // Fallback: in-memory
-    installmentGroupRepository: new InMemoryInstallmentGroupRepository(), // Fallback: in-memory
+    creditCardRepository: new DrizzleCreditCardRepository(dbClient),
+    invoiceRepository: new DrizzleInvoiceRepository(dbClient),
+    installmentGroupRepository: new DrizzleInstallmentGroupRepository(dbClient),
     recurrenceRepository: new InMemoryRecurrenceRepository(), // Fallback: in-memory
     recurrenceOccurrenceRepository: new InMemoryRecurrenceOccurrenceRepository(), // Fallback: in-memory
     billRepository: new InMemoryBillRepository(), // Fallback: in-memory
@@ -133,11 +142,11 @@ function createDrizzleRepositoriesWithClient(databaseUrl?: string): DrizzleRepos
     categoryRepository: new DrizzleCategoryRepository(dbClient),
     financialRecordRepository: new DrizzleFinancialRecordRepository(dbClient),
     ledgerRepository: new DrizzleLedgerRepository(dbClient),
-    auditLogRepository: new InMemoryAuditLogRepository(), // Fallback: in-memory
+    auditLogRepository: new DrizzleAuditLogRepository(dbClient),
     idempotencyRepository: new DrizzleIdempotencyRepository(dbClient),
-    creditCardRepository: new InMemoryCreditCardRepository(), // Fallback: in-memory
-    invoiceRepository: new InMemoryInvoiceRepository(), // Fallback: in-memory
-    installmentGroupRepository: new InMemoryInstallmentGroupRepository(), // Fallback: in-memory
+    creditCardRepository: new DrizzleCreditCardRepository(dbClient),
+    invoiceRepository: new DrizzleInvoiceRepository(dbClient),
+    installmentGroupRepository: new DrizzleInstallmentGroupRepository(dbClient),
     recurrenceRepository: new InMemoryRecurrenceRepository(), // Fallback: in-memory
     recurrenceOccurrenceRepository: new InMemoryRecurrenceOccurrenceRepository(), // Fallback: in-memory
     billRepository: new InMemoryBillRepository(), // Fallback: in-memory
