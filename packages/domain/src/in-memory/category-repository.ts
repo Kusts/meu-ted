@@ -51,6 +51,14 @@ export class InMemoryCategoryRepository implements ICategoryRepository {
     return { ...alias };
   }
 
+  async updateAlias(id: string, update: { categoryId: string }): Promise<CategoryAlias | null> {
+    const existing = this.aliases.get(id);
+    if (!existing) return null;
+    const updated = { ...existing, categoryId: update.categoryId };
+    this.aliases.set(id, updated);
+    return updated;
+  }
+
   async findByAlias(householdId: string, alias: string): Promise<Category | null> {
     const found = Array.from(this.aliases.values()).find(
       a => a.householdId === householdId && a.alias.toLowerCase() === alias.toLowerCase()

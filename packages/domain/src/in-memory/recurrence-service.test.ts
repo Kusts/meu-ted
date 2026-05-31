@@ -380,11 +380,11 @@ describe('RecurrenceService - Process Occurrence', () => {
       amountCents: 12000,
       period: 'monthly',
       targetType: 'payable_bill',
-      firstDate: new Date('2026-05-01').toISOString(),
+      firstDate: new Date('2026-08-01').toISOString(),
     });
 
     const occurrence = (await occurrenceRepo.findByRecurrenceId(createResult.recurrence!.id))
-      .find(o => o.occurrenceDate.includes('2026-05'));
+      .find(o => o.occurrenceDate.includes('2026-08'));
 
     // Process it to create bill
     await service.processOccurrence(occurrence!.id);
@@ -407,11 +407,11 @@ describe('RecurrenceService - Process Occurrence', () => {
       amountCents: 12000,
       period: 'monthly',
       targetType: 'payable_bill',
-      firstDate: new Date('2026-05-01').toISOString(),
+      firstDate: new Date('2026-08-01').toISOString(),
     });
 
     const occurrence = (await occurrenceRepo.findByRecurrenceId(createResult.recurrence!.id))
-      .find(o => o.occurrenceDate.includes('2026-05'));
+      .find(o => o.occurrenceDate.includes('2026-08'));
 
     // Process it to create bill
     await service.processOccurrence(occurrence!.id);
@@ -427,9 +427,9 @@ describe('RecurrenceService - Process Occurrence', () => {
     expect(rolloverResult.rolledCount).toBe(1);
     expect(rolloverResult.rolledBills.length).toBe(1);
     
-    // New bill should be in June (next month)
+    // New bill should be in September (next month)
     const newBill = rolloverResult.rolledBills[0];
-    expect(newBill.dueDate).toContain('2026-06');
+    expect(newBill.dueDate).toContain('2026-09');
     expect(newBill.amountCents).toBe(12000);
     expect(newBill.status).toBe('pending');
   });
@@ -441,11 +441,11 @@ describe('RecurrenceService - Process Occurrence', () => {
       amountCents: 12000,
       period: 'monthly',
       targetType: 'payable_bill',
-      firstDate: new Date('2026-05-01').toISOString(),
+      firstDate: new Date('2026-08-01').toISOString(),
     });
 
     const occurrence = (await occurrenceRepo.findByRecurrenceId(createResult.recurrence!.id))
-      .find(o => o.occurrenceDate.includes('2026-05'));
+      .find(o => o.occurrenceDate.includes('2026-08'));
 
     await service.processOccurrence(occurrence!.id);
 
@@ -468,11 +468,11 @@ describe('RecurrenceService - Process Occurrence', () => {
       amountCents: 12000,
       period: 'monthly',
       targetType: 'payable_bill',
-      firstDate: new Date('2026-05-01').toISOString(),
+      firstDate: new Date('2026-08-01').toISOString(),
     });
 
     const occurrence = (await occurrenceRepo.findByRecurrenceId(createResult.recurrence!.id))
-      .find(o => o.occurrenceDate.includes('2026-05'));
+      .find(o => o.occurrenceDate.includes('2026-08'));
 
     await service.processOccurrence(occurrence!.id);
 
@@ -495,7 +495,7 @@ describe('RecurrenceService - Process Occurrence', () => {
       amountCents: 12000,
       period: 'monthly',
       targetType: 'payable_bill',
-      firstDate: new Date('2026-05-01').toISOString(),
+      firstDate: new Date('2026-08-01').toISOString(),
     });
 
     const result2 = await service.createRecurrence({
@@ -504,13 +504,13 @@ describe('RecurrenceService - Process Occurrence', () => {
       amountCents: 20000,
       period: 'monthly',
       targetType: 'payable_bill',
-      firstDate: new Date('2026-05-01').toISOString(),
+      firstDate: new Date('2026-08-01').toISOString(),
     });
 
     // Process both
     for (const rec of [result1.recurrence!, result2.recurrence!]) {
       const occ = (await occurrenceRepo.findByRecurrenceId(rec.id))
-        .find(o => o.occurrenceDate.includes('2026-05'));
+        .find(o => o.occurrenceDate.includes('2026-08'));
       await service.processOccurrence(occ!.id);
     }
 

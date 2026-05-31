@@ -35,6 +35,15 @@ export interface EditOccurrenceInput {
   date?: string;
 }
 
+export interface EditOccurrenceScopeInput {
+  occurrenceId: string;
+  scope: 'single' | 'future' | 'all';
+  updates: {
+    amountCents?: number;
+    description?: string;
+  };
+}
+
 export interface EditFutureOccurrencesInput {
   fromOccurrenceId: string;
   amountCents?: number;
@@ -449,6 +458,65 @@ export class RecurrenceService {
     });
 
     return { success: true, editedCount: 1 };
+  }
+
+  /**
+   * Edit occurrence with scope: single, future, or all (REQ-018)
+   */
+  async editOccurrenceScope(input: EditOccurrenceScopeInput): Promise<EditOccurrenceResult> {
+    const occurrence = await this.deps.occurrenceRepository.findById(input.occurrenceId);
+    if (!occurrence) {
+      return { success: false, editedCount: 0, reason: 'Ocorrência não encontrada' };
+    }
+
+    if (input.scope === 'single') {
+      await this.deps.occurrenceRepository.update(input.occurrenceId, {
+        amountCents: input.updates.amountCents ?? undefined,
+        description: input.updates.description ?? undefined,
+        editedPolicy: 'single',
+      });
+      return { success: true, editedCount: 1 };
+    }
+
+    if (input.scope === 'future') {
+      const allOccurrences = await this.deps.occurrenceRepository.findByRecurrenceId(occurrence.recurrenceId);
+      const fromDate = new Date(occurrence.occurrenceDate);
+      let editedCount = 0;
+
+      for (const occ of allOccurrences) {
+        const occDate = new Date(occ.occurrenceDate);
+        if (occDate >= fromDate && occ.status === 'pending') {
+          await this.deps.occurrenceRepository.update(occ.id, {
+            amountCents: input.updates.amountCents ?? undefined,
+            description: input.updates.description ?? undefined,
+            editedPolicy: 'future',
+          });
+          editedCount++;
+        }
+      }
+      return { success: true, editedCount };
+    }
+
+    if (input.scope === 'all') {
+      // Update recurrence base
+      await this.deps.recurrenceRepository.update(occurrence.recurrenceId, {
+        amountCents: input.updates.amountCents ?? undefined,
+        description: input.updates.description ?? undefined,
+      });
+
+      // Update all pending occurrences
+      const occurrences = await this.deps.occurrenceRepository.findPendingByRecurrenceId(occurrence.recurrenceId);
+      for (const occ of occurrences) {
+        await this.deps.occurrenceRepository.update(occ.id, {
+          amountCents: input.updates.amountCents ?? undefined,
+          description: input.updates.description ?? undefined,
+          editedPolicy: 'all',
+        });
+      }
+      return { success: true, editedCount: occurrences.length };
+    }
+
+    return { success: false, editedCount: 0, reason: 'Escopo inválido' };
   }
 
   /**

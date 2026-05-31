@@ -76,6 +76,15 @@ export class DrizzleCategoryRepository implements ICategoryRepository {
     return fromDbCategoryAlias(inserted);
   }
 
+  async updateAlias(id: string, update: { categoryId: string }): Promise<CategoryAlias | null> {
+    const [updated] = await this.dbClient.db
+      .update(categoryAliases)
+      .set({ categoryId: update.categoryId })
+      .where(eq(categoryAliases.id, id))
+      .returning();
+    return updated ? fromDbCategoryAlias(updated) : null;
+  }
+
   async findByAlias(householdId: string, aliasValue: string): Promise<Category | null> {
     const [aliasRow] = await this.dbClient.db
       .select()

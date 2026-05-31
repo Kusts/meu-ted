@@ -83,7 +83,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
       : undefined,
   });
 
-  const categoryService = new CategoryService({ categoryRepository });
+  const categoryService = new CategoryService({ categoryRepository, recordRepository: financialRecordRepository });
 
   const cardInvoiceService = new CardInvoiceService({
     cardRepository,
@@ -245,6 +245,32 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
     const categories = await categoryRepository.findByHouseholdId(householdId);
     return reply.status(200).send({ success: true, data: categories });
+  });
+
+  app.post('/categories/merge', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as { householdId?: string; sourceCategoryId?: string; targetCategoryId?: string };
+
+    if (!body.householdId) {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+    if (!body.sourceCategoryId) {
+      return reply.status(400).send({ success: false, reason: 'sourceCategoryId é obrigatório' });
+    }
+    if (!body.targetCategoryId) {
+      return reply.status(400).send({ success: false, reason: 'targetCategoryId é obrigatório' });
+    }
+
+    const result = await categoryService.mergeCategory({
+      householdId: body.householdId,
+      sourceCategoryId: body.sourceCategoryId,
+      targetCategoryId: body.targetCategoryId,
+    });
+
+    if (!result.success) {
+      return reply.status(422).send({ success: false, reason: result.reason });
+    }
+
+    return reply.status(200).send({ success: true, data: result });
   });
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -490,6 +516,43 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
         reversalRecord: result.reversalRecord,
       },
     });
+  });
+
+  app.post('/records/:id/review', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { householdId?: string; userId?: string; action?: string; cancelRecord?: boolean };
+
+    if (!body.householdId) {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+    if (!body.action || !['approve', 'reject'].includes(body.action)) {
+      return reply.status(400).send({ success: false, reason: 'action deve ser approve ou reject' });
+    }
+
+    if (!options.reviewService) {
+      return reply.status(503).send({ success: false, reason: 'ReviewService não configurado' });
+    }
+
+    // Find review entry by record id
+    const reviewEntries = await options.reviewService.listAll(body.householdId);
+    const reviewEntry = reviewEntries.find((e: any) => e.recordId === id);
+
+    if (!reviewEntry) {
+      return reply.status(404).send({ success: false, reason: 'Review entry não encontrada para este registro' });
+    }
+
+    let result;
+    if (body.action === 'approve') {
+      result = await options.reviewService.approve(reviewEntry.id, body.userId ?? 'system');
+    } else {
+      result = await options.reviewService.reject(reviewEntry.id, body.userId ?? 'system', body.cancelRecord ?? true);
+    }
+
+    if (!result.success) {
+      return reply.status(422).send({ success: false, reason: result.reason });
+    }
+
+    return reply.status(200).send({ success: true, data: result });
   });
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -762,6 +825,32 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     }
 
     return reply.status(200).send({ success: true, data: { success: true, createdCount: result.createdCount } });
+  });
+
+  app.post('/recurrences/:id/edit-scope', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as { householdId?: string; occurrenceId?: string; scope?: string; updates?: { amountCents?: number; description?: string } };
+
+    if (!body.householdId) {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+    if (!body.occurrenceId) {
+      return reply.status(400).send({ success: false, reason: 'occurrenceId é obrigatório' });
+    }
+    if (!body.scope || !['single', 'future', 'all'].includes(body.scope)) {
+      return reply.status(400).send({ success: false, reason: 'scope deve ser single, future ou all' });
+    }
+
+    const result = await recurrenceService.editOccurrenceScope({
+      occurrenceId: body.occurrenceId,
+      scope: body.scope as 'single' | 'future' | 'all',
+      updates: body.updates ?? {},
+    });
+
+    if (!result.success) {
+      return reply.status(422).send({ success: false, reason: result.reason });
+    }
+
+    return reply.status(200).send({ success: true, data: { editedCount: result.editedCount } });
   });
 
   // ─────────────────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ export interface ICategoryRepository {
   
   // Aliases
   createAlias(alias: CategoryAlias): Promise<CategoryAlias>;
+  updateAlias(id: string, update: { categoryId: string }): Promise<CategoryAlias | null>;
   findByAlias(householdId: string, alias: string): Promise<Category | null>;
   findAliasesByCategoryId(categoryId: string): Promise<CategoryAlias[]>;
 }
