@@ -65,6 +65,7 @@ export * from './core/services/budget-service.js';
 export * from './core/services/report-service.js';
 export * from './core/services/attachment-service.js';
 export * from './core/services/reimbursement-service.js';
+export * from './core/services/export-service.js';
 
 // In-memory implementations (for tests)
 export { InMemoryAccountRepository } from './in-memory/account-repository.js';
