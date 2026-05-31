@@ -17,6 +17,8 @@ const navItems = [
   { href: '/recurrences', icon: '🔄', label: 'Recorrências' },
   { href: '/reports', icon: '📈', label: 'Relatórios' },
   { href: '/categories', icon: '🏷️', label: 'Categorias' },
+  { href: '/reimbursements', icon: '🔁', label: 'Reembolsos' },
+  { href: '/attachments', icon: '📎', label: 'Anexos' },
   { href: '/review', icon: '⚠️', label: 'Revisão' },
   { href: '/settings', icon: '⚙️', label: 'Configurações' },
 ];

@@ -311,6 +311,13 @@ export function createApiClient(
   getAccountBalances: (householdId: string) => Promise<ApiResponse<AccountBalance[]>>;
   getBudgetVsActual: (householdId: string) => Promise<ApiResponse<BudgetComparison[]>>;
   getInvoicesDue: (householdId: string) => Promise<ApiResponse<InvoiceDue[]>>;
+  createAttachment: (input: CreateAttachmentInput) => Promise<ApiResponse<Attachment>>;
+  getAttachments: (householdId: string, entityType: string, entityId: string) => Promise<ApiResponse<Attachment[]>>;
+  deleteAttachment: (id: string, householdId: string) => Promise<ApiResponse<void>>;
+  createReimbursement: (input: CreateReimbursementInput) => Promise<ApiResponse<Reimbursement>>;
+  getReimbursements: (householdId: string) => Promise<ApiResponse<Reimbursement[]>>;
+  completeReimbursement: (id: string, householdId: string, accountId: string, date: string) => Promise<ApiResponse<{ reimbursement: Reimbursement; record: FinancialRecord }>>;
+  splitExpense: (recordId: string, householdId: string, splits: Array<{ userId: string; amountCents: number }>) => Promise<ApiResponse<FinancialRecord>>;
 } {
   const api = async <T>(path: string, options?: RequestInit): Promise<T> => {
     const url = `${baseUrl}${path}`;
@@ -657,6 +664,64 @@ export function createApiClient(
         body: JSON.stringify({ userId, cancelRecord }),
       });
     },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Attachments (REQ-027/040)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async createAttachment(input: CreateAttachmentInput) {
+      return api<ApiResponse<Attachment>>('/attachments', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async getAttachments(householdId: string, entityType: string, entityId: string) {
+      return api<ApiResponse<Attachment[]>>(
+        `/attachments?householdId=${encodeURIComponent(householdId)}&entityType=${encodeURIComponent(entityType)}&entityId=${encodeURIComponent(entityId)}`
+      );
+    },
+
+    async deleteAttachment(id: string, householdId: string) {
+      return api<ApiResponse<void>>(`/attachments/${id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ householdId }),
+      });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Reimbursements (REQ-029)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async createReimbursement(input: CreateReimbursementInput) {
+      return api<ApiResponse<Reimbursement>>('/reimbursements', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    },
+
+    async getReimbursements(householdId: string) {
+      return api<ApiResponse<Reimbursement[]>>(
+        `/reimbursements?householdId=${encodeURIComponent(householdId)}`
+      );
+    },
+
+    async completeReimbursement(id: string, householdId: string, accountId: string, date: string) {
+      return api<ApiResponse<{ reimbursement: Reimbursement; record: FinancialRecord }>>(
+        `/reimbursements/${id}/complete`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ householdId, accountId, date }),
+        }
+      );
+    },
+
+    async splitExpense(recordId: string, householdId: string, splits: Array<{ userId: string; amountCents: number }>) {
+      return api<ApiResponse<FinancialRecord>>(`/records/${recordId}/split`, {
+        method: 'POST',
+        body: JSON.stringify({ householdId, splits }),
+      });
+    },
   };
 }
 
@@ -777,4 +842,46 @@ export interface CreateBudgetInput {
   amountCents: number;
   targetId?: string;
   targetType?: 'category' | 'account';
+}
+
+export interface Attachment {
+  id: string;
+  householdId: string;
+  entityType: string;
+  entityId: string;
+  filePath: string;
+  mimeType: string;
+  fileSizeBytes: number | null;
+  originalName: string | null;
+  uploadedByUserId: string | null;
+  createdAt: string;
+}
+
+export interface Reimbursement {
+  id: string;
+  householdId: string;
+  originalRecordId: string;
+  reimbursementRecordId: string | null;
+  amountCents: number;
+  status: 'pending' | 'partial' | 'completed';
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateAttachmentInput {
+  householdId: string;
+  entityType: string;
+  entityId: string;
+  filePath: string;
+  mimeType: string;
+  fileSizeBytes?: number;
+  originalName?: string;
+}
+
+export interface CreateReimbursementInput {
+  householdId: string;
+  originalRecordId: string;
+  amountCents: number;
+  description?: string;
 }
