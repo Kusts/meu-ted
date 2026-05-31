@@ -23,6 +23,7 @@ export * from './core/entities/categorization-rule.js';
 export * from './core/entities/review-entry.js';
 export * from './core/entities/loan.js';
 export * from './core/entities/budget.js';
+export * from './core/entities/attachment.js';
 
 // Repository ports
 export * from './core/repositories/account-repository.js';
@@ -46,6 +47,7 @@ export * from './core/repositories/review-queue-repository.js';
 export * from './core/repositories/loan-repository.js';
 export * from './core/repositories/loan-installment-repository.js';
 export * from './core/repositories/budget-repository.js';
+export * from './core/repositories/attachment-repository.js';
 
 // Services
 export * from './core/services/financial-record-service.js';
@@ -59,6 +61,7 @@ export * from './core/services/review-service.js';
 export * from './core/services/loan-service.js';
 export * from './core/services/budget-service.js';
 export * from './core/services/report-service.js';
+export * from './core/services/attachment-service.js';
 
 // In-memory implementations (for tests)
 export { InMemoryAccountRepository } from './in-memory/account-repository.js';
@@ -82,6 +85,7 @@ export { InMemoryReviewQueueRepository } from './in-memory/review-queue-reposito
 export { InMemoryLoanRepository } from './in-memory/loan-repository.js';
 export { InMemoryLoanInstallmentRepository } from './in-memory/loan-installment-repository.js';
 export { InMemoryBudgetRepository } from './in-memory/budget-repository.js';
+export { InMemoryAttachmentRepository } from './in-memory/attachment-repository.js';
 
 // Legacy exports (for backward compatibility with existing tests)
 export { calculateAccountBalance } from './legacy.js';

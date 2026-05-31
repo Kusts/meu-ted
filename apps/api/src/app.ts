@@ -12,6 +12,7 @@ import {
   LoanService,
   BudgetService,
   ReportService,
+  AttachmentService,
 } from '@pi-financeiro/domain';
 import type { Account, AccountType, AccountScope, CategoryKind } from '@pi-financeiro/domain';
 import type { CreditCard } from '@pi-financeiro/domain';
@@ -123,6 +124,12 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     budgetRepository,
     invoiceRepository,
     billRepository,
+  });
+
+  // Attachment Service
+  const attachmentService = new AttachmentService({
+    attachmentRepository: deps.attachmentRepository,
+    auditLogRepository: auditLogRepository,
   });
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1187,6 +1194,83 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
         reason: error instanceof Error ? error.message : 'erro desconhecido' 
       });
     }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Attachments (REQ-027/040)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  app.post('/attachments', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as { householdId?: string; entityType?: string; entityId?: string; filePath?: string; mimeType?: string; fileSizeBytes?: number; originalName?: string; uploadedByUserId?: string };
+
+    if (!body.householdId) {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+    if (!body.entityType) {
+      return reply.status(400).send({ success: false, reason: 'entityType é obrigatório' });
+    }
+    if (!body.entityId) {
+      return reply.status(400).send({ success: false, reason: 'entityId é obrigatório' });
+    }
+    if (!body.filePath) {
+      return reply.status(400).send({ success: false, reason: 'filePath é obrigatório' });
+    }
+    if (!body.mimeType) {
+      return reply.status(400).send({ success: false, reason: 'mimeType é obrigatório' });
+    }
+
+    const validEntityTypes = ['financial_record', 'account', 'card', 'invoice', 'recurrence', 'category', 'budget', 'loan'];
+    if (!validEntityTypes.includes(body.entityType)) {
+      return reply.status(400).send({ success: false, reason: `entityType inválido. Valores: ${validEntityTypes.join(', ')}` });
+    }
+
+    const result = await attachmentService.saveAttachment({
+      householdId: body.householdId,
+      entityType: body.entityType as any,
+      entityId: body.entityId,
+      filePath: body.filePath,
+      mimeType: body.mimeType,
+      fileSizeBytes: body.fileSizeBytes,
+      originalName: body.originalName,
+      uploadedByUserId: body.uploadedByUserId,
+    });
+
+    if (!result.success) {
+      return reply.status(422).send({ success: false, reason: result.reason });
+    }
+
+    return reply.status(201).send({ success: true, data: result.attachment });
+  });
+
+  app.get('/attachments', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId, entityType, entityId } = request.query as { householdId?: string; entityType?: string; entityId?: string };
+
+    if (!householdId) {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+    if (!entityType || !entityId) {
+      return reply.status(400).send({ success: false, reason: 'entityType e entityId são obrigatórios' });
+    }
+
+    const result = await attachmentService.listByEntity(householdId, entityType as any, entityId);
+    return reply.status(200).send({ success: true, data: result.attachments });
+  });
+
+  app.delete('/attachments/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { householdId?: string };
+
+    if (!body.householdId) {
+      return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    }
+
+    const result = await attachmentService.deleteAttachment(id, body.householdId);
+
+    if (!result.success) {
+      return reply.status(404).send({ success: false, reason: result.reason });
+    }
+
+    return reply.status(200).send({ success: true });
   });
 
   // ─────────────────────────────────────────────────────────────────────────

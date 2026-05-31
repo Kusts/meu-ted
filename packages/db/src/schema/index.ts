@@ -362,6 +362,8 @@ export const attachments = pgTable('attachments', {
   entityId: uuid('entity_id').notNull(),
   filePath: varchar('file_path', { length: 1000 }).notNull(),
   mimeType: varchar('mime_type', { length: 100 }).notNull(),
+  fileSizeBytes: integer('file_size_bytes'),
+  originalName: varchar('original_name', { length: 500 }),
   uploadedByUserId: uuid('uploaded_by_user_id').references(() => users.id),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
