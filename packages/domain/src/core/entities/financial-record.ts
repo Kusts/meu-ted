@@ -7,7 +7,7 @@ import { z } from 'zod';
 export const RecordType = z.enum(['income', 'expense', 'transfer', 'interest', 'adjustment']);
 export type RecordType = z.infer<typeof RecordType>;
 
-export const RecordSource = z.enum(['whatsapp', 'dashboard', 'cron', 'agent']);
+export const RecordSource = z.enum(['whatsapp', 'dashboard', 'cron', 'agent', 'reimbursement']);
 export type RecordSource = z.infer<typeof RecordSource>;
 
 export const RecordStatus = z.enum(['posted', 'scheduled', 'paid', 'overdue', 'cancelled', 'review']);
@@ -36,7 +36,7 @@ export const FinancialRecord = z.object({
   relatedRecordId: z.string().uuid().nullable(),
   merchantId: z.string().uuid().nullable(),
   confirmedAt: z.string().datetime().nullable(),
-  metadataJson: z.record(z.unknown()).nullable(),
+  metadataJson: z.union([z.record(z.unknown()), z.string()]).nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -64,7 +64,7 @@ export const RecordCreateInput = z.object({
   installmentGroupId: z.string().uuid().nullable().optional(),
   relatedRecordId: z.string().uuid().nullable().optional(),
   merchantId: z.string().uuid().nullable().optional(),
-  metadataJson: z.record(z.unknown()).nullable().optional(),
+  metadataJson: z.union([z.record(z.unknown()), z.string()]).nullable().optional(),
 });
 export type RecordCreateInput = z.infer<typeof RecordCreateInput>;
 
@@ -77,5 +77,6 @@ export const RecordUpdate = z.object({
   categoryId: z.string().uuid().nullable().optional(),
   status: RecordStatus.optional(),
   confirmedAt: z.string().datetime().nullable().optional(),
+  metadataJson: z.union([z.record(z.unknown()), z.string()]).nullable().optional(),
 });
 export type RecordUpdate = z.infer<typeof RecordUpdate>;

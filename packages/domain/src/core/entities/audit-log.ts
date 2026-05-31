@@ -22,7 +22,7 @@ export const AuditLog = z.object({
   entityId: z.string().uuid(),
   beforeJson: z.record(z.unknown()).nullable(),
   afterJson: z.record(z.unknown()).nullable(),
-  source: z.enum(['whatsapp', 'dashboard', 'cron', 'agent']),
+  source: z.enum(['whatsapp', 'dashboard', 'cron', 'agent', 'reimbursement']),
   createdAt: z.string().datetime(),
 });
 export type AuditLog = z.infer<typeof AuditLog>;
@@ -36,6 +36,6 @@ export const AuditLogCreateInput = z.object({
   entityId: z.string().uuid(),
   beforeJson: z.record(z.unknown()).nullable().optional(),
   afterJson: z.record(z.unknown()).nullable().optional(),
-  source: z.enum(['whatsapp', 'dashboard', 'cron', 'agent']),
+  source: z.enum(['whatsapp', 'dashboard', 'cron', 'agent', 'reimbursement']),
 });
 export type AuditLogCreateInput = z.infer<typeof AuditLogCreateInput>;

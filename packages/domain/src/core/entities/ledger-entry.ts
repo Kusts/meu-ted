@@ -7,7 +7,7 @@ import { z } from 'zod';
 export const LedgerDirection = z.enum(['debit', 'credit']);
 export type LedgerDirection = z.infer<typeof LedgerDirection>;
 
-export const LedgerEntryType = z.enum(['cash', 'card_charge', 'invoice_payment', 'transfer', 'interest', 'adjustment', 'recurrence']);
+export const LedgerEntryType = z.enum(['cash', 'card_charge', 'invoice_payment', 'transfer', 'interest', 'adjustment', 'recurrence', 'reimbursement']);
 export type LedgerEntryType = z.infer<typeof LedgerEntryType>;
 
 export const LedgerEntry = z.object({

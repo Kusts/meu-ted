@@ -13,6 +13,7 @@ import {
   BudgetService,
   ReportService,
   AttachmentService,
+  ReimbursementService,
 } from '@pi-financeiro/domain';
 import type { Account, AccountType, AccountScope, CategoryKind } from '@pi-financeiro/domain';
 import type { CreditCard } from '@pi-financeiro/domain';
@@ -130,6 +131,14 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   const attachmentService = new AttachmentService({
     attachmentRepository: deps.attachmentRepository,
     auditLogRepository: auditLogRepository,
+  });
+
+  // Reimbursement Service
+  const reimbursementService = new ReimbursementService({
+    reimbursementRepository: deps.reimbursementRepository,
+    recordRepository: financialRecordRepository,
+    ledgerRepository,
+    auditRepository: auditLogRepository,
   });
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1271,6 +1280,72 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     }
 
     return reply.status(200).send({ success: true });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Reimbursements (REQ-029)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  app.post('/reimbursements', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as { householdId?: string; originalRecordId?: string; amountCents?: number; description?: string };
+
+    if (!body.householdId) return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    if (!body.originalRecordId) return reply.status(400).send({ success: false, reason: 'originalRecordId é obrigatório' });
+    if (!body.amountCents || body.amountCents <= 0) return reply.status(400).send({ success: false, reason: 'amountCents deve ser positivo' });
+
+    const result = await reimbursementService.createReimbursement({
+      householdId: body.householdId,
+      originalRecordId: body.originalRecordId,
+      amountCents: body.amountCents,
+      description: body.description,
+    });
+
+    if (!result.success) return reply.status(422).send({ success: false, reason: result.reason });
+    return reply.status(201).send({ success: true, data: result.reimbursement });
+  });
+
+  app.get('/reimbursements', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId } = request.query as { householdId?: string };
+    if (!householdId) return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+
+    const reimbursements = await reimbursementService.listByHousehold(householdId);
+    return reply.status(200).send({ success: true, data: reimbursements });
+  });
+
+  app.post('/reimbursements/:id/complete', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { householdId?: string; accountId?: string; date?: string };
+
+    if (!body.householdId) return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    if (!body.accountId) return reply.status(400).send({ success: false, reason: 'accountId é obrigatório' });
+    if (!body.date) return reply.status(400).send({ success: false, reason: 'date é obrigatório' });
+
+    const result = await reimbursementService.completeReimbursement({
+      householdId: body.householdId,
+      reimbursementId: id,
+      accountId: body.accountId,
+      date: body.date,
+    });
+
+    if (!result.success) return reply.status(422).send({ success: false, reason: result.reason });
+    return reply.status(200).send({ success: true, data: { reimbursement: result.reimbursement, record: result.record } });
+  });
+
+  app.post('/records/:id/split', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { householdId?: string; splits?: Array<{ userId: string; amountCents: number }> };
+
+    if (!body.householdId) return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+    if (!body.splits || body.splits.length === 0) return reply.status(400).send({ success: false, reason: 'splits é obrigatório' });
+
+    const result = await reimbursementService.splitExpense({
+      householdId: body.householdId,
+      recordId: id,
+      splits: body.splits,
+    });
+
+    if (!result.success) return reply.status(422).send({ success: false, reason: result.reason });
+    return reply.status(200).send({ success: true, data: result.record });
   });
 
   // ─────────────────────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ import type {
   ILoanInstallmentRepository,
   IBudgetRepository,
   IAttachmentRepository,
+  IReimbursementRepository,
 } from '@pi-financeiro/domain';
 import {
   InMemoryAccountRepository,
@@ -40,6 +41,7 @@ import {
   InMemoryLoanInstallmentRepository,
   InMemoryBudgetRepository,
   InMemoryAttachmentRepository,
+  InMemoryReimbursementRepository,
 } from '@pi-financeiro/domain';
 
 export interface ApiDependencies {
@@ -60,6 +62,7 @@ export interface ApiDependencies {
   loanInstallmentRepository: ILoanInstallmentRepository;
   budgetRepository: IBudgetRepository;
   attachmentRepository: IAttachmentRepository;
+  reimbursementRepository: IReimbursementRepository;
 }
 
 export type DepsMode = 'memory' | 'drizzle';
@@ -145,6 +148,7 @@ function createMemoryDependencies(): ApiDependencies {
     loanInstallmentRepository: new InMemoryLoanInstallmentRepository(),
     budgetRepository: new InMemoryBudgetRepository(),
     attachmentRepository: new InMemoryAttachmentRepository(),
+    reimbursementRepository: new InMemoryReimbursementRepository(),
   };
 }
 
