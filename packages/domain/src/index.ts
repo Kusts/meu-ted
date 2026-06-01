@@ -25,6 +25,7 @@ export * from './core/entities/loan.js';
 export * from './core/entities/budget.js';
 export * from './core/entities/attachment.js';
 export * from './core/entities/reimbursement.js';
+export * from './core/entities/backup.js';
 
 // Repository ports
 export * from './core/repositories/account-repository.js';
@@ -50,6 +51,7 @@ export * from './core/repositories/loan-installment-repository.js';
 export * from './core/repositories/budget-repository.js';
 export * from './core/repositories/attachment-repository.js';
 export * from './core/repositories/reimbursement-repository.js';
+export * from './core/repositories/backup-repository.js';
 
 // Services
 export * from './core/services/financial-record-service.js';
@@ -66,6 +68,7 @@ export * from './core/services/report-service.js';
 export * from './core/services/attachment-service.js';
 export * from './core/services/reimbursement-service.js';
 export * from './core/services/export-service.js';
+export * from './core/services/backup-service.js';
 
 // In-memory implementations (for tests)
 export { InMemoryAccountRepository } from './in-memory/account-repository.js';
@@ -91,6 +94,7 @@ export { InMemoryLoanInstallmentRepository } from './in-memory/loan-installment-
 export { InMemoryBudgetRepository } from './in-memory/budget-repository.js';
 export { InMemoryAttachmentRepository } from './in-memory/attachment-repository.js';
 export { InMemoryReimbursementRepository } from './in-memory/reimbursement-repository.js';
+export { InMemoryBackupRepository } from './in-memory/backup-repository.js';
 
 // Legacy exports (for backward compatibility with existing tests)
 export { calculateAccountBalance } from './legacy.js';

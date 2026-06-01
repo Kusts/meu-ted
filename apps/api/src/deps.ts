@@ -22,6 +22,7 @@ import type {
   IBudgetRepository,
   IAttachmentRepository,
   IReimbursementRepository,
+  IBackupRepository,
 } from '@pi-financeiro/domain';
 import {
   InMemoryAccountRepository,
@@ -42,6 +43,7 @@ import {
   InMemoryBudgetRepository,
   InMemoryAttachmentRepository,
   InMemoryReimbursementRepository,
+  InMemoryBackupRepository,
 } from '@pi-financeiro/domain';
 
 export interface ApiDependencies {
@@ -63,6 +65,7 @@ export interface ApiDependencies {
   budgetRepository: IBudgetRepository;
   attachmentRepository: IAttachmentRepository;
   reimbursementRepository: IReimbursementRepository;
+  backupRepository: IBackupRepository;
 }
 
 export type DepsMode = 'memory' | 'drizzle';
@@ -149,6 +152,7 @@ function createMemoryDependencies(): ApiDependencies {
     budgetRepository: new InMemoryBudgetRepository(),
     attachmentRepository: new InMemoryAttachmentRepository(),
     reimbursementRepository: new InMemoryReimbursementRepository(),
+    backupRepository: new InMemoryBackupRepository(),
   };
 }
 

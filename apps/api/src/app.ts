@@ -14,6 +14,7 @@ import {
   ReportService,
   AttachmentService,
   ReimbursementService,
+  BackupService,
 } from '@pi-financeiro/domain';
 import type { Account, AccountType, AccountScope, CategoryKind } from '@pi-financeiro/domain';
 import type { CreditCard } from '@pi-financeiro/domain';
@@ -139,6 +140,16 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     recordRepository: financialRecordRepository,
     ledgerRepository,
     auditRepository: auditLogRepository,
+  });
+
+  // Backup Service (REQ-038)
+  const backupService = new BackupService(deps.backupRepository, {
+    execSync: (cmd: string) => { require('child_process').execSync(cmd); },
+    readFileSync: (path: string) => require('fs').readFileSync(path),
+    writeFileSync: (path: string, data: Buffer) => require('fs').writeFileSync(path, data),
+    mkdirSync: (path: string) => require('fs').mkdirSync(path, { recursive: true }),
+    existsSync: (path: string) => require('fs').existsSync(path),
+    unlinkSync: (path: string) => require('fs').unlinkSync(path),
   });
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1346,6 +1357,42 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
     if (!result.success) return reply.status(422).send({ success: false, reason: result.reason });
     return reply.status(200).send({ success: true, data: result.record });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Backup Routes (REQ-038)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  app.post('/backups/run', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as { householdId?: string; databaseUrl?: string; outputDir?: string };
+
+    if (!body.householdId) return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+
+    const result = await backupService.createBackup({ householdId: body.householdId, databaseUrl: body.databaseUrl, outputDir: body.outputDir });
+
+    if (!result.success) return reply.status(500).send({ success: false, reason: result.reason });
+    return reply.status(201).send(result.backup);
+  });
+
+  app.post('/backups/:id/verify-restore', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { householdId?: string; testDatabaseUrl?: string };
+
+    if (!body.householdId) return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+
+    const result = await backupService.verifyRestore({ backupId: id, householdId: body.householdId, testDatabaseUrl: body.testDatabaseUrl });
+
+    if (!result.success) return reply.status(500).send({ success: false, reason: result.reason });
+    return reply.status(200).send({ verified: result.verified, backup: result.backup });
+  });
+
+  app.get('/backups', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId } = request.query as { householdId?: string };
+
+    if (!householdId) return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+
+    const backups = await backupService.listByHousehold(householdId);
+    return reply.status(200).send(backups);
   });
 
   // ─────────────────────────────────────────────────────────────────────────
