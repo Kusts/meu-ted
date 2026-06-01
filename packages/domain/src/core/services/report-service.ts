@@ -5,6 +5,7 @@ import type { ICategoryRepository } from '../repositories/category-repository.js
 import type { IBudgetRepository } from '../repositories/budget-repository.js';
 import type { IInvoiceRepository } from '../repositories/invoice-repository.js';
 import type { IBillRepository } from '../repositories/bill-repository.js';
+import type { IRecurrenceRepository } from '../repositories/recurrence-repository.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Interface Types
@@ -60,6 +61,13 @@ export interface InvoiceDue {
   daysUntilDue: number;
 }
 
+export interface MonthlyProjection {
+  month: string; // 'YYYY-MM'
+  projectedIncomeCents: number;
+  projectedExpenseCents: number;
+  netCents: number;
+}
+
 interface ReportServiceDeps {
   recordRepository: IFinancialRecordRepository;
   ledgerRepository: ILedgerRepository;
@@ -68,6 +76,7 @@ interface ReportServiceDeps {
   budgetRepository: IBudgetRepository;
   invoiceRepository: IInvoiceRepository;
   billRepository: IBillRepository;
+  recurrenceRepository?: IRecurrenceRepository;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -275,5 +284,87 @@ export class ReportService {
     result.sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
     
     return result;
+  }
+
+  /**
+   * Generate 12-month projection based on recurrences + historical averages (REQ-020)
+   */
+  async twelveMonthProjection(householdId: string): Promise<MonthlyProjection[]> {
+    const results: MonthlyProjection[] = [];
+    const now = new Date();
+
+    // Fetch active recurrences
+    let recurrenceIncomeCents = 0;
+    let recurrenceExpenseCents = 0;
+
+    if (this.deps.recurrenceRepository) {
+      const recurrences = await this.deps.recurrenceRepository.findByHouseholdId(householdId);
+      const active = recurrences.filter(r => r.active);
+
+      for (const rec of active) {
+        // Add monthly equivalent based on period
+        const monthlyAmount = rec.amountCents * this.getPeriodMultiplier(rec.period);
+
+        if (rec.targetType === 'payable_bill') {
+          recurrenceExpenseCents += monthlyAmount;
+        } else if (rec.targetType === 'account_debit') {
+          // Could be income or expense depending on direction
+          recurrenceExpenseCents += monthlyAmount;
+        }
+      }
+    }
+
+    // Calculate historical average from last 3 months
+    const last3Months: { income: number; expense: number }[] = [];
+    for (let i = 1; i <= 3; i++) {
+      const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59);
+      const result = await this.deps.recordRepository.findByHouseholdIdFiltered(householdId, {
+        dateFrom: start.toISOString(),
+        dateTo: end.toISOString(),
+      });
+
+      const records = result.records;
+      const income = records
+        .filter(r => r.type === 'income')
+        .reduce((sum, r) => sum + r.amountCents, 0);
+      const expense = records
+        .filter(r => r.type === 'expense')
+        .reduce((sum, r) => sum + r.amountCents, 0);
+
+      last3Months.push({ income, expense });
+    }
+
+    const avgIncome = last3Months.reduce((s, m) => s + m.income, 0) / 3;
+    const avgExpense = last3Months.reduce((s, m) => s + m.expense, 0) / 3;
+
+    // Project next 12 months
+    for (let i = 1; i <= 12; i++) {
+      const date = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const month = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+      const projectedIncomeCents = Math.round(recurrenceIncomeCents + avgIncome * 0.5);
+      const projectedExpenseCents = Math.round(recurrenceExpenseCents + avgExpense * 0.5);
+
+      results.push({
+        month,
+        projectedIncomeCents,
+        projectedExpenseCents,
+        netCents: projectedIncomeCents - projectedExpenseCents,
+      });
+    }
+
+    return results;
+  }
+
+  private getPeriodMultiplier(period: string): number {
+    switch (period) {
+      case 'daily': return 30;
+      case 'weekly': return 4;
+      case 'biweekly': return 2;
+      case 'monthly': return 1;
+      case 'yearly': return 1 / 12;
+      default: return 1;
+    }
   }
 }

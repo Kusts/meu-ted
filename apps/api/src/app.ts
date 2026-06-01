@@ -126,6 +126,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     budgetRepository,
     invoiceRepository,
     billRepository,
+    recurrenceRepository,
   });
 
   // Attachment Service
@@ -1149,6 +1150,14 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
     const invoices = await reportService.invoicesDue(householdId);
     return reply.send({ success: true, data: invoices });
+  });
+
+  app.get('/reports/12-month-projection', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { householdId } = request.query as { householdId?: string };
+    if (!householdId) return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
+
+    const projection = await reportService.twelveMonthProjection(householdId);
+    return reply.send({ success: true, data: projection });
   });
 
   // ─────────────────────────────────────────────────────────────────────────

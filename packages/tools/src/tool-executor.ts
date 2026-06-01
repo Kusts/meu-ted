@@ -20,6 +20,16 @@ export interface ToolExecutorDeps {
   cardInvoiceService: CardInvoiceService;
   recurrenceService: RecurrenceService;
   categoryService: CategoryService;
+  reviewService?: {
+    approve: (entryId: string, userId: string) => Promise<{ success: boolean; reason?: string }>;
+    reject: (entryId: string, userId: string, cancelRecord?: boolean) => Promise<{ success: boolean; reason?: string }>;
+  };
+  reportService?: {
+    getCurrentMonthSummary: (householdId: string) => Promise<{ success: boolean; summary?: unknown; reason?: string }>;
+    getCategoryBreakdown: (householdId: string, dateFrom: string, dateTo: string, type: 'income' | 'expense') => Promise<{ success: boolean; breakdown?: unknown[]; reason?: string }>;
+    getAccountBalances: (householdId: string) => Promise<{ success: boolean; balances?: unknown[]; reason?: string }>;
+  };
+  sendWhatsAppMessage?: (groupJid: string, message: string) => Promise<{ success: boolean }>;
 }
 
 export class ToolExecutor {
@@ -363,31 +373,50 @@ export class ToolExecutor {
       },
     });
 
-    // generate_report
+    // generate_report - connects to ReportService
     this.registry.register('generate_report', {
       inputSchema: {
         type: 'object',
         properties: {
-          type: { type: 'string' },
+          reportType: { type: 'string', enum: ['monthly_summary', 'category_breakdown', 'account_balances'] },
           startDate: { type: 'string' },
           endDate: { type: 'string' },
         },
-        required: ['type'],
+        required: ['reportType'],
       },
-      handler: async (_ctx, input) => {
-        const { type, startDate, endDate } = input as {
-          type: string;
+      handler: async (ctx, input) => {
+        const { reportType, startDate, endDate } = input as {
+          reportType: string;
           startDate?: string;
           endDate?: string;
         };
 
-        return toolSuccess({
-          type,
-          startDate,
-          endDate,
-          // Actual implementation would generate report from ledger
-          summary: {},
-        });
+        if (!this.deps.reportService) {
+          return toolFailure('ReportService não disponível');
+        }
+
+        if (reportType === 'monthly_summary') {
+          const result = await this.deps.reportService.getCurrentMonthSummary(ctx.householdId);
+          if (!result.success) return toolFailure(result.reason || 'Erro ao gerar relatório');
+          return toolSuccess({ report: result.summary });
+        }
+
+        if (reportType === 'category_breakdown') {
+          const now = new Date();
+          const from = startDate ?? new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+          const to = endDate ?? now.toISOString();
+          const incResult = await this.deps.reportService.getCategoryBreakdown(ctx.householdId, from, to, 'income');
+          const expResult = await this.deps.reportService.getCategoryBreakdown(ctx.householdId, from, to, 'expense');
+          return toolSuccess({ income: incResult.breakdown ?? [], expense: expResult.breakdown ?? [] });
+        }
+
+        if (reportType === 'account_balances') {
+          const result = await this.deps.reportService.getAccountBalances(ctx.householdId);
+          if (!result.success) return toolFailure(result.reason || 'Erro ao gerar relatório');
+          return toolSuccess({ balances: result.balances });
+        }
+
+        return toolFailure(`Tipo de relatório desconhecido: ${reportType}`);
       },
     });
 
@@ -421,28 +450,98 @@ export class ToolExecutor {
       },
     });
 
-    // undo_last_action - requires full audit log implementation
-    this.registry.register('undo_last_action', {
+    // mark_reviewed - resolves review queue entry via ReviewService
+    this.registry.register('mark_reviewed', {
       inputSchema: {
         type: 'object',
-        properties: {},
+        properties: {
+          reviewEntryId: { type: 'string' },
+          action: { type: 'string', enum: ['approve', 'reject'] },
+        },
+        required: ['reviewEntryId', 'action'],
       },
-      handler: async () => {
-        return toolFailure('undo_last_action requer funcionalidade de auditoria completa');
+      handler: async (ctx, input) => {
+        const { reviewEntryId, action } = input as {
+          reviewEntryId: string;
+          action: 'approve' | 'reject';
+        };
+
+        if (!this.deps.reviewService) {
+          return toolFailure('ReviewService não disponível');
+        }
+
+        const targetUser = ctx.userId ?? '';
+        if (!targetUser) {
+          return toolFailure('userId não disponível no contexto');
+        }
+
+        const result = action === 'approve'
+          ? await this.deps.reviewService.approve(reviewEntryId, targetUser)
+          : await this.deps.reviewService.reject(reviewEntryId, targetUser);
+
+        if (!result.success) {
+          return toolFailure(result.reason || `Erro ao ${action} entrada`);
+        }
+
+        return toolSuccess({ entryId: reviewEntryId, action, resolved: true });
       },
     });
 
-    // send_whatsapp_message - requires Evolution API integration
+    // undo_last_action - uses financialRecordService.undoRecord
+    this.registry.register('undo_last_action', {
+      inputSchema: {
+        type: 'object',
+        properties: {
+          recordId: { type: 'string' },
+          householdId: { type: 'string' },
+        },
+      },
+      handler: async (ctx, input) => {
+        const { recordId, householdId } = input as { recordId?: string; householdId?: string };
+        const targetHousehold = householdId ?? ctx.householdId;
+
+        if (!recordId) {
+          return toolFailure('recordId é obrigatório');
+        }
+
+        const result = await this.deps.financialRecordService.undoRecord({ recordId, householdId: targetHousehold });
+
+        if (!result.success) {
+          return toolFailure(result.reason || 'Erro ao desfazer');
+        }
+
+        return toolSuccess({
+          originalRecordId: result.originalRecord?.id,
+          reversalRecordId: result.reversalRecord?.id,
+        });
+      },
+    });
+
+    // send_whatsapp_message - uses sendWhatsAppMessage callback (Evolution API)
     this.registry.register('send_whatsapp_message', {
       inputSchema: {
         type: 'object',
         properties: {
+          groupJid: { type: 'string' },
           message: { type: 'string' },
         },
         required: ['message'],
       },
-      handler: async () => {
-        return toolFailure('send_whatsapp_message requer integração Evolution API configurada');
+      handler: async (_ctx, input) => {
+        const { groupJid, message } = input as { groupJid?: string; message: string };
+
+        if (!this.deps.sendWhatsAppMessage) {
+          return toolFailure('send_whatsapp_message: Evolution API não configurada');
+        }
+
+        const target = groupJid ?? '';
+        const result = await this.deps.sendWhatsAppMessage(target, message);
+
+        if (!result.success) {
+          return toolFailure('Falha ao enviar mensagem WhatsApp');
+        }
+
+        return toolSuccess({ sent: true });
       },
     });
   }
