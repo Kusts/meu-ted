@@ -208,27 +208,27 @@ export class RecurrenceService {
     let currentDate = new Date(recurrence.firstDate);
     const now = new Date();
 
-    for (let i = 0; i < count; i++) {
-      const occurrenceDate = new Date(currentDate);
-      
-      // Skip past occurrences
-      if (occurrenceDate > now) {
-        occurrences.push({
-          id: crypto.randomUUID(),
-          householdId: recurrence.householdId,
-          recurrenceId: recurrence.id,
-          occurrenceDate: occurrenceDate.toISOString(),
-          amountCents: recurrence.amountCents,
-          description: recurrence.description,
-          recordId: null,
-          billId: null,
-          status: 'pending',
-          editedPolicy: 'none',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-      }
+    // Advance past occurrences so first generated is future
+    while (currentDate <= now) {
+      currentDate = this.addPeriod(recurrence.period, currentDate);
+    }
 
+    // Collect `count` future occurrences
+    for (let i = 0; i < count; i++) {
+      occurrences.push({
+        id: crypto.randomUUID(),
+        householdId: recurrence.householdId,
+        recurrenceId: recurrence.id,
+        occurrenceDate: currentDate.toISOString(),
+        amountCents: recurrence.amountCents,
+        description: recurrence.description,
+        recordId: null,
+        billId: null,
+        status: 'pending',
+        editedPolicy: 'none',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
       currentDate = this.addPeriod(recurrence.period, currentDate);
     }
 
@@ -273,20 +273,25 @@ export class RecurrenceService {
     const existingOccurrences = await this.deps.occurrenceRepository.findByRecurrenceId(recurrenceId);
     const now = new Date();
 
-    // Count how many future pending occurrences we need
-    const futurePending = existingOccurrences.filter(
-      o => new Date(o.occurrenceDate) > now && o.status === 'pending'
+    // Count existing future occurrences (pending or processed)
+    const futureCount = existingOccurrences.filter(
+      o => new Date(o.occurrenceDate) > now
     ).length;
 
     // Calculate horizon end date
     const horizonEnd = new Date();
     horizonEnd.setMonth(horizonEnd.getMonth() + recurrence.horizonMonths);
 
-    // Generate needed occurrences
+    // Start from last occurrence or now
     let currentDate = this.getLastOccurrenceDate(existingOccurrences);
+    // If last occurrence is already past horizon, start from now instead
+    if (currentDate >= horizonEnd) {
+      currentDate = new Date();
+    }
     let createdCount = 0;
 
-    while (futurePending + createdCount < 12 && currentDate < horizonEnd) {
+    // Keep generating until we have 12 future occurrences or hit horizon end
+    while (futureCount + createdCount < 12 && currentDate < horizonEnd) {
       currentDate = this.addPeriod(recurrence.period, currentDate);
 
       // Check if already exists
