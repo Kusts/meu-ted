@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   postgres:
     image: postgres:17-alpine
@@ -9,10 +7,8 @@ services:
       POSTGRES_PASSWORD: pi_financeiro_dev_secret
       POSTGRES_DB: pi_financeiro
       PGDATA: /var/lib/postgresql/data/pgdata
-      # DATABASE_URL for pg-boss (cron jobs) - constructed from other vars
-      DATABASE_URL: postgresql://postgres:pi_financeiro_dev_secret@postgres:5433/pi_financeiro
     ports:
-      - "5433:5432"  # Use 5433 since 5432 is taken
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -21,32 +17,38 @@ services:
       timeout: 5s
       retries: 5
 
-  # Future: Cron worker container for pg-boss jobs
-  # Uncomment when ready to deploy cron workers separately
-  # cron-worker:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.jobs
-  #   container_name: pi-financeiro-cron
-  #   environment:
-  #     - DATABASE_URL=postgresql://postgres:pi_financeiro_dev_secret@postgres:5433/pi_financeiro
-  #     - NODE_ENV=production
-  #   depends_on:
-  #     - postgres
+  # Cron worker container for pg-boss jobs
+  cron-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.cron
+    container_name: pi-financeiro-cron
+    environment:
+      - DATABASE_URL=postgresql://postgres:pi_financeiro_dev_secret@postgres:5432/pi_financeiro
+      - NODE_ENV=production
+    depends_on:
+      postgres:
+        condition: service_healthy
 
-  # Evolution API for WhatsApp (placeholder for future)
-  # evolution-api:
-  #   image: atendai/evolution-api:latest
-  #   container_name: pi-financeiro-whatsapp
-  #   environment:
-  #     - SERVER_URL=${SERVER_URL:-http://localhost:8080}
-  #     - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY}
-  #     - DATABASE_PROVIDER=postgresql
-  #     - DATABASE_CONNECTION_URI=postgresql://pi_financeiro:pi_financeiro_dev_secret@postgres:5432/pi_financeiro
-  #   ports:
-  #     - "8080:8080"
-  #   depends_on:
-  #     - postgres
+  # Evolution API for WhatsApp integration
+  # Uses its own database to avoid schema conflicts with Drizzle
+  evolution-api:
+    image: atendai/evolution-api:latest
+    container_name: pi-financeiro-whatsapp
+    environment:
+      - SERVER_URL=${SERVER_URL:-http://localhost:8080}
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-}
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://postgres:pi_financeiro_dev_secret@postgres:5432/pi_financeiro_evolution
+      - WEBHOOK_EVENTS=true
+      - WEBHOOK_URL=${WEBHOOK_CALLBACK_URL:-}
+      - DEL_INSTANCE=false
+      - LOG_SESSION=false
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:

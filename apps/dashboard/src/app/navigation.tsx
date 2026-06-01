@@ -6,6 +6,7 @@
 
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
+import { useAuth } from '@/lib/auth-context';
 
 const navItems = [
   { href: '/', icon: '📊', label: 'Dashboard' },
@@ -25,6 +26,7 @@ const navItems = [
 
 export function Navigation() {
   const pathname = usePathname();
+  const { user, isLoggedIn, logout } = useAuth();
 
   return (
     <aside className="sidebar">
@@ -57,12 +59,19 @@ export function Navigation() {
 
       <div className="sidebar-footer">
         <div className="sidebar-user">
-          <div className="sidebar-user-avatar">U</div>
+          <div className="sidebar-user-avatar">{user?.name?.charAt(0)?.toUpperCase() || 'U'}</div>
           <div className="sidebar-user-info">
-            <div className="sidebar-user-name">Usuário</div>
-            <div className="sidebar-user-phone">Logado</div>
+            <div className="sidebar-user-name">{user?.name || 'Usuário'}</div>
+            <div className="sidebar-user-phone">{isLoggedIn ? 'Logado' : 'Sair'}</div>
           </div>
-          <button className="btn-logout" title="Sair">
+          <button
+            className="btn-logout"
+            title="Sair"
+            onClick={() => {
+              logout();
+              window.location.href = '/';
+            }}
+          >
             🚪
           </button>
         </div>

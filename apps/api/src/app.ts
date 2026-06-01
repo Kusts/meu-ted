@@ -19,6 +19,8 @@ import {
 import type { Account, AccountType, AccountScope, CategoryKind } from '@pi-financeiro/domain';
 import type { CreditCard } from '@pi-financeiro/domain';
 import { createApiDependencies, type ApiDependencies } from './deps.js';
+import { authMiddlewarePlugin } from './middleware/auth.js';
+import { AuthService } from '@pi-financeiro/domain';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Options
@@ -41,6 +43,9 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
   // Use provided dependencies or create in-memory ones
   const deps = options.deps ?? createApiDependencies({ mode: 'memory' });
+  
+  // Store deps for access by auth routes
+  (app as any).deps = deps;
 
   const {
     accountRepository,
@@ -152,6 +157,43 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     existsSync: (path: string) => require('fs').existsSync(path),
     unlinkSync: (path: string) => require('fs').unlinkSync(path),
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Auth Service (for token validation middleware)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Initialize code store for test access (used by tests to get login codes)
+  (app as any).codeStore = new Map<string, string>();
+
+  // Create sendLoginCode that stores code for test access
+  const sendLoginCode = async (phone: string, code: string) => {
+    // Store code for test access (used by tests to get the code)
+    ((app as any).codeStore as Map<string, string>).set(phone, code);
+    console.log(`[FAKE SMS] Code for ${phone}: ${code}`);
+  };
+
+  const authService = new AuthService({
+    sessionRepository: deps.sessionRepository,
+    loginCodeRepository: deps.loginCodeRepository,
+    userRepository: deps.userRepository,
+    householdRepository: deps.householdRepository,
+    sendLoginCode,
+  });
+
+  // Register auth middleware (validates Bearer token on protected routes)
+  app.register(authMiddlewarePlugin, {
+    authService,
+    publicPaths: [
+      '/health',
+      '/auth/seed',
+      '/auth/request-code',
+      '/auth/verify-code',
+      '/webhooks/evolution',
+    ],
+  });
+
+  // Make authService accessible (used by auth routes to create sessions)
+  (app as any).authService = authService;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Source Message Store for WhatsApp webhook (in-memory)

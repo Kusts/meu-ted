@@ -1,5 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth Middleware - Protects routes requiring authentication
+// Validates Bearer token and decorates request with user info
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
@@ -23,12 +24,31 @@ export interface AuthMiddlewareOptions {
 /**
  * Auth middleware plugin
  * Validates Bearer token and decorates request with user info
+ * 
+ * Usage:
+ *   app.register(authMiddlewarePlugin, { authService, publicPaths });
+ * 
+ * Public paths (by default):
+ *   - GET /health
+ *   - POST /auth/seed
+ *   - POST /auth/request-code
+ *   - POST /auth/verify-code
+ *   - POST /webhooks/evolution
  */
-export async function authMiddleware(
+export async function authMiddlewarePlugin(
   app: FastifyInstance,
   options: AuthMiddlewareOptions
 ): Promise<void> {
-  const { authService, publicPaths = ['/health', '/auth/seed', '/auth/request-code', '/auth/verify-code'] } = options;
+  const {
+    authService,
+    publicPaths = [
+      '/health',
+      '/auth/seed',
+      '/auth/request-code',
+      '/auth/verify-code',
+      '/webhooks/evolution',
+    ]
+  } = options;
 
   // Add hook to validate token on every request
   app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -41,9 +61,9 @@ export async function authMiddleware(
     // Get Authorization header
     const authHeader = request.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return reply.status(401).send({ 
-        success: false, 
-        reason: 'Token de autenticação necessário' 
+      return reply.status(401).send({
+        success: false,
+        reason: 'Token de autenticação necessário'
       });
     }
 
@@ -52,9 +72,9 @@ export async function authMiddleware(
     // Validate token
     const sessionData = await authService.validateToken(token);
     if (!sessionData) {
-      return reply.status(401).send({ 
-        success: false, 
-        reason: 'Token inválido ou revogado' 
+      return reply.status(401).send({
+        success: false,
+        reason: 'Token inválido ou revogado'
       });
     }
 
@@ -65,11 +85,4 @@ export async function authMiddleware(
       sessionId: sessionData.sessionId,
     };
   });
-}
-
-/**
- * Create auth middleware plugin
- */
-export function createAuthMiddleware(options: AuthMiddlewareOptions) {
-  return authMiddleware.bind(null, null as unknown as FastifyInstance, options);
 }

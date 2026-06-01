@@ -2,15 +2,15 @@
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Attachments Page (REQ-027/040)
+// Uses useAuth from auth-context
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState } from 'react';
-import { createApiClient } from '@/lib/api-client';
+import { useState, useEffect } from 'react';
+import { useAuth } from '@/lib/auth-context';
 import type { Attachment } from '@/lib/api-client';
 
-const client = createApiClient();
-
 export default function AttachmentsPage() {
+  const { householdId, apiClient } = useAuth();
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -18,10 +18,10 @@ export default function AttachmentsPage() {
   const [entityId, setEntityId] = useState('');
 
   const fetchAttachments = async () => {
-    if (!entityId) return;
+    if (!entityId || !householdId) return;
     setLoading(true);
     try {
-      const res = await client.getAttachments('household-1', entityType, entityId);
+      const res = await apiClient.getAttachments(householdId, entityType, entityId);
       if (res.success && res.data) setAttachments(res.data);
     } catch (e) {
       console.error('Failed to fetch attachments:', e);
@@ -31,14 +31,25 @@ export default function AttachmentsPage() {
   };
 
   const deleteAttachment = async (id: string) => {
-    if (!confirm('Excluir este anexo?')) return;
+    if (!confirm('Excluir este anexo?') || !householdId) return;
     try {
-      await client.deleteAttachment(id, 'household-1');
+      await apiClient.deleteAttachment(id, householdId);
       fetchAttachments();
     } catch (e) {
       console.error('Failed to delete attachment:', e);
     }
   };
+
+  // Show login prompt if not authenticated
+  if (!householdId) {
+    return (
+      <div className="page">
+        <div className="card">
+          <p className="text-muted">Faça login para ver os anexos.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page">

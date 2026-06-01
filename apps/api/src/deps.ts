@@ -5,6 +5,7 @@
 
 import type {
   IAccountRepository,
+  ICategorizationRuleRepository,
   ICategoryRepository,
   IFinancialRecordRepository,
   ILedgerRepository,
@@ -23,6 +24,10 @@ import type {
   IAttachmentRepository,
   IReimbursementRepository,
   IBackupRepository,
+  ISessionRepository,
+  ILoginCodeRepository,
+  IUserRepository,
+  IHouseholdRepository,
 } from '@pi-financeiro/domain';
 import {
   InMemoryAccountRepository,
@@ -44,6 +49,10 @@ import {
   InMemoryAttachmentRepository,
   InMemoryReimbursementRepository,
   InMemoryBackupRepository,
+  InMemorySessionRepository,
+  InMemoryLoginCodeRepository,
+  InMemoryUserRepository,
+  InMemoryHouseholdRepository,
 } from '@pi-financeiro/domain';
 
 export interface ApiDependencies {
@@ -66,6 +75,13 @@ export interface ApiDependencies {
   attachmentRepository: IAttachmentRepository;
   reimbursementRepository: IReimbursementRepository;
   backupRepository: IBackupRepository;
+  // Auth repositories
+  sessionRepository: ISessionRepository;
+  loginCodeRepository: ILoginCodeRepository;
+  userRepository: IUserRepository;
+  householdRepository: IHouseholdRepository;
+  // Auth categorization rule repository (optional)
+  categorizationRuleRepository?: ICategorizationRuleRepository;
 }
 
 export type DepsMode = 'memory' | 'drizzle';
@@ -153,6 +169,11 @@ function createMemoryDependencies(): ApiDependencies {
     attachmentRepository: new InMemoryAttachmentRepository(),
     reimbursementRepository: new InMemoryReimbursementRepository(),
     backupRepository: new InMemoryBackupRepository(),
+    // Auth repositories
+    sessionRepository: new InMemorySessionRepository(),
+    loginCodeRepository: new InMemoryLoginCodeRepository(),
+    userRepository: new InMemoryUserRepository(),
+    householdRepository: new InMemoryHouseholdRepository(),
   };
 }
 

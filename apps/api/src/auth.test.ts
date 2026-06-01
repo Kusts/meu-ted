@@ -159,24 +159,8 @@ describe('Auth Routes', () => {
     expect(response.statusCode).toBe(401);
   });
 
-  test('protected route behavior without auth middleware', async () => {
-    // Note: Auth middleware not yet integrated into createApp
-    // This test documents expected behavior after middleware is added
-    const response = await app.inject({
-      method: 'GET',
-      url: '/accounts',
-      query: { householdId: 'test' },
-    });
-
-    // Without middleware, this would return 400 (missing auth header)
-    // With middleware, this would return 401
-    // Currently returns 200 because no middleware is applied
-    expect([200, 400, 401]).toContain(response.statusCode);
-  });
-
-  test('protected route works with auth flow - seed, login, access', async () => {
-    // Note: Auth middleware not yet integrated, this tests the auth flow
-    // Seed first
+  test('protected route works with valid token - full auth flow', async () => {
+    // Seed first (public endpoint)
     await app.inject({
       method: 'POST',
       url: '/auth/seed',
@@ -187,7 +171,7 @@ describe('Auth Routes', () => {
       },
     });
 
-    // Request code
+    // Request code (public endpoint)
     await app.inject({
       method: 'POST',
       url: '/auth/request-code',
@@ -198,7 +182,7 @@ describe('Auth Routes', () => {
     const codeStore = (app as any).codeStore;
     const code = codeStore?.get('5511999999999');
 
-    // Verify
+    // Verify - get token (public endpoint)
     const verifyResponse = await app.inject({
       method: 'POST',
       url: '/auth/verify-code',
@@ -210,7 +194,19 @@ describe('Auth Routes', () => {
     expect(body.success).toBe(true);
     expect(body.token).toBeTruthy();
 
-    // Note: Accessing /accounts with token would require auth middleware
-    // which is not yet integrated
+    const token = body.token;
+
+    // Now access protected endpoint with token
+    const protectedResponse = await app.inject({
+      method: 'GET',
+      url: '/accounts',
+      query: { householdId: 'test' },
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    // Should work now (200 or 400 for missing account, but not 401)
+    expect(protectedResponse.statusCode).not.toBe(401);
   });
 });

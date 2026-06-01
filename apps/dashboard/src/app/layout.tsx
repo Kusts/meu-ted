@@ -2,16 +2,8 @@
 // Dashboard Layout - Next.js App Router
 // ─────────────────────────────────────────────────────────────────────────────
 
-'use client';
-
-import type { Metadata } from 'next';
 import './globals.css';
-import { Navigation } from './navigation';
-
-export const metadata: Metadata = {
-  title: 'TED Finance - Dashboard',
-  description: 'Assistente financeiro pessoal',
-};
+import { ClientLayout } from './client-layout';
 
 export default function RootLayout({
   children,
@@ -21,12 +13,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body>
-        <div className="app-layout">
-          <Navigation />
-          <main className="app-main">
-            {children}
-          </main>
-        </div>
+        <ClientLayout>{children}</ClientLayout>
       </body>
     </html>
   );

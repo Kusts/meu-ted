@@ -3,16 +3,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Login Form Component
 // Shows when user is not logged in
+// Uses useAuth from auth-context
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState } from 'react';
+import { useAuth } from '@/lib/auth-context';
 
-interface LoginFormProps {
-  apiUrl: string;
-  onSuccess: (token: string, user: { id: string; name: string; phone: string }) => void;
-}
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
-export function LoginForm({ apiUrl, onSuccess }: LoginFormProps) {
+export function LoginForm() {
+  const { login } = useAuth();
   const [step, setStep] = useState<'phone' | 'code'>('phone');
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
@@ -25,7 +25,7 @@ export function LoginForm({ apiUrl, onSuccess }: LoginFormProps) {
     setLoading(true);
 
     try {
-      const response = await fetch(`${apiUrl}/auth/request-code`, {
+      const response = await fetch(`${API_URL}/auth/request-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone }),
@@ -52,7 +52,7 @@ export function LoginForm({ apiUrl, onSuccess }: LoginFormProps) {
     setLoading(true);
 
     try {
-      const response = await fetch(`${apiUrl}/auth/verify-code`, {
+      const response = await fetch(`${API_URL}/auth/verify-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, code }),
@@ -65,11 +65,16 @@ export function LoginForm({ apiUrl, onSuccess }: LoginFormProps) {
         return;
       }
 
-      // Save token to localStorage
-      localStorage.setItem('auth_token', data.token);
-      localStorage.setItem('auth_user', JSON.stringify(data.user));
+      // Save token to localStorage via auth context login
+      login(data.token, {
+        id: data.user.id,
+        name: data.user.name,
+        phone: data.user.phone,
+        householdId: data.user.householdId || data.user.id, // fallback if not returned
+      });
 
-      onSuccess(data.token, data.user);
+      // Reload to show authenticated state
+      window.location.reload();
     } catch {
       setError('Erro de conexão');
     } finally {
@@ -233,38 +238,4 @@ export function LoginForm({ apiUrl, onSuccess }: LoginFormProps) {
       `}</style>
     </div>
   );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Auth Hook
-// Manages login state
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function useAuth() {
-  function getToken(): string | null {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem('auth_token');
-  }
-
-  function getUser(): { id: string; name: string; phone: string } | null {
-    if (typeof window === 'undefined') return null;
-    const userStr = localStorage.getItem('auth_user');
-    if (!userStr) return null;
-    try {
-      return JSON.parse(userStr);
-    } catch {
-      return null;
-    }
-  }
-
-  function logout(): void {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('auth_user');
-  }
-
-  function isLoggedIn(): boolean {
-    return !!getToken();
-  }
-
-  return { getToken, getUser, logout, isLoggedIn };
 }

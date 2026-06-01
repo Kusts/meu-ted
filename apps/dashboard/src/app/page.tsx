@@ -1,17 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Dashboard Page - TED Finance Cockpit
+// Uses useAuth from auth-context
 // ─────────────────────────────────────────────────────────────────────────────
 
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createApiClient } from '../lib/api-client';
 import { formatCentsToBRL, formatDate, formatAccountType, formatRecordType, formatSource } from '../lib/formatters';
-import { LoginForm, useAuth } from '../components/login-form';
-import type { Account, Category, FinancialRecord } from '../lib/api-client';
-
-const DEFAULT_HOUSEHOLD = 'demo-household';
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+import { LoginForm } from '../components/login-form';
+import { useAuth } from '../lib/auth-context';
+import type { Account, FinancialRecord } from '../lib/api-client';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Header Component
@@ -96,11 +94,13 @@ function SummaryCards({ data, loading }: { data: SummaryData; loading: boolean }
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface AccountFormProps {
+  householdId: string;
+  apiClient: ReturnType<typeof useAuth>['apiClient'];
   onSuccess: (account: Account) => void;
   onError: (error: string) => void;
 }
 
-function AccountForm({ onSuccess, onError }: AccountFormProps) {
+function AccountForm({ householdId, apiClient, onSuccess, onError }: AccountFormProps) {
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     name: '',
@@ -114,11 +114,10 @@ function AccountForm({ onSuccess, onError }: AccountFormProps) {
     setLoading(true);
 
     try {
-      const client = createApiClient(API_URL);
       const balanceCents = Math.round(parseFloat(form.initialBalanceCents || '0') * 100);
       
-      const result = await client.createAccount({
-        householdId: DEFAULT_HOUSEHOLD,
+      const result = await apiClient.createAccount({
+        householdId,
         name: form.name,
         type: form.type,
         scope: form.scope,
@@ -203,12 +202,14 @@ function AccountForm({ onSuccess, onError }: AccountFormProps) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface RecordFormProps {
+  householdId: string;
   accounts: Account[];
+  apiClient: ReturnType<typeof useAuth>['apiClient'];
   onSuccess: () => void;
   onError: (error: string) => void;
 }
 
-function RecordForm({ accounts, onSuccess, onError }: RecordFormProps) {
+function RecordForm({ householdId, accounts, apiClient, onSuccess, onError }: RecordFormProps) {
   const [loading, setLoading] = useState(false);
   const [type, setType] = useState<'expense' | 'income' | 'transfer'>('expense');
   const [form, setForm] = useState({
@@ -224,11 +225,10 @@ function RecordForm({ accounts, onSuccess, onError }: RecordFormProps) {
     setLoading(true);
 
     try {
-      const client = createApiClient(API_URL);
       const amountCents = Math.round(parseFloat(form.amountCents || '0') * 100);
       
       const input = {
-        householdId: DEFAULT_HOUSEHOLD,
+        householdId,
         accountId: form.accountId,
         amountCents,
         description: form.description,
@@ -238,11 +238,11 @@ function RecordForm({ accounts, onSuccess, onError }: RecordFormProps) {
 
       let result;
       if (type === 'expense') {
-        result = await client.createExpense(input);
+        result = await apiClient.createExpense(input);
       } else if (type === 'income') {
-        result = await client.createIncome(input);
+        result = await apiClient.createIncome(input);
       } else {
-        result = await client.createTransfer({
+        result = await apiClient.createTransfer({
           ...input,
           fromAccountId: form.accountId,
           toAccountId: form.toAccountId,
@@ -481,33 +481,39 @@ function Message({ type, children, onClose }: { type: 'success' | 'error' | 'war
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const { isLoggedIn, householdId, apiClient, logout, user } = useAuth();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [records, setRecords] = useState<FinancialRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null);
   const [apiConnected, setApiConnected] = useState(false);
 
-  // Load initial data
+  // Load initial data when householdId is available
   useEffect(() => {
+    if (!householdId) return;
+
     async function loadData() {
+      if (!householdId) return;
+      
       try {
-        const client = createApiClient(API_URL);
-        
         // Check health
-        const health = await client.health();
+        const health = await apiClient.health();
         if (!health.ok) {
           throw new Error('API não está respondendo');
         }
         setApiConnected(true);
 
         // Load accounts
-        const accountsResult = await client.listAccounts(DEFAULT_HOUSEHOLD);
+        const accountsResult = await apiClient.listAccounts(householdId);
         if (accountsResult.success && accountsResult.data) {
           setAccounts(accountsResult.data);
         }
 
-        // Records would need a list endpoint - for now empty
-        setRecords([]);
+        // Load records
+        const recordsResult = await apiClient.getRecords({ householdId, limit: 50 });
+        if (recordsResult.success && recordsResult.data) {
+          setRecords(recordsResult.data.records);
+        }
       } catch (err) {
         console.error('Failed to load data:', err);
         setApiConnected(false);
@@ -517,43 +523,17 @@ export default function DashboardPage() {
     }
 
     loadData();
-  }, []);
+  }, [householdId, apiClient]);
 
   const showMessage = (type: 'success' | 'error' | 'warning', text: string) => {
     setMessage({ type, text });
     setTimeout(() => setMessage(null), 5000);
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Auth Check
-  // ─────────────────────────────────────────────────────────────────────────
-
-  const { isLoggedIn, logout, getUser } = useAuth();
-  const [authChecked, setAuthChecked] = useState(false);
-
-  useEffect(() => {
-    setAuthChecked(true);
-  }, []);
-
   const handleLogout = () => {
     logout();
     window.location.reload();
   };
-
-  const user = getUser();
-
-  // Show login if not authenticated (skip for demo data when no API)
-  if (authChecked && !isLoggedIn() && apiConnected) {
-    return (
-      <LoginForm
-        apiUrl={API_URL}
-        onSuccess={() => {
-          // Force refresh to reload data with new auth
-          window.location.reload();
-        }}
-      />
-    );
-  }
 
   const handleAccountCreated = (account: Account) => {
     setAccounts([...accounts, account]);
@@ -562,24 +542,43 @@ export default function DashboardPage() {
 
   const handleRecordSuccess = () => {
     showMessage('success', 'Transação registrada com sucesso!');
-    // Reload accounts to get updated balances
-    async function reload() {
-      const client = createApiClient(API_URL);
-      const result = await client.listAccounts(DEFAULT_HOUSEHOLD);
+    // Reload accounts and records
+    if (!householdId) return;
+    
+    apiClient.listAccounts(householdId).then((result) => {
       if (result.success && result.data) {
         setAccounts(result.data);
       }
-    }
-    reload();
+    });
+    apiClient.getRecords({ householdId, limit: 50 }).then((result) => {
+      if (result.success && result.data) {
+        setRecords(result.data.records);
+      }
+    });
   };
 
   // Calculate summary data
+  const currentMonth = new Date().toISOString().slice(0, 7);
   const summaryData: SummaryData = {
     totalBalance: accounts.reduce((sum, acc) => sum + (acc.initialBalanceCents || 0), 0),
-    monthExpenses: records.filter(r => r.type === 'expense' && r.date.startsWith(new Date().toISOString().slice(0, 7))).reduce((sum, r) => sum + r.amountCents, 0),
-    monthIncome: records.filter(r => r.type === 'income' && r.date.startsWith(new Date().toISOString().slice(0, 7))).reduce((sum, r) => sum + r.amountCents, 0),
-    pendingBills: 0, // Would come from bills endpoint
+    monthExpenses: records.filter(r => r.type === 'expense' && r.date.startsWith(currentMonth)).reduce((sum, r) => sum + r.amountCents, 0),
+    monthIncome: records.filter(r => r.type === 'income' && r.date.startsWith(currentMonth)).reduce((sum, r) => sum + r.amountCents, 0),
+    pendingBills: 0,
   };
+
+  // Show login if not authenticated
+  if (!isLoggedIn) {
+    return <LoginForm />;
+  }
+
+  // Show loading while checking auth
+  if (!householdId) {
+    return (
+      <div className="page">
+        <div className="loading">Carregando...</div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -599,7 +598,7 @@ export default function DashboardPage() {
 
         {!apiConnected && (
           <div className="alert alert-warning">
-            ⚠️ Não foi possível conectar à API. Verifique se o servidor está rodando em {API_URL}
+            ⚠️ Não foi possível conectar à API. Verifique se o servidor está rodando.
           </div>
         )}
 
@@ -608,13 +607,17 @@ export default function DashboardPage() {
         <div className="grid grid-2">
           <div className="section">
             <AccountForm
+              householdId={householdId}
+              apiClient={apiClient}
               onSuccess={handleAccountCreated}
               onError={(err) => showMessage('error', err)}
             />
           </div>
           <div className="section">
             <RecordForm
+              householdId={householdId}
               accounts={accounts}
+              apiClient={apiClient}
               onSuccess={handleRecordSuccess}
               onError={(err) => showMessage('error', err)}
             />

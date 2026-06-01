@@ -13,17 +13,12 @@ import {
 } from '@pi-financeiro/domain';
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
-  // In-memory stores for auth (in production would use Drizzle)
-  const sessionRepo = new InMemorySessionRepository();
-  const loginCodeRepo = new InMemoryLoginCodeRepository();
-  const userRepo = new InMemoryUserRepository();
-  const householdRepo = new InMemoryHouseholdRepository();
-
   // Code store for test access (used in tests)
   const codeStore = new Map<string, string>();
   (app as any).codeStore = codeStore;
 
   // Fake sender - in production would use Evolution API
+  // Uses callback to allow storing code in multiple places
   async function sendLoginCode(phone: string, code: string): Promise<void> {
     // Store code for test access
     codeStore.set(phone, code);
@@ -31,17 +26,38 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     console.log(`[FAKE SMS] Code for ${phone}: ${code}`);
   }
 
-  // Create auth service
-  const authService = new AuthService({
-    sessionRepository: sessionRepo,
-    loginCodeRepository: loginCodeRepo,
-    userRepository: userRepo,
-    householdRepository: householdRepo,
-    sendLoginCode,
-  });
-
-  // Make auth service accessible for middleware
-  (app as any).authService = authService;
+  // Check if deps is available (from createApp) and use shared auth service
+  const deps = (app as any).deps;
+  const existingAuthService = (app as any).authService;
+  
+  let sessionRepo: InstanceType<typeof InMemorySessionRepository>;
+  let loginCodeRepo: InstanceType<typeof InMemoryLoginCodeRepository>;
+  let userRepo: InstanceType<typeof InMemoryUserRepository>;
+  let householdRepo: InstanceType<typeof InMemoryHouseholdRepository>;
+  let authService: AuthService;
+  
+  if (deps?.sessionRepository && existingAuthService) {
+    // Use existing auth repos from deps (shared state with middleware)
+    sessionRepo = deps.sessionRepository;
+    loginCodeRepo = deps.loginCodeRepository;
+    userRepo = deps.userRepository;
+    householdRepo = deps.householdRepository;
+    authService = existingAuthService;
+  } else {
+    // Create standalone auth stores for tests
+    sessionRepo = new InMemorySessionRepository();
+    loginCodeRepo = new InMemoryLoginCodeRepository();
+    userRepo = new InMemoryUserRepository();
+    householdRepo = new InMemoryHouseholdRepository();
+    
+    authService = new AuthService({
+      sessionRepository: sessionRepo,
+      loginCodeRepository: loginCodeRepo,
+      userRepository: userRepo,
+      householdRepository: householdRepo,
+      sendLoginCode,
+    });
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // POST /auth/seed
@@ -154,7 +170,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(200).send({
       success: true,
       token: result.token,
-      user: user ? { id: user.id, name: user.name, phone: user.phone } : null,
+      user: user ? { id: user.id, name: user.name, phone: user.phone, householdId: user.householdId } : null,
     });
   });
 

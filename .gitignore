@@ -41,4 +41,4 @@ data/
 # Test artifacts
 *.lcov
 coverage/
-.nyc_output/
+.nyc_output/*.tsbuildinfo
