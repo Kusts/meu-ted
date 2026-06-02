@@ -47,6 +47,25 @@ export interface FinancialRecord {
   date: string;
 }
 
+export interface MonthSummary {
+  householdId: string;
+  month: string;
+  incomeCents: number;
+  expenseCents: number;
+  transferCents: number;
+  netCents: number;
+  recordCount: number;
+}
+
+export interface AccountBalance {
+  accountId: string;
+  accountName: string;
+  initialBalanceCents: number;
+  debitCents: number;
+  creditCents: number;
+  currentBalanceCents: number;
+}
+
 export interface CreateExpenseInput {
   householdId: string;
   accountId: string;
@@ -191,6 +210,20 @@ export class FinanceApiClient {
   }
 
   /**
+   * Get current month summary report
+   */
+  async getCurrentMonthSummary(householdId: string): Promise<ApiResponse<MonthSummary>> {
+    return this.request<MonthSummary>(`/reports/current-month?householdId=${encodeURIComponent(householdId)}`);
+  }
+
+  /**
+   * Get account balances report
+   */
+  async getAccountBalances(householdId: string): Promise<ApiResponse<AccountBalance[]>> {
+    return this.request<AccountBalance[]>(`/reports/account-balances?householdId=${encodeURIComponent(householdId)}`);
+  }
+
+  /**
    * Undo last record or specific record
    */
   async undoRecord(input: UndoRecordInput): Promise<ApiResponse<{ undone: boolean }>> {
@@ -312,6 +345,41 @@ export class FakeFinanceApiClient extends FinanceApiClient {
     };
     this.records.push(record);
     return { success: true, data: record };
+  }
+
+  async getCurrentMonthSummary(householdId: string): Promise<ApiResponse<MonthSummary>> {
+    this.log('getCurrentMonthSummary', householdId);
+    const records = this.records.filter(r => r.householdId === householdId);
+    const incomeCents = records.filter(r => r.type === 'income').reduce((sum, r) => sum + r.amountCents, 0);
+    const expenseCents = records.filter(r => r.type === 'expense').reduce((sum, r) => sum + r.amountCents, 0);
+    return {
+      success: true,
+      data: {
+        householdId,
+        month: new Date().toISOString().slice(0, 7),
+        incomeCents,
+        expenseCents,
+        transferCents: 0,
+        netCents: incomeCents - expenseCents,
+        recordCount: records.length,
+      },
+    };
+  }
+
+  async getAccountBalances(householdId: string): Promise<ApiResponse<AccountBalance[]>> {
+    this.log('getAccountBalances', householdId);
+    const accounts = this.accounts.filter(a => a.householdId === householdId);
+    return {
+      success: true,
+      data: accounts.map(account => ({
+        accountId: account.id,
+        accountName: account.name,
+        initialBalanceCents: account.initialBalanceCents,
+        debitCents: 0,
+        creditCents: 0,
+        currentBalanceCents: account.initialBalanceCents,
+      })),
+    };
   }
 
   async undoRecord(input: UndoRecordInput): Promise<ApiResponse<{ undone: boolean }>> {
