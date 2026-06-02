@@ -6,11 +6,12 @@ import { classifyMessage, generateClarificationPrompt, type MessageClassificatio
 const PI_RPC_DISABLED_REASON = 'Pi RPC desabilitado em modo desenvolvimento';
 const GENERAL_FALLBACK_MESSAGE = 'Oi! Sou o TED, seu assistente pessoal de finanças. Pode me mandar gastos, dúvidas, metas ou qualquer pergunta.';
 
-// Progress thresholds (ms)
-const PROGRESS_THRESHOLD_3S_MS = 3000;
-const PROGRESS_THRESHOLD_8S_MS = 8000;
-const PROGRESS_TEXT_3S = '🔎 Estou consultando seus dados...';
-const PROGRESS_TEXT_8S = '🧮 Estou organizando a resposta...';
+// User prefers only typing indicator, no progress texts
+// Set PROGRESS_THRESHOLD_3S_MS high to effectively disable them
+const PROGRESS_THRESHOLD_3S_MS = 999999;
+const PROGRESS_THRESHOLD_8S_MS = 999999;
+const PROGRESS_TEXT_3S = '';
+const PROGRESS_TEXT_8S = '';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Evolution GO Webhook Payload

@@ -106,8 +106,11 @@ export class PiBridge {
       systemPrompt = readFileSync(promptPath, 'utf-8');
     }
 
-    // Build command args
+    // Build command args with system prompt
     const args = [...this.options.piArgs];
+    if (systemPrompt) {
+      args.push('--append-system-prompt', systemPrompt);
+    }
 
     // Spawn process
     this.proc = spawn(this.options.piCommand, args, {
@@ -147,11 +150,6 @@ export class PiBridge {
 
     // Wait for process to be ready (give it a moment)
     await this.waitForReady();
-
-    // Append system prompt if we have one
-    if (systemPrompt) {
-      await this.sendSystemPrompt(systemPrompt);
-    }
 
     // Start health check loop
     this.startHealthCheck();
@@ -290,20 +288,6 @@ export class PiBridge {
    */
   private async waitForReady(): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, 500));
-  }
-
-  /**
-   * Send system prompt
-   */
-  private async sendSystemPrompt(prompt: string): Promise<void> {
-    if (!this.proc?.stdin) return;
-
-    const payload = {
-      type: 'append_system_prompt',
-      content: prompt,
-    };
-
-    this.proc.stdin.write(JSON.stringify(payload) + '\n');
   }
 
   /**
