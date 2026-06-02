@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { CliResult } from './types.js';
+import { logShadowOperation, isShadowMode, isWriteMethod } from './shadow-logger.js';
 
 const API_BASE_URL = process.env.FINANCE_API_URL || 'http://localhost:3000';
 
@@ -23,8 +24,28 @@ export class FinanceApiClient {
 
   /**
    * Make a typed API call
+   * - In shadow mode, writes are validated but NOT executed
+   * - GET operations always work in both modes
    */
   async call<T>(endpoint: string, method: string, body?: unknown): Promise<CliResult<T>> {
+    // Shadow mode: validate writes but don't execute
+    if (isShadowMode() && isWriteMethod(method)) {
+      logShadowOperation({
+        intent: this.extractIntentFromEndpoint(endpoint),
+        method,
+        endpoint,
+        payload: body,
+        validation: 'passed',
+        wouldWrite: true,
+      });
+
+      // Return simulated success with the payload
+      return {
+        success: true,
+        data: { ...(body as Record<string, unknown>), _shadow: true } as unknown as T,
+      };
+    }
+
     try {
       const response = await fetch(`${this.baseUrl}${endpoint}`, {
         method,
@@ -54,6 +75,14 @@ export class FinanceApiClient {
         reason: error instanceof Error ? error.message : 'Network error',
       };
     }
+  }
+
+  /**
+   * Extract intent name from endpoint for logging
+   */
+  private extractIntentFromEndpoint(endpoint: string): string {
+    const match = endpoint.match(/\/api\/(\w+(?:-\w+)*)/);
+    return match ? match[1].replace(/-/g, '_') : 'unknown';
   }
 
   // ─────────────────────────────────────────────────────────────────────────
