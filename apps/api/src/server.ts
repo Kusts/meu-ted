@@ -2,6 +2,47 @@
 // Production Server Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { readFileSync, existsSync } from 'fs';
+import { resolve } from 'path';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Load .env from project root (no dotenv dependency, pure Node 20+)
+// Walks up from cwd (apps/api/) or falls back to cwd itself
+// ─────────────────────────────────────────────────────────────────────────────
+function findEnvFile(startDir) {
+  let dir = startDir;
+  for (let i = 0; i < 5; i++) {
+    const candidate = resolve(dir, '.env');
+    if (existsSync(candidate)) return candidate;
+    const parent = resolve(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+const envPath = findEnvFile(process.cwd()) || resolve(process.cwd(), '.env');
+if (existsSync(envPath)) {
+  const content = readFileSync(envPath, 'utf-8');
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    let value = trimmed.slice(eqIdx + 1).trim();
+    // Strip surrounding quotes
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (!process.env[key] && key) {
+      process.env[key] = value;
+    }
+  }
+  console.log('[env] Loaded .env from', envPath);
+} else {
+  console.warn('[env] No .env found at', envPath);
+}
+
 import { createApp } from './app.js';
 import { registerAuthRoutes } from './auth.js';
 
@@ -62,7 +103,7 @@ async function main() {
   };
 
   const app = createApp({
-    webhookSecret: process.env.EVOLUTION_WEBHOOK_SECRET,
+    instanceToken: process.env.EVOLUTION_GO_INSTANCE_TOKEN,
     allowedGroupIds: process.env.ALLOWED_GROUP_IDS?.split(',') || [],
     registeredPhones: process.env.REGISTERED_PHONES?.split(',') || [],
   });

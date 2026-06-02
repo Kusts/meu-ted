@@ -40,9 +40,15 @@ export class PiRpcRunner {
   private managedProcess: ManagedProcess | null = null;
   private queue: RpcQueue;
   private timeoutMs: number;
+  private piCommand: string;
+  private piArgs: string[];
+  private cwd?: string;
 
   constructor(options: PiRpcRunnerOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? 30000;
+    this.piCommand = options.piCommand ?? 'pi';
+    this.piArgs = options.piArgs ?? ['--mode', 'rpc'];
+    this.cwd = options.cwd;
     this.queue = new RpcQueue({
       timeoutMs: options.queueOptions?.timeoutMs ?? this.timeoutMs,
       maxRetries: options.queueOptions?.maxRetries ?? 3,
@@ -58,9 +64,9 @@ export class PiRpcRunner {
     }
 
     this.managedProcess = startPiRpcProcess({
-      command: 'pi',
-      args: ['--mode', 'rpc'],
-      cwd: options.cwd || process.cwd(),
+      command: this.piCommand,
+      args: this.piArgs,
+      cwd: options.cwd || this.cwd || process.cwd(),
     });
 
     // Handle process exit

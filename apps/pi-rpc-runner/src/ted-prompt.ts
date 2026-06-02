@@ -64,7 +64,7 @@ export function buildTedPrompt(options: TedPromptOptions): string {
   const rulesSection = buildRules();
 
   // Build user message
-  const messageSection = buildMessage(userMessage, idempotencyKey);
+  const messageSection = buildMessage(userMessage, idempotencyKey, source);
 
   // Combine all sections
   return [
@@ -171,14 +171,22 @@ function buildRules(): string {
    responda de forma amigável mas não registre nada.`;
 }
 
-function buildMessage(userMessage: string, idempotencyKey?: string): string {
+function buildMessage(
+  userMessage: string,
+  idempotencyKey?: string,
+  source: TedPromptOptions['source'] = 'dashboard'
+): string {
   let message = `Mensagem do usuário:\n"${userMessage}"`;
 
   if (idempotencyKey) {
     message += `\n\nIdempotencyKey: ${idempotencyKey}`;
   }
 
-  message += '\n\nO que você deve fazer? Responda em JSON com ação e parâmetros, ou responda amigavelmente se não for ação financeira.';
+  if (source === 'whatsapp') {
+    message += '\n\nO que você deve fazer? responda em texto natural para WhatsApp, curto e claro. Não responda em JSON, Markdown com bloco de código, ou formato técnico. Se precisar executar ação financeira, explique o que precisa confirmar ou o resultado em linguagem humana.';
+  } else {
+    message += '\n\nO que você deve fazer? Responda em JSON com ação e parâmetros, ou responda amigavelmente se não for ação financeira.';
+  }
 
   return message;
 }

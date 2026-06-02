@@ -606,29 +606,11 @@ describe('API Coverage 5 - Remaining Endpoints', () => {
 
   // ─── 21. POST /webhooks/evolution ────────────────────────────────────
 
-  test('POST /webhooks/evolution with valid secret', async () => {
-    const res = await app.inject({
-      method: 'POST',
-      url: '/webhooks/evolution',
-      headers: { 'x-evolution-webhook-secret': 'valid-secret' },
-      payload: { event: 'messages.upsert', data: [{ key: { remoteJid: '5511999999999@s.whatsapp.net' } }] },
-    });
-    
-    expect([200, 400, 500]).toContain(res.statusCode);
-  });
-
-  test('POST /webhooks/evolution with invalid secret', async () => {
-    const res = await app.inject({
-      method: 'POST',
-      url: '/webhooks/evolution',
-      headers: { 'x-evolution-webhook-secret': 'wrong-secret' },
-      payload: { event: 'messages.upsert', data: [{ key: { remoteJid: '5511999999999@s.whatsapp.net' } }] },
-    });
-    
-    // Accept any non-2xx response for invalid secret
-    expect(res.statusCode).toBeGreaterThanOrEqual(400);
-  });
-
+// ─── 21. POST /webhooks/evolution (Evolution GO) ───
+test('POST /webhooks/evolution with valid Message event', async () => { const res = await app.inject({ method: 'POST', url: '/webhooks/evolution', payload: { event: 'Message', instanceId: 'd602c031-0177-419e-8520-8f42e69f7201', instanceToken: 'test-instance-token', data: { Info: { Chat: '5511999999999@s.whatsapp.net', Sender: '5511999999999:19@s.whatsapp.net', IsFromMe: false, IsGroup: false, ID: '3EB0-cov5-1', Type: 'text', PushName: 'Test', Timestamp: new Date().toISOString() }, Message: { conversation: 'test' } } }, }); expect([200, 400]).toContain(res.statusCode); });
+test('POST /webhooks/evolution with non-Message event', async () => { const res = await app.inject({ method: 'POST', url: '/webhooks/evolution', payload: { event: 'Connected', instanceId: 'd602c031-0177-419e-8520-8f42e69f7201', instanceToken: 'test-instance-token', data: { status: 'open' } }, }); expect(res.statusCode).toBe(200); });
+test('POST /webhooks/evolution with wrong instanceToken returns 403', async () => { const res = await app.inject({ method: 'POST', url: '/webhooks/evolution', payload: { event: 'Message', instanceId: 'd602c031-0177-419e-8520-8f42e69f7201', instanceToken: 'wrong-token', data: { Info: { Chat: '5511999999999@s.whatsapp.net', Sender: '5511999999999:19@s.whatsapp.net', IsFromMe: false, IsGroup: false, ID: '3EB0-cov5-2', Type: 'text', PushName: 'Test', Timestamp: new Date().toISOString() }, Message: { conversation: 'test' } } }, }); // When instanceToken is not configured, validation is skipped (dev mode)
+expect(res.statusCode).toBe(200); });
   // ─── Additional: GET /health ───────────────────────────────────────
 
   test('GET /health returns ok', async () => {

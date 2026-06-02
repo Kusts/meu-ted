@@ -15,7 +15,7 @@ describe('Categorization Rules API', () => {
 
   beforeEach(async () => {
     app = createApp({
-      webhookSecret: 'test',
+      instanceToken: 'test',
       allowedGroupIds: [],
       registeredPhones: [],
     });

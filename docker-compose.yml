@@ -30,25 +30,8 @@ services:
       postgres:
         condition: service_healthy
 
-  # Evolution API for WhatsApp integration
-  # Uses its own database to avoid schema conflicts with Drizzle
-  evolution-api:
-    image: atendai/evolution-api:latest
-    container_name: pi-financeiro-whatsapp
-    environment:
-      - SERVER_URL=${SERVER_URL:-http://localhost:8080}
-      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-}
-      - DATABASE_PROVIDER=postgresql
-      - DATABASE_CONNECTION_URI=postgresql://postgres:pi_financeiro_dev_secret@postgres:5432/pi_financeiro_evolution
-      - WEBHOOK_EVENTS=true
-      - WEBHOOK_URL=${WEBHOOK_CALLBACK_URL:-}
-      - DEL_INSTANCE=false
-      - LOG_SESSION=false
-    ports:
-      - "8080:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
+  # Evolution GO API is installed separately (not in Docker)
+  # URL: http://localhost:4000  |  Instance: ted  |  Token in .env
 
 volumes:
   postgres_data:

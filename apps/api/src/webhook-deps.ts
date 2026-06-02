@@ -4,22 +4,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createPiClient, getPiCommand, getPiArgs, getPiTimeoutMs, type PiClient } from '@pi-financeiro/whatsapp-bridge';
-import { FakeEvolutionClient } from '@pi-financeiro/whatsapp-bridge';
+import { EvolutionClient, FakeEvolutionClient } from '@pi-financeiro/whatsapp-bridge';
 
 // Re-export for convenience
 export { type PiClient, type SourceMessageStore, type UserRegistry, type ResponseSender } from '@pi-financeiro/whatsapp-bridge';
 
 export interface WebhookDependencies {
   piClient: PiClient;
-  responseSender: FakeEvolutionClient;
+  responseSender: EvolutionClient | FakeEvolutionClient;
   sourceMessageStore: InMemorySourceMessageStore;
   userRegistry: EnvBasedUserRegistry;
 }
 
 export interface WebhookDepsOptions {
   piEnabled?: boolean;
-  evolutionApiUrl?: string;
-  evolutionApiKey?: string;
+  evolutionGoApiUrl?: string;
+  evolutionGoInstanceToken?: string;
 }
 
 /**
@@ -61,14 +61,15 @@ function isPiRpcEnabled(): boolean {
 /**
  * Create response sender based on environment
  */
-function createResponseSender(options: WebhookDepsOptions): FakeEvolutionClient {
-  const evolutionApiUrl = options.evolutionApiUrl || process.env.EVOLUTION_API_URL;
-  const evolutionApiKey = options.evolutionApiKey || process.env.EVOLUTION_API_KEY;
+function createResponseSender(options: WebhookDepsOptions): EvolutionClient | FakeEvolutionClient {
+  const evolutionGoApiUrl = options.evolutionGoApiUrl || process.env.EVOLUTION_GO_API_URL;
+  const evolutionGoInstanceToken = options.evolutionGoInstanceToken || process.env.EVOLUTION_GO_INSTANCE_TOKEN;
 
-  if (evolutionApiUrl && evolutionApiKey) {
-    // Import and return real Evolution client
-    // Note: In production, this would be the real client
-    return new FakeEvolutionClient();
+  if (evolutionGoApiUrl && evolutionGoInstanceToken) {
+    return new EvolutionClient({
+      baseUrl: evolutionGoApiUrl,
+      instanceToken: evolutionGoInstanceToken,
+    });
   }
 
   // Return fake client for dev/test
@@ -87,7 +88,7 @@ export class InMemorySourceMessageStore {
 
   markProcessed(msg: { providerMessageId: string; processed: boolean; errorReason?: string }): void {
     this.messages.set(msg.providerMessageId, {
-      processed: msg.processed,
+      processed: true,
       errorReason: msg.errorReason,
     });
   }
@@ -155,8 +156,9 @@ export class EnvBasedUserRegistry {
 }
 
 /**
- * Get webhook secret from environment
+ * Get instance token for webhook validation
+ * In Evolution GO, webhooks include instanceToken in the payload
  */
-export function getWebhookSecret(): string {
-  return process.env.EVOLUTION_WEBHOOK_SECRET || '';
+export function getInstanceToken(): string {
+  return process.env.EVOLUTION_GO_INSTANCE_TOKEN || '';
 }

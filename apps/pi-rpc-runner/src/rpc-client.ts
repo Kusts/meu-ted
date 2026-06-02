@@ -28,6 +28,22 @@ interface PendingResponse {
   timeoutId: ReturnType<typeof setTimeout>;
 }
 
+function extractAssistantText(message: unknown): string {
+  if (!message || typeof message !== 'object') return '';
+  const msg = message as { role?: string; content?: unknown };
+  if (msg.role !== 'assistant' || !Array.isArray(msg.content)) return '';
+
+  return msg.content
+    .map(part => {
+      if (!part || typeof part !== 'object') return '';
+      const contentPart = part as { type?: string; text?: unknown };
+      return contentPart.type === 'text' && typeof contentPart.text === 'string'
+        ? contentPart.text
+        : '';
+    })
+    .join('');
+}
+
 /**
  * Creates a JSONL client for Pi RPC communication
  * 
@@ -103,18 +119,37 @@ class JsonlClient {
 
   private handleParsedMessage(msg: JsonlResponse): void {
     switch (msg.type) {
-      case 'message_update':
+      case 'message_update': {
         if (typeof msg.delta === 'string') {
+          this.responseBuffer += msg.delta;
           this.responseHandlers.forEach(h => h(msg.delta!));
+        }
+        const text = extractAssistantText(msg.message);
+        if (text) {
+          this.responseBuffer = text;
+          this.responseHandlers.forEach(h => h(text));
         }
         this.resetTimeout();
         break;
+      }
 
       case 'tool_calls':
         if (Array.isArray(msg.toolCalls)) {
           this.toolCallHandlers.forEach(h => h(msg.toolCalls!));
         }
         break;
+
+      case 'message_end':
+      case 'turn_end': {
+        const text = extractAssistantText(msg.message);
+        if (text) {
+          this.responseBuffer = text;
+          this.isDone = true;
+          this.clearTimeout();
+          this.resolvePending();
+        }
+        break;
+      }
 
       case 'error':
         this.isDone = true;

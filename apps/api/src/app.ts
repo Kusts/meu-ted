@@ -21,13 +21,15 @@ import type { CreditCard } from '@pi-financeiro/domain';
 import { createApiDependencies, type ApiDependencies } from './deps.js';
 import { authMiddlewarePlugin } from './middleware/auth.js';
 import { AuthService } from '@pi-financeiro/domain';
+import { processWebhook, type WebhookPayload } from '@pi-financeiro/whatsapp-bridge';
+import { createWebhookDependencies, getInstanceToken } from './webhook-deps.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Options
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface AppOptions {
-  webhookSecret?: string;
+  instanceToken?: string;
   allowedGroupIds?: string[];
   registeredPhones?: string[];
   deps?: ApiDependencies;
@@ -43,9 +45,11 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
   // Use provided dependencies or create in-memory ones
   const deps = options.deps ?? createApiDependencies({ mode: 'memory' });
-  
+
   // Store deps for access by auth routes
   (app as any).deps = deps;
+
+  const webhookDeps = createWebhookDependencies();
 
   const {
     accountRepository,
@@ -86,8 +90,8 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     auditRepository,
     idempotencyRepository,
     reviewService,
-    highValueThresholdCents: process.env.HIGH_VALUE_THRESHOLD_CENTS 
-      ? parseInt(process.env.HIGH_VALUE_THRESHOLD_CENTS, 10) 
+    highValueThresholdCents: process.env.HIGH_VALUE_THRESHOLD_CENTS
+      ? parseInt(process.env.HIGH_VALUE_THRESHOLD_CENTS, 10)
       : undefined,
   });
 
@@ -715,9 +719,9 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
       return reply.status(422).send({ success: false, reason: result.reason });
     }
 
-    return reply.status(201).send({ 
-      success: true, 
-      data: { 
+    return reply.status(201).send({
+      success: true,
+      data: {
         record: result.record,
         invoiceId: result.record?.invoiceId,
       }
@@ -779,7 +783,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     }
 
     let invoices = await invoiceRepository.findByHouseholdId(householdId);
-    
+
     if (cardId) {
       invoices = invoices.filter(inv => inv.cardId === cardId);
     }
@@ -962,7 +966,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
   app.get('/review', async (request: FastifyRequest, reply: FastifyReply) => {
     const query = request.query as { householdId?: string; status?: string };
-    
+
     if (!query.householdId) {
       return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
     }
@@ -978,7 +982,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
   app.get('/review/count', async (request: FastifyRequest, reply: FastifyReply) => {
     const query = request.query as { householdId?: string };
-    
+
     if (!query.householdId) {
       return reply.status(400).send({ success: false, reason: 'householdId é obrigatório' });
     }
@@ -1156,11 +1160,11 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   });
 
   app.get('/reports/category-breakdown', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { householdId, dateFrom, dateTo, type } = request.query as { 
-      householdId?: string; 
-      dateFrom?: string; 
-      dateTo?: string; 
-      type?: 'income' | 'expense' 
+    const { householdId, dateFrom, dateTo, type } = request.query as {
+      householdId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      type?: 'income' | 'expense'
     };
     if (!householdId || !dateFrom || !dateTo || !type) {
       return reply.status(400).send({ success: false, reason: 'householdId, dateFrom, dateTo e type são obrigatórios' });
@@ -1215,9 +1219,9 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
     const validJobs = ['recurrence-horizon', 'invoice-close', 'overdue-rollover', 'daily-summary', 'weekly-backup'];
     if (!body.job || !validJobs.includes(body.job)) {
-      return reply.status(400).send({ 
-        success: false, 
-        reason: `job inválido. Valores válidos: ${validJobs.join(', ')}` 
+      return reply.status(400).send({
+        success: false,
+        reason: `job inválido. Valores válidos: ${validJobs.join(', ')}`
       });
     }
 
@@ -1260,9 +1264,9 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
       const result = await handler.execute(body.householdId);
       return reply.send({ success: true, job: body.job, result });
     } catch (error) {
-      return reply.status(500).send({ 
-        success: false, 
-        reason: error instanceof Error ? error.message : 'erro desconhecido' 
+      return reply.status(500).send({
+        success: false,
+        reason: error instanceof Error ? error.message : 'erro desconhecido'
       });
     }
   });
@@ -1451,51 +1455,25 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   // ─────────────────────────────────────────────────────────────────────────
 
   app.post('/webhooks/evolution', async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as Record<string, unknown>;
+    const body = request.body as WebhookPayload;
 
-    // Validate webhook secret
-    if (options.webhookSecret && body.secret !== options.webhookSecret) {
-      return reply.status(403).send({ success: false, reason: 'secret inválido' });
-    }
-
-    // Extract message info
-    const data = body.data as {
-      key?: { remoteJid?: string; fromMe?: boolean; id?: string };
-      message?: { conversation?: string; extendedTextMessage?: { text?: string } };
-      pushName?: string;
-    };
-
-    if (!data?.key?.remoteJid) {
-      return reply.status(400).send({ success: false, reason: 'payload inválido' });
-    }
-
-    const remoteJid = data.key.remoteJid;
-    const providerMessageId = data.key.id || '';
-
-    // Validate group
-    if (options.allowedGroupIds && !options.allowedGroupIds.includes(remoteJid)) {
-      return reply.status(403).send({ success: false, reason: 'grupo não permitido' });
-    }
-
-    // Validate sender phone (for logging/audit purposes)
-
-    // Check idempotency
-    if (sourceMessageStore.isProcessed(providerMessageId)) {
-      return reply.status(200).send({ success: false, reason: 'mensagem duplicada' });
-    }
-
-    // Extract text
-    const text = data.message?.conversation || data.message?.extendedTextMessage?.text || '';
-
-    // Mark as processed
-    sourceMessageStore.markProcessed(providerMessageId);
-
-    // In a real implementation, this would call Pi RPC
-    // For now, just acknowledge the message
-    return reply.status(200).send({ 
-      success: true, 
-      data: { messageId: providerMessageId, text },
+    console.log('[WEBHOOK] Event received:', {
+      event: body.event,
+      instanceId: body.instanceId,
+      messageId: body.data?.Info?.ID,
     });
+
+    const result = await processWebhook(
+      body,
+      options.instanceToken ?? getInstanceToken(),
+      webhookDeps.userRegistry,
+      webhookDeps.sourceMessageStore,
+      webhookDeps.piClient,
+      webhookDeps.responseSender
+    );
+
+    const statusCode = result.success ? 200 : 403;
+    return reply.status(statusCode).send(result);
   });
 
   return app;

@@ -209,7 +209,7 @@ import { createApp } from './app.js';
  */
 export async function createAuthApp() {
   const app = createApp({
-    webhookSecret: 'secret',
+    instanceToken: 'test-instance-token',
     allowedGroupIds: [],
     registeredPhones: [],
   });

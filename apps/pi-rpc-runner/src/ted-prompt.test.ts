@@ -50,6 +50,17 @@ describe('Pi RPC Runner - TED Prompt Builder', () => {
     expect(result).toContain('5511999999999');
   });
 
+  test('whatsapp prompt asks for natural text response, not JSON', () => {
+    const result = buildTedPrompt({
+      userMessage: 'oi',
+      householdId: 'test-household',
+      source: 'whatsapp',
+    });
+
+    expect(result).toContain('responda em texto natural');
+    expect(result).not.toContain('Responda em JSON');
+  });
+
   test('includes WhatsApp context for whatsapp source', () => {
     const result = buildTedPrompt({
       userMessage: 'comprei tennis no cartao',

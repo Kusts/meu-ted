@@ -11,7 +11,7 @@ Sistema financeiro pessoal para casal via WhatsApp grupo + TED agent (Pi termina
 | Dashboard | Next.js 15 |
 | DB | Postgres Docker (porta 5432/5433) |
 | ORM | Drizzle |
-| WhatsApp | Evolution API Docker |
+| WhatsApp | Evolution GO API |
 | Agent | `pi --mode rpc` (sem SDK) |
 | Jobs/Fila | RPC queue serial |
 | Testes | Vitest |
@@ -57,10 +57,10 @@ Copie `.env.example` → `.env` e configure:
 | `PI_RPC_COMMAND` | Comando Pi | `pi` |
 | `PI_RPC_ARGS` | Args como JSON array | `["--mode","rpc"]` |
 | `PI_RPC_TIMEOUT_MS` | Timeout Pi em ms | `30000` |
-| `EVOLUTION_API_URL` | URL Evolution API | `http://localhost:8080` |
-| `EVOLUTION_API_KEY` | Chave Evolution API | - |
-| `EVOLUTION_INSTANCE` | Nome instância Evolution | `my-instance` |
-| `EVOLUTION_WEBHOOK_SECRET` | Secret webhook | - |
+| `EVOLUTION_GO_API_URL` | URL Evolution GO API | `http://localhost:4000` |
+| `EVOLUTION_GO_INSTANCE_TOKEN` | Token da instância Evolution GO | - |
+| `EVOLUTION_GO_INSTANCE_NAME` | Nome instância Evolution GO | `ted` |
+| `WEBHOOK_SECRET` | Secret webhook | - |
 | `ALLOWED_GROUP_IDS` | Grupos WhatsApp permitidos (separados por vírgula) | - |
 | `REGISTERED_PHONES` | Telefones cadastrados (separados por vírgula) | - |
 | `DEFAULT_HOUSEHOLD_ID` | Household default | `default` |
@@ -109,9 +109,8 @@ O `docker-compose.yml` inclui:
 
 | Serviço | Porta | Descrição |
 |---|---|---|
-| `postgres` | 5432/5433 | Postgres 16 |
-| `evolution-api` | 8080 | Evolution API (WhatsApp) |
-| `redis` | 6379 | Redis (opcional para Evolution) |
+| `postgres` | 5432/5433 | Postgres 17 |
+
 
 ```bash
 # Ver logs
@@ -119,7 +118,6 @@ docker compose logs -f
 
 # Ver logs de serviço específico
 docker compose logs -f postgres
-docker compose logs -f evolution-api
 
 # Reiniciar serviço
 docker compose restart postgres
@@ -169,8 +167,8 @@ pnpm clean
                                │ webhooks
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Evolution API Docker                         │
-│                         (porta 8080)                            │
+│                    Evolution GO API                         │
+│                         (porta 4000 — externa ao Docker)                            │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
                                ▼

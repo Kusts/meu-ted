@@ -11,7 +11,7 @@ describe('Server Seed Behavior', () => {
 
   beforeEach(async () => {
     app = createApp({
-      webhookSecret: 'test-secret',
+      instanceToken: 'test-secret',
       allowedGroupIds: [],
       registeredPhones: [],
     });

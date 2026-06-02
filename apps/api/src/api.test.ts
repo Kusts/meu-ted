@@ -8,7 +8,7 @@ const cardId = '44444444-4444-4444-8444-444444444444';
 
 async function buildSeededApp() {
   const app = createApp({
-    webhookSecret: 'secret',
+    instanceToken: 'secret',
     allowedGroupIds: ['5511999999999@g.us'],
     registeredPhones: ['5511999999999'],
   });
@@ -627,44 +627,66 @@ describe('API Fastify', () => {
     expect(response.json().success).toBe(false);
   });
 
-  test('webhook endpoint validates and forwards Evolution messages', async () => {
-    const app = createApp({
-      webhookSecret: 'secret',
-      allowedGroupIds: ['5511999999999@g.us'],
-      registeredPhones: ['5511999999999'],
-    });
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/webhooks/evolution',
-      payload: {
-        secret: 'secret',
-        instanceId: 'main',
-        timestamp: Date.now(),
-        data: {
-          key: { remoteJid: '5511999999999@g.us', fromMe: false, id: 'msg-1' },
-          message: { conversation: 'gastei 50 mercado no inter' },
-          pushName: 'Walis',
-        },
-      },
-    });
-    const retry = await app.inject({
-      method: 'POST',
-      url: '/webhooks/evolution',
-      payload: {
-        secret: 'secret',
-        instanceId: 'main',
-        timestamp: Date.now(),
-        data: {
-          key: { remoteJid: '5511999999999@g.us', fromMe: false, id: 'msg-1' },
-          message: { conversation: 'gastei 50 mercado no inter' },
-        },
-      },
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json().success).toBe(true);
-    expect(retry.statusCode).toBe(200);
-    expect(retry.json().reason).toBe('mensagem duplicada');
+  test('webhook endpoint validates and forwards Evolution GO messages', async () => {
+  const app = createApp({
+    instanceToken: 'test-instance-token',
+    allowedGroupIds: ['5511999999999@s.whatsapp.net'],
+    registeredPhones: ['5511999999999'],
   });
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/webhooks/evolution',
+    payload: {
+      event: 'Message',
+      instanceId: 'd602c031-0177-419e-8520-8f42e69f7201',
+      instanceToken: 'test-instance-token',
+      data: {
+        Info: {
+          Chat: '5511999999999@s.whatsapp.net',
+          Sender: '5511999999999:19@s.whatsapp.net',
+          IsFromMe: false,
+          IsGroup: false,
+          ID: '3EB0-msg-1',
+          Type: 'text',
+          PushName: 'Walis',
+          Timestamp: new Date().toISOString(),
+        },
+        Message: {
+          conversation: 'gastei 50 mercado no inter',
+        },
+      },
+    },
+  });
+
+  const retry = await app.inject({
+    method: 'POST',
+    url: '/webhooks/evolution',
+    payload: {
+      event: 'Message',
+      instanceId: 'd602c031-0177-419e-8520-8f42e69f7201',
+      instanceToken: 'test-instance-token',
+      data: {
+        Info: {
+          Chat: '5511999999999@s.whatsapp.net',
+          Sender: '5511999999999:19@s.whatsapp.net',
+          IsFromMe: false,
+          IsGroup: false,
+          ID: '3EB0-msg-1',
+          Type: 'text',
+          PushName: 'Walis',
+          Timestamp: new Date().toISOString(),
+        },
+        Message: {
+          conversation: 'gastei 50 mercado no inter',
+        },
+      },
+    },
+  });
+
+  expect(response.statusCode).toBe(200);
+  expect(response.json().success).toBe(true);
+  expect(retry.statusCode).toBe(200);
+  expect(retry.json().reason).toBe('mensagem duplicada');
+});
 });
