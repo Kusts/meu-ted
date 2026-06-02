@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
 // TED Finance CLI - Entry Point
-// Deterministic CLI helper for financial operations
-// Uses tsx to load TypeScript directly (no build step needed)
+// Uses compiled JavaScript from dist/
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { runCommand } from '../src/index.ts';
+import { runCommand } from '../index.js';
 
 const args = process.argv.slice(2);
 

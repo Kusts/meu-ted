@@ -95,6 +95,7 @@ export { InMemoryBudgetRepository } from './in-memory/budget-repository.js';
 export { InMemoryAttachmentRepository } from './in-memory/attachment-repository.js';
 export { InMemoryReimbursementRepository } from './in-memory/reimbursement-repository.js';
 export { InMemoryBackupRepository } from './in-memory/backup-repository.js';
+export { InMemoryPendingOperationRepository } from './in-memory/in-memory-pending-operation-repository.js';
 
 // Legacy exports (for backward compatibility with existing tests)
 export { calculateAccountBalance } from './legacy.js';
