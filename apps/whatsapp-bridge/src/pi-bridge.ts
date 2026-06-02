@@ -5,8 +5,6 @@
 
 import { spawn, type ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
-import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -72,8 +70,8 @@ export class PiBridge {
     this.options = {
       piCommand: opts.piCommand ?? 'pi',
       piArgs: opts.piArgs ?? ['--mode', 'rpc'],
-      systemPromptPath: opts.systemPromptPath ?? this.findAgentsMd(opts.projectDir),
-      timeoutMs: opts.timeoutMs ?? 30000,
+      systemPromptPath: opts.systemPromptPath ?? null,
+      timeoutMs: opts.timeoutMs ?? 120000,
       projectDir: opts.projectDir ?? process.cwd(),
       householdId: opts.householdId,
     };
@@ -99,24 +97,16 @@ export class PiBridge {
   }
 
   private async doStart(): Promise<void> {
-    // Read system prompt
-    let systemPrompt = '';
-    const promptPath = this.options.systemPromptPath;
-    if (promptPath && existsSync(promptPath)) {
-      systemPrompt = readFileSync(promptPath, 'utf-8');
-    }
-
-    // Build command args with system prompt
+    // Build command args
+    // Pi natively loads .pi/AGENTS.md — no --append-system-prompt needed
     const args = [...this.options.piArgs];
-    if (systemPrompt) {
-      args.push('--append-system-prompt', systemPrompt);
-    }
 
-    // Spawn process
+    // Spawn process (shell:true required on Windows for .cmd resolution)
     this.proc = spawn(this.options.piCommand, args, {
       cwd: this.options.projectDir,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
+      shell: true,
     });
 
     // Handle stdout - persistent JSONL buffer
@@ -265,23 +255,6 @@ export class PiBridge {
   // ─────────────────────────────────────────────────────────────────────────
   // Private Methods
   // ─────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Find AGENTS.md in project
-   */
-  private findAgentsMd(projectDir?: string): string | null {
-    const dirs = [
-      projectDir ?? process.cwd(),
-      join(projectDir ?? process.cwd(), '.pi'),
-      join(process.cwd(), '.pi'),
-    ];
-
-    for (const dir of dirs) {
-      const path = join(dir, 'AGENTS.md');
-      if (existsSync(path)) return path;
-    }
-    return null;
-  }
 
   /**
    * Wait for process to be ready
