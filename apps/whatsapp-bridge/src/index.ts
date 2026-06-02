@@ -7,7 +7,8 @@ export type { MessageClassification } from './message-classifier.js';
 
 export {
   processWebhook,
-  validateWebhookSecret,
+  validateEventType,
+  validateInstanceToken,
   validateGroup,
   validateSender,
   extractPhone,
@@ -27,6 +28,7 @@ export type {
 
 export { EvolutionClient, FakeEvolutionClient } from './evolution-client.js';
 export type { EvolutionClientOptions, SendTextRequest, SendTextResponse } from './evolution-client.js';
+/** @deprecated Use EVOLUTION_GO_API_URL instead of EVOLUTION_API_URL */
 
 export { PiRpcRunnerClient, createPiClient, getPiCommand, getPiArgs, getPiTimeoutMs } from './pi-rpc-runner-client.js';
 export type { PiRpcRunnerClientOptions } from './pi-rpc-runner-client.js';

@@ -30,9 +30,28 @@ describe('WhatsApp Bridge - Message Classifier', () => {
       expect(result.type).not.toBe('ignored');
     });
 
-    test('normal conversation returns ignored', () => {
+    test('normal conversation returns general (forwarded to Pi as personal assistant)', () => {
       const result = classifyMessage('oi tudo bem?');
-      expect(result.type).toBe('ignored');
+      expect(result.type).toBe('general');
+      if (result.type === 'general') {
+        expect(result.raw).toBe('oi tudo bem?');
+      }
+    });
+
+    test('"Olá" greeting returns general with raw text', () => {
+      const result = classifyMessage('Olá');
+      expect(result.type).toBe('general');
+      if (result.type === 'general') {
+        expect(result.raw).toBe('Olá');
+      }
+    });
+
+    test('general classification preserves original casing and whitespace', () => {
+      const result = classifyMessage('  Bom dia, TED!  ');
+      expect(result.type).toBe('general');
+      if (result.type === 'general') {
+        expect(result.raw).toBe('  Bom dia, TED!  ');
+      }
     });
 
     test('financial keyword detected', () => {
@@ -236,13 +255,11 @@ describe('WhatsApp Bridge - Evolution Client', () => {
 
   test('EvolutionClientOptions structure', () => {
     const options = {
-      baseUrl: 'http://localhost:8080',
-      instanceName: 'my-instance',
-      apiToken: 'secret-token',
+      baseUrl: 'http://localhost:4000',
+      instanceToken: 'd602c031-0177-419e-8520-8f42e69f7201',
     };
     expect(options.baseUrl).toContain('localhost');
-    expect(options.instanceName).toBeDefined();
-    expect(options.apiToken).toBeDefined();
+    expect(options.instanceToken).toBeDefined();
   });
 
   test('SendTextRequest structure', () => {
@@ -258,18 +275,24 @@ describe('WhatsApp Bridge - Evolution Client', () => {
 
   test('SendTextResponse key structure', () => {
     const response = {
-      key: {
-        id: 'msg-id-123',
-        remoteJid: '5511999999999@s.whatsapp.net',
-        fromMe: true,
+      data: {
+        Info: {
+          Chat: '5511999999999@s.whatsapp.net',
+          Sender: '5511999999999:19@s.whatsapp.net',
+          IsFromMe: true,
+          ID: '3EB0EBF39AF82560EC70BC',
+          Type: 'ExtendedTextMessage',
+          Timestamp: '2026-06-02T09:20:07.765362952-03:00',
+        },
+        Message: {
+          extendedTextMessage: { text: 'Olá' },
+        },
       },
-      message: {
-        conversation: 'Olá',
-      },
+      message: 'success',
     };
-    expect(response.key.id).toBeDefined();
-    expect(response.key.remoteJid).toBeDefined();
-    expect(response.key.fromMe).toBe(true);
+    expect(response.data.Info.ID).toBeDefined();
+    expect(response.data.Info.Chat).toBeDefined();
+    expect(response.data.Info.IsFromMe).toBe(true);
   });
 
   test('ResponseSender interface compliance', () => {
@@ -278,5 +301,47 @@ describe('WhatsApp Bridge - Evolution Client', () => {
       sendResponse: vi.fn().mockResolvedValue({ success: true }),
     };
     expect(typeof mockSender.sendResponse).toBe('function');
+  });
+
+  test('sendPresence posts to /message/presence with apikey header and correct body', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
+
+    const { EvolutionClient } = await import('./evolution-client.js');
+    const client = new EvolutionClient({
+      baseUrl: 'http://localhost:4000',
+      instanceToken: 'test-token-abc',
+    });
+
+    await client.sendPresence({ number: '5511999999999', state: 'composing' });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://localhost:4000/message/presence');
+    expect((opts as any).method).toBe('POST');
+    expect((opts as any).headers).toEqual(expect.objectContaining({ apikey: 'test-token-abc' }));
+    expect(JSON.parse((opts as any).body)).toEqual({
+      number: '5511999999999',
+      state: 'composing',
+      isAudio: false,
+    });
+  });
+
+  test('sendPresence also supports ResponseSender signature used by webhook', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) });
+
+    const { EvolutionClient } = await import('./evolution-client.js');
+    const client = new EvolutionClient({
+      baseUrl: 'http://localhost:4000',
+      instanceToken: 'test-token-abc',
+    });
+
+    await client.sendPresence('5511999999999@s.whatsapp.net', 'paused');
+
+    const [, opts] = mockFetch.mock.calls[0];
+    expect(JSON.parse((opts as any).body)).toEqual({
+      number: '5511999999999@s.whatsapp.net',
+      state: 'paused',
+      isAudio: false,
+    });
   });
 });

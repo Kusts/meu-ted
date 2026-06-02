@@ -5,6 +5,7 @@
 export type MessageClassification =
   | { type: 'command'; intent: string; params: Record<string, string> }
   | { type: 'financial_detected'; raw: string }
+  | { type: 'general'; raw: string }
   | { type: 'ignored' }
   | { type: 'clarification_needed'; missingInfo: string[] };
 
@@ -52,8 +53,12 @@ export function classifyMessage(
     }
   }
 
-  // Normal conversation - ignore
-  return { type: 'ignored' };
+  // Normal conversation - forward to Pi as general chat (TED as personal assistant)
+  if (normalizedText === '') {
+    // Empty/whitespace messages have no conversation to forward
+    return { type: 'ignored' };
+  }
+  return { type: 'general', raw: text };
 }
 
 function parseCommand(text: string, command: string): MessageClassification {

@@ -60,9 +60,9 @@ describe('WhatsApp Bridge - Message Classifier', () => {
     expect(['financial_detected', 'clarification_needed']).toContain(result.type);
   });
 
-  test('E4.1j: "bom dia" greeting (ignored)', () => {
+  test('E4.1j: "bom dia" greeting (general — forwarded to Pi as personal assistant)', () => {
     const result = classifyMessage('bom dia');
-    expect(result.type).toBe('ignored');
+    expect(result.type).toBe('general');
   });
 
   test('E4.1k: "quanto gastei mês" query', () => {
@@ -92,9 +92,9 @@ describe('WhatsApp Bridge - Message Classifier', () => {
     expect(result.type).toBeTruthy();
   });
 
-  test('E4.1p: unrecognized text', () => {
+  test('E4.1p: unrecognized text (general — forwarded to Pi as personal assistant)', () => {
     const result = classifyMessage('o tempo está bonito hoje');
-    expect(result.type).toBe('ignored');
+    expect(result.type).toBe('general');
   });
 
   test('E4.1q: needs clarification', () => {
@@ -121,7 +121,7 @@ describe('WhatsApp Bridge - Evolution Client', () => {
       json: () => Promise.resolve({ success: true, instanceId: 'inst-123' }),
     });
 
-    const response = await mockFetch('http://localhost:8080/instance/create', {
+    const response = await mockFetch('http://localhost:4000/instance/create', {
       method: 'POST',
     });
     
@@ -136,7 +136,7 @@ describe('WhatsApp Bridge - Evolution Client', () => {
       json: () => Promise.resolve({ messageId: 'msg-456' }),
     });
 
-    const response = await mockFetch('http://localhost:8080/message/send', {
+    const response = await mockFetch('http://localhost:4000/send/text', {
       method: 'POST',
       body: JSON.stringify({ to: '5511999999999', text: 'Olá!' }),
     });
@@ -152,7 +152,7 @@ describe('WhatsApp Bridge - Evolution Client', () => {
       json: () => Promise.resolve({ status: 'connected', qrCode: null }),
     });
 
-    const response = await mockFetch('http://localhost:8080/instance/status');
+    const response = await mockFetch('http://localhost:4000/instance/status');
     expect(response.ok).toBe(true);
     const data = await response.json();
     expect(data.status).toBe('connected');
@@ -164,7 +164,7 @@ describe('WhatsApp Bridge - Evolution Client', () => {
       status: 500,
     });
 
-    const response = await mockFetch('http://localhost:8080/message/send', {
+    const response = await mockFetch('http://localhost:4000/send/text', {
       method: 'POST',
     });
     
@@ -179,7 +179,7 @@ describe('WhatsApp Bridge - Evolution Client', () => {
       json: () => Promise.resolve({ error: 'Invalid payload' }),
     });
 
-    const response = await mockFetch('http://localhost:8080/instance/create', {
+    const response = await mockFetch('http://localhost:4000/instance/create', {
       method: 'POST',
       body: JSON.stringify({}),
     });
