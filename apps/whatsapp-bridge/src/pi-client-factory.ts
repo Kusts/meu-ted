@@ -1,31 +1,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Pi Client Factory - Creates PiClient based on FINANCE_AGENT_RUNTIME
-// Supports: legacy (PiRpcRunnerClient), pi-native (PiBridge)
+// Supports: disabled (dev/fake), pi-native (PiBridge)
+// Step 6 refactor: removed legacy mode, removed PiRpcRunnerClient dependency
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { PiBridge, type PiBridgeOptions } from './pi-bridge.js';
-import { FinanceApiClient, type AccountBalance, type MonthSummary } from './finance-api-client.js';
 import type { PiClient } from './webhook-handler.js';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Report Finance API Client interface
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface ReportFinanceApiClient {
-  getCurrentMonthSummary(householdId: string): Promise<{ success: boolean; data?: MonthSummary; reason?: string }>;
-  getAccountBalances(householdId: string): Promise<{ success: boolean; data?: AccountBalance[]; reason?: string }>;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Environment-based configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type AgentRuntime = 'legacy' | 'pi-native';
+export type AgentRuntime = 'pi-native' | 'disabled';
 
 export function getAgentRuntime(): AgentRuntime {
   const env = process.env.FINANCE_AGENT_RUNTIME;
-  if (env === 'pi-native') return 'pi-native';
-  return 'legacy'; // default
+  if (env === 'disabled' || env === 'fake') return 'disabled';
+  return 'pi-native'; // default (was 'legacy' before refactor)
 }
 
 export function getPiRpcEnabled(): boolean {
@@ -58,15 +49,49 @@ export function getWriteMode(): 'live' | 'shadow' {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Fake Pi Client (disabled/dev mode - no Pi installed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class FakePiClient implements PiClient {
+  private started = false;
+
+  async start(): Promise<void> {
+    this.started = true;
+    console.log('[PiClient] Fake (disabled) mode - no Pi RPC');
+  }
+
+  async send(
+    message: string,
+    _senderPhone: string,
+    context: { householdId: string; source: string; idempotencyKey?: string }
+  ): Promise<{ success: boolean; reason?: string; data?: { message?: string } }> {
+    console.log(`[PiClient] Fake send (household=${context.householdId}): ${message.slice(0, 80)}...`);
+    return {
+      success: true,
+      data: {
+        message: '[dev] TED está desabilitado (FINANCE_AGENT_RUNTIME=disabled). Instale o Pi ou configure pi-native.',
+      },
+    };
+  }
+
+  isHealthy(): boolean {
+    return this.started;
+  }
+
+  async stop(): Promise<void> {
+    this.started = false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PiBridge Adapter (implements PiClient)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export class PiBridgeAdapter implements PiClient {
+class PiBridgeAdapter implements PiClient {
   private bridge: PiBridge | null = null;
-  private financeApiClient: ReportFinanceApiClient;
 
-  constructor(private householdId: string, options?: { financeApiClient?: ReportFinanceApiClient }) {
-    this.financeApiClient = options?.financeApiClient ?? new FinanceApiClient();
+  constructor(private householdId: string) {
+    // All communication goes through PiBridge via pi --mode rpc
   }
 
   async start(): Promise<void> {
@@ -120,53 +145,26 @@ export class PiBridgeAdapter implements PiClient {
 // Pi Client Factory
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface FakePiClient {
-  send(): Promise<{ success: boolean; reason: string }>;
-}
-
-export interface PiClientFactoryOptions {
-  householdId: string;
-  financeApiClient?: ReportFinanceApiClient;
-}
-
 /**
  * Create the appropriate PiClient based on FINANCE_AGENT_RUNTIME
+ * Default changed from 'legacy' to 'pi-native' (Step 6 refactor)
+ * No more PiRpcRunnerClient, no more require() calls for deleted files
  */
-export function createPiClient(options: PiClientFactoryOptions): PiClient {
+export function createPiClient(householdId: string): PiClient {
   const runtime = getAgentRuntime();
 
   switch (runtime) {
+    case 'disabled':
+      // Dev/test mode: fake client logs but does not call Pi
+      const fake = new FakePiClient();
+      fake.start().catch(console.error);
+      return fake;
+
     case 'pi-native':
-      // Use PiBridge adapter for pi-native mode
-      const adapter = new PiBridgeAdapter(options.householdId, {
-        financeApiClient: options.financeApiClient,
-      });
+    default:
+      // PiBridge adapter with real pi --mode rpc
+      const adapter = new PiBridgeAdapter(householdId);
       adapter.start().catch(console.error);
       return adapter;
-
-    case 'legacy':
-    default:
-      // In legacy mode, try to use PiRpcRunnerClient if available
-      return createLegacyPiClient(options);
-  }
-}
-
-function createLegacyPiClient(options: PiClientFactoryOptions): PiClient {
-  // Try to import PiRpcRunnerClient, fall back to fake if not available
-  try {
-    const { PiRpcRunnerClient } = require('./pi-rpc-runner-client.js');
-    return new PiRpcRunnerClient({
-      enabled: getPiRpcEnabled(),
-      command: getPiCommand(),
-      args: getPiArgs(),
-      timeoutMs: getPiTimeoutMs(),
-      cwd: process.cwd(),
-      financeApiClient: options.financeApiClient,
-    });
-  } catch {
-    // PiRpcRunnerClient not available (e.g., in tests), return fake client
-    return {
-      send: async () => ({ success: false, reason: 'Pi RPC desabilitado em modo desenvolvimento' }),
-    } as PiClient;
   }
 }

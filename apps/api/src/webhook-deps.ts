@@ -16,7 +16,7 @@ export interface WebhookDependencies {
   sourceMessageStore: InMemorySourceMessageStore;
   userRegistry: EnvBasedUserRegistry;
   pendingOperationService?: PendingOperationService;
-  agentRuntime: 'legacy' | 'pi-native';
+  agentRuntime: 'pi-native' | 'disabled';
 }
 
 export interface WebhookDepsOptions {
@@ -36,11 +36,7 @@ export function createWebhookDependencies(options: WebhookDepsOptions = {}): Web
   const householdId = options.householdId || process.env.DEFAULT_HOUSEHOLD_ID || 'default';
 
   // Create Pi client based on runtime mode
-  // In pi-native mode, we use the new factory; in legacy mode, we use the legacy path
-  const piClient = createPiClient({
-    householdId,
-    financeApiClient: undefined, // Will use default FinanceApiClient internally
-  });
+  const piClient = createPiClient(householdId);
 
   // Create response sender (Evolution API or fake)
   const responseSender = createResponseSender(options);

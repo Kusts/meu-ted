@@ -4,7 +4,7 @@
 // Uses compiled JavaScript from dist/
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { runCommand } from '../index.js';
+import { runCommand } from '../dist/index.js';
 
 const args = process.argv.slice(2);
 

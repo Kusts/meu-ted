@@ -24,6 +24,9 @@ interface PendingRequest {
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
   startedAt: number;
+  requestId: string;
+  message: string;
+  chatId: string;
 }
 
 interface JsonRpcMessage {
@@ -63,9 +66,10 @@ export class PiBridge {
   private lineBuffer = '';
 
   // Per-chat queues for serialization
+  // Each entry stores full context so dequeueNext can call sendImmediate
   private chatQueues = new Map<string, PendingRequest[]>();
 
-  // Active request tracking
+  // Active request tracking (requestId → PendingRequest)
   private activeRequests = new Map<string, PendingRequest>();
 
   // Streaming text accumulator per request (Pi RPC sends text_delta in chunks)
@@ -161,16 +165,17 @@ export class PiBridge {
 
   /**
    * Send a message and wait for response
+   * Serialized per chatId: only one active request per chat at a time
    */
   async send(message: string, chatId: string): Promise<string> {
     if (!this.isRunning || !this.proc?.stdin) {
       throw new Error('PiBridge not running');
     }
 
+    const requestId = randomUUID();
+
     // Queue message for this chat
     return new Promise((resolve, reject) => {
-      const requestId = randomUUID();
-
       const timeout = setTimeout(() => {
         this.handleRequestTimeout(requestId);
         reject(new Error(`Request ${requestId} timed out after ${this.options.timeoutMs}ms`));
@@ -181,6 +186,9 @@ export class PiBridge {
         reject,
         timeout,
         startedAt: Date.now(),
+        requestId,
+        message,
+        chatId,
       };
 
       // Add to queue for this chat
@@ -191,7 +199,7 @@ export class PiBridge {
       // Track by request ID
       this.activeRequests.set(requestId, pendingRequest);
 
-      // Send if this is the first in queue
+      // Send if this is the first in queue (no other active request for this chat)
       if (queue.length === 1) {
         this.sendImmediate(requestId, message, chatId);
       }
@@ -344,6 +352,12 @@ export class PiBridge {
 
   /**
    * Handle parsed JSON message
+   * Implements real Pi RPC protocol:
+   * - type 'response' is just an ACK, does NOT resolve
+   * - type 'message_update' accumulates streaming text_delta
+   * - type 'turn_end' resolves with final text
+   * - type 'agent_end' resolves as fallback
+   * - type 'error' rejects
    */
   private handleMessage(msg: JsonRpcMessage): void {
     const { id, type, error } = msg;
@@ -351,8 +365,7 @@ export class PiBridge {
     // Update health check timestamp
     this.lastHealthCheck = Date.now();
 
-    // 'response' is just an ACK from Pi RPC (e.g. {type:"response", id, success:true})
-    // Do NOT resolve the pending request — wait for turn_end / agent_end
+    // 'response' is just an ACK from Pi RPC — do NOT resolve
     if (type === 'response') {
       return;
     }
@@ -383,7 +396,7 @@ export class PiBridge {
         pending.resolve(finalText);
         this.emit('turn_end', msg);
         this.emit('agent_end', msg);
-        this.dequeueNext(id);
+        this.dequeueNext(id, pending.chatId);
         return;
       }
 
@@ -397,7 +410,7 @@ export class PiBridge {
         this.accumulatedText.delete(id);
         pending.resolve(finalText);
         this.emit('agent_end', msg);
-        this.dequeueNext(id);
+        this.dequeueNext(id, pending.chatId);
         return;
       }
 
@@ -408,12 +421,12 @@ export class PiBridge {
         this.accumulatedText.delete(id);
         pending.reject(new Error(typeof error === 'string' ? error : 'Pi RPC error'));
         this.emit('error', msg);
-        this.dequeueNext(id);
+        this.dequeueNext(id, pending.chatId);
         return;
       }
     }
 
-    // Emit typed events (for non-tracked or unhandled)
+    // Emit typed events (for non-tracked or unhandled messages)
     switch (type) {
       case 'message_update':
         this.emit('message_update', msg);
@@ -431,47 +444,46 @@ export class PiBridge {
   }
 
   /**
-   * Dequeue next message for a chat
+   * Dequeue next message for a chat after completing/removing the current one.
+   * Called after: turn_end, agent_end, error, timeout.
+   * Removes the completed request from the queue and sends the next one.
    */
-  private dequeueNext(completedId: string): void {
-    for (const [chatId, queue] of this.chatQueues.entries()) {
-      // Find and remove completed request
-      const idx = queue.findIndex(p => {
-        // Match by checking if it's the active one being dequeued
-        return Array.from(this.activeRequests.values()).includes(p) === false;
-      });
+  private dequeueNext(completedId: string, chatId: string): void {
+    const queue = this.chatQueues.get(chatId);
+    if (!queue || queue.length === 0) return;
 
-      if (idx > 0) {
-        queue.splice(0, 1);
-        this.chatQueues.set(chatId, queue);
+    // Remove the completed request from the queue front
+    const completed = queue.shift();
 
-        // Send next message if any
-        if (queue.length > 0) {
-          const next = queue[0];
-          const nextId = Array.from(this.activeRequests.entries())
-            .find(([, p]) => p === next)?.[0] ?? randomUUID();
-          // Note: we can't get the ID from the dequeued request,
-          // this is a simplification. In production you'd track it better.
-        }
-        break;
-      }
+    if (queue.length === 0) {
+      // No more pending for this chat
+      this.chatQueues.delete(chatId);
+      return;
     }
+
+    // Send the next request immediately
+    const next = queue[0];
+    this.sendImmediate(next.requestId, next.message, chatId);
   }
 
   /**
-   * Handle request timeout
+   * Handle request timeout — reject and dequeue
    */
   private handleRequestTimeout(requestId: string): void {
     const pending = this.activeRequests.get(requestId);
-    if (pending) {
-      this.activeRequests.delete(requestId);
-      pending.reject(new Error('Request timed out'));
-      this.dequeueNext(requestId);
-    }
+    if (!pending) return;
+
+    this.activeRequests.delete(requestId);
+    this.accumulatedText.delete(requestId);
+
+    // Reject (the timeout already fired, so the Promise is already rejected)
+    // But we still need to dequeue the next
+    const chatId = pending.chatId;
+    this.dequeueNext(requestId, chatId);
   }
 
   /**
-   * Reject all pending requests
+   * Reject all pending requests (on stop or exit)
    */
   private rejectAllPending(error: Error): void {
     for (const pending of this.activeRequests.values()) {

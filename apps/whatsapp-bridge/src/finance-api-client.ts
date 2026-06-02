@@ -1,6 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Finance API Client for WhatsApp Bridge
-// Direct API calls for financial operations (alternative to Pi RPC)
+// DEPRECATED — PiBridge now uses finance-cli for all operations via pi --mode rpc.
+// This file is kept for potential future use (direct HTTP bypass for specific reports).
+// Remove if proven unused after full migration to CLI determinístico.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ApiResponse<T> {

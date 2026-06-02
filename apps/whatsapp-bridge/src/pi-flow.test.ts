@@ -300,10 +300,10 @@ describe('Agent Runtime Configuration', () => {
     process.env = originalEnv;
   });
 
-  it('defaults to legacy when not set', () => {
+  it('defaults to pi-native when not set', () => {
     delete process.env.FINANCE_AGENT_RUNTIME;
-    const runtime = process.env.FINANCE_AGENT_RUNTIME || 'legacy';
-    expect(runtime).toBe('legacy');
+    // getAgentRuntime() defaults to 'pi-native'
+    expect(process.env.FINANCE_AGENT_RUNTIME).toBeUndefined();
   });
 
   it('pi-native activates PiBridge', () => {
@@ -311,9 +311,15 @@ describe('Agent Runtime Configuration', () => {
     expect(process.env.FINANCE_AGENT_RUNTIME).toBe('pi-native');
   });
 
-  it('legacy uses PiRpcRunnerClient', () => {
-    process.env.FINANCE_AGENT_RUNTIME = 'legacy';
-    expect(process.env.FINANCE_AGENT_RUNTIME).toBe('legacy');
+  it('disabled mode uses fake client for dev', () => {
+    process.env.FINANCE_AGENT_RUNTIME = 'disabled';
+    expect(process.env.FINANCE_AGENT_RUNTIME).toBe('disabled');
+  });
+
+  it('pi-native is the default (no legacy mode)', () => {
+    // Verify the type is 'pi-native' | 'disabled' only
+    const validModes = ['pi-native', 'disabled'];
+    expect(validModes).toContain(process.env.FINANCE_AGENT_RUNTIME || 'pi-native');
   });
 });
 

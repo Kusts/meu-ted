@@ -85,8 +85,8 @@ pnpm --filter @pi-financeiro/dashboard dev
 # WhatsApp Bridge
 pnpm --filter @pi-financeiro/whatsapp-bridge dev
 
-# Pi RPC Runner
-pnpm --filter @pi-financeiro/pi-rpc-runner dev
+# TED Agent (pi --mode rpc)
+pi --mode rpc
 ```
 
 ### Modo produção local
@@ -95,8 +95,8 @@ pnpm --filter @pi-financeiro/pi-rpc-runner dev
 # Usar Drizzle com Postgres real
 API_DEP_MODE=drizzle DATABASE_URL=postgresql://... pnpm --filter @pi-financeiro/api dev
 
-# Usar Pi RPC real (requer `pi` instalado)
-PI_RPC_ENABLED=true pnpm --filter @pi-financeiro/pi-rpc-runner dev
+# TED via Pi RPC (requer `pi` instalado)
+FINANCE_AGENT_RUNTIME=pi-native pnpm --filter @pi-financeiro/whatsapp-bridge dev
 
 # Build e start dashboard
 pnpm --filter @pi-financeiro/dashboard build
@@ -174,27 +174,25 @@ pnpm clean
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                   apps/whatsapp-bridge                          │
-│              Webhook handler + PiClient adapter                │
-│                    (PiRpcRunnerClient)                           │
+│           Webhook handler + PiBridge adapter                   │
 └────────────────────────────┬───────────────────────────────────┘
-                             │ Pi RPC JSONL
+                             │ Pi RPC JSONL (stdin/stdout)
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                   apps/pi-rpc-runner                             │
-│     TED Prompt Builder + RPC Queue + Process Runner            │
-│                    (pi --mode rpc)                               │
-└────────────────────────────┬───────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      TED Agent (Pi)                             │
-│           "Nunca diga que fez sem confirmação"                   │
+│                    pi --mode rpc                               │
+│     (pi CLI, carrega .pi/AGENTS.md, executa ted-finance CLI)   │
 └────────────────────────────┬───────────────────────────────────┘
                              │ Tools (create_expense, etc)
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
+│                  packages/finance-cli                           │
+│         ted-finance CLI (deterministic, typed)                  │
+└────────────────────────────┬───────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
 │                       apps/api (Fastify)                        │
-│    CRUD endpoints + webhook handler + services validar          │
+│    CRUD endpoints + webhook handler + services                  │
 └────────────────────────────┬───────────────────────────────────┘
                              │
            ┌─────────────────┼─────────────────┐

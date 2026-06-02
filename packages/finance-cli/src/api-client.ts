@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // API Client - TED Finance CLI
 // Deterministic HTTP client with typed inputs/outputs
+// Routes match the Fastify API (no /api prefix — Fastify uses root paths)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { CliResult } from './types.js';
@@ -47,7 +48,8 @@ export class FinanceApiClient {
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      const url = endpoint.startsWith('http') ? endpoint : `${this.baseUrl}${endpoint}`;
+      const response = await fetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -81,12 +83,15 @@ export class FinanceApiClient {
    * Extract intent name from endpoint for logging
    */
   private extractIntentFromEndpoint(endpoint: string): string {
-    const match = endpoint.match(/\/api\/(\w+(?:-\w+)*)/);
+    const match = endpoint.match(/\/(\w+(?:-\w+)*)/);
     return match ? match[1].replace(/-/g, '_') : 'unknown';
   }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Financial Records
+  // Route 1: create-expense → POST /records/expense
+  // Route 2: create-income  → POST /records/income
+  // Route 3: create-transfer → POST /records/transfer
   // ─────────────────────────────────────────────────────────────────────────
 
   async createExpense(input: {
@@ -99,7 +104,7 @@ export class FinanceApiClient {
     source?: string;
     idempotencyKey?: string;
   }): Promise<CliResult<{ recordId: string }>> {
-    return this.call('/api/financial-records/expense', 'POST', {
+    return this.call('/records/expense', 'POST', {
       householdId: input.householdId,
       accountId: input.accountId,
       amountCents: input.amountCents,
@@ -121,7 +126,7 @@ export class FinanceApiClient {
     source?: string;
     idempotencyKey?: string;
   }): Promise<CliResult<{ recordId: string }>> {
-    return this.call('/api/financial-records/income', 'POST', {
+    return this.call('/records/income', 'POST', {
       householdId: input.householdId,
       accountId: input.accountId,
       amountCents: input.amountCents,
@@ -143,7 +148,7 @@ export class FinanceApiClient {
     source?: string;
     idempotencyKey?: string;
   }): Promise<CliResult<{ recordId: string }>> {
-    return this.call('/api/financial-records/transfer', 'POST', {
+    return this.call('/records/transfer', 'POST', {
       householdId: input.householdId,
       fromAccountId: input.fromAccountId,
       toAccountId: input.toAccountId,
@@ -165,7 +170,7 @@ export class FinanceApiClient {
     categoryId?: string;
     source?: string;
   }): Promise<CliResult<{ installmentGroupId: string }>> {
-    return this.call('/api/card-purchases/installment', 'POST', {
+    return this.call('/cards/installments', 'POST', {
       householdId: input.householdId,
       cardId: input.cardId,
       amountCents: input.amountCents,
@@ -188,7 +193,7 @@ export class FinanceApiClient {
     cardId?: string;
     categoryId?: string;
   }): Promise<CliResult<{ recurrenceId: string; occurrencesCount: number }>> {
-    return this.call('/api/recurrences', 'POST', {
+    return this.call('/recurrences', 'POST', {
       householdId: input.householdId,
       description: input.description,
       amountCents: input.amountCents,
@@ -208,9 +213,8 @@ export class FinanceApiClient {
     amountCents: number;
     paymentDate: string;
   }): Promise<CliResult<{ recordId: string; interestRecordId?: string }>> {
-    return this.call('/api/bills/pay', 'POST', {
+    return this.call(`/bills/${input.billId}/pay`, 'POST', {
       householdId: input.householdId,
-      billId: input.billId,
       paymentAccountId: input.paymentAccountId,
       amountCents: input.amountCents,
       paymentDate: input.paymentDate,
@@ -221,9 +225,8 @@ export class FinanceApiClient {
     householdId: string;
     invoiceId: string;
   }): Promise<CliResult<{ invoiceId: string }>> {
-    return this.call('/api/invoices/close', 'POST', {
+    return this.call(`/invoices/${input.invoiceId}/close`, 'POST', {
       householdId: input.householdId,
-      invoiceId: input.invoiceId,
     });
   }
 
@@ -234,9 +237,8 @@ export class FinanceApiClient {
     amountCents: number;
     paymentDate: string;
   }): Promise<CliResult<{ recordId: string }>> {
-    return this.call('/api/invoices/pay', 'POST', {
+    return this.call(`/invoices/${input.invoiceId}/pay`, 'POST', {
       householdId: input.householdId,
-      invoiceId: input.invoiceId,
       paymentAccountId: input.paymentAccountId,
       amountCents: input.amountCents,
       paymentDate: input.paymentDate,
@@ -247,9 +249,8 @@ export class FinanceApiClient {
     householdId: string;
     recordId: string;
   }): Promise<CliResult<{ originalRecordId: string; reversalRecordId: string }>> {
-    return this.call('/api/financial-records/undo', 'POST', {
+    return this.call(`/records/${input.recordId}/undo`, 'POST', {
       householdId: input.householdId,
-      recordId: input.recordId,
     });
   }
 
@@ -258,23 +259,24 @@ export class FinanceApiClient {
     reviewEntryId: string;
     action: 'approve' | 'reject';
   }): Promise<CliResult<{ resolved: boolean }>> {
-    return this.call('/api/review/mark', 'POST', {
+    return this.call(`/review/${input.reviewEntryId}/${input.action}`, 'POST', {
       householdId: input.householdId,
-      reviewEntryId: input.reviewEntryId,
-      action: input.action,
     });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Queries
+  // Route: list-accounts → GET /accounts?householdId=
+  // Route: list-categories → GET /categories?householdId=
+  // Route: get-report → GET /reports?householdId=&type=[monthly|category|account]
   // ─────────────────────────────────────────────────────────────────────────
 
   async listAccounts(householdId: string): Promise<CliResult<{ accounts: unknown[] }>> {
-    return this.call(`/api/accounts?householdId=${encodeURIComponent(householdId)}`, 'GET');
+    return this.call(`/accounts?householdId=${encodeURIComponent(householdId)}`, 'GET');
   }
 
   async listCategories(householdId: string): Promise<CliResult<{ categories: unknown[] }>> {
-    return this.call(`/api/categories?householdId=${encodeURIComponent(householdId)}`, 'GET');
+    return this.call(`/categories?householdId=${encodeURIComponent(householdId)}`, 'GET');
   }
 
   async getReport(input: {
@@ -289,7 +291,7 @@ export class FinanceApiClient {
     });
     if (input.dateFrom) params.set('dateFrom', input.dateFrom);
     if (input.dateTo) params.set('dateTo', input.dateTo);
-    
-    return this.call(`/api/reports?${params}`, 'GET');
+
+    return this.call(`/reports?${params}`, 'GET');
   }
 }
