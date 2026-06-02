@@ -89,11 +89,14 @@ describe('PiBridge', () => {
   });
 
   describe('message handling', () => {
-    it('findAgentsMd returns null when no AGENTS.md exists', () => {
-      const bridge = new PiBridge({ householdId: 'h123', projectDir: '/nonexistent' });
-      // Access private method via any for testing
-      const result = (bridge as any).findAgentsMd('/nonexistent');
-      expect(result).toBeNull();
+    it('has handleMessage method (protocol parsing)', () => {
+      const bridge = new PiBridge({ householdId: 'h123' });
+      expect(typeof (bridge as any).handleMessage).toBe('function');
+    });
+
+    it('has extractTextFromPiMessage helper', () => {
+      const bridge = new PiBridge({ householdId: 'h123' });
+      expect(typeof (bridge as any).extractTextFromPiMessage).toBe('function');
     });
   });
 

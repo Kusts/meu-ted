@@ -29,12 +29,20 @@ interface PendingRequest {
 interface JsonRpcMessage {
   id?: string;
   type?: string;
-  message?: string;
+  message?: string | { role: string; content: Array<{ type: string; text: string }> };
   delta?: string;
   text_delta?: string;
   text?: string;
   error?: string;
   status?: string;
+  // Real Pi RPC protocol fields
+  command?: string;
+  success?: boolean;
+  assistantMessageEvent?: {
+    type?: string;
+    delta?: string;
+    content?: string;
+  };
 }
 
 type BridgeEventType = 'message_update' | 'turn_end' | 'agent_end' | 'error' | 'health_check';
@@ -59,6 +67,9 @@ export class PiBridge {
 
   // Active request tracking
   private activeRequests = new Map<string, PendingRequest>();
+
+  // Streaming text accumulator per request (Pi RPC sends text_delta in chunks)
+  private accumulatedText = new Map<string, string>();
 
   // Event handlers
   private eventHandlers = new Map<BridgeEventType, Set<BridgeEventHandler>>();
@@ -222,6 +233,7 @@ export class PiBridge {
 
     this.chatQueues.clear();
     this.activeRequests.clear();
+    this.accumulatedText.clear();
     this.lineBuffer = '';
     console.log('[PiBridge] Stopped');
   }
@@ -296,44 +308,112 @@ export class PiBridge {
   }
 
   /**
+   * Extract text from any Pi RPC message format.
+   * Real protocol puts text in:
+   * - assistantMessageEvent.delta (text_delta streaming)
+   * - assistantMessageEvent.content (text_end complete)
+   * - message.content[0].text (turn_end final)
+   * Legacy fallbacks: root-level text, delta, text_delta
+   */
+  private extractTextFromPiMessage(msg: unknown): string {
+    if (!msg || typeof msg !== 'object') return '';
+    const m = msg as Record<string, unknown>;
+
+    // Real protocol: turn_end / agent_end with full message
+    const message = m.message as { content?: Array<{ type: string; text: string }> } | undefined;
+    if (message?.content?.[0]?.text) {
+      return message.content[0].text;
+    }
+
+    // Real protocol: message_update with assistantMessageEvent.delta (streaming)
+    const evt = m.assistantMessageEvent as { type?: string; delta?: string; content?: string } | undefined;
+    if (evt?.type === 'text_delta' && typeof evt.delta === 'string') {
+      return evt.delta;
+    }
+    if (evt?.type === 'text_end' && typeof evt.content === 'string') {
+      return evt.content;
+    }
+
+    // Legacy fallback
+    if (typeof m.text === 'string') return m.text;
+    if (typeof m.delta === 'string') return m.delta;
+    if (typeof m.text_delta === 'string') return m.text_delta;
+
+    return '';
+  }
+
+  /**
    * Handle parsed JSON message
    */
   private handleMessage(msg: JsonRpcMessage): void {
-    const { id, type, delta, text_delta, text, error, status } = msg;
+    const { id, type, error } = msg;
 
     // Update health check timestamp
     this.lastHealthCheck = Date.now();
 
-    // Handle response to a request
+    // 'response' is just an ACK from Pi RPC (e.g. {type:"response", id, success:true})
+    // Do NOT resolve the pending request — wait for turn_end / agent_end
+    if (type === 'response') {
+      return;
+    }
+
+    // Handle response to a tracked request
     if (id && this.activeRequests.has(id)) {
       const pending = this.activeRequests.get(id)!;
 
-      // Check for completion events
-      if (type === 'agent_end' || type === 'turn_end' || status === 'complete') {
+      // 1) Stream chunks: accumulate text_delta for later fallback
+      if (type === 'message_update') {
+        const chunk = this.extractTextFromPiMessage(msg);
+        if (chunk) {
+          const prev = this.accumulatedText.get(id) ?? '';
+          this.accumulatedText.set(id, prev + chunk);
+        }
+        this.emit('message_update', msg);
+        return;
+      }
+
+      // 2) turn_end: final response with full message
+      if (type === 'turn_end') {
+        const finalText = this.extractTextFromPiMessage(msg)
+          || this.accumulatedText.get(id)
+          || '';
         clearTimeout(pending.timeout);
         this.activeRequests.delete(id);
-        pending.resolve(text ?? delta ?? text_delta ?? '');
+        this.accumulatedText.delete(id);
+        pending.resolve(finalText);
+        this.emit('turn_end', msg);
         this.emit('agent_end', msg);
         this.dequeueNext(id);
         return;
       }
 
-      // Handle text delta updates
-      if (delta || text_delta) {
-        this.emit('message_update', msg);
-      }
-
-      // Handle errors
-      if (error) {
+      // 3) agent_end: fallback resolve with accumulated text
+      if (type === 'agent_end') {
+        const finalText = this.extractTextFromPiMessage(msg)
+          || this.accumulatedText.get(id)
+          || '';
         clearTimeout(pending.timeout);
         this.activeRequests.delete(id);
-        pending.reject(new Error(error));
+        this.accumulatedText.delete(id);
+        pending.resolve(finalText);
+        this.emit('agent_end', msg);
+        this.dequeueNext(id);
+        return;
+      }
+
+      // 4) Errors
+      if (type === 'error' || error) {
+        clearTimeout(pending.timeout);
+        this.activeRequests.delete(id);
+        this.accumulatedText.delete(id);
+        pending.reject(new Error(typeof error === 'string' ? error : 'Pi RPC error'));
         this.emit('error', msg);
         this.dequeueNext(id);
+        return;
       }
     }
 
-    // Emit typed events
+    // Emit typed events (for non-tracked or unhandled)
     switch (type) {
       case 'message_update':
         this.emit('message_update', msg);
@@ -399,6 +479,7 @@ export class PiBridge {
       pending.reject(error);
     }
     this.activeRequests.clear();
+    this.accumulatedText.clear();
 
     for (const queue of this.chatQueues.values()) {
       for (const pending of queue) {
