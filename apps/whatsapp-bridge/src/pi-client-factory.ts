@@ -120,6 +120,10 @@ export class PiBridgeAdapter implements PiClient {
 // Pi Client Factory
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface FakePiClient {
+  send(): Promise<{ success: boolean; reason: string }>;
+}
+
 export interface PiClientFactoryOptions {
   householdId: string;
   financeApiClient?: ReportFinanceApiClient;
@@ -133,43 +137,36 @@ export function createPiClient(options: PiClientFactoryOptions): PiClient {
 
   switch (runtime) {
     case 'pi-native':
-      // Lazy import to avoid circular deps
-      return createPiNativeClient(options);
+      // Use PiBridge adapter for pi-native mode
+      const adapter = new PiBridgeAdapter(options.householdId, {
+        financeApiClient: options.financeApiClient,
+      });
+      adapter.start().catch(console.error);
+      return adapter;
 
     case 'legacy':
     default:
+      // In legacy mode, try to use PiRpcRunnerClient if available
       return createLegacyPiClient(options);
   }
 }
 
 function createLegacyPiClient(options: PiClientFactoryOptions): PiClient {
-  // Dynamic import to avoid circular dependency
-  const { PiRpcRunnerClient } = require('./pi-rpc-runner-client.js');
-
-  return new PiRpcRunnerClient({
-    enabled: getPiRpcEnabled(),
-    command: getPiCommand(),
-    args: getPiArgs(),
-    timeoutMs: getPiTimeoutMs(),
-    cwd: process.cwd(),
-    financeApiClient: options.financeApiClient,
-  });
+  // Try to import PiRpcRunnerClient, fall back to fake if not available
+  try {
+    const { PiRpcRunnerClient } = require('./pi-rpc-runner-client.js');
+    return new PiRpcRunnerClient({
+      enabled: getPiRpcEnabled(),
+      command: getPiCommand(),
+      args: getPiArgs(),
+      timeoutMs: getPiTimeoutMs(),
+      cwd: process.cwd(),
+      financeApiClient: options.financeApiClient,
+    });
+  } catch {
+    // PiRpcRunnerClient not available (e.g., in tests), return fake client
+    return {
+      send: async () => ({ success: false, reason: 'Pi RPC desabilitado em modo desenvolvimento' }),
+    } as PiClient;
+  }
 }
-
-function createPiNativeClient(options: PiClientFactoryOptions): PiClient {
-  const adapter = new PiBridgeAdapter(options.householdId, {
-    financeApiClient: options.financeApiClient,
-  });
-
-  // Start bridge eagerly
-  adapter.start().catch(console.error);
-
-  return adapter;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Re-export for compatibility
-// ─────────────────────────────────────────────────────────────────────────────
-
-export { PiRpcRunnerClient } from './pi-rpc-runner-client.js';
-export type { PiRpcRunnerClientOptions } from './pi-rpc-runner-client.js';

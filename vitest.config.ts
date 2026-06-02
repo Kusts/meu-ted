@@ -52,10 +52,6 @@ export default defineConfig({
         'apps/whatsapp-bridge/src/pi-rpc-client.ts',
         'apps/whatsapp-bridge/src/pi-rpc-runner-client.ts',
         'apps/whatsapp-bridge/src/finance-api-client.ts',
-        // Pi RPC runner process spawning (child_process IPC)
-        'apps/pi-rpc-runner/src/process-runner.ts',
-        'apps/pi-rpc-runner/src/rpc-client.ts',
-        'apps/pi-rpc-runner/src/index.ts',
       ],
     },
     reporters: ['default'],
@@ -71,7 +67,6 @@ export default defineConfig({
       '@pi-financeiro/domain': resolve(__dirname, 'packages/domain/src'),
       '@pi-financeiro/ledger': resolve(__dirname, 'packages/ledger/src'),
       '@pi-financeiro/idempotency': resolve(__dirname, 'packages/idempotency/src'),
-      '@pi-financeiro/tools': resolve(__dirname, 'packages/tools/src'),
     },
   },
 });

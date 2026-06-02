@@ -15,9 +15,7 @@
     "fastify": "^5.0.0",
     "@pi-financeiro/db": "workspace:*",
     "@pi-financeiro/domain": "workspace:*",
-    "@pi-financeiro/idempotency": "workspace:*",
-    "@pi-financeiro/tools": "workspace:*",
-    "@pi-financeiro/pi-rpc-runner": "workspace:*"
+    "@pi-financeiro/idempotency": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

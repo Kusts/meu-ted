@@ -2,9 +2,26 @@
 // WhatsApp Bridge - Exports
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { createPiClient, getAgentRuntime, getWriteMode } from './pi-client-factory.js';
+import { PiBridge, createPiBridge } from './pi-bridge.js';
+import type { PiClient } from './webhook-handler.js';
+
+// Re-export factory functions
+export { createPiClient, getAgentRuntime, getWriteMode } from './pi-client-factory.js';
+export type { PiClientFactoryOptions } from './pi-client-factory.js';
+
+// Re-export bridge
+export { PiBridge, createPiBridge } from './pi-bridge.js';
+export type { PiBridgeOptions } from './pi-bridge.js';
+
+// PiClient type from webhook-handler
+export type { PiClient };
+
+// Message classifier
 export { classifyMessage, generateClarificationPrompt } from './message-classifier.js';
 export type { MessageClassification } from './message-classifier.js';
 
+// Webhook handler
 export {
   processWebhook,
   validateEventType,
@@ -22,16 +39,9 @@ export type {
   UserRegistry,
   SourceMessageStore,
   ValidationResult,
-  PiClient,
   ResponseSender,
 } from './webhook-handler.js';
 
+// Evolution client
 export { EvolutionClient, FakeEvolutionClient } from './evolution-client.js';
 export type { EvolutionClientOptions, SendTextRequest, SendTextResponse } from './evolution-client.js';
-/** @deprecated Use EVOLUTION_GO_API_URL instead of EVOLUTION_API_URL */
-
-export { PiRpcRunnerClient, createPiClient, getPiCommand, getPiArgs, getPiTimeoutMs } from './pi-rpc-runner-client.js';
-export type { PiRpcRunnerClientOptions } from './pi-rpc-runner-client.js';
-
-export { RpcQueue, formatPromptAsJsonl, parseJsonlResponse } from './rpc-queue.js';
-export type { RpcJob, RpcResponse, QueueOptions } from './rpc-queue.js';

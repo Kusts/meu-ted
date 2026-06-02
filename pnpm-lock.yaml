@@ -104,34 +104,6 @@ importers:
         specifier: ^3.1.0
         version: 3.2.4(@types/node@22.19.19)(tsx@4.22.3)(yaml@2.9.0)
 
-  apps/pi-rpc-runner:
-    dependencies:
-      '@pi-financeiro/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@pi-financeiro/domain':
-        specifier: workspace:*
-        version: link:../../packages/domain
-      '@pi-financeiro/idempotency':
-        specifier: workspace:*
-        version: link:../../packages/idempotency
-      '@pi-financeiro/ledger':
-        specifier: workspace:*
-        version: link:../../packages/ledger
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.19
-      tsx:
-        specifier: ^4.0.0
-        version: 4.22.3
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.1.0
-        version: 3.2.4(@types/node@22.19.19)(tsx@4.22.3)(yaml@2.9.0)
-
   apps/whatsapp-bridge:
     dependencies:
       '@pi-financeiro/db':
@@ -143,12 +115,6 @@ importers:
       '@pi-financeiro/idempotency':
         specifier: workspace:*
         version: link:../../packages/idempotency
-      '@pi-financeiro/pi-rpc-runner':
-        specifier: workspace:*
-        version: link:../pi-rpc-runner
-      '@pi-financeiro/tools':
-        specifier: workspace:*
-        version: link:../../packages/tools
       fastify:
         specifier: ^5.0.0
         version: 5.8.5
@@ -210,6 +176,9 @@ importers:
         specifier: ^3.23.8
         version: 3.25.76
     devDependencies:
+      '@pi-financeiro/domain':
+        specifier: workspace:*
+        version: link:../domain
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.19
@@ -289,25 +258,6 @@ importers:
       testcontainers:
         specifier: ^11.0.0
         version: 11.14.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.1.0
-        version: 3.2.4(@types/node@22.19.19)(tsx@4.22.3)(yaml@2.9.0)
-
-  packages/tools:
-    dependencies:
-      '@pi-financeiro/domain':
-        specifier: workspace:*
-        version: link:../domain
-      zod:
-        specifier: ^3.24.0
-        version: 3.25.76
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.19
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

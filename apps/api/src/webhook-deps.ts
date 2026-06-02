@@ -3,8 +3,9 @@
 // Creates webhook-related dependencies for the API server
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { createPiClient, getPiCommand, getPiArgs, getPiTimeoutMs, type PiClient } from '@pi-financeiro/whatsapp-bridge';
+import { createPiClient, getAgentRuntime, type PiClient } from '@pi-financeiro/whatsapp-bridge';
 import { EvolutionClient, FakeEvolutionClient } from '@pi-financeiro/whatsapp-bridge';
+import type { PendingOperationService } from '@pi-financeiro/domain';
 
 // Re-export for convenience
 export { type PiClient, type SourceMessageStore, type UserRegistry, type ResponseSender } from '@pi-financeiro/whatsapp-bridge';
@@ -14,24 +15,31 @@ export interface WebhookDependencies {
   responseSender: EvolutionClient | FakeEvolutionClient;
   sourceMessageStore: InMemorySourceMessageStore;
   userRegistry: EnvBasedUserRegistry;
+  pendingOperationService?: PendingOperationService;
+  agentRuntime: 'legacy' | 'pi-native';
 }
 
 export interface WebhookDepsOptions {
   piEnabled?: boolean;
   evolutionGoApiUrl?: string;
   evolutionGoInstanceToken?: string;
+  householdId?: string;
+  pendingOperationService?: PendingOperationService;
 }
 
 /**
  * Create webhook dependencies based on environment
  */
 export function createWebhookDependencies(options: WebhookDepsOptions = {}): WebhookDependencies {
-  // Create Pi client (real or fake based on env)
+  // Get agent runtime mode
+  const runtime = getAgentRuntime();
+  const householdId = options.householdId || process.env.DEFAULT_HOUSEHOLD_ID || 'default';
+
+  // Create Pi client based on runtime mode
+  // In pi-native mode, we use the new factory; in legacy mode, we use the legacy path
   const piClient = createPiClient({
-    enabled: options.piEnabled ?? isPiRpcEnabled(),
-    command: getPiCommand(),
-    args: getPiArgs(),
-    timeoutMs: getPiTimeoutMs(),
+    householdId,
+    financeApiClient: undefined, // Will use default FinanceApiClient internally
   });
 
   // Create response sender (Evolution API or fake)
@@ -48,14 +56,9 @@ export function createWebhookDependencies(options: WebhookDepsOptions = {}): Web
     responseSender,
     sourceMessageStore,
     userRegistry,
+    pendingOperationService: options.pendingOperationService,
+    agentRuntime: runtime,
   };
-}
-
-/**
- * Check if Pi RPC is enabled via environment
- */
-function isPiRpcEnabled(): boolean {
-  return process.env.PI_RPC_ENABLED === 'true';
 }
 
 /**
