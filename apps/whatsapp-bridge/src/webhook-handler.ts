@@ -1,47 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Webhook Handler - Validates and processes Evolution GO API webhooks
+// WhatsApp Bridge — Webhook handler
+// Responsibility: validate, extract, and forward WhatsApp messages to Pi.
+// NO financial classification here. The Agent Pi interprets the message.
 // ─────────────────────────────────────────────────────────────────────────────
-import { classifyMessage, generateClarificationPrompt, type MessageClassification } from './message-classifier.js';
-
-const PI_RPC_DISABLED_REASON = 'Pi RPC desabilitado em modo desenvolvimento';
-const GENERAL_FALLBACK_MESSAGE = 'Oi! Sou o TED, seu assistente pessoal de finanças. Pode me mandar gastos, dúvidas, metas ou qualquer pergunta.';
-
-// User prefers only typing indicator, no progress texts
-// Set PROGRESS_THRESHOLD_3S_MS high to effectively disable them
-const PROGRESS_THRESHOLD_3S_MS = 999999;
-const PROGRESS_THRESHOLD_8S_MS = 999999;
-const PROGRESS_TEXT_3S = '';
-const PROGRESS_TEXT_8S = '';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Evolution GO Webhook Payload
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Evolution GO webhook payload (POST from GO to our server)
- *
- * Example (Message event):
- * {
- *   "event": "Message",
- *   "instanceId": "uuid",
- *   "instanceToken": "token",
- *   "data": {
- *     "Info": {
- *       "Chat": "5511...@s.whatsapp.net",
- *       "Sender": "5511...:19@s.whatsapp.net",
- *       "IsFromMe": false,
- *       "IsGroup": false,
- *       "ID": "3EB0...",
- *       "Type": "text",
- *       "PushName": "João",
- *       "Timestamp": "2024-10-10T17:17:44-03:00"
- *     },
- *     "Message": {
- *       "conversation": "oi"
- *     }
- *   }
- * }
- */
 export interface WebhookPayload {
   event: string;
   instanceId: string;
@@ -69,8 +35,23 @@ export interface WebhookPayload {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Internal types
+// Public interfaces (kept stable for server.ts and tests)
 // ─────────────────────────────────────────────────────────────────────────────
+
+export type WebhookStatus = 'forwarded' | 'ignored' | 'failed';
+
+export interface ProcessedResult {
+  status: WebhookStatus;
+  reason?: string;
+  sourceMessageId?: string;
+  response?: string;
+}
+
+export interface UserRegistry {
+  isPhoneRegistered(phone: string): boolean;
+  isGroupAllowed(groupId: string): boolean;
+  getHouseholdIdForGroup(groupId: string): string | null;
+}
 
 export interface SourceMessage {
   id: string;
@@ -83,23 +64,7 @@ export interface SourceMessage {
   timestamp: number;
   processed: boolean;
   processedAt?: string;
-  classification?: MessageClassification;
-  tedResponse?: string;
   errorReason?: string;
-}
-
-export interface ProcessedResult {
-  success: boolean;
-  classification: MessageClassification;
-  response?: string;
-  sourceMessageId?: string;
-  reason?: string;
-}
-
-export interface UserRegistry {
-  isPhoneRegistered(phone: string): boolean;
-  isGroupAllowed(groupId: string): boolean;
-  getHouseholdIdForGroup(groupId: string): string | null;
 }
 
 export interface SourceMessageStore {
@@ -108,21 +73,33 @@ export interface SourceMessageStore {
   saveError(providerMessageId: string, error: string): void;
 }
 
-/**
- * Webhook validation result
- */
 export interface ValidationResult {
   valid: boolean;
   reason?: string;
 }
 
+export interface ResponseSender {
+  send(chatId: string, message: string): Promise<void>;
+  sendPresence?(chatId: string, state: 'composing' | 'paused'): Promise<void>;
+}
+
+export interface PiClient {
+  send(
+    message: string,
+    senderPhone: string,
+    context: {
+      source: string;
+      chatId: string;
+      providerMessageId: string;
+      idempotencyKey?: string;
+    }
+  ): Promise<{ success: boolean; reason?: string; data?: { message?: string } }>;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Validation functions
+// Validation
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Validate webhook is a Message event (ignore Connection, Receipt, etc.)
- */
 export function validateEventType(payload: WebhookPayload): ValidationResult {
   if (payload.event !== 'Message') {
     return { valid: false, reason: `evento ignorado: ${payload.event}` };
@@ -130,42 +107,27 @@ export function validateEventType(payload: WebhookPayload): ValidationResult {
   return { valid: true };
 }
 
-/**
- * Validate instance token matches expected token
- * In Evolution GO, the instanceToken is sent in the webhook payload.
- * We validate it against our configured token to prevent spoofed webhooks.
- */
 export function validateInstanceToken(
   payload: WebhookPayload,
   expectedToken: string
 ): ValidationResult {
-  if (!expectedToken) {
-    // No token configured — skip validation (dev mode)
-    return { valid: true };
-  }
+  if (!expectedToken) return { valid: true };
   if (payload.instanceToken !== expectedToken) {
     return { valid: false, reason: 'instanceToken inválido' };
   }
   return { valid: true };
 }
 
-/**
- * Validate group is allowed
- */
 export function validateGroup(
   payload: WebhookPayload,
   registry: UserRegistry
 ): ValidationResult {
-  const groupId = payload.data.Info.Chat;
-  if (!registry.isGroupAllowed(groupId)) {
+  if (!registry.isGroupAllowed(payload.data.Info.Chat)) {
     return { valid: false, reason: 'grupo não permitido' };
   }
   return { valid: true };
 }
 
-/**
- * Validate sender phone is registered
- */
 export function validateSender(
   payload: WebhookPayload,
   registry: UserRegistry
@@ -181,44 +143,26 @@ export function validateSender(
 // Extraction helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Extract phone number from WhatsApp JID
- * Handles both personal JIDs (5511...@s.whatsapp.net, 5511...:19@s.whatsapp.net)
- * and group JIDs (@g.us)
- */
 export function extractPhone(remoteJid: string): string {
   return remoteJid
     .replace(/@s\.whatsapp\.net$/, '')
     .replace(/@g\.us$/, '')
-    .replace(/:\d+$/, ''); // Remove device suffix like :19
+    .replace(/:\d+$/, '');
 }
 
-/**
- * Extract text from webhook payload
- */
 export function extractMessageText(payload: WebhookPayload): string {
   const msg = payload.data.Message;
-  if (msg?.conversation) {
-    return msg.conversation;
-  }
-  if (msg?.extendedTextMessage?.text) {
-    return msg.extendedTextMessage.text;
-  }
-  if (msg?.imageMessage?.caption) {
-    return msg.imageMessage.caption;
-  }
-  if (msg?.videoMessage?.caption) {
-    return msg.videoMessage.caption;
-  }
+  if (!msg) return '';
+  if (msg.conversation) return msg.conversation;
+  if (msg.extendedTextMessage?.text) return msg.extendedTextMessage.text;
+  if (msg.imageMessage?.caption) return msg.imageMessage.caption;
+  if (msg.videoMessage?.caption) return msg.videoMessage.caption;
+  if (msg.documentMessage?.title) return msg.documentMessage.title;
   return '';
 }
 
-/**
- * Build SourceMessage from payload
- */
 export function buildSourceMessage(payload: WebhookPayload): SourceMessage {
-  const timestamp = new Date(payload.data.Info.Timestamp).getTime() / 1000;
-
+  const ts = new Date(payload.data.Info.Timestamp).getTime() / 1000;
   return {
     id: crypto.randomUUID(),
     providerMessageId: payload.data.Info.ID,
@@ -227,57 +171,56 @@ export function buildSourceMessage(payload: WebhookPayload): SourceMessage {
     text: extractMessageText(payload),
     senderPhone: extractPhone(payload.data.Info.Sender),
     pushName: payload.data.Info.PushName || undefined,
-    timestamp: Number.isNaN(timestamp) ? Date.now() / 1000 : timestamp,
+    timestamp: Number.isNaN(ts) ? Date.now() / 1000 : ts,
     processed: false,
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hybrid progress logger (presence + timed text messages)
+// Prompt builder (documented contract for the Agent Pi)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Wraps an async operation with composing/paused presence and optional progress text.
- * - Sends "composing" immediately.
- * - At 3s: sends first progress text (🔎).
- * - At 8s: sends second progress text (🧮).
- * - On completion/error: clears timers and sends "paused".
- * Only applies to messages that will be processed (not ignored).
- */
-async function withHybridProgress<T>(
+export function buildBridgePrompt(
+  source: SourceMessage,
+  householdId: string
+): string {
+  const isoTimestamp = new Date(source.timestamp * 1000).toISOString();
+  return [
+    '[WhatsApp Message]',
+    `householdId: ${householdId}`,
+    `chatId: ${source.remoteJid}`,
+    `senderPhone: ${source.senderPhone}`,
+    `pushName: ${source.pushName ?? ''}`,
+    `providerMessageId: ${source.providerMessageId}`,
+    `timestamp: ${isoTimestamp}`,
+    `source: whatsapp`,
+    '',
+    'User message:',
+    source.text,
+  ].join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Presence helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function withPresence<T>(
   chatId: string,
-  responseSender: ResponseSender,
+  sender: ResponseSender,
   fn: () => Promise<T>
 ): Promise<T> {
-  await responseSender.sendPresence?.(chatId, 'composing');
-
-  let timer3s: ReturnType<typeof setTimeout> | undefined;
-  let timer8s: ReturnType<typeof setTimeout> | undefined;
-
-  timer3s = setTimeout(() => {
-    void responseSender.send(chatId, PROGRESS_TEXT_3S).catch(() => {});
-  }, PROGRESS_THRESHOLD_3S_MS);
-
-  timer8s = setTimeout(() => {
-    void responseSender.send(chatId, PROGRESS_TEXT_8S).catch(() => {});
-  }, PROGRESS_THRESHOLD_8S_MS);
-
+  await sender.sendPresence?.(chatId, 'composing');
   try {
     return await fn();
   } finally {
-    if (timer3s) clearTimeout(timer3s);
-    if (timer8s) clearTimeout(timer8s);
-    await responseSender.sendPresence?.(chatId, 'paused');
+    await sender.sendPresence?.(chatId, 'paused');
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main webhook processor
+// Main processor
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Process webhook - main entry point
- */
 export async function processWebhook(
   payload: WebhookPayload,
   expectedInstanceToken: string,
@@ -286,121 +229,91 @@ export async function processWebhook(
   piClient: PiClient,
   responseSender: ResponseSender
 ): Promise<ProcessedResult> {
-  // Step 1: Validate event type (only process Message events)
-  const eventValidation = validateEventType(payload);
-  if (!eventValidation.valid) {
-    return { success: true, classification: { type: 'ignored' }, reason: eventValidation.reason };
+  // 1) Only Message events
+  const eventCheck = validateEventType(payload);
+  if (!eventCheck.valid) {
+    return { status: 'ignored', reason: eventCheck.reason };
   }
 
-  // Step 2: Validate instance token
-  const tokenValidation = validateInstanceToken(payload, expectedInstanceToken);
-  if (!tokenValidation.valid) {
-    return { success: false, classification: { type: 'ignored' }, reason: tokenValidation.reason };
+  // 2) Token
+  const tokenCheck = validateInstanceToken(payload, expectedInstanceToken);
+  if (!tokenCheck.valid) {
+    return { status: 'failed', reason: tokenCheck.reason };
   }
 
-  // Step 3: Ignore own messages
+  // 3) Skip own messages
   if (payload.data.Info.IsFromMe) {
-    return { success: true, classification: { type: 'ignored' }, reason: 'mensagem própria ignorada' };
+    return { status: 'ignored', reason: 'mensagem própria ignorada' };
   }
 
-  // Step 4: Validate group only for group chats
+  // 4) Group (only for group chats)
   if (payload.data.Info.IsGroup) {
-    const groupValidation = validateGroup(payload, userRegistry);
-    if (!groupValidation.valid) {
-      return { success: false, classification: { type: 'ignored' }, reason: groupValidation.reason };
+    const groupCheck = validateGroup(payload, userRegistry);
+    if (!groupCheck.valid) {
+      return { status: 'failed', reason: groupCheck.reason };
     }
   }
 
-  // Step 5: Validate sender
-  const senderValidation = validateSender(payload, userRegistry);
-  if (!senderValidation.valid) {
-    return { success: false, classification: { type: 'ignored' }, reason: senderValidation.reason };
+  // 5) Sender
+  const senderCheck = validateSender(payload, userRegistry);
+  if (!senderCheck.valid) {
+    return { status: 'failed', reason: senderCheck.reason };
   }
 
-  // Step 6: Build source message
+  // 6) Build source message
   const sourceMsg = buildSourceMessage(payload);
 
-  // Step 7: Check idempotency
+  // 7) Idempotency by providerMessageId
   if (sourceStore.isProcessed(sourceMsg.providerMessageId)) {
-    return { success: true, classification: { type: 'ignored' }, sourceMessageId: sourceMsg.id, reason: 'mensagem duplicada' };
+    return {
+      status: 'ignored',
+      sourceMessageId: sourceMsg.id,
+      reason: 'mensagem duplicada',
+    };
   }
 
-  // Step 8: Classify message
-  const classification = classifyMessage(sourceMsg.text);
-  sourceMsg.classification = classification;
+  // 8) Empty text → ignore
+  if (!sourceMsg.text.trim()) {
+    sourceStore.markProcessed(sourceMsg);
+    return { status: 'ignored', sourceMessageId: sourceMsg.id, reason: 'texto vazio' };
+  }
 
-  // Step 9: Handle classification
-  switch (classification.type) {
-    case 'ignored':
-      // Mark as processed but don't respond
-      sourceStore.markProcessed(sourceMsg);
-      return { success: true, classification, sourceMessageId: sourceMsg.id };
+  // 9) Forward to Pi
+  const householdId =
+    userRegistry.getHouseholdIdForGroup(sourceMsg.remoteJid) ?? 'default';
 
-    case 'clarification_needed':
-      return withHybridProgress(sourceMsg.remoteJid, responseSender, async () => {
-        const response = generateClarificationPrompt(classification.missingInfo);
-        sourceMsg.tedResponse = response;
-        await responseSender.send(sourceMsg.remoteJid, response);
+  const prompt = buildBridgePrompt(sourceMsg, householdId);
+
+  return withPresence(sourceMsg.remoteJid, responseSender, async () => {
+    try {
+      const result = await piClient.send(prompt, sourceMsg.senderPhone, {
+        source: 'whatsapp',
+        chatId: sourceMsg.remoteJid,
+        providerMessageId: sourceMsg.providerMessageId,
+        idempotencyKey: `whatsapp:${sourceMsg.providerMessageId}`,
+      });
+
+      if (result.success && result.data?.message) {
+        await responseSender.send(sourceMsg.remoteJid, result.data.message);
         sourceStore.markProcessed(sourceMsg);
-        return { success: true, classification, response, sourceMessageId: sourceMsg.id };
-      });
+        return {
+          status: 'forwarded',
+          response: result.data.message,
+          sourceMessageId: sourceMsg.id,
+        };
+      }
 
-    case 'command':
-    case 'financial_detected':
-    case 'general':
-      return withHybridProgress(sourceMsg.remoteJid, responseSender, async () => {
-        // Forward to Pi/TED (general covers all non-financial human conversation)
-        try {
-          const tedResult = await piClient.send(
-            sourceMsg.text,
-            sourceMsg.senderPhone,
-            {
-              householdId: userRegistry.getHouseholdIdForGroup(sourceMsg.remoteJid) ?? 'unknown',
-              source: 'whatsapp',
-              idempotencyKey: `whatsapp:${sourceMsg.providerMessageId}`,
-            }
-          );
-
-          if (tedResult.success && tedResult.data?.message) {
-            sourceMsg.tedResponse = tedResult.data.message;
-            await responseSender.send(sourceMsg.remoteJid, tedResult.data.message);
-          } else if (!tedResult.success) {
-            sourceMsg.errorReason = tedResult.reason;
-            sourceStore.saveError(sourceMsg.providerMessageId, tedResult.reason || 'unknown');
-
-            if (classification.type === 'general' && tedResult.reason === PI_RPC_DISABLED_REASON) {
-              sourceMsg.tedResponse = GENERAL_FALLBACK_MESSAGE;
-              await responseSender.send(sourceMsg.remoteJid, GENERAL_FALLBACK_MESSAGE);
-            } else {
-              await responseSender.send(sourceMsg.remoteJid, `❌ ${tedResult.reason || 'erro'}`);
-            }
-          }
-          sourceStore.markProcessed(sourceMsg);
-          return { success: true, classification, response: sourceMsg.tedResponse, sourceMessageId: sourceMsg.id };
-        } catch (error) {
-          sourceMsg.errorReason = error instanceof Error ? error.message : 'erro desconhecido';
-          sourceStore.saveError(sourceMsg.providerMessageId, sourceMsg.errorReason);
-          return { success: false, classification, reason: sourceMsg.errorReason, sourceMessageId: sourceMsg.id };
-        }
-      });
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Pi Client Interface
-// ─────────────────────────────────────────────────────────────────────────────
-export interface PiClient {
-  send(
-    message: string,
-    senderPhone: string,
-    context: { householdId: string; source: string; idempotencyKey?: string }
-  ): Promise<{ success: boolean; reason?: string; data?: { message?: string } }>;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Response Sender Interface
-// ─────────────────────────────────────────────────────────────────────────────
-export interface ResponseSender {
-  send(groupId: string, message: string): Promise<void>;
-  sendPresence?(chatId: string, state: 'composing' | 'paused'): Promise<void>;
+      const reason = result.reason ?? 'erro';
+      sourceMsg.errorReason = reason;
+      sourceStore.saveError(sourceMsg.providerMessageId, reason);
+      await responseSender.send(sourceMsg.remoteJid, `❌ ${reason}`);
+      sourceStore.markProcessed(sourceMsg);
+      return { status: 'failed', reason, sourceMessageId: sourceMsg.id };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'erro desconhecido';
+      sourceMsg.errorReason = reason;
+      sourceStore.saveError(sourceMsg.providerMessageId, reason);
+      return { status: 'failed', reason, sourceMessageId: sourceMsg.id };
+    }
+  });
 }

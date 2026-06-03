@@ -24,7 +24,10 @@ export interface PiBridgeOptions {
 interface PendingRequest {
   resolve: (value: string) => void;
   reject: (error: Error) => void;
-  timeout: NodeJS.Timeout;
+  // Timeout is armed ONLY when the request is actually written to Pi.
+  // Queued requests have undefined here so the timer does not fire while
+  // the request is waiting its turn.
+  timeout?: NodeJS.Timeout;
   startedAt: number;
   requestId: string;
   message: string;
@@ -153,15 +156,12 @@ export class PiBridge {
 
     return new Promise((resolve, reject) => {
       const requestId = randomUUID();
-      const timeout = setTimeout(() => {
-        this.handleRequestTimeout(requestId);
-        reject(new Error(`Request timed out after ${this.options.timeoutMs}ms`));
-      }, this.options.timeoutMs);
-
+      // No timeout armed here — the timer starts ONLY when sendImmediate
+      // actually writes the prompt to the Pi process. Otherwise a queued
+      // request would expire while waiting its turn.
       const pending: PendingRequest = {
         resolve,
         reject,
-        timeout,
         startedAt: Date.now(),
         requestId,
         message,
@@ -173,7 +173,6 @@ export class PiBridge {
       this.chatQueues.set(chatId, queue);
       this.activeRequests.set(requestId, pending);
 
-      // Only send if no current request is active
       if (this.currentRequestId === null) {
         this.sendImmediate(requestId, message, chatId);
       }
@@ -183,6 +182,15 @@ export class PiBridge {
   private sendImmediate(requestId: string, message: string, _chatId: string): void {
     if (!this.proc?.stdin) return;
     this.currentRequestId = requestId;
+
+    const pending = this.activeRequests.get(requestId);
+    if (pending) {
+      // Arm timeout only on the real write path. This guarantees the timer
+      // does not burn the wait time of a queued request.
+      pending.timeout = setTimeout(() => {
+        this.handleRequestTimeout(requestId);
+      }, this.options.timeoutMs);
+    }
 
     const payload = {
       id: requestId,
@@ -285,7 +293,7 @@ export class PiBridge {
     const pending = this.activeRequests.get(requestId);
     if (!pending) return;
 
-    clearTimeout(pending.timeout);
+    if (pending.timeout) clearTimeout(pending.timeout);
     this.activeRequests.delete(requestId);
     this.accumulatedText.delete(requestId);
     this.currentRequestId = null;
@@ -302,7 +310,7 @@ export class PiBridge {
     const pending = this.activeRequests.get(requestId);
     if (!pending) return;
 
-    clearTimeout(pending.timeout);
+    if (pending.timeout) clearTimeout(pending.timeout);
     this.activeRequests.delete(requestId);
     this.accumulatedText.delete(requestId);
     this.currentRequestId = null;
@@ -455,7 +463,11 @@ export class PiBridge {
       this.currentRequestId = null;
     }
 
-    // Dequeue next (reject already fired via timeout)
+    // Fire the reject here (the timer callback does not have access to the
+    // promise reject function the caller wired up).
+    pending.reject(new Error(`Request timed out after ${this.options.timeoutMs}ms`));
+
+    // Dequeue next
     this.dequeueNext(requestId, chatId);
   }
 
@@ -464,7 +476,7 @@ export class PiBridge {
    */
   private rejectAllPending(err: Error): void {
     for (const pending of this.activeRequests.values()) {
-      clearTimeout(pending.timeout);
+      if (pending.timeout) clearTimeout(pending.timeout);
       pending.reject(err);
     }
     this.activeRequests.clear();
@@ -473,7 +485,7 @@ export class PiBridge {
 
     for (const queue of this.chatQueues.values()) {
       for (const pending of queue) {
-        clearTimeout(pending.timeout);
+        if (pending.timeout) clearTimeout(pending.timeout);
         pending.reject(err);
       }
     }
