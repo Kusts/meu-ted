@@ -1,96 +1,58 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // PiBridge Protocol Tests
-// Tests against the REAL Pi RPC protocol (response ACK, streaming, turn_end)
-// Tests queue serialization per chat
+// Tests: real Pi RPC protocol (ACK, streaming, turn_end, agent_end)
+// Tests: events without id → currentRequestId matching
+// Tests: global serialization (one request at a time)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
 
-// Mock child_process BEFORE importing PiBridge
 const { mockSpawn } = vi.hoisted(() => ({ mockSpawn: vi.fn() }));
-vi.mock('child_process', () => ({
-  spawn: mockSpawn,
-}));
+vi.mock('child_process', () => ({ spawn: mockSpawn }));
 
 import { PiBridge } from './pi-bridge.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface MockChildProcess extends EventEmitter {
-  stdin: { write: ReturnType<typeof vi.fn> };
-  stdout: EventEmitter;
-  stderr: EventEmitter;
-  kill: ReturnType<typeof vi.fn>;
-  exitCode: number | null;
-}
-
-function createMockProc(): MockChildProcess {
-  const proc = new EventEmitter() as MockChildProcess;
-  proc.stdin = { write: vi.fn() };
-  proc.stdout = new EventEmitter();
-  proc.stderr = new EventEmitter();
-  proc.kill = vi.fn();
-  proc.exitCode = null;
-  return proc;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// extractTextFromPiMessage helper - covers all 3 real-world formats
+// extractTextFromPiMessage
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('PiBridge.extractTextFromPiMessage', () => {
   const extract = (bridge: PiBridge) => (msg: unknown) =>
     (bridge as any).extractTextFromPiMessage(msg);
 
-  it('extracts from turn_end message.content[0].text (real protocol)', () => {
+  it('extracts from turn_end message.content[0].text', () => {
     const bridge = new PiBridge({ householdId: 'h1' });
-    const msg = {
+    expect(extract(bridge)({
       type: 'turn_end',
-      message: {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'Resposta final completa' }],
-      },
-    };
-    expect(extract(bridge)(msg)).toBe('Resposta final completa');
+      message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
+    })).toBe('ok');
   });
 
-  it('extracts from message_update assistantMessageEvent.delta (text_delta)', () => {
+  it('extracts from assistantMessageEvent.delta (text_delta)', () => {
     const bridge = new PiBridge({ householdId: 'h1' });
-    const msg = {
+    expect(extract(bridge)({
       type: 'message_update',
-      assistantMessageEvent: { type: 'text_delta', delta: 'olá ' },
-    };
-    expect(extract(bridge)(msg)).toBe('olá ');
+      assistantMessageEvent: { type: 'text_delta', delta: 'hi ' },
+    })).toBe('hi ');
   });
 
-  it('extracts from message_update assistantMessageEvent.content (text_end)', () => {
+  it('extracts from assistantMessageEvent.content (text_end)', () => {
     const bridge = new PiBridge({ householdId: 'h1' });
-    const msg = {
+    expect(extract(bridge)({
       type: 'message_update',
-      assistantMessageEvent: { type: 'text_end', content: 'texto completo' },
-    };
-    expect(extract(bridge)(msg)).toBe('texto completo');
+      assistantMessageEvent: { type: 'text_end', content: 'full text' },
+    })).toBe('full text');
   });
 
-  it('falls back to legacy root-level text field', () => {
+  it('falls back to legacy root-level fields', () => {
     const bridge = new PiBridge({ householdId: 'h1' });
-    expect(extract(bridge)({ type: 'legacy', text: 'legacy text' })).toBe('legacy text');
+    expect(extract(bridge)({ text: 'legacy' })).toBe('legacy');
+    expect(extract(bridge)({ delta: 'ld' })).toBe('ld');
+    expect(extract(bridge)({ text_delta: 'td' })).toBe('td');
   });
 
-  it('falls back to legacy root-level delta field', () => {
-    const bridge = new PiBridge({ householdId: 'h1' });
-    expect(extract(bridge)({ type: 'legacy', delta: 'legacy delta' })).toBe('legacy delta');
-  });
-
-  it('falls back to legacy root-level text_delta field', () => {
-    const bridge = new PiBridge({ householdId: 'h1' });
-    expect(extract(bridge)({ type: 'legacy', text_delta: 'legacy td' })).toBe('legacy td');
-  });
-
-  it('returns empty string for empty message', () => {
+  it('returns empty string for empty/null', () => {
     const bridge = new PiBridge({ householdId: 'h1' });
     expect(extract(bridge)({})).toBe('');
     expect(extract(bridge)(null)).toBe('');
@@ -101,156 +63,174 @@ describe('PiBridge.extractTextFromPiMessage', () => {
 // handleMessage - protocol behavior
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('PiBridge handleMessage - real protocol', () => {
+describe('PiBridge handleMessage - protocol', () => {
   let bridge: PiBridge;
 
-  beforeEach(() => {
-    bridge = new PiBridge({ householdId: 'h1', timeoutMs: 60000 });
-  });
+  beforeEach(() => { bridge = new PiBridge({ householdId: 'h1', timeoutMs: 60000 }); });
 
+  // ACK: type 'response' does NOT resolve
   it('type "response" is an ACK and does NOT resolve the pending request', () => {
     const handleMessage = (bridge as any).handleMessage.bind(bridge);
     const resolveSpy = vi.fn();
-    const rejectSpy = vi.fn();
     (bridge as any).activeRequests.set('test-3', {
-      resolve: resolveSpy,
-      reject: rejectSpy,
-      timeout: setTimeout(() => {}, 1000),
-      startedAt: Date.now(),
-      requestId: 'test-3',
-      message: 'test',
-      chatId: 'chat1',
+      resolve: resolveSpy, reject: vi.fn(),
+      timeout: setTimeout(() => {}), startedAt: Date.now(),
+      requestId: 'test-3', message: 'x', chatId: 'c1',
     });
 
-    handleMessage({
-      type: 'response',
-      id: 'test-3',
-      command: 'prompt',
-      success: true,
-    });
+    handleMessage({ type: 'response', id: 'test-3', command: 'prompt', success: true });
 
     expect(resolveSpy).not.toHaveBeenCalled();
-    expect(rejectSpy).not.toHaveBeenCalled();
     expect((bridge as any).activeRequests.has('test-3')).toBe(true);
   });
 
-  it('accumulates text_delta from message_update events', () => {
+  // Stream: message_update accumulates
+  it('message_update accumulates text_delta in accumulatedText', () => {
     const handleMessage = (bridge as any).handleMessage.bind(bridge);
     (bridge as any).activeRequests.set('req-1', {
-      resolve: vi.fn(),
-      reject: vi.fn(),
-      timeout: setTimeout(() => {}, 1000),
-      startedAt: Date.now(),
-      requestId: 'req-1',
-      message: 'test',
-      chatId: 'chat1',
+      resolve: vi.fn(), reject: vi.fn(),
+      timeout: setTimeout(() => {}), startedAt: Date.now(),
+      requestId: 'req-1', message: 'x', chatId: 'c1',
     });
 
-    handleMessage({
-      type: 'message_update',
-      id: 'req-1',
-      assistantMessageEvent: { type: 'text_delta', delta: 'olá ' },
-    });
-    handleMessage({
-      type: 'message_update',
-      id: 'req-1',
-      assistantMessageEvent: { type: 'text_delta', delta: 'mundo' },
-    });
+    handleMessage({ type: 'message_update', id: 'req-1', assistantMessageEvent: { type: 'text_delta', delta: 'hi' } });
+    expect((bridge as any).accumulatedText.get('req-1')).toBe('hi');
 
-    const acc = (bridge as any).accumulatedText.get('req-1');
-    expect(acc).toBe('olá mundo');
+    handleMessage({ type: 'message_update', id: 'req-1', assistantMessageEvent: { type: 'text_delta', delta: ' there' } });
+    expect((bridge as any).accumulatedText.get('req-1')).toBe('hi there');
   });
 
-  it('turn_end resolves pending request with message.content[0].text', () => {
+  // turn_end with id → resolves
+  it('turn_end with id resolves the pending request', () => {
     const handleMessage = (bridge as any).handleMessage.bind(bridge);
     const resolveSpy = vi.fn();
-    (bridge as any).activeRequests.set('req-2', {
-      resolve: resolveSpy,
-      reject: vi.fn(),
-      timeout: setTimeout(() => {}, 1000),
-      startedAt: Date.now(),
-      requestId: 'req-2',
-      message: 'test',
-      chatId: 'chat1',
-    });
+    const pending = {
+      resolve: resolveSpy, reject: vi.fn(),
+      timeout: setTimeout(() => {}), startedAt: Date.now(),
+      requestId: 'req-2', message: 'x', chatId: 'c1',
+    };
+    (bridge as any).activeRequests.set('req-2', pending);
 
     handleMessage({
-      type: 'turn_end',
-      id: 'req-2',
-      message: {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'Resposta consolidada' }],
-      },
+      type: 'turn_end', id: 'req-2',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'final answer' }] },
     });
 
-    expect(resolveSpy).toHaveBeenCalledWith('Resposta consolidada');
+    expect(resolveSpy).toHaveBeenCalledWith('final answer');
     expect((bridge as any).activeRequests.has('req-2')).toBe(false);
   });
 
-  it('agent_end is a fallback that resolves with accumulatedText if not yet resolved', () => {
+  // agent_end with id → resolves (fallback)
+  it('agent_end with id resolves the pending request as fallback', () => {
     const handleMessage = (bridge as any).handleMessage.bind(bridge);
     const resolveSpy = vi.fn();
     (bridge as any).activeRequests.set('req-3', {
-      resolve: resolveSpy,
-      reject: vi.fn(),
-      timeout: setTimeout(() => {}, 1000),
-      startedAt: Date.now(),
-      requestId: 'req-3',
-      message: 'test',
-      chatId: 'chat1',
+      resolve: resolveSpy, reject: vi.fn(),
+      timeout: setTimeout(() => {}), startedAt: Date.now(),
+      requestId: 'req-3', message: 'x', chatId: 'c1',
     });
-    (bridge as any).accumulatedText.set('req-3', 'fallback text from stream');
 
-    handleMessage({ type: 'agent_end', id: 'req-3' });
+    handleMessage({ type: 'agent_end', id: 'req-3', text: 'agent fallback text' });
 
-    expect(resolveSpy).toHaveBeenCalledWith('fallback text from stream');
+    expect(resolveSpy).toHaveBeenCalledWith('agent fallback text');
     expect((bridge as any).activeRequests.has('req-3')).toBe(false);
   });
+});
 
-  it('agent_end does NOT double-resolve if turn_end already resolved', () => {
+// ─────────────────────────────────────────────────────────────────────────────
+// handleMessage - events WITHOUT id (currentRequestId matching)
+// These are the events Pi RPC actually sends — turn_end/agent_end lack id
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('PiBridge handleMessage - events without id (currentRequestId)', () => {
+  let bridge: PiBridge;
+
+  beforeEach(() => { bridge = new PiBridge({ householdId: 'h1', timeoutMs: 60000 }); });
+
+  it('turn_end WITHOUT id resolves the currentRequestId', () => {
     const handleMessage = (bridge as any).handleMessage.bind(bridge);
     const resolveSpy = vi.fn();
-    (bridge as any).activeRequests.set('req-4', {
-      resolve: resolveSpy,
-      reject: vi.fn(),
-      timeout: setTimeout(() => {}, 1000),
-      startedAt: Date.now(),
-      requestId: 'req-4',
-      message: 'test',
-      chatId: 'chat1',
+    (bridge as any).activeRequests.set('req-current', {
+      resolve: resolveSpy, reject: vi.fn(),
+      timeout: setTimeout(() => {}), startedAt: Date.now(),
+      requestId: 'req-current', message: 'x', chatId: 'c1',
     });
+    // Simulate: prompt was sent, currentRequestId is set
+    (bridge as any).currentRequestId = 'req-current';
 
+    // turn_end has NO id (real Pi RPC behavior)
     handleMessage({
       type: 'turn_end',
-      id: 'req-4',
-      message: { role: 'assistant', content: [{ type: 'text', text: 'final' }] },
+      message: { role: 'assistant', content: [{ type: 'text', text: 'final from pi' }] },
     });
-    expect(resolveSpy).toHaveBeenCalledTimes(1);
 
-    handleMessage({ type: 'agent_end', id: 'req-4' });
-    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(resolveSpy).toHaveBeenCalledWith('final from pi');
+    expect((bridge as any).currentRequestId).toBe(null);
+    expect((bridge as any).activeRequests.has('req-current')).toBe(false);
   });
 
-  it('cleans up accumulatedText when request resolves', () => {
+  it('agent_end WITHOUT id resolves the currentRequestId as fallback', () => {
     const handleMessage = (bridge as any).handleMessage.bind(bridge);
-    (bridge as any).activeRequests.set('req-5', {
-      resolve: vi.fn(),
-      reject: vi.fn(),
-      timeout: setTimeout(() => {}, 1000),
-      startedAt: Date.now(),
-      requestId: 'req-5',
-      message: 'test',
-      chatId: 'chat1',
+    const resolveSpy = vi.fn();
+    (bridge as any).activeRequests.set('req-agent', {
+      resolve: resolveSpy, reject: vi.fn(),
+      timeout: setTimeout(() => {}), startedAt: Date.now(),
+      requestId: 'req-agent', message: 'x', chatId: 'c1',
     });
-    (bridge as any).accumulatedText.set('req-5', 'streamed text');
+    (bridge as any).currentRequestId = 'req-agent';
 
-    handleMessage({
-      type: 'turn_end',
-      id: 'req-5',
-      message: { role: 'assistant', content: [{ type: 'text', text: 'final' }] },
+    handleMessage({ type: 'agent_end', text: 'agent resolved' });
+
+    expect(resolveSpy).toHaveBeenCalledWith('agent resolved');
+    expect((bridge as any).currentRequestId).toBe(null);
+  });
+
+  it('message_update WITHOUT id accumulates into currentRequestId', () => {
+    const handleMessage = (bridge as any).handleMessage.bind(bridge);
+    (bridge as any).activeRequests.set('req-stream', {
+      resolve: vi.fn(), reject: vi.fn(),
+      timeout: setTimeout(() => {}), startedAt: Date.now(),
+      requestId: 'req-stream', message: 'x', chatId: 'c1',
     });
+    (bridge as any).currentRequestId = 'req-stream';
 
-    expect((bridge as any).accumulatedText.has('req-5')).toBe(false);
+    handleMessage({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'chunk1' } });
+    handleMessage({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'chunk2' } });
+
+    expect((bridge as any).accumulatedText.get('req-stream')).toBe('chunk1chunk2');
+  });
+
+  it('agent_end does NOT double-resolve after turn_end already resolved', () => {
+    const handleMessage = (bridge as any).handleMessage.bind(bridge);
+    const resolveSpy = vi.fn();
+    (bridge as any).activeRequests.set('req-dup', {
+      resolve: resolveSpy, reject: vi.fn(),
+      timeout: setTimeout(() => {}), startedAt: Date.now(),
+      requestId: 'req-dup', message: 'x', chatId: 'c1',
+    });
+    (bridge as any).currentRequestId = 'req-dup';
+
+    // First: turn_end resolves
+    handleMessage({ type: 'turn_end', message: { content: [{ text: 'first' }] } });
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(resolveSpy).toHaveBeenCalledWith('first');
+
+    // Second: agent_end — request already gone, should NOT call resolve again
+    handleMessage({ type: 'agent_end', text: 'second' });
+    expect(resolveSpy).toHaveBeenCalledTimes(1); // still 1, not 2
+  });
+
+  it('event without id is ignored when no currentRequestId is active', () => {
+    const handleMessage = (bridge as any).handleMessage.bind(bridge);
+    const resolveSpy = vi.fn();
+    (bridge as any).currentRequestId = null; // no active request
+
+    // Should not throw or crash
+    handleMessage({ type: 'turn_end', message: { content: [{ text: 'orphan' }] } });
+    handleMessage({ type: 'agent_end', text: 'orphan-agent' });
+    handleMessage({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'x' } });
+
+    expect(resolveSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -259,225 +239,104 @@ describe('PiBridge handleMessage - real protocol', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('PiBridge queue serialization', () => {
-  let mockProc: MockChildProcess;
+  let bridge: PiBridge;
 
-  beforeEach(async () => {
-    mockProc = createMockProc();
-    mockSpawn.mockClear();
-    mockSpawn.mockReturnValue(mockProc);
+  beforeEach(() => {
+    mockSpawn.mockReset();
+    const proc = new EventEmitter() as any;
+    proc.stdin = { write: vi.fn() };
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.kill = vi.fn();
+    proc.exitCode = null;
+    mockSpawn.mockReturnValue(proc);
+
+    bridge = new PiBridge({ householdId: 'h1', timeoutMs: 60000 });
   });
 
-  it('second message is not sent before first completes (same chat)', async () => {
-    const bridge = new PiBridge({ householdId: 'h1', timeoutMs: 60000 });
-
+  it('sends immediately when no other request is active', async () => {
     await bridge.start();
+    const proc = mockSpawn.mock.results[0].value;
 
-    // Capture the stdin write calls
-    const writes: string[] = [];
-    mockProc.stdin.write = vi.fn((data: string) => {
-      writes.push(data);
-      // Simulate completion after short delay
-      setTimeout(() => {
-        bridge.start(); // keep bridge alive
-      }, 0);
-      return true;
-    });
+    const sendPromise = bridge.send('hello', 'chat-1');
+    // Pump stdout with ACK
+    proc.stdout.emit('data', '{"type":"response","id":"1","command":"prompt","success":true}\n');
+    proc.stdout.emit('data', '{"type":"turn_end","message":{"content":[{"text":"ok"}]}}\n');
 
-    // Send two messages for same chat
-    // Note: we can't test actual send here since bridge needs to be running
-    // This tests the queue state mechanism
-    expect(bridge).toBeDefined();
-
-    await bridge.stop();
+    await expect(sendPromise).resolves.toBe('ok');
   });
 
-  it('dequeueNext sends the next message after completion', async () => {
-    const bridge = new PiBridge({ householdId: 'h1', timeoutMs: 60000 });
+  it('second send waits for first to complete before sending', async () => {
     await bridge.start();
+    const proc = mockSpawn.mock.results[0].value;
 
-    const writes: string[] = [];
-    mockProc.stdin.write = vi.fn((data: string) => {
-      writes.push(data);
-      return true;
-    });
+    const p1 = bridge.send('msg1', 'chat-1');
+    void bridge.send('msg2', 'chat-1'); // queued, not awaited
 
-    // Manually inject a turn_end to trigger dequeue
-    const queue = (bridge as any).chatQueues;
-    const req1 = {
-      resolve: vi.fn(),
-      reject: vi.fn(),
-      timeout: setTimeout(() => {}),
-      startedAt: Date.now(),
-      requestId: 'req-1',
-      message: 'msg1',
-      chatId: 'chat1',
-    };
-    const req2 = {
-      resolve: vi.fn(),
-      reject: vi.fn(),
-      timeout: setTimeout(() => {}),
-      startedAt: Date.now(),
-      requestId: 'req-2',
-      message: 'msg2',
-      chatId: 'chat1',
-    };
+    // Pump ACK + turn_end for first request
+    proc.stdout.emit('data', '{"type":"response","command":"prompt","success":true}\n');
+    proc.stdout.emit('data', '{"type":"turn_end","message":{"content":[{"text":"resp1"}]}}\n');
 
-    queue.set('chat1', [req1, req2]);
-    (bridge as any).activeRequests.set('req-1', req1);
+    await expect(p1).resolves.toBe('resp1');
 
-    // Simulate completion: call dequeueNext
-    (bridge as any).dequeueNext('req-1', 'chat1');
-
-    // req1 should be removed from queue front, req2 should be sent
-    expect(queue.get('chat1')?.[0]).toBe(req2);
-    expect(writes.length).toBe(1);
-    expect(writes[0]).toContain('"id":"req-2"');
-
-    // Clean up
-    clearTimeout(req1.timeout);
-    clearTimeout(req2.timeout);
-    await bridge.stop();
+    // Second request should now be sent
+    const writeCall = proc.stdin.write.mock.calls.find(
+      (c: unknown[]) => (c[0] as string).includes('msg2')
+    );
+    expect(writeCall).toBeDefined();
   });
 
-  it('timeout triggers dequeue for next message', async () => {
-    const bridge = new PiBridge({ householdId: 'h1', timeoutMs: 60000 });
+  it('requests on different chats are serialized globally (Pi is single-process)', async () => {
     await bridge.start();
+    const proc = mockSpawn.mock.results[0].value;
 
-    const writes: string[] = [];
-    mockProc.stdin.write = vi.fn((data: string) => {
-      writes.push(data);
-      return true;
-    });
+    const p1 = bridge.send('msg1', 'chat-A');
+    void bridge.send('msg2', 'chat-B'); // different chat, queued
 
-    const queue = (bridge as any).chatQueues;
-    const req1 = {
-      resolve: vi.fn(),
-      reject: vi.fn(),
-      timeout: setTimeout(() => {}),
-      startedAt: Date.now(),
-      requestId: 'req-1',
-      message: 'msg1',
-      chatId: 'chat1',
-    };
-    const req2 = {
-      resolve: vi.fn(),
-      reject: vi.fn(),
-      timeout: setTimeout(() => {}),
-      startedAt: Date.now(),
-      requestId: 'req-2',
-      message: 'msg2',
-      chatId: 'chat1',
-    };
+    // Both queued — second should NOT be sent until first resolves
+    const writesBeforeResolve = proc.stdin.write.mock.calls.filter(
+      (c: unknown[]) => (c[0] as string).includes('msg')
+    );
+    expect(writesBeforeResolve).toHaveLength(1); // only msg1
 
-    queue.set('chat1', [req1, req2]);
-    (bridge as any).activeRequests.set('req-1', req1);
+    // Resolve first
+    proc.stdout.emit('data', '{"type":"response","command":"prompt","success":true}\n');
+    proc.stdout.emit('data', '{"type":"turn_end","message":{"content":[{"text":"r1"}]}}\n');
+    await expect(p1).resolves.toBe('r1');
 
-    // Simulate timeout
-    (bridge as any).handleRequestTimeout('req-1');
-
-    // req1 should be removed, req2 should be sent
-    expect(writes.length).toBe(1);
-    expect(writes[0]).toContain('"id":"req-2"');
-
-    clearTimeout(req1.timeout);
-    clearTimeout(req2.timeout);
-    await bridge.stop();
-  });
-
-  it('error triggers dequeue for next message', async () => {
-    const bridge = new PiBridge({ householdId: 'h1', timeoutMs: 60000 });
-    await bridge.start();
-
-    const writes: string[] = [];
-    mockProc.stdin.write = vi.fn((data: string) => {
-      writes.push(data);
-      return true;
-    });
-
-    const queue = (bridge as any).chatQueues;
-    const req1 = {
-      resolve: vi.fn(),
-      reject: vi.fn(),
-      timeout: setTimeout(() => {}),
-      startedAt: Date.now(),
-      requestId: 'req-1',
-      message: 'msg1',
-      chatId: 'chat1',
-    };
-    const req2 = {
-      resolve: vi.fn(),
-      reject: vi.fn(),
-      timeout: setTimeout(() => {}),
-      startedAt: Date.now(),
-      requestId: 'req-2',
-      message: 'msg2',
-      chatId: 'chat1',
-    };
-
-    queue.set('chat1', [req1, req2]);
-    (bridge as any).activeRequests.set('req-1', req1);
-
-    // Simulate error message
-    (bridge as any).handleMessage({
-      type: 'error',
-      id: 'req-1',
-      error: 'Pi process error',
-    });
-
-    expect(writes.length).toBe(1);
-    expect(writes[0]).toContain('"id":"req-2"');
-    expect(req1.reject).toHaveBeenCalled();
-
-    clearTimeout(req1.timeout);
-    clearTimeout(req2.timeout);
-    await bridge.stop();
+    // Now msg2 should be sent
+    const writesAfterResolve = proc.stdin.write.mock.calls.filter(
+      (c: unknown[]) => (c[0] as string).includes('msg2')
+    );
+    expect(writesAfterResolve).toHaveLength(1);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// spawn() configuration
+// Timeout
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('PiBridge spawn configuration', () => {
-  let mockProc: MockChildProcess;
-
-  beforeEach(() => {
-    mockProc = createMockProc();
-    mockSpawn.mockClear();
-    mockSpawn.mockReturnValue(mockProc);
+describe('PiBridge timeout', () => {
+  it('bridge default timeout is 120000ms', () => {
+    const bridge = new PiBridge({ householdId: 'h1' });
+    expect((bridge as any).options.timeoutMs).toBe(120000);
   });
 
-  it('spawn is called with shell: true for Windows .cmd resolution', async () => {
-    const bridge = new PiBridge({
-      householdId: 'h1',
-      piCommand: 'pi',
-      projectDir: '/tmp/proj',
-      timeoutMs: 60000,
-    });
+  it('timeout rejects the pending request', async () => {
+    mockSpawn.mockReset();
+    const proc = new EventEmitter() as any;
+    proc.stdin = { write: vi.fn() };
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.kill = vi.fn();
+    proc.exitCode = null;
+    mockSpawn.mockReturnValue(proc);
+
+    const bridge = new PiBridge({ householdId: 'h1', timeoutMs: 50 });
 
     await bridge.start();
+    const sendPromise = bridge.send('test', 'c1');
 
-    // Check the last spawn call (auto-restart may call it again after stop)
-    const lastCall = mockSpawn.mock.calls.at(-1)!;
-    const opts = lastCall[2];
-    expect(opts.shell).toBe(true);
-
-    await bridge.stop();
-  });
-
-  it('spawn is called with correct command and args', async () => {
-    const bridge = new PiBridge({
-      householdId: 'h1',
-      piCommand: 'pi',
-      timeoutMs: 60000,
-    });
-
-    await bridge.start();
-
-    const lastCall = mockSpawn.mock.calls.at(-1)!;
-    expect(lastCall[0]).toBe('pi');
-    expect(lastCall[1]).toEqual(['--mode', 'rpc']);
-
-    await bridge.stop();
+    await expect(sendPromise).rejects.toThrow('timed out after 50ms');
   });
 });

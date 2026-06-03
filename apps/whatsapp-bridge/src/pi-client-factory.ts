@@ -39,7 +39,7 @@ export function getPiArgs(): string[] {
 }
 
 export function getPiTimeoutMs(): number {
-  return parseInt(process.env.PI_RPC_TIMEOUT_MS || '30000', 10);
+  return parseInt(process.env.PI_RPC_TIMEOUT_MS || '120000', 10);
 }
 
 export function getWriteMode(): 'live' | 'shadow' {

@@ -2,7 +2,7 @@
 // Feature Flag Tests - FINANCE_AGENT_RUNTIME and FINANCE_WRITE_MODE
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { PiBridge, createPiBridge } from './pi-bridge.js';
 
 // ─────────────────────────────────────────────────────────────────────────────

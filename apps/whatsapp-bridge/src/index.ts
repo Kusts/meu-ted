@@ -2,20 +2,15 @@
 // WhatsApp Bridge - Exports
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { createPiClient, getAgentRuntime, getWriteMode } from './pi-client-factory.js';
-import { PiBridge, createPiBridge } from './pi-bridge.js';
-import type { PiClient } from './webhook-handler.js';
-
 // Re-export factory functions
 export { createPiClient, getAgentRuntime, getWriteMode } from './pi-client-factory.js';
-export type { PiClientFactoryOptions } from './pi-client-factory.js';
 
 // Re-export bridge
 export { PiBridge, createPiBridge } from './pi-bridge.js';
 export type { PiBridgeOptions } from './pi-bridge.js';
 
 // PiClient type from webhook-handler
-export type { PiClient };
+export type { PiClient } from './webhook-handler.js';
 
 // Message classifier
 export { classifyMessage, generateClarificationPrompt } from './message-classifier.js';

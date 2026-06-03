@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { classifyMessage, type MessageClassification } from './message-classifier.js';
+import { classifyMessage } from './message-classifier.js';
 
 // ─── message-classifier.ts ──────────────────────────────────────────────────
 

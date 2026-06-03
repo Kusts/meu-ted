@@ -2,32 +2,11 @@
 // PiBridge Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { spawn } from 'child_process';
+import { describe, it, expect, vi } from 'vitest';
 import { PiBridge, createPiBridge } from './pi-bridge.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-function createMockProcess() {
-  const proc = {
-    stdin: {
-      write: vi.fn(),
-    },
-    stdout: {
-      on: vi.fn(),
-    },
-    stderr: {
-      on: vi.fn(),
-    },
-    on: vi.fn(),
-    kill: vi.fn(),
-    exitCode: null as number | null,
-  };
-  return proc;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
