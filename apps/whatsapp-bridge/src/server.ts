@@ -7,7 +7,7 @@
 
 import Fastify, { type FastifyInstance } from 'fastify';
 import { existsSync, readFileSync } from 'fs';
-import { resolve } from 'path';
+import { join, resolve } from 'path';
 import {
   processWebhook,
   type PiClient,
@@ -18,6 +18,7 @@ import {
 } from './webhook-handler.js';
 import { EvolutionClient, FakeEvolutionClient } from './evolution-client.js';
 import { createPiClient } from './pi-client-factory.js';
+import { createSourceMessageStore } from './source-message-store.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // .env loader (no dotenv dep)
@@ -78,14 +79,8 @@ function buildRegistry(): UserRegistry {
 }
 
 function buildStore(): SourceMessageStore {
-  const seen = new Set<string>();
-  return {
-    isProcessed: (id) => seen.has(id),
-    markProcessed: (msg) => seen.add(msg.providerMessageId),
-    saveError: () => {
-      // intentionally swallow — webhook handler keeps local error state
-    },
-  };
+  const path = join(process.cwd(), 'data', 'dedupe-store.json');
+  return createSourceMessageStore(path);
 }
 
 function buildSender(): ResponseSender {

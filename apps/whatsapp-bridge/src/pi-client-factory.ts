@@ -1,9 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Pi Client Factory — chooses how to talk to Pi
-// Modes: 'pi-native' (real PiBridge) or 'disabled' (FakePiClient for dev/test)
+// Modes: 'pi-native' (RpcClient) or 'disabled' (FakePiClient for dev/test)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { PiBridge, type PiBridgeOptions } from './pi-bridge.js';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { realpathSync } from 'node:fs';
+import { createRequire } from 'module';
+import { RpcClient } from '@earendil-works/pi-coding-agent';
 import type { PiClient } from './webhook-handler.js';
 
 export type AgentRuntime = 'pi-native' | 'disabled';
@@ -20,28 +24,9 @@ export function getWriteMode(): 'live' | 'shadow' {
   return 'live';
 }
 
-function getPiCommand(): string {
-  return process.env.PI_RPC_COMMAND ?? process.env.PI_COMMAND ?? 'pi';
-}
-
-function getPiArgs(): string[] {
-  const raw = process.env.PI_RPC_ARGS ?? process.env.PI_ARGS;
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed as string[];
-    } catch {
-      // fall through to default
-    }
-    // Allow comma-separated form: "--mode,rpc"
-    return raw.split(',').map((s) => s.trim()).filter(Boolean);
-  }
-  return ['--mode', 'rpc'];
-}
-
 function getPiTimeoutMs(): number {
   return parseInt(
-    process.env.PI_RPC_TIMEOUT_MS ?? process.env.PI_TIMEOUT_MS ?? '120000',
+    process.env.PI_RPC_TIMEOUT_MS ?? process.env.PI_TIMEOUT_MS ?? '90000',
     10,
   );
 }
@@ -63,37 +48,159 @@ class FakePiClient implements PiClient {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PiBridge adapter (real pi --mode rpc)
+// RpcClient adapter (real Pi via upstream client)
+// Runtime is dedicated and isolated — uses --no-session for no session
+// pollution with the user's interactive sessions.
+//
+// Uses collectEvents() + manual text extraction from message_end events.
+// getLastAssistantText() returns null when agent is mid-tool or has no
+// assistant message yet; collectEvents gives us the actual text directly.
 // ─────────────────────────────────────────────────────────────────────────────
 
-class PiBridgeAdapter implements PiClient {
-  private bridge: PiBridge;
+interface SendResult {
+  success: boolean;
+  reason?: string;
+  data?: { message?: string };
+}
 
-  constructor(householdId: string) {
-    const opts: PiBridgeOptions = {
-      householdId,
-      piCommand: getPiCommand(),
-      piArgs: getPiArgs(),
-      timeoutMs: getPiTimeoutMs(),
-      projectDir: process.cwd(),
-    };
-    this.bridge = new PiBridge(opts);
-    void this.bridge.start();
+/**
+ * Extract text from a message content array.
+ * Prioritizes text blocks, skips thinking blocks.
+ */
+function extractTextFromContent(content: unknown): string | null {
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    if (typeof block !== 'object' || block === null) continue;
+    const b = block as Record<string, unknown>;
+    if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+      return b.text;
+    }
+    // Plain { text: '...' } without type field
+    if (!b.type && typeof b.text === 'string' && b.text.trim()) {
+      return b.text;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve the installed pi-coding-agent CLI from node_modules.
+ *
+ * Uses createRequire(import.meta.url) — the only robust approach in ESM
+ * that correctly follows pnpm symlinks in a monorepo workspace.
+ *
+ * require.resolve('@earendil-works/pi-coding-agent/dist/cli.js') may fail
+ * because the package has no "exports" main, so we walk up directories
+ * from this source file until we find node_modules/@earendil-works/pi-coding-agent,
+ * then append dist/cli.js. realpathSync resolves the symlink to the
+ * actual pnpm store location.
+ */
+function resolvePiAgentCli(): string {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const req = createRequire(__filename);
+
+  // Walk up from this source file's directory (src/) to workspace root.
+  // Each iteration: try node_modules/@earendil-works/pi-coding-agent/dist/cli.js
+  // at the current level. realpathSync resolves any pnpm symlink to the
+  // actual pnpm store path, avoiding "Cannot find module" errors.
+  let dir = __dirname;
+  for (let i = 0; i < 10; i++) {
+    try {
+      const candidate = resolve(dir, 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js');
+      return realpathSync(candidate);
+    } catch {
+      // Not found at this level, walk up one directory
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break; // reached filesystem root
+    dir = parent;
+  }
+
+  // Fallback: try createRequire resolution directly (may throw)
+  try {
+    return req.resolve('@earendil-works/pi-coding-agent/dist/cli.js');
+  } catch {
+    // Last resort: relative path from src/ — let it throw clearly if wrong
+    return resolve(__dirname, '../../node_modules/@earendil-works/pi-coding-agent/dist/cli.js');
+  }
+}
+
+class PiBridgeAdapter implements PiClient {
+  private client: RpcClient;
+  private started = false;
+
+  constructor(_householdId: string) {
+    this.client = new RpcClient({
+      cwd: process.cwd(),
+      cliPath: resolvePiAgentCli(),
+      args: ['--no-session'],
+    });
   }
 
   async send(
     message: string,
     _senderPhone: string,
-    context: { source: string; chatId: string; providerMessageId: string; idempotencyKey?: string },
-  ): Promise<{ success: boolean; reason?: string; data?: { message?: string } }> {
+    _context: { source: string; chatId: string; providerMessageId: string; idempotencyKey?: string },
+  ): Promise<SendResult> {
     try {
-      const text = await this.bridge.send(message, context.chatId);
-      return { success: true, data: { message: text } };
-    } catch (err) {
+      if (!this.started) {
+        await this.client.start();
+        this.started = true;
+      }
+
+      const timeoutMs = getPiTimeoutMs();
+
+      // Collect all events until agent_end — this gives us the full run.
+      // We extract text from message_end events directly instead of relying
+      // on getLastAssistantText() which returns null when agent is mid-tool.
+      const events = await this.client.promptAndWait(message, undefined, timeoutMs);
+
+      // Try to extract text from the last message_end that has content
+      let extractedText: string | null = null;
+      for (const event of events) {
+        if (
+          event.type === 'message_end' &&
+          typeof event.message === 'object' &&
+          event.message !== null
+        ) {
+          const msg = event.message as unknown as Record<string, unknown>;
+          const content = msg.content as unknown;
+          const text = extractTextFromContent(content);
+          if (text !== null) extractedText = text;
+        }
+      }
+
+      if (extractedText !== null) {
+        return { success: true, data: { message: extractedText } };
+      }
+
+      // Fallback: try getLastAssistantText
+      const lastText = await this.client.getLastAssistantText();
+      if (lastText !== null && lastText.trim()) {
+        return { success: true, data: { message: lastText } };
+      }
+
+      // No text found — log for debugging, return friendly error
+      console.error('[PiBridge] No text extracted from events. Stderr:', this.client.getStderr());
       return {
         success: false,
-        reason: err instanceof Error ? err.message : 'erro desconhecido',
+        reason: 'Pi agent did not produce a text response',
       };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'erro desconhecido';
+      console.error('[PiBridge] Exception:', errorMessage, '| Stderr:', this.client.getStderr());
+      return {
+        success: false,
+        reason: errorMessage,
+      };
+    }
+  }
+
+  async stop(): Promise<void> {
+    if (this.started) {
+      await this.client.stop();
+      this.started = false;
     }
   }
 }

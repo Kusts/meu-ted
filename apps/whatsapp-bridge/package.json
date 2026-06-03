@@ -15,6 +15,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.78.0",
     "fastify": "^5.0.0"
   },
   "devDependencies": {

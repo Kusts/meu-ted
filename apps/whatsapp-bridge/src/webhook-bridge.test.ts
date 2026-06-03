@@ -357,12 +357,14 @@ describe('processWebhook', () => {
     expect(res.reason).toMatch(/pi offline/);
   });
 
-  it('sends error message to chat when Pi fails', async () => {
-    pi = makePi({ success: false, reason: 'pi offline' });
+  it('sends friendly fallback when Pi fails (does not leak technical reason to user)', async () => {
+    pi = makePi({ success: false, reason: 'Pi RPC returned empty response' });
     const p = payload({ text: 'oi' });
     await processWebhook(p, 'good-token', reg, store, pi, sender);
     const last = sender.sent[sender.sent.length - 1];
     expect(last.chatId).toBe('5511999999999@s.whatsapp.net');
-    expect(last.text).toMatch(/pi offline/);
+    expect(last.text).toBe('❌ Não consegui processar sua mensagem agora. Tente novamente em instantes.');
+    // internal error is still saved for diagnostics
+    expect(store.errors).toEqual([{ id: '3EB0_ABC', reason: 'Pi RPC returned empty response' }]);
   });
 });

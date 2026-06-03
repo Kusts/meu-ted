@@ -306,7 +306,7 @@ export async function processWebhook(
       const reason = result.reason ?? 'erro';
       sourceMsg.errorReason = reason;
       sourceStore.saveError(sourceMsg.providerMessageId, reason);
-      await responseSender.send(sourceMsg.remoteJid, `❌ ${reason}`);
+      await responseSender.send(sourceMsg.remoteJid, '❌ Não consegui processar sua mensagem agora. Tente novamente em instantes.');
       sourceStore.markProcessed(sourceMsg);
       return { status: 'failed', reason, sourceMessageId: sourceMsg.id };
     } catch (err) {

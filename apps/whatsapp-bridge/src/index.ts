@@ -4,9 +4,6 @@
 
 export { createPiClient, getAgentRuntime, getWriteMode } from './pi-client-factory.js';
 
-export { PiBridge, createPiBridge } from './pi-bridge.js';
-export type { PiBridgeOptions } from './pi-bridge.js';
-
 export type { PiClient } from './webhook-handler.js';
 
 export {
