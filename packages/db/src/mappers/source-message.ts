@@ -3,8 +3,6 @@
 // Maps between Drizzle DB rows and domain SourceMessage type
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { sourceMessages } from '../schema/index.js';
-
 export interface DbSourceMessage {
   id: string;
   householdId: string;
@@ -49,7 +47,7 @@ export function fromDbSourceMessage(row: DbSourceMessage): SourceMessage {
   };
 }
 
-export function toDbSourceMessage(msg: SourceMessage): Omit<DbSourceMessage, never> {
+export function toDbSourceMessage(msg: SourceMessage): DbSourceMessage {
   return {
     id: msg.id,
     householdId: msg.householdId,

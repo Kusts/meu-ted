@@ -96,6 +96,8 @@ export { InMemoryAttachmentRepository } from './in-memory/attachment-repository.
 export { InMemoryReimbursementRepository } from './in-memory/reimbursement-repository.js';
 export { InMemoryBackupRepository } from './in-memory/backup-repository.js';
 export { InMemoryPendingOperationRepository } from './in-memory/in-memory-pending-operation-repository.js';
+export type { PendingOperation, OperationType, OperationStatus, IPendingOperationRepository, DraftPayload } from './pending-operation.js';
+export { PendingOperationService } from './pending-operation-service.js';
 
 // Legacy exports (for backward compatibility with existing tests)
 export { calculateAccountBalance } from './legacy.js';

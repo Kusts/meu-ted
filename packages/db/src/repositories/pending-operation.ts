@@ -13,12 +13,11 @@ export class DrizzlePendingOperationRepository implements IPendingOperationRepos
   constructor(private dbClient: DbClient) {}
 
   async create(operation: PendingOperation): Promise<PendingOperation> {
-    const dbRow = toDbPendingOperation(operation);
     const [inserted] = await this.dbClient.db
       .insert(pendingOperations)
-      .values(dbRow)
+      .values(toDbPendingOperation(operation as unknown as Parameters<typeof toDbPendingOperation>[0]))
       .returning();
-    return fromDbPendingOperation(inserted) as PendingOperation;
+    return fromDbPendingOperation(inserted as Parameters<typeof fromDbPendingOperation>[0]) as PendingOperation;
   }
 
   async findById(id: string): Promise<PendingOperation | null> {
@@ -27,7 +26,7 @@ export class DrizzlePendingOperationRepository implements IPendingOperationRepos
       .from(pendingOperations)
       .where(eq(pendingOperations.id, id))
       .limit(1);
-    return row ? fromDbPendingOperation(row) as PendingOperation : null;
+    return row ? fromDbPendingOperation(row as Parameters<typeof fromDbPendingOperation>[0]) as PendingOperation : null;
   }
 
   async update(id: string, updates: Partial<PendingOperation>): Promise<PendingOperation | null> {
@@ -46,18 +45,26 @@ export class DrizzlePendingOperationRepository implements IPendingOperationRepos
       .where(eq(pendingOperations.id, id))
       .returning();
 
-    return updated ? fromDbPendingOperation(updated) as PendingOperation : null;
+    return updated ? fromDbPendingOperation(updated as Parameters<typeof fromDbPendingOperation>[0]) as PendingOperation : null;
   }
 
   async delete(id: string): Promise<boolean> {
-    const result = await this.dbClient.db
+    // Check existence first
+    const [existing] = await this.dbClient.db
+      .select({ id: pendingOperations.id })
+      .from(pendingOperations)
+      .where(eq(pendingOperations.id, id))
+      .limit(1);
+    if (!existing) return false;
+
+    await this.dbClient.db
       .delete(pendingOperations)
       .where(eq(pendingOperations.id, id));
-    return (result.rowCount ?? 0) > 0;
+    return true;
   }
 
   async findByChat(householdId: string, chatId: string): Promise<PendingOperation | null> {
-    const now = new Date().toISOString();
+    const now = new Date();
     const [row] = await this.dbClient.db
       .select()
       .from(pendingOperations)
@@ -70,20 +77,21 @@ export class DrizzlePendingOperationRepository implements IPendingOperationRepos
         )
       )
       .limit(1);
-    return row ? fromDbPendingOperation(row) as PendingOperation : null;
+    return row ? fromDbPendingOperation(row as Parameters<typeof fromDbPendingOperation>[0]) as PendingOperation : null;
   }
 
   async findExpiredBefore(before: string): Promise<PendingOperation[]> {
+    const beforeDate = new Date(before);
     const rows = await this.dbClient.db
       .select()
       .from(pendingOperations)
       .where(
         and(
           eq(pendingOperations.status, 'pending'),
-          lt(pendingOperations.expiresAt, before)
+          lt(pendingOperations.expiresAt, beforeDate)
         )
       );
-    return rows.map(r => fromDbPendingOperation(r) as PendingOperation);
+    return rows.map(r => fromDbPendingOperation(r as Parameters<typeof fromDbPendingOperation>[0]) as PendingOperation);
   }
 
   async findByIdempotencyKey(householdId: string, key: string): Promise<PendingOperation | null> {
@@ -97,6 +105,6 @@ export class DrizzlePendingOperationRepository implements IPendingOperationRepos
         )
       )
       .limit(1);
-    return row ? fromDbPendingOperation(row) as PendingOperation : null;
+    return row ? fromDbPendingOperation(row as Parameters<typeof fromDbPendingOperation>[0]) as PendingOperation : null;
   }
 }

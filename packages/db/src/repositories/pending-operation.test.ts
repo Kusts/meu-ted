@@ -39,7 +39,7 @@ describe('InMemoryPendingOperationRepository', () => {
 
   it('create + find by id', async () => {
     const op = makeOp();
-    const created = await repo.create(op);
+    await repo.create(op);
     const found = await repo.findById(op.id);
     expect(found?.id).toBe(op.id);
     expect(found?.draftPayload.amountCents).toBe(3590);

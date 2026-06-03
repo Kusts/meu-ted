@@ -30,7 +30,8 @@ describe('PendingOperationService', () => {
         },
       });
 
-      expect(result.success).toBeUndefined();
+      // result is PendingOperation — no .success field (this assertion validates the type contract)
+      expect((result as unknown as Record<string, unknown>).success).toBeUndefined();
       expect(result).toMatchObject({
         householdId: 'h123',
         chatId: 'chat1',
