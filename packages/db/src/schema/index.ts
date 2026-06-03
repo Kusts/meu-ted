@@ -25,6 +25,7 @@ export const auditActionEnum = pgEnum('audit_action', ['create', 'update', 'dele
 export const categoryKindEnum = pgEnum('category_kind', ['income', 'expense', 'transfer']);
 export const reviewQueueStatusEnum = pgEnum('review_queue_status', ['pending', 'approved', 'rejected']);
 export const entityTypeEnum = pgEnum('entity_type', ['financial_record', 'account', 'card', 'invoice', 'recurrence', 'category', 'budget', 'loan']);
+export const operationStatusEnum = pgEnum('operation_status', ['pending', 'confirmed', 'cancelled', 'expired']);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Household
@@ -389,12 +390,38 @@ export const sourceMessages = pgTable('source_messages', {
   senderPhone: varchar('sender_phone', { length: 30 }).notNull(),
   providerMessageId: varchar('provider_message_id', { length: 255 }).notNull(),
   contentHash: varchar('content_hash', { length: 64 }),
+  text: text('text'),
   processedAt: timestamp('processed_at', { withTimezone: true }),
+  errorReason: text('error_reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_source_messages_household_id').on(table.householdId),
   index('idx_source_messages_provider_message_id').on(table.providerMessageId),
   unique('uniq_provider_message_id').on(table.provider, table.providerMessageId),
+]);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pending Operations (multi-step financial ops pending confirmation)
+// ─────────────────────────────────────────────────────────────────────────────
+export const pendingOperations = pgTable('pending_operations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  householdId: uuid('household_id').notNull().references(() => households.id, { onDelete: 'cascade' }),
+  chatId: varchar('chat_id', { length: 255 }).notNull(),
+  userPhone: varchar('user_phone', { length: 30 }).notNull(),
+  operationType: varchar('operation_type', { length: 80 }).notNull(),
+  draftPayload: jsonb('draft_payload').notNull(),
+  missingFields: jsonb('missing_fields').notNull().default([]),
+  confirmationLevel: integer('confirmation_level').default(1).notNull(),
+  idempotencyKey: varchar('idempotency_key', { length: 255 }),
+  status: operationStatusEnum('status').default('pending').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, (table) => [
+  index('idx_pending_operations_household_id').on(table.householdId),
+  index('idx_pending_operations_chat_id').on(table.chatId),
+  index('idx_pending_operations_status').on(table.status),
+  unique('uniq_pending_idempotency_key').on(table.householdId, table.idempotencyKey),
 ]);
 
 export const idempotencyKeys = pgTable('idempotency_keys', {

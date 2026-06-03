@@ -48,6 +48,8 @@ import { DrizzleRecurrenceRepository } from './recurrence.js';
 import { DrizzleRecurrenceOccurrenceRepository } from './recurrence-occurrence.js';
 import { DrizzleBillRepository } from './bill.js';
 import { DrizzleReviewQueueRepository } from './review-queue.js';
+import { DrizzlePendingOperationRepository } from './pending-operation.js';
+import { DrizzleSourceMessageRepository } from './source-message.js';
 
 // Re-export Drizzle repositories for direct use
 export { DrizzleAccountRepository } from './account.js';
@@ -65,6 +67,8 @@ export { DrizzleRecurrenceOccurrenceRepository } from './recurrence-occurrence.j
 export { DrizzleBillRepository } from './bill.js';
 export { DrizzleReviewQueueRepository } from './review-queue.js';
 export { DrizzleUserRepository, DrizzleSessionRepository, DrizzleLoginCodeRepository } from './auth.js';
+export { DrizzlePendingOperationRepository } from './pending-operation.js';
+export { DrizzleSourceMessageRepository, type ISourceMessageRepository } from './source-message.js';
 
 /**
  * Repository set interface - all repositories an app needs

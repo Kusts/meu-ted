@@ -36,8 +36,14 @@ export class InMemoryPendingOperationRepository implements IPendingOperationRepo
   }
 
   async findByChat(householdId: string, chatId: string): Promise<PendingOperation | null> {
+    const now = new Date().toISOString();
     for (const op of this.operations.values()) {
-      if (op.householdId === householdId && op.chatId === chatId && op.status === 'pending') {
+      if (
+        op.householdId === householdId &&
+        op.chatId === chatId &&
+        op.status === 'pending' &&
+        op.expiresAt > now
+      ) {
         return op;
       }
     }
