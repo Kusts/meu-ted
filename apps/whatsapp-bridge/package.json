@@ -16,10 +16,12 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.78.0",
-    "fastify": "^5.0.0"
+    "fastify": "^5.0.0",
+    "pg": "^8.13.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
     "@vitest/coverage-v8": "3.2.6",
     "tsx": "^4.0.0",
     "typescript": "^5.7.0",
