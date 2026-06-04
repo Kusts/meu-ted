@@ -11,7 +11,8 @@
     "test:watch": "pnpm --filter @pi-financeiro/whatsapp-bridge test:watch",
     "test:coverage": "pnpm --filter @pi-financeiro/whatsapp-bridge test:coverage",
     "typecheck": "pnpm --filter @pi-financeiro/whatsapp-bridge typecheck",
-    "lint": "pnpm --filter @pi-financeiro/whatsapp-bridge lint"
+    "lint": "pnpm --filter @pi-financeiro/whatsapp-bridge lint",
+    "reminder": "pnpm --filter @pi-financeiro/whatsapp-bridge reminder"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

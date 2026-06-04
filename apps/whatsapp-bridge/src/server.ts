@@ -6,8 +6,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import Fastify, { type FastifyInstance } from 'fastify';
-import { existsSync, readFileSync } from 'fs';
-import { join, resolve } from 'path';
+import { join } from 'path';
+import { loadEnv } from './env.js';
 import {
   processWebhook,
   type PiClient,
@@ -21,39 +21,8 @@ import { createPiClient } from './pi-client-factory.js';
 import { createSourceMessageStore } from './source-message-store.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// .env loader (no dotenv dep)
+// .env loader (no dotenv dep) — moved to ./env.ts
 // ─────────────────────────────────────────────────────────────────────────────
-
-function loadEnvFile(startDir: string): void {
-  let dir = startDir;
-  for (let i = 0; i < 5; i++) {
-    const candidate = resolve(dir, '.env');
-    if (existsSync(candidate)) {
-      const content = readFileSync(candidate, 'utf-8');
-      for (const line of content.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const eq = trimmed.indexOf('=');
-        if (eq === -1) continue;
-        const key = trimmed.slice(0, eq).trim();
-        let value = trimmed.slice(eq + 1).trim();
-        if (
-          (value.startsWith('"') && value.endsWith('"')) ||
-          (value.startsWith("'") && value.endsWith("'"))
-        ) {
-          value = value.slice(1, -1);
-        }
-        if (key && process.env[key] === undefined) {
-          process.env[key] = value;
-        }
-      }
-      return;
-    }
-    const parent = resolve(dir, '..');
-    if (parent === dir) break;
-    dir = parent;
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Env helpers
@@ -151,7 +120,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  loadEnvFile(process.cwd());
+  void loadEnv(process.cwd());
   const host = process.env.HOST ?? '0.0.0.0';
   const port = parseInt(process.env.PORT ?? '3000', 10);
 

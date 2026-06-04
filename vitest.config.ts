@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['apps/whatsapp-bridge/src/**/*.test.ts'],
+    include: ['apps/whatsapp-bridge/src/**/*.test.ts', 'apps/whatsapp-bridge/scripts/**/*.test.ts'],
     exclude: [
       'node_modules',
       'dist',
@@ -14,7 +14,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
-      include: ['apps/whatsapp-bridge/src/**/*.ts'],
+      include: ['apps/whatsapp-bridge/src/**/*.ts', 'apps/whatsapp-bridge/scripts/**/*.ts'],
       exclude: [
         'node_modules',
         'dist',

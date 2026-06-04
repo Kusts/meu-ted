@@ -4,13 +4,19 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/**/*.test.ts'],
-    exclude: [
-      'node_modules',
-      'dist',
-      '**/*.d.ts',
-      'vitest.config.ts',
-    ],
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html'],
+      include: ['src/**/*.ts', 'scripts/**/*.ts'],
+      exclude: [
+        'node_modules',
+        'dist',
+        '**/*.d.ts',
+        '**/*.test.ts',
+        'vitest.config.ts',
+      ],
+    },
     reporters: ['default'],
     pool: 'forks',
   },
