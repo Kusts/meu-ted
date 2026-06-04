@@ -70,10 +70,32 @@ export class EvolutionClient implements ResponseSender {
   }
 
   /**
+   * Normalize a WhatsApp JID into a clean phone/group number.
+   * Evolution GO API expects plain number, not JID.
+   * "5511999999999@s.whatsapp.net" → "5511999999999"
+   * "12000000000@g.us" → "12000000000"
+   * "12000000000-123456789@g.us" → "12000000000-123456789"
+   */
+  private normalizeJid(jid: string): string {
+    return jid
+      .replace(/@s\.whatsapp\.net$/, '')
+      .replace(/@g\.us$/, '');
+  }
+
+  /**
    * Send message to group (implements ResponseSender)
    */
   async send(groupId: string, message: string): Promise<void> {
-    await this.sendText({ number: groupId, text: message });
+    const number = this.normalizeJid(groupId);
+    console.log('[EvolutionClient] send() to', groupId, '| clean number=', number, '| message=', message.slice(0, 80));
+    try {
+      await this.sendText({ number, text: message });
+      console.log('[EvolutionClient] send() SUCCESS to', groupId);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error('[EvolutionClient] send() FAILED to', groupId, ':', reason);
+      throw err;
+    }
   }
 
   /**
@@ -87,9 +109,13 @@ export class EvolutionClient implements ResponseSender {
     } | string,
     state?: 'composing' | 'paused'
   ): Promise<void> {
-    const request = typeof requestOrNumber === 'string'
+    const raw = typeof requestOrNumber === 'string'
       ? { number: requestOrNumber, state: state ?? 'composing', isAudio: false }
       : requestOrNumber;
+    const request = {
+      ...raw,
+      number: this.normalizeJid(raw.number),
+    };
 
     const response = await fetch(
       `${this.options.baseUrl}/message/presence`,

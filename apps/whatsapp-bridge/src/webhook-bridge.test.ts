@@ -363,8 +363,75 @@ describe('processWebhook', () => {
     await processWebhook(p, 'good-token', reg, store, pi, sender);
     const last = sender.sent[sender.sent.length - 1];
     expect(last.chatId).toBe('5511999999999@s.whatsapp.net');
-    expect(last.text).toBe('❌ Não consegui processar sua mensagem agora. Tente novamente em instantes.');
+    expect(last.text).toBe('⚠️ Tive um problema aqui. Pode tentar de novo em instantes?');
     // internal error is still saved for diagnostics
     expect(store.errors).toEqual([{ id: '3EB0_ABC', reason: 'Pi RPC returned empty response' }]);
+  });
+
+  it('composing presence does NOT block piClient.send — proven by deferred resolve', async () => {
+    let resolveComposing: () => void;
+    const composingPending = new Promise<void>((res) => { resolveComposing = res; });
+
+    (sender.sendPresence as any).mockImplementation(async (chatId: string, state: 'composing' | 'paused') => {
+      sender.presence.push({ chatId, state });
+      if (state === 'composing') {
+        await composingPending;
+      }
+    });
+
+    (pi.send as any).mockResolvedValue({ success: true, data: { message: 'ok' } });
+
+    const p = payload({ text: 'oi' });
+    const webhookPromise = processWebhook(p, 'good-token', reg, store, pi, sender);
+
+    // Give microtasks a chance to run
+    await new Promise(res => setTimeout(res, 10));
+
+    // piClient.send was called BEFORE composing resolved
+    expect(pi.send).toHaveBeenCalled();
+
+    // Now resolve composing and let webhook finish
+    resolveComposing!();
+    await webhookPromise;
+
+    // Paused was called (finally executed)
+    expect(sender.presence.map(p => p.state)).toContain('paused');
+  });
+
+  it('paused presence fires from finally on success path', async () => {
+    (pi.send as any).mockResolvedValue({ success: true, data: { message: 'ok' } });
+    (sender.sendPresence as any).mockResolvedValue(undefined);
+
+    const p = payload({ text: 'oi' });
+    await processWebhook(p, 'good-token', reg, store, pi, sender);
+
+    const calls = (sender.sendPresence as any).mock.calls;
+    const lastCall = calls[calls.length - 1];
+    expect(lastCall[1]).toBe('paused');
+  });
+
+  it('paused presence fires from finally even when Pi returns failure', async () => {
+    (pi.send as any).mockResolvedValue({ success: false, reason: 'timeout' });
+    (sender.sendPresence as any).mockResolvedValue(undefined);
+
+    const p = payload({ text: 'oi' });
+    await processWebhook(p, 'good-token', reg, store, pi, sender);
+
+    const calls = (sender.sendPresence as any).mock.calls;
+    const lastCall = calls[calls.length - 1];
+    expect(lastCall[1]).toBe('paused');
+    expect(sender.sent[sender.sent.length - 1].text).toBe('⚠️ Tive um problema aqui. Pode tentar de novo em instantes?');
+  });
+
+  it('paused presence fires from finally even when piClient.send throws', async () => {
+    (pi.send as any).mockRejectedValue(new Error('crash'));
+    (sender.sendPresence as any).mockResolvedValue(undefined);
+
+    const p = payload({ text: 'oi' });
+    await processWebhook(p, 'good-token', reg, store, pi, sender);
+
+    const calls = (sender.sendPresence as any).mock.calls;
+    const lastCall = calls[calls.length - 1];
+    expect(lastCall[1]).toBe('paused');
   });
 });

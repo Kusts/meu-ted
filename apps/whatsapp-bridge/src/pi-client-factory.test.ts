@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createPiClient } from './pi-client-factory.js';
+import { existsSync } from 'node:fs';
+import { createPiClient, createAndWarmPiClient } from './pi-client-factory.js';
 
 describe('createPiClient', () => {
   const env = { ...process.env };
@@ -242,5 +243,77 @@ describe('createPiClient', () => {
 
     expect(result.success).toBe(false);
     expect(result.reason).toContain('Timeout waiting');
+  });
+
+  // ── warmup() idempotency under concurrent calls ─────────────────────────
+
+  it('warmup() is idempotent — concurrent calls share one start', async () => {
+    const client = createPiClient('default') as any;
+    let startCount = 0;
+    client.client.start = vi.fn().mockImplementation(async () => {
+      startCount++;
+      await new Promise(res => setTimeout(res, 80));
+      client.started = true;
+    });
+    client.startPromise = null;
+    client.started = false;
+
+    await Promise.all([client.warmup(), client.warmup(), client.warmup()]);
+
+    expect(startCount).toBe(1);
+    expect(client.started).toBe(true);
+  });
+
+  it('warmup() allows retry after start failure — startPromise reset on error', async () => {
+    const client = createPiClient('default') as any;
+    let attempts = 0;
+    client.client.start = vi.fn().mockImplementation(async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('spawn fail');
+      client.started = true;
+    });
+    client.startPromise = null;
+    client.started = false;
+
+    await expect(client.warmup()).rejects.toThrow('spawn fail');
+    expect(client.startPromise).toBeNull();
+
+    await client.warmup();
+    expect(attempts).toBe(2);
+    expect(client.started).toBe(true);
+  });
+
+  it('createAndWarmPiClient returns client immediately — warmup runs in background', async () => {
+    const clientPromise = createAndWarmPiClient('default');
+    // Returns a Promise immediately (non-blocking)
+    expect(clientPromise).toBeInstanceOf(Promise);
+    const client = await clientPromise;
+    // The underlying adapter has warmup()
+    expect((client as any).warmup).toBeDefined();
+    expect(typeof (client as any).warmup).toBe('function');
+    expect((client as any).warmup()).toBeInstanceOf(Promise);
+  });
+
+  // ── project root resolution ────────────────────────────────────────────────
+
+  it('PiBridgeAdapter uses project root that contains .pi/AGENTS.md', async () => {
+    const client = createPiClient('default') as any;
+    const cwd = client.client.options.cwd as string;
+
+    // The cwd must contain .pi/AGENTS.md (the repo root)
+    const hasAgents = existsSync(path.resolve(cwd, '.pi', 'AGENTS.md'));
+    expect(hasAgents).toBe(true);
+
+    // Must NOT be inside apps/whatsapp-bridge (wrong root)
+    expect(cwd).not.toMatch(/apps[/\\]whatsapp-bridge$/);
+  });
+
+  it('projectRoot resolves to repo root, not subdirectory', async () => {
+    const client = createPiClient('default') as any;
+    const cwd = client.client.options.cwd as string;
+
+    // Repo root has package.json at the top
+    const hasRootPackage = existsSync(path.resolve(cwd, 'package.json'));
+    expect(hasRootPackage).toBe(true);
   });
 });

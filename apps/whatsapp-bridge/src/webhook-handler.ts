@@ -201,20 +201,16 @@ export function buildBridgePrompt(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Presence helper
+// Presence helpers — fire-and-forget, never block piClient.send
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function withPresence<T>(
+function firePresence(
   chatId: string,
-  sender: ResponseSender,
-  fn: () => Promise<T>
-): Promise<T> {
-  await sender.sendPresence?.(chatId, 'composing');
-  try {
-    return await fn();
-  } finally {
-    await sender.sendPresence?.(chatId, 'paused');
-  }
+  state: 'composing' | 'paused',
+  sender: ResponseSender
+): void {
+  const result = sender.sendPresence?.(chatId, state);
+  if (result?.catch) result.catch(() => {/* silencia erro de presence */});
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -278,42 +274,53 @@ export async function processWebhook(
     return { status: 'ignored', sourceMessageId: sourceMsg.id, reason: 'texto vazio' };
   }
 
-  // 9) Forward to Pi
+  // 9) Fire composing (non-blocking) and call Pi
+  firePresence(sourceMsg.remoteJid, 'composing', responseSender);
+
   const householdId =
     userRegistry.getHouseholdIdForGroup(sourceMsg.remoteJid) ?? 'default';
-
   const prompt = buildBridgePrompt(sourceMsg, householdId);
 
-  return withPresence(sourceMsg.remoteJid, responseSender, async () => {
-    try {
-      const result = await piClient.send(prompt, sourceMsg.senderPhone, {
-        source: 'whatsapp',
-        chatId: sourceMsg.remoteJid,
-        providerMessageId: sourceMsg.providerMessageId,
-        idempotencyKey: `whatsapp:${sourceMsg.providerMessageId}`,
-      });
+  // TEMP DIAGNOSTIC: log every stage
+  console.log('[webhook-handler] IN  providerMessageId=', sourceMsg.providerMessageId, 'text=', sourceMsg.text.slice(0, 50));
 
-      if (result.success && result.data?.message) {
-        await responseSender.send(sourceMsg.remoteJid, result.data.message);
-        sourceStore.markProcessed(sourceMsg);
-        return {
-          status: 'forwarded',
-          response: result.data.message,
-          sourceMessageId: sourceMsg.id,
-        };
-      }
+  try {
+    console.log('[webhook-handler] CALLING piClient.send()...');
+    const result = await piClient.send(prompt, sourceMsg.senderPhone, {
+      source: 'whatsapp',
+      chatId: sourceMsg.remoteJid,
+      providerMessageId: sourceMsg.providerMessageId,
+      idempotencyKey: `whatsapp:${sourceMsg.providerMessageId}`,
+    });
+    console.log('[webhook-handler] piClient.send() returned success=', result.success, 'reason=', result.reason);
 
-      const reason = result.reason ?? 'erro';
-      sourceMsg.errorReason = reason;
-      sourceStore.saveError(sourceMsg.providerMessageId, reason);
-      await responseSender.send(sourceMsg.remoteJid, '❌ Não consegui processar sua mensagem agora. Tente novamente em instantes.');
+    if (result.success && result.data?.message) {
+      console.log('[webhook-handler] responseSender.send() to', sourceMsg.remoteJid, 'message=', result.data.message.slice(0, 80));
+      await responseSender.send(sourceMsg.remoteJid, result.data.message);
       sourceStore.markProcessed(sourceMsg);
-      return { status: 'failed', reason, sourceMessageId: sourceMsg.id };
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : 'erro desconhecido';
-      sourceMsg.errorReason = reason;
-      sourceStore.saveError(sourceMsg.providerMessageId, reason);
-      return { status: 'failed', reason, sourceMessageId: sourceMsg.id };
+      console.log('[webhook-handler] OUT  status=forwarded');
+      return {
+        status: 'forwarded',
+        response: result.data.message,
+        sourceMessageId: sourceMsg.id,
+      };
     }
-  });
+
+    const reason = result.reason ?? 'erro';
+    sourceMsg.errorReason = reason;
+    sourceStore.saveError(sourceMsg.providerMessageId, reason);
+    console.log('[webhook-handler] responseSender.send() FALLBACK to', sourceMsg.remoteJid);
+    await responseSender.send(sourceMsg.remoteJid, '⚠️ Tive um problema aqui. Pode tentar de novo em instantes?');
+    sourceStore.markProcessed(sourceMsg);
+    console.log('[webhook-handler] OUT  status=failed reason=', reason);
+    return { status: 'failed', reason, sourceMessageId: sourceMsg.id };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'erro desconhecido';
+    console.error('[webhook-handler] EXCEPTION:', reason);
+    sourceMsg.errorReason = reason;
+    sourceStore.saveError(sourceMsg.providerMessageId, reason);
+    return { status: 'failed', reason, sourceMessageId: sourceMsg.id };
+  } finally {
+    firePresence(sourceMsg.remoteJid, 'paused', responseSender);
+  }
 }

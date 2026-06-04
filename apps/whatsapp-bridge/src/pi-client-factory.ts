@@ -5,7 +5,7 @@
 
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { createRequire } from 'module';
 import { RpcClient } from '@earendil-works/pi-coding-agent';
 import type { PiClient } from './webhook-handler.js';
@@ -24,7 +24,7 @@ export function getWriteMode(): 'live' | 'shadow' {
   return 'live';
 }
 
-function getPiTimeoutMs(): number {
+export function getPiTimeoutMs(): number {
   return parseInt(
     process.env.PI_RPC_TIMEOUT_MS ?? process.env.PI_TIMEOUT_MS ?? '90000',
     10,
@@ -49,12 +49,6 @@ class FakePiClient implements PiClient {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RpcClient adapter (real Pi via upstream client)
-// Runtime is dedicated and isolated — uses --no-session for no session
-// pollution with the user's interactive sessions.
-//
-// Uses collectEvents() + manual text extraction from message_end events.
-// getLastAssistantText() returns null when agent is mid-tool or has no
-// assistant message yet; collectEvents gives us the actual text directly.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface SendResult {
@@ -63,10 +57,6 @@ interface SendResult {
   data?: { message?: string };
 }
 
-/**
- * Extract text from a message content array.
- * Prioritizes text blocks, skips thinking blocks.
- */
 function extractTextFromContent(content: unknown): string | null {
   if (!Array.isArray(content)) return null;
   for (const block of content) {
@@ -75,7 +65,6 @@ function extractTextFromContent(content: unknown): string | null {
     if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
       return b.text;
     }
-    // Plain { text: '...' } without type field
     if (!b.type && typeof b.text === 'string' && b.text.trim()) {
       return b.text;
     }
@@ -83,59 +72,72 @@ function extractTextFromContent(content: unknown): string | null {
   return null;
 }
 
-/**
- * Resolve the installed pi-coding-agent CLI from node_modules.
- *
- * Uses createRequire(import.meta.url) — the only robust approach in ESM
- * that correctly follows pnpm symlinks in a monorepo workspace.
- *
- * require.resolve('@earendil-works/pi-coding-agent/dist/cli.js') may fail
- * because the package has no "exports" main, so we walk up directories
- * from this source file until we find node_modules/@earendil-works/pi-coding-agent,
- * then append dist/cli.js. realpathSync resolves the symlink to the
- * actual pnpm store location.
- */
 function resolvePiAgentCli(): string {
   const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  const req = createRequire(__filename);
-
-  // Walk up from this source file's directory (src/) to workspace root.
-  // Each iteration: try node_modules/@earendil-works/pi-coding-agent/dist/cli.js
-  // at the current level. realpathSync resolves any pnpm symlink to the
-  // actual pnpm store path, avoiding "Cannot find module" errors.
-  let dir = __dirname;
+  let dir = dirname(__filename);
   for (let i = 0; i < 10; i++) {
     try {
-      const candidate = resolve(dir, 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js');
-      return realpathSync(candidate);
-    } catch {
-      // Not found at this level, walk up one directory
-    }
+      return realpathSync(resolve(dir, 'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'));
+    } catch {}
     const parent = dirname(dir);
-    if (parent === dir) break; // reached filesystem root
+    if (parent === dir) break;
     dir = parent;
   }
-
-  // Fallback: try createRequire resolution directly (may throw)
+  const req = createRequire(__filename);
   try {
     return req.resolve('@earendil-works/pi-coding-agent/dist/cli.js');
   } catch {
-    // Last resort: relative path from src/ — let it throw clearly if wrong
     return resolve(__dirname, '../../node_modules/@earendil-works/pi-coding-agent/dist/cli.js');
   }
 }
 
-class PiBridgeAdapter implements PiClient {
+interface WarmablePiClient extends PiClient {
+  warmup(): Promise<void>;
+}
+
+class PiBridgeAdapter implements WarmablePiClient {
   private client: RpcClient;
+  private startPromise: Promise<void> | null = null;
   private started = false;
+  private readonly projectRoot: string;
 
   constructor(_householdId: string) {
+    this.projectRoot = PiBridgeAdapter.resolveProjectRoot();
     this.client = new RpcClient({
-      cwd: process.cwd(),
+      cwd: this.projectRoot,
       cliPath: resolvePiAgentCli(),
       args: ['--no-session'],
     });
+  }
+
+  private static resolveProjectRoot(): string {
+    const __filename = fileURLToPath(import.meta.url);
+    let dir = dirname(__filename);
+    for (let i = 0; i < 20; i++) {
+      try {
+        if (existsSync(resolve(dir, '.pi', 'AGENTS.md'))) return dir;
+      } catch {}
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    return resolve(dirname(__filename), '../../..');
+  }
+
+  async warmup(): Promise<void> {
+    if (this.started) return;
+    if (this.startPromise) return this.startPromise;
+
+    this.startPromise = this.client.start()
+      .then(() => { this.started = true; this.startPromise = null; })
+      .catch(err => { this.startPromise = null; throw err; });
+
+    return this.startPromise;
+  }
+
+  private async ensureStarted(): Promise<void> {
+    if (this.started) return;
+    await this.warmup();
   }
 
   async send(
@@ -143,20 +145,15 @@ class PiBridgeAdapter implements PiClient {
     _senderPhone: string,
     _context: { source: string; chatId: string; providerMessageId: string; idempotencyKey?: string },
   ): Promise<SendResult> {
+    console.log('[PiBridge] send() timeoutMs:', getPiTimeoutMs(), '| projectRoot:', this.projectRoot);
     try {
-      if (!this.started) {
-        await this.client.start();
-        this.started = true;
-      }
+      await this.ensureStarted();
 
       const timeoutMs = getPiTimeoutMs();
-
-      // Collect all events until agent_end — this gives us the full run.
-      // We extract text from message_end events directly instead of relying
-      // on getLastAssistantText() which returns null when agent is mid-tool.
+      console.log('[PiBridge] calling client.promptAndWait() with timeout', timeoutMs, 'ms');
       const events = await this.client.promptAndWait(message, undefined, timeoutMs);
+      console.log('[PiBridge] promptAndWait returned', events.length, 'events');
 
-      // Try to extract text from the last message_end that has content
       let extractedText: string | null = null;
       for (const event of events) {
         if (
@@ -175,25 +172,17 @@ class PiBridgeAdapter implements PiClient {
         return { success: true, data: { message: extractedText } };
       }
 
-      // Fallback: try getLastAssistantText
       const lastText = await this.client.getLastAssistantText();
       if (lastText !== null && lastText.trim()) {
         return { success: true, data: { message: lastText } };
       }
 
-      // No text found — log for debugging, return friendly error
       console.error('[PiBridge] No text extracted from events. Stderr:', this.client.getStderr());
-      return {
-        success: false,
-        reason: 'Pi agent did not produce a text response',
-      };
+      return { success: false, reason: 'Pi agent did not produce a text response' };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'erro desconhecido';
       console.error('[PiBridge] Exception:', errorMessage, '| Stderr:', this.client.getStderr());
-      return {
-        success: false,
-        reason: errorMessage,
-      };
+      return { success: false, reason: errorMessage };
     }
   }
 
@@ -205,13 +194,13 @@ class PiBridgeAdapter implements PiClient {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Public factory
-// ─────────────────────────────────────────────────────────────────────────────
+export function createAndWarmPiClient(householdId: string): Promise<WarmablePiClient> {
+  const client = new PiBridgeAdapter(householdId);
+  client.warmup().catch(err => console.error('[PiBridge] warmup failed:', err.message));
+  return Promise.resolve(client);
+}
 
 export function createPiClient(householdId: string): PiClient {
-  if (getAgentRuntime() === 'disabled') {
-    return new FakePiClient();
-  }
+  if (getAgentRuntime() === 'disabled') return new FakePiClient();
   return new PiBridgeAdapter(householdId);
 }

@@ -17,7 +17,7 @@ import {
   type WebhookPayload,
 } from './webhook-handler.js';
 import { EvolutionClient, FakeEvolutionClient } from './evolution-client.js';
-import { createPiClient } from './pi-client-factory.js';
+import { createPiClient, getAgentRuntime } from './pi-client-factory.js';
 import { createSourceMessageStore } from './source-message-store.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,6 +89,18 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     process.env.DEFAULT_HOUSEHOLD_ID ?? 'default',
   );
 
+  // Pre-warm Pi client in background — does NOT block app.listen()
+  if (getAgentRuntime() === 'pi-native') {
+    (async () => {
+      try {
+        await (piClient as any).warmup();
+        console.log('[bridge] Pi client warmed up');
+      } catch (err) {
+        console.error('[bridge] Pi warmup failed:', err instanceof Error ? err.message : String(err));
+      }
+    })();
+  }
+
   app.get('/health', async () => ({ status: 'ok' }));
 
   app.post('/webhooks/evolution', async (req, reply) => {
@@ -121,6 +133,9 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
 async function main(): Promise<void> {
   void loadEnv(process.cwd());
+  console.log('[bridge] DATABASE_URL:', JSON.stringify(process.env.DATABASE_URL));
+  console.log('[bridge] PI_AGENT_RUNTIME:', JSON.stringify(process.env.PI_AGENT_RUNTIME));
+  console.log('[bridge] cwd:', process.cwd());
   const host = process.env.HOST ?? '0.0.0.0';
   const port = parseInt(process.env.PORT ?? '3000', 10);
 
