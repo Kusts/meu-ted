@@ -1,11 +1,17 @@
 /**
  * create_expense — Pi tool implementation
  * Register an expense transaction.
+ *
+ * Duplicate detection: checks idempotency_key and semantic similarity
+ * (same kind + same amount + same account + within 1 day) before inserting.
+ * When a duplicate is found, returns a `duplicate_detected` response and
+ * waits for the user to confirm (caller must retry with `force: true`).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { randomUUID } from "node:crypto";
+import { findDuplicate, formatDuplicateWarning } from "./duplicate-detector.js";
 
 async function query<T extends { rows: unknown[] }>(text: string, params?: unknown[]): Promise<T> {
   const { default: pg } = await import("pg");
@@ -29,7 +35,7 @@ function isValidDate(s: string): boolean {
 export const createExpenseTool = {
   name: "create_expense",
   label: "Create Expense",
-  description: "Register an expense transaction. amount_cents is always positive; sign is encoded as kind='expense'. Idempotent: if idempotency_key matches an existing transaction, returns that transaction instead.",
+  description: "Register an expense transaction. amount_cents is always positive; sign is encoded as kind='expense'. Detects duplicates (idempotency_key or semantic similarity) and asks the user to confirm before registering twice. Pass force=true to override.",
   parameters: Type.Object({
     description: Type.String({ description: "Description of the expense" }),
     amountCents: Type.Number({ description: "Amount in cents (positive integer)" }),
@@ -39,6 +45,7 @@ export const createExpenseTool = {
     householdId: Type.String({ description: "Household UUID" }),
     sourceMessageId: Type.Optional(Type.String()),
     idempotencyKey: Type.Optional(Type.String()),
+    force: Type.Optional(Type.Boolean({ description: "Skip duplicate detection. Use after the user has confirmed they want to register anyway." })),
   }),
 
   async execute(
@@ -52,6 +59,7 @@ export const createExpenseTool = {
       householdId: string;
       sourceMessageId?: string;
       idempotencyKey?: string;
+      force?: boolean;
     },
     _signal: AbortSignal,
     onUpdate: ((u: { content: { type: "text"; text: string }[] }) => void) | undefined,
@@ -65,17 +73,35 @@ export const createExpenseTool = {
     if (!isValidUUID(params.householdId)) throw new Error("household_id must be a valid UUID");
     if (!isValidDate(params.date)) throw new Error("date must be in YYYY-MM-DD format");
 
-    // Idempotency check
-    if (params.idempotencyKey) {
-      const existing = await query<{ rows: { id: string }[] }>(
-        `SELECT id FROM transactions WHERE household_id = $1 AND idempotency_key = $2 AND deleted_at IS NULL LIMIT 1`,
-        [params.householdId, params.idempotencyKey]
-      );
-      if (existing.rows.length > 0) {
-        return {
-          content: [{ type: "text", text: `Despesa já registrada (idempotency): ${existing.rows[0].id}` }],
-          details: { transaction_id: existing.rows[0].id, idempotent: true },
-        };
+    // Duplicate detection (unless force=true)
+    if (!params.force) {
+      const { default: pg } = await import("pg");
+      const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+      try {
+        const dup = await findDuplicate(pool, {
+          householdId: params.householdId,
+          kind: "expense",
+          description: params.description,
+          amountCents: params.amountCents,
+          date: params.date,
+          accountId: params.accountId,
+          idempotencyKey: params.idempotencyKey,
+        });
+        if (dup) {
+          const warning = formatDuplicateWarning(dup, params.description);
+          return {
+            content: [{ type: "text", text: warning }],
+            details: {
+              duplicate_detected: true,
+              existing_transaction_id: dup.id,
+              match_type: dup.match_type,
+              similarity: dup.similarity,
+              hint: "Ask the user to confirm. If they want to register anyway, retry with force=true.",
+            },
+          };
+        }
+      } finally {
+        await pool.end();
       }
     }
 

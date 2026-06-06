@@ -1,9 +1,13 @@
 /**
  * create_transfer — Pi tool
+ *
+ * Detects duplicates before inserting. Returns `duplicate_detected` when a
+ * similar transfer (same accounts, same amount, nearby date) is found.
  */
 
 import { Type } from "typebox";
 import { randomUUID } from "node:crypto";
+import { findDuplicate, formatDuplicateWarning } from "./duplicate-detector.js";
 
 async function query<T extends { rows: unknown[] }>(text: string, params?: unknown[]): Promise<T> {
   const { default: pg } = await import("pg");
@@ -17,7 +21,7 @@ function isDate(s: string) { return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date
 export const createTransferTool = {
   name: "create_transfer",
   label: "Create Transfer",
-  description: "Transfer money between two accounts. Cannot transfer to the same account. Idempotent via idempotency_key.",
+  description: "Transfer money between two accounts. Cannot transfer to the same account. Detects duplicates (idempotency_key or semantic similarity) and asks the user to confirm. Pass force=true to override.",
   parameters: Type.Object({
     fromAccountId: Type.String(),
     toAccountId: Type.String(),
@@ -27,6 +31,7 @@ export const createTransferTool = {
     householdId: Type.String(),
     sourceMessageId: Type.Optional(Type.String()),
     idempotencyKey: Type.Optional(Type.String()),
+    force: Type.Optional(Type.Boolean({ description: "Skip duplicate detection." })),
   }),
 
   async execute(_id: string, params: any, _sig: AbortSignal, onUpdate: ((u: { content: { type: "text"; text: string }[] }) => void) | undefined) {
@@ -38,12 +43,37 @@ export const createTransferTool = {
     if (!isDate(params.date)) throw new Error("date must be YYYY-MM-DD");
     if (!isUUID(params.householdId)) throw new Error("household_id must be a valid UUID");
 
-    if (params.idempotencyKey) {
-      const ex = await query<{ rows: { id: string }[] }>(
-        `SELECT id FROM transactions WHERE household_id = $1 AND idempotency_key = $2 AND deleted_at IS NULL LIMIT 1`,
-        [params.householdId, params.idempotencyKey]
-      );
-      if (ex.rows.length) return { content: [{ type: "text", text: `Transferência já registrada (idempotency): ${ex.rows[0].id}` }], details: { transaction_id: ex.rows[0].id, idempotent: true } };
+    // Duplicate detection (unless force=true)
+    if (!params.force) {
+      const { default: pg } = await import("pg");
+      const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+      try {
+        const dup = await findDuplicate(pool, {
+          householdId: params.householdId,
+          kind: "transfer",
+          description: params.description,
+          amountCents: params.amountCents,
+          date: params.date,
+          fromAccountId: params.fromAccountId,
+          toAccountId: params.toAccountId,
+          idempotencyKey: params.idempotencyKey,
+        });
+        if (dup) {
+          const warning = formatDuplicateWarning(dup, params.description);
+          return {
+            content: [{ type: "text", text: warning }],
+            details: {
+              duplicate_detected: true,
+              existing_transaction_id: dup.id,
+              match_type: dup.match_type,
+              similarity: dup.similarity,
+              hint: "Ask the user to confirm. If they want to register anyway, retry with force=true.",
+            },
+          };
+        }
+      } finally {
+        await pool.end();
+      }
     }
 
     const accounts = await query<{ rows: { id: string }[] }>(

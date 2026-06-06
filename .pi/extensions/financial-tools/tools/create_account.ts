@@ -16,11 +16,12 @@ function isUUID(s: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 export const createAccountTool = {
   name: "create_account",
   label: "Create Account",
-  description: "Create a new account for a household with an initial balance.",
+  description: "Create a new account for a household with an initial balance. Detects accounts with the same name (case-insensitive) and asks the user to confirm. Pass force=true to override.",
   parameters: Type.Object({
     name: Type.String(),
     initialBalanceCents: Type.Number(),
     householdId: Type.String(),
+    force: Type.Optional(Type.Boolean({ description: "Skip duplicate detection." })),
   }),
 
   async execute(_id: string, params: any, _sig: AbortSignal, onUpdate: ((u: { content: { type: "text"; text: string }[] }) => void) | undefined) {
@@ -28,11 +29,32 @@ export const createAccountTool = {
     if (!Number.isInteger(params.initialBalanceCents) || params.initialBalanceCents < 0) throw new Error("initial_balance_cents must be a non-negative integer");
     if (!isUUID(params.householdId)) throw new Error("household_id must be a valid UUID");
 
-    const existing = await query<{ rows: { id: string }[] }>(
-      `SELECT id FROM accounts WHERE household_id = $1 AND LOWER(name) = LOWER($2) AND deleted_at IS NULL LIMIT 1`,
-      [params.householdId, params.name.trim()]
-    );
-    if (existing.rows.length) throw new Error(`Account with name="${params.name.trim()}" already exists in this household`);
+    if (!params.force) {
+      const existing = await query<{ rows: { id: string; name: string; initial_balance_cents: string }[] }>(
+        `SELECT id, name, initial_balance_cents FROM accounts WHERE household_id = $1 AND LOWER(name) = LOWER($2) AND deleted_at IS NULL LIMIT 1`,
+        [params.householdId, params.name.trim()]
+      );
+      if (existing.rows.length) {
+        const ex = existing.rows[0];
+        const exBal = (parseInt(ex.initial_balance_cents, 10) / 100).toFixed(2);
+        return {
+          content: [{
+            type: "text",
+            text: `⚠️ Já existe uma conta com esse nome:
+• "${ex.name}" — saldo inicial R$ ${exBal}
+ID: ${ex.id}
+
+Quer criar mesmo assim? Responda "sim" para confirmar (será criada como conta separada).`,
+          }],
+          details: {
+            duplicate_detected: true,
+            existing_account_id: ex.id,
+            match_type: "exact_name",
+            hint: "Ask the user to confirm. If they want to create a new account with the same name anyway, retry with force=true.",
+          },
+        };
+      }
+    }
 
     const rid = randomUUID();
     const r = await query<{ rows: { id: string }[] }>(
