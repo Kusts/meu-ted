@@ -90,7 +90,9 @@ export function extractRecipientName(description: string): string | null {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match && match[1]) {
-      const candidate = match[1].trim();
+      let candidate = match[1].trim();
+      // Strip leading "para", "pra", "a" (common prefix)
+      candidate = candidate.replace(/^(para|pra|à|a)\s+/i, "");
       // Filter out generic words that are likely not recipient names
       const STOPWORDS = ["aluguel", "conta", "compra", "pagamento", "salário", "salario", "nubank", "itau", "itaú", "carteira", "bradesco", "santander", "caixa", "banco", "para", "pra"];
       const words = candidate.toLowerCase().split(/\s+/);
