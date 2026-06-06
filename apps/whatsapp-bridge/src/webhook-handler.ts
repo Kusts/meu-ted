@@ -193,6 +193,7 @@ export function buildBridgePrompt(
     `pushName: ${source.pushName ?? ''}`,
     `providerMessageId: ${source.providerMessageId}`,
     `timestamp: ${isoTimestamp}`,
+    `# timestamp acima é a data padrão do gasto`,
     `source: whatsapp`,
     '',
     'User message:',
@@ -277,8 +278,8 @@ export async function processWebhook(
   // 9) Fire composing (non-blocking) and call Pi
   firePresence(sourceMsg.remoteJid, 'composing', responseSender);
 
-  const householdId =
-    userRegistry.getHouseholdIdForGroup(sourceMsg.remoteJid) ?? 'default';
+  const groupHousehold = userRegistry.getHouseholdIdForGroup(sourceMsg.remoteJid);
+  const householdId = groupHousehold ?? process.env.DEFAULT_HOUSEHOLD_ID ?? 'default';
   const prompt = buildBridgePrompt(sourceMsg, householdId);
 
   // TEMP DIAGNOSTIC: log every stage

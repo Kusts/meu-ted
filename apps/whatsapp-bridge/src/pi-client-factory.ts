@@ -31,6 +31,14 @@ export function getPiTimeoutMs(): number {
   );
 }
 
+export function getPiRpcProvider(): string {
+  return process.env.PI_RPC_PROVIDER ?? 'minimax';
+}
+
+export function getPiRpcModel(): string {
+  return process.env.PI_RPC_MODEL ?? 'MiniMax-M2.7:off';
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Fake Pi Client (used when runtime is 'disabled')
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,6 +81,11 @@ function extractTextFromContent(content: unknown): string | null {
 }
 
 function resolvePiAgentCli(): string {
+  // Prefer global npm install (version 0.78.1+) over pnpm workspace version (0.78.0)
+  const globalCli = '/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js';
+  if (existsSync(globalCli)) return globalCli;
+
+  // Fallback: resolve from package resolution
   const __filename = fileURLToPath(import.meta.url);
   let dir = dirname(__filename);
   for (let i = 0; i < 10; i++) {
@@ -107,6 +120,8 @@ class PiBridgeAdapter implements WarmablePiClient {
       cwd: this.projectRoot,
       cliPath: resolvePiAgentCli(),
       args: ['--no-session'],
+      provider: getPiRpcProvider(),
+      model: getPiRpcModel(),
     });
   }
 

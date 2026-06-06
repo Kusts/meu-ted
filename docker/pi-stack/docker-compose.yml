@@ -1,0 +1,31 @@
+name: pi-stack
+
+services:
+  pi-stack:
+    build:
+      context: ../..
+      dockerfile: docker/pi-stack/Dockerfile
+    container_name: pi-stack
+    volumes:
+      - ../../:/workspace
+    env_file:
+      - ../../.env.pi
+    environment:
+      - HOME=/home/pi-stack
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@host.docker.internal:5432/pi_financeiro}
+      - PI_AGENT_RUNTIME=pi-native
+      - PI_RPC_TIMEOUT_MS=${PI_RPC_TIMEOUT_MS:-120000}
+      - PI_RPC_PROVIDER=${PI_RPC_PROVIDER:-minimax}
+      - PI_RPC_MODEL=${PI_RPC_MODEL:-MiniMax-M2.7:off}
+      - PI_RPC_ARGS=["--mode","rpc"]
+      - DEFAULT_HOUSEHOLD_ID=${DEFAULT_HOUSEHOLD_ID:-550e8400-e29b-41d4-a716-446655440000}
+      - PORT=${PORT:-3000}
+      - HOST=0.0.0.0
+    working_dir: /workspace
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - "3000:3000"
+    command: ["sleep", "infinity"]
+    stdin_open: true
+    tty: true
