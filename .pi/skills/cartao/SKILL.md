@@ -236,3 +236,37 @@ Após qualquer operação, verificar:
 | `getStatementPurchases(...)` | Compras de uma fatura |
 | `recalculateStatementTotal(...)` | Recalcula total |
 | `formatStatement(...)` | Formata para exibição |
+
+## Tools Expostas (TED invoca diretamente)
+
+| Tool | Quando usar |
+|------|------------|
+| `create_credit_card_account` | Criar nova conta de cartão |
+| `create_card_purchase` | Registrar compra (com ou sem parcelas) |
+| `pay_statement` | Pagar fatura (total ou parcial) |
+| `list_statements` | Listar faturas (filtros: account, status, overdueOnly) |
+| `get_statement_details` | Detalhes de uma fatura (compras) |
+| `card_insights` | Insights de uso (mês-a-mês, top categorias) |
+
+## Quando usar card_insights
+
+Use a tool `card_insights` quando o usuário perguntar:
+- "Quanto gastei no cartão esse mês?"
+- "Meus gastos com cartão subiram?"
+- "Em que categoria eu mais gasto no cartão?"
+- "Quanto do meu gasto é no cartão vs débito?"
+
+A tool retorna 4 tipos de insight:
+- **month-over-month**: comparação % vs mês anterior
+- **top-categories**: top 5 categorias por cartão
+- **card-vs-other**: % gasto em cartão vs outros
+- **overdue**: faturas atrasadas
+
+## Parcelamento Cruzado
+
+O helper `calculateInstallments` lida com parcelamentos que cruzam o ano:
+- Compra 12x em outubro 2026 → parcela 1 em out/26, parcela 12 em set/27
+- `getInstallmentYears()` retorna os anos envolvidos
+
+⚠️ **Limitação atual**: O `create_card_purchase` registra apenas a parcela 1.
+Para registrar todas as N parcelas, faça N chamadas ou expanda a tool.

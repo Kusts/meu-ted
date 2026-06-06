@@ -1,7 +1,7 @@
 /**
  * financial-tools — Pi Extension
  *
- * Registers all 17 financial assistant tools as Pi tools via pi.registerTool().
+ * Registers all 22 financial assistant tools as Pi tools via pi.registerTool().
  * The Pi agent calls these tools to manage household finances via WhatsApp.
  *
  * Tools execute SQL directly against the Postgres database (DATABASE_URL).
@@ -37,6 +37,14 @@ import { confirmPendingOperationTool } from "./tools/confirm_pending_operation.j
 import { cancelPendingOperationTool } from "./tools/cancel_pending_operation.js";
 import { undoLastActionTool } from "./tools/undo_last_action.js";
 
+// Credit card tools
+import { createCreditCardAccount } from "./tools/create_credit_card_account.js";
+import { createCardPurchase } from "./tools/create_card_purchase.js";
+import { payStatement } from "./tools/pay_statement.js";
+import { listStatements } from "./tools/list_statements.js";
+import { getStatementDetails } from "./tools/get_statement_details.js";
+import { cardInsights } from "./tools/card_insights.js";
+
 export default function (pi: ExtensionAPI) {
   // Read tools
   pi.registerTool(listAccountsTool);
@@ -62,4 +70,12 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(confirmPendingOperationTool);
   pi.registerTool(cancelPendingOperationTool);
   pi.registerTool(undoLastActionTool);
+
+  // Credit card tools
+  pi.registerTool(createCreditCardAccount);
+  pi.registerTool(createCardPurchase);
+  pi.registerTool(payStatement);
+  pi.registerTool(listStatements);
+  pi.registerTool(getStatementDetails);
+  pi.registerTool(cardInsights);
 }
