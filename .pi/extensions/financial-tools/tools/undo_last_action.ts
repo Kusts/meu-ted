@@ -16,8 +16,8 @@ export const undoLastActionTool = {
   async execute(_id: string, params: { householdId: string }, _sig: AbortSignal, onUpdate: ((u: { content: { type: "text"; text: string }[] }) => void) | undefined) {
     if (!isUUID(params.householdId)) throw new Error("householdId must be a valid UUID");
 
-    const lastLog = await query<{ rows: { id: string; action: string; entity_type: string; entity_id: string; changed_data: Record<string, unknown> | null }[] }>(
-      `SELECT id, action, entity_type, entity_id, changed_data
+    const lastLog = await query<{ rows: { id: string; action: string; entity_type: string; entity_id: string; before_json: Record<string, unknown> | null }[] }>(
+      `SELECT id, action, entity_type, entity_id, before_json
        FROM audit_logs WHERE household_id = $1 AND action IN ('CREATE', 'UPDATE', 'DELETE')
        ORDER BY created_at DESC LIMIT 1`,
       [params.householdId]
@@ -30,15 +30,15 @@ export const undoLastActionTool = {
     if (log.action === "CREATE" && log.entity_type === "transaction") {
       await query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [log.entity_id, params.householdId]);
       undone = true;
-    } else if (log.action === "DELETE" && log.entity_type === "transaction" && log.changed_data) {
-      const d = log.changed_data as Record<string, unknown>;
+    } else if (log.action === "DELETE" && log.entity_type === "transaction" && log.before_json) {
+      const d = log.before_json as Record<string, unknown>;
       await query(
         `UPDATE transactions SET deleted_at = NULL WHERE id = $1 AND household_id = $2`,
         [log.entity_id, params.householdId]
       );
       undone = true;
-    } else if (log.action === "UPDATE" && log.changed_data) {
-      const d = log.changed_data as Record<string, unknown>;
+    } else if (log.action === "UPDATE" && log.before_json) {
+      const d = log.before_json as Record<string, unknown>;
       const table = log.entity_type === "account" ? "accounts" : log.entity_type === "category" ? "categories" : "transactions";
       const sets = Object.keys(d).filter(k => k !== "id" && k !== "household_id").map(k => `${k} = $${1 + Object.keys(d).indexOf(k)}`);
       if (sets.length) {

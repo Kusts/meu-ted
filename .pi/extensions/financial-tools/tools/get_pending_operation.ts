@@ -15,10 +15,22 @@ export const getPendingOperationTool = {
   async execute(_id: string, params: { chatId: string }, _sig: AbortSignal, onUpdate: ((u: { content: { type: "text"; text: string }[] }) => void) | undefined) {
     if (!params.chatId?.trim()) throw new Error("chat_id cannot be empty");
 
-    const r = await query<{ rows: { id: string; operation_type: string; operation_data: Record<string, unknown>; expires_at: Date; created_at: Date }[] }>(
-      `SELECT id, operation_type, operation_data, expires_at, created_at
+    const r = await query<{ rows: {
+      id: string;
+      kind: string;
+      amount_cents: string;
+      description: string;
+      category_id: string | null;
+      from_account_id: string | null;
+      to_account_id: string | null;
+      date: Date;
+      expires_at: Date;
+      created_at: Date;
+    }[] }>(
+      `SELECT id, kind, amount_cents, description, category_id, from_account_id,
+              to_account_id, date, expires_at, created_at
        FROM pending_operations
-       WHERE chat_id = $1 AND expires_at > NOW() AND consumed_at IS NULL
+       WHERE chat_id = $1 AND expires_at > NOW() AND status = 'awaiting_confirmation'
        LIMIT 1`,
       [params.chatId]
     );
@@ -26,10 +38,11 @@ export const getPendingOperationTool = {
     if (!r.rows.length) return { content: [{ type: "text", text: "Nenhuma operação pendente encontrada." }], details: { operation: null } };
 
     const op = r.rows[0];
+    const amount = (parseInt(op.amount_cents, 10) / 100).toFixed(2);
     onUpdate?.({ content: [{ type: "text", text: "Verificando operação pendente..." }] });
     return {
-      content: [{ type: "text", text: `⏳ Operação pendente: ${op.operation_type} — expira em ${new Date(op.expires_at).toLocaleString("pt-BR")}` }],
-      details: { id: op.id, operation_type: op.operation_type, operation_data: op.operation_data, expires_at: op.expires_at, created_at: op.created_at },
+      content: [{ type: "text", text: `⏳ Operação pendente: ${op.kind} (R$ ${amount}) — ${op.description} — expira em ${new Date(op.expires_at).toLocaleString("pt-BR")}` }],
+      details: { ...op },
     };
   },
 };

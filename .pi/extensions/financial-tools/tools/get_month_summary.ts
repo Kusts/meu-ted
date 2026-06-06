@@ -27,8 +27,10 @@ export const getMonthSummaryTool = {
     if (!isUUID(params.householdId)) throw new Error("householdId must be a valid UUID");
     if (!parseYearMonth(params.yearMonth)) throw new Error("yearMonth must be in YYYY-MM format");
 
-    const startDate = params.yearMonth + "-01";
-    const endDate = params.yearMonth + "-31";
+    const [year, month] = params.yearMonth.split("-").map(Number);
+    const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const endDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 
     const r = await query<{ rows: { kind: string; total: string }[] }>(
       `SELECT kind, COALESCE(SUM(amount_cents), 0) as total

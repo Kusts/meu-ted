@@ -43,7 +43,7 @@ export const updateTransactionTool = {
       if (!acc.rows.length) throw new Error("Account not found or inactive");
     }
 
-    const sets: string[] = ["updated_at = NOW()"];
+    const sets: string[] = [];
     const par: unknown[] = [];
     let i = 1;
     if (params.description !== undefined) { sets.push(`description = $${i++}`); par.push(params.description.trim()); }

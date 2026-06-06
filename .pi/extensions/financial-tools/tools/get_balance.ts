@@ -52,21 +52,24 @@ export const getBalanceTool = {
 
     const balance = parseInt(accResult.rows[0].initial_balance_cents, 10);
 
-    const txResult = await query<{ rows: { kind: string; amount_cents: string }[] }>(
-      `SELECT kind, amount_cents FROM transactions
-       WHERE household_id = $1 AND deleted_at IS NULL`,
-      [params.householdId]
+    const txResult = await query<{ rows: { from_account_id: string | null; to_account_id: string | null; kind: string; amount_cents: string }[] }>(
+      `SELECT from_account_id, to_account_id, kind, amount_cents
+       FROM transactions
+       WHERE household_id = $1 AND deleted_at IS NULL
+         AND (from_account_id = $2 OR to_account_id = $2)`,
+      [params.householdId, params.accountId]
     );
 
     let calculated = balance;
     for (const tx of txResult.rows) {
       const cents = parseInt(tx.amount_cents, 10);
-      if (tx.kind === "income") calculated += cents;
-      else if (tx.kind === "expense") calculated -= cents;
-      else if (tx.kind === "transfer") {
-        // Check if this account was involved as from or to
-        // For a simple balance calculation, we just use the aggregate
-        // Full transfer tracking would need from/to account checks
+      if (tx.from_account_id === params.accountId) {
+        // Money leaving this account
+        if (tx.kind === "expense" || tx.kind === "transfer") calculated -= cents;
+      }
+      if (tx.to_account_id === params.accountId) {
+        // Money entering this account
+        if (tx.kind === "income" || tx.kind === "transfer") calculated += cents;
       }
     }
 

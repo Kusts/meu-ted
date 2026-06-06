@@ -34,7 +34,7 @@ export const updateCategoryTool = {
     if (dup.rows.length) throw new Error(`Category "${params.name.trim()}" (${params.kind}) already exists`);
 
     const r = await query<{ rows: { id: string }[] }>(
-      `UPDATE categories SET name = $1, kind = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4 AND deleted_at IS NULL RETURNING id`,
+      `UPDATE categories SET name = $1, kind = $2 WHERE id = $3 AND household_id = $4 AND deleted_at IS NULL RETURNING id`,
       [params.name.trim(), params.kind, params.categoryId, params.householdId]
     );
 

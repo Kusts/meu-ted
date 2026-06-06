@@ -36,7 +36,7 @@ export const updateAccountTool = {
     if (dup.rows.length) throw new Error(`Account with name="${params.name.trim()}" already exists in this household`);
 
     const r = await query<{ rows: { id: string }[] }>(
-      `UPDATE accounts SET name = $1, updated_at = NOW() WHERE id = $2 AND household_id = $3 AND deleted_at IS NULL RETURNING id`,
+      `UPDATE accounts SET name = $1 WHERE id = $2 AND household_id = $3 AND deleted_at IS NULL RETURNING id`,
       [params.name.trim(), params.accountId, params.householdId]
     );
 

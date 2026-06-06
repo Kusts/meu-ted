@@ -16,7 +16,7 @@ export const cancelPendingOperationTool = {
     if (!params.chatId?.trim()) throw new Error("chat_id cannot be empty");
 
     const r = await query<{ rows: { id: string }[] }>(
-      `UPDATE pending_operations SET consumed_at = NOW() WHERE chat_id = $1 AND consumed_at IS NULL AND expires_at > NOW() RETURNING id`,
+      `UPDATE pending_operations SET status = 'cancelled' WHERE chat_id = $1 AND status = 'awaiting_confirmation' AND expires_at > NOW() RETURNING id`,
       [params.chatId]
     );
 

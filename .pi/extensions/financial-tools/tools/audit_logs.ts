@@ -8,7 +8,7 @@ async function query<T extends { rows: unknown[] }>(text: string, params?: unkno
 }
 function isUUID(s: string) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s); }
 
-interface LogRow { id: string; entity_type: string; entity_id: string | null; action: string; changed_data: Record<string, unknown> | null; created_at: Date; }
+interface LogRow { id: string; entity_type: string; entity_id: string | null; action: string; before_json: Record<string, unknown> | null; after_json: Record<string, unknown> | null; created_at: Date; }
 
 export const auditLogsTool = {
   name: "audit_logs",
@@ -24,7 +24,7 @@ export const auditLogsTool = {
     if (!isUUID(params.householdId)) throw new Error("householdId must be a valid UUID");
     const limit = Math.min(params.limit ?? 20, 100);
 
-    let sql = `SELECT id, entity_type, entity_id, action, changed_data, created_at
+    let sql = `SELECT id, entity_type, entity_id, action, before_json, after_json, created_at
                FROM audit_logs WHERE household_id = $1`;
     const args: unknown[] = [params.householdId];
 
@@ -38,8 +38,9 @@ export const auditLogsTool = {
     if (!r.rows.length) return { content: [{ type: "text", text: "Nenhum registro de auditoria encontrado." }], details: { logs: [] } };
 
     const text = r.rows.map(l => {
-      const changed = l.changed_data ? JSON.stringify(l.changed_data).slice(0, 80) : "";
-      return `• [${new Date(l.created_at).toISOString().slice(0, 16)}] ${l.action} ${l.entity_type}${l.entity_id ? ` (${l.entity_id})` : ""}${changed ? ` — ${changed}` : ""}`;
+      const before = l.before_json ? JSON.stringify(l.before_json).slice(0, 60) : "";
+      const after = l.after_json ? `→ ${JSON.stringify(l.after_json).slice(0, 60)}` : "";
+      return `• [${new Date(l.created_at).toISOString().slice(0, 16)}] ${l.action} ${l.entity_type}${l.entity_id ? ` (${l.entity_id})` : ""}${before ? ` — ${before}` : ""}${after ? ` ${after}` : ""}`;
     }).join("\n");
 
     onUpdate?.({ content: [{ type: "text", text: "Carregando logs de auditoria..." }] });
