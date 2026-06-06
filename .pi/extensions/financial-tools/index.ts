@@ -54,6 +54,10 @@ import { createRecurringPurchase, postDueRecurring, listRecurringPurchases } fro
 // Spending analysis
 import { spendingInsights } from "./tools/spending_insights.js";
 
+// Installment plans
+import { createInstallmentPlan, listInstallmentPlans } from "./tools/create_installment_plan.js";
+import { payInstallment, listDueInstallments } from "./tools/pay_installment.js";
+
 export default function (pi: ExtensionAPI) {
   // Read tools
   pi.registerTool(listAccountsTool);
@@ -98,4 +102,10 @@ export default function (pi: ExtensionAPI) {
 
   // Spending analysis
   pi.registerTool(spendingInsights);
+
+  // Installment plans
+  pi.registerTool(createInstallmentPlan);
+  pi.registerTool(listInstallmentPlans);
+  pi.registerTool(payInstallment);
+  pi.registerTool(listDueInstallments);
 }
