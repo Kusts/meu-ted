@@ -20,6 +20,7 @@ import {
 } from "./credit-card";
 import { autoCategorize } from "./categorizer";
 import { findDuplicate } from "./duplicate-detector";
+import { getLimitStatus } from "./limit-guard";
 
 interface Params {
   householdId: string;
@@ -187,6 +188,23 @@ export const createCardPurchase: ToolDefinition = {
       if (params.installmentsTotal) {
         response.installment = `${params.installmentNumber}/${params.installmentsTotal}`;
       }
+
+      // 8. Check limit usage
+      const limitStatus = await getLimitStatus(pool, params.accountId, new Date().toISOString().slice(0, 10));
+      if (limitStatus && limitStatus.status !== "ok") {
+        response.limitWarning = {
+          status: limitStatus.status,
+          usagePercent: limitStatus.usagePercent,
+          availableCents: limitStatus.availableCents,
+          message:
+            limitStatus.status === "over_limit"
+              ? `🚨 Limite estourado! Você usou ${limitStatus.usagePercent}% do limite (R$ ${(limitStatus.usedCents / 100).toFixed(2)} de R$ ${(limitStatus.creditLimitCents / 100).toFixed(2)})`
+              : limitStatus.status === "warning"
+                ? `🔴 Cuidado: ${limitStatus.usagePercent}% do limite usado. Disponível: R$ ${(limitStatus.availableCents / 100).toFixed(2)}`
+                : `⚠️ Atenção: ${limitStatus.usagePercent}% do limite usado`,
+        };
+      }
+
       return response;
     } catch (e: any) {
       return { success: false, error: "db_error", message: e.message };

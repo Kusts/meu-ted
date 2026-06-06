@@ -270,3 +270,88 @@ O helper `calculateInstallments` lida com parcelamentos que cruzam o ano:
 
 ⚠️ **Limitação atual**: O `create_card_purchase` registra apenas a parcela 1.
 Para registrar todas as N parcelas, faça N chamadas ou expanda a tool.
+
+## Tools Avançadas (Auto-gerenciamento)
+
+### `create_card_installments`
+
+Diferente de `create_card_purchase` (que registra 1 parcela), esta registra **TODAS as N parcelas** de uma vez, cada uma em sua respectiva fatura.
+
+**Quando usar**: Compras parceladas longas (6x, 10x, 12x, 18x, 24x) que cruzam meses ou anos.
+
+**Exemplo**:
+- `description: "iPhone 15 Pro"`, `totalAmountCents: 700000`, `installmentsTotal: 12`
+- Cria 12 transações, distribuídas em faturas de 2026-11 até 2027-10
+- `crossesYear: true` se aplicável
+
+### `check_card_limits`
+
+Verifica uso do limite de todos os cartões.
+
+**Alertas**:
+- ✅ `ok`: < 80% usado
+- ⚠️ `caution`: 80-90%
+- 🔴 `warning`: 90-100%
+- 🚨 `over_limit`: > 100%
+
+**Resposta inclui**: Faturas pendentes, dias até vencer, sugestão de pagamento.
+
+### `refresh_statements`
+
+Atualiza status de todas as faturas. **Deve ser chamado periodicamente** (início de sessão do TED).
+
+**Transições automáticas**:
+- `open` → `closed` (após closing_date)
+- `closed` → `overdue` (após due_date sem pagar)
+- `partial` → `overdue` (após due_date)
+
+**Também retorna**: Faturas que fecham nos próximos 5 dias (proativo).
+
+## Auto-Warning em Compras
+
+`create_card_purchase` agora **automaticamente** verifica o limite após registrar a compra. Se o uso ficar >= 80%, retorna `limitWarning` com:
+
+```json
+{
+  "limitWarning": {
+    "status": "warning",
+    "usagePercent": 95,
+    "availableCents": 500,
+    "message": "🔴 Cuidado: 95% do limite usado. Disponível: R$ 5.00"
+  }
+}
+```
+
+## Procedures Importantes
+
+### 1. Ao iniciar conversa
+
+```typescript
+// Primeiro refresh sempre
+await refresh_statements({ householdId: "..." });
+
+// Depois checa limites
+await check_card_limits({ householdId: "..." });
+```
+
+### 2. Antes de registrar compra grande
+
+```typescript
+// Verifica se há limite
+const limits = await check_card_limits({ householdId, accountId });
+if (limits.statuses[0].status === "over_limit") {
+  // Pergunta antes de prosseguir
+  return "🚨 Seu limite já está estourado. Quer continuar mesmo assim?";
+}
+```
+
+### 3. Compra parcelada
+
+```typescript
+// Se for parcelada e >= 4x, prefira create_card_installments
+if (installmentsTotal >= 4) {
+  await create_card_installments({ ... });
+} else {
+  await create_card_purchase({ ... });
+}
+```

@@ -40,10 +40,13 @@ import { undoLastActionTool } from "./tools/undo_last_action.js";
 // Credit card tools
 import { createCreditCardAccount } from "./tools/create_credit_card_account.js";
 import { createCardPurchase } from "./tools/create_card_purchase.js";
+import { createCardInstallments } from "./tools/create_card_installments.js";
 import { payStatement } from "./tools/pay_statement.js";
 import { listStatements } from "./tools/list_statements.js";
 import { getStatementDetails } from "./tools/get_statement_details.js";
 import { cardInsights } from "./tools/card_insights.js";
+import { checkCardLimits } from "./tools/check_card_limits.js";
+import { refreshStatements } from "./tools/refresh_statements.js";
 
 export default function (pi: ExtensionAPI) {
   // Read tools
@@ -74,8 +77,11 @@ export default function (pi: ExtensionAPI) {
   // Credit card tools
   pi.registerTool(createCreditCardAccount);
   pi.registerTool(createCardPurchase);
+  pi.registerTool(createCardInstallments);
   pi.registerTool(payStatement);
   pi.registerTool(listStatements);
   pi.registerTool(getStatementDetails);
   pi.registerTool(cardInsights);
+  pi.registerTool(checkCardLimits);
+  pi.registerTool(refreshStatements);
 }
