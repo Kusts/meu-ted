@@ -728,6 +728,8 @@ parameters: Type.Object({
 
 ### Constraint UNIQUE no Banco (já aplicada)
 
+#### transactions
+
 ```sql
 ALTER TABLE transactions 
 ADD CONSTRAINT transactions_idempotency_key_unique 
@@ -735,6 +737,51 @@ UNIQUE (household_id, idempotency_key);
 ```
 
 Esta constraint é o **safety net final** caso a detecção semântica falhe ou ocorra race condition no nível da aplicação.
+
+#### accounts e categories (com normalização de acentos)
+
+```sql
+-- Habilitar extensão unaccent
+CREATE EXTENSION IF NOT EXISTS unaccent;
+
+-- Trigger para preencher name_normalized
+CREATE OR REPLACE FUNCTION normalize_name() RETURNS TRIGGER AS $$
+BEGIN
+  NEW.name_normalized = LOWER(UNACCENT(NEW.name));
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER accounts_normalize_name BEFORE INSERT OR UPDATE ON accounts
+  FOR EACH ROW EXECUTE FUNCTION normalize_name();
+CREATE TRIGGER categories_normalize_name BEFORE INSERT OR UPDATE ON categories
+  FOR EACH ROW EXECUTE FUNCTION normalize_name();
+
+-- Coluna name_normalized (preenchida pelo trigger)
+ALTER TABLE accounts ADD COLUMN name_normalized TEXT;
+ALTER TABLE categories ADD COLUMN name_normalized TEXT;
+ALTER TABLE accounts ALTER COLUMN name_normalized SET NOT NULL;
+ALTER TABLE categories ALTER COLUMN name_normalized SET NOT NULL;
+
+-- UNIQUE INDEX com normalização de acentos
+CREATE UNIQUE INDEX accounts_household_name_norm_unique
+  ON accounts (household_id, name_normalized)
+  WHERE deleted_at IS NULL;
+
+CREATE UNIQUE INDEX categories_household_name_norm_kind_unique
+  ON categories (household_id, name_normalized, kind)
+  WHERE deleted_at IS NULL;
+```
+
+Por que não usar `LOWER(UNACCENT(name))` direto no UNIQUE INDEX?
+Porque `UNACCENT()` é uma função **VOLATILE** (depende do dicionário de acentos),
+e Postgres exige funções IMMUTABLE em UNIQUE INDEX. Solução: usar trigger
+para materializar o valor normalizado numa coluna.
+
+Benefícios:
+- **Detecção case-insensitive**: "Nubank" == "nubank"
+- **Detecção accent-insensitive**: "Saúde" == "Saude"
+- **Performance**: índice em coluna normalizada é mais rápido que função
 
 ### Padrão de Resposta (Tool Output)
 

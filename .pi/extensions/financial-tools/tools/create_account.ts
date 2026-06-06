@@ -31,7 +31,11 @@ export const createAccountTool = {
 
     if (!params.force) {
       const existing = await query<{ rows: { id: string; name: string; initial_balance_cents: string }[] }>(
-        `SELECT id, name, initial_balance_cents FROM accounts WHERE household_id = $1 AND LOWER(name) = LOWER($2) AND deleted_at IS NULL LIMIT 1`,
+        `SELECT id, name, initial_balance_cents FROM accounts
+         WHERE household_id = $1
+           AND name_normalized = LOWER(UNACCENT($2))
+           AND deleted_at IS NULL
+         LIMIT 1`,
         [params.householdId, params.name.trim()]
       );
       if (existing.rows.length) {

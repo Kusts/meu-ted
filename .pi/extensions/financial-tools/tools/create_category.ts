@@ -31,7 +31,12 @@ export const createCategoryTool = {
 
     if (!params.force) {
       const existing = await query<{ rows: { id: string; name: string; kind: string }[] }>(
-        `SELECT id, name, kind FROM categories WHERE household_id = $1 AND LOWER(name) = LOWER($2) AND kind = $3 AND deleted_at IS NULL LIMIT 1`,
+        `SELECT id, name, kind FROM categories
+         WHERE household_id = $1
+           AND name_normalized = LOWER(UNACCENT($2))
+           AND kind = $3
+           AND deleted_at IS NULL
+         LIMIT 1`,
         [params.householdId, params.name.trim(), params.kind]
       );
       if (existing.rows.length) {
