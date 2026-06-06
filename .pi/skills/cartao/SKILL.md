@@ -355,3 +355,103 @@ if (installmentsTotal >= 4) {
   await create_card_purchase({ ... });
 }
 ```
+
+## Assinaturas e Compras Recorrentes
+
+### Quando usar recorrência
+
+Quando o usuário disser:
+- "todo mês gasto X com Y"
+- "minha assinatura da Netflix é 55.90"
+- "aluguel é 1500 por mês"
+- "academia 99/mês"
+
+### `create_recurring_purchase`
+
+Cria uma recorrência que será postada automaticamente todo mês.
+
+**Exemplo**:
+```typescript
+await create_recurring_purchase({
+  accountId: cartaoId,
+  description: "Netflix",
+  amountCents: 5590,
+  frequency: "monthly",  // ou "quarterly" / "yearly"
+  startDate: "2026-06-01",
+});
+```
+
+### `post_due_recurring`
+
+Posta todas as recorrências que estão devidas. **Chamar no início de cada sessão** (junto com `refresh_statements`).
+
+```typescript
+const result = await post_due_recurring({ householdId });
+// → { posted: 3, totalCents: 161180, items: [...] }
+```
+
+Avança `next_due_date` automaticamente baseado na frequência.
+
+### `list_recurring_purchases`
+
+Lista todas as recorrências ativas e mostra **total mensal estimado**.
+
+```
+🔁 2 assinatura(ões) ativa(s):
+  🔄 Aluguel apartamento: R$ 1500.00 /mês
+     Próx: 2026-07-05 (último: 2026-06-05)
+  🔄 Netflix mensal: R$ 55.90 /mês
+     Próx: 2026-07-01 (último: 2026-06-01)
+
+💰 Total mensal estimado: R$ 1555.90
+```
+
+### Frequências Suportadas
+
+| Frequência | Uso | Cálculo |
+|-----------|-----|---------|
+| `monthly` | Assinaturas, aluguel | +1 mês |
+| `quarterly` | Trimestral (ex: IPVA) | +3 meses |
+| `yearly` | Anual (ex: seguro) | +12 meses |
+
+### Edge Cases Tratados
+
+- ✅ Fim de mês: 31/jan + 1 month = 28/fev (clamp ao último dia)
+- ✅ Ano: 15/dez + 1 month = 15/jan (próximo ano)
+- ✅ Status: `active` / `paused` / `cancelled`
+- ✅ end_date: se passar do end_date, não posta mais
+
+## Análise Comparativa de Gastos
+
+### `spending_insights`
+
+Compara gastos do mês atual com a média dos últimos 3 meses, detecta anomalias e mostra % da renda.
+
+**4 tipos de insight**:
+- `comparison`: % vs média histórica
+- `anomalies`: transações 2.5x maiores que a média
+- `income-share`: % da renda por categoria
+- `all`: tudo junto
+
+**Exemplo de output**:
+```
+💡 6 insight(s):
+  🚨 📈 Lazer > Streaming: +200% vs média dos últimos 3 meses
+  🆕 Nova categoria detectada: Moradia > Aluguel (R$ 1500.00)
+  
+📊 Comparação vs média:
+  📈 Lazer > Streaming: R$ 111.80 vs R$ 37.27 (+200%)
+  📈 Alimentação > iFood: R$ 100.00 vs R$ 33.33 (+200%)
+
+💰 % da renda por categoria:
+  • Alimentação > Mercado: 27% (R$ 9458.00)
+  • Moradia > Aluguel: 4% (R$ 1500.00)
+```
+
+### Severidades
+
+| Severidade | Quando |
+|-----------|--------|
+| `info` | Tendência leve, nova categoria, economia |
+| `warning` | +50% ou mais vs média |
+| `alert` | +100% ou mais vs média, ou anomalia |

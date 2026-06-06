@@ -48,6 +48,12 @@ import { cardInsights } from "./tools/card_insights.js";
 import { checkCardLimits } from "./tools/check_card_limits.js";
 import { refreshStatements } from "./tools/refresh_statements.js";
 
+// Recurring purchases
+import { createRecurringPurchase, postDueRecurring, listRecurringPurchases } from "./tools/create_recurring_purchase.js";
+
+// Spending analysis
+import { spendingInsights } from "./tools/spending_insights.js";
+
 export default function (pi: ExtensionAPI) {
   // Read tools
   pi.registerTool(listAccountsTool);
@@ -84,4 +90,12 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(cardInsights);
   pi.registerTool(checkCardLimits);
   pi.registerTool(refreshStatements);
+
+  // Recurring purchases
+  pi.registerTool(createRecurringPurchase);
+  pi.registerTool(postDueRecurring);
+  pi.registerTool(listRecurringPurchases);
+
+  // Spending analysis
+  pi.registerTool(spendingInsights);
 }
