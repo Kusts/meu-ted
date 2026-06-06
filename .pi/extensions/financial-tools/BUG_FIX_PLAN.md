@@ -611,6 +611,175 @@ for (const tx of txResult.rows) {
 
 ---
 
+## 🆕 Funcionalidade Adicionada: Detecção de Duplicatas
+
+**Data**: 2026-06-06
+**Commit**: `259b99e feat(financial-tools): deteccao de duplicatas em todas tools de criacao`
+
+### Visão Geral
+
+Implementada detecção de duplicatas em **todas as 5 tools de criação**:
+- `create_expense` 💸
+- `create_income` 💰
+- `create_transfer` 🔄
+- `create_account` 🏦
+- `create_category` 🏷️
+
+### Estratégia de Detecção (3 níveis)
+
+| Prioridade | Tipo | Quando Detecta | Threshold |
+|------------|------|----------------|-----------|
+| 1ª | `idempotency_key` | Mesma `idempotency_key` UUID | Match exato |
+| 2ª | `semantic` | Descrição similar + mesmo valor + mesma conta + data próxima | Jaccard ≥ 60% + 1 dia |
+| 3ª | `exact_name` | Conta/categoria com mesmo nome (case-insensitive) | Match exato |
+
+### Algoritmo de Similaridade (Jaccard)
+
+```typescript
+function jaccardSimilarity(a: string, b: string): number {
+  const tokensA = new Set(normalize(a).split(" ").filter(Boolean));
+  const tokensB = new Set(normalize(b).split(" ").filter(Boolean));
+  const intersection = tokensA ∩ tokensB;
+  return intersection / (tokensA ∪ tokensB);
+}
+```
+
+**Normalização aplicada**:
+- Lowercase
+- Remove acentos
+- Remove stopwords (em, no, na, de, da, do, com, para, pra)
+- Remove pontuação
+- Trim whitespace
+
+**Exemplos**:
+| String A | String B | Similaridade |
+|----------|----------|--------------|
+| "lanche" | "Lanche" | 1.00 |
+| "lanche" | "lanche no nubank" | 0.50 |
+| "cinema" | "Cinema IMAX com a galera" | 0.33 |
+| "banana" | "Lanche" | 0.00 |
+
+### Fluxo de Confirmação
+
+```
+User: "gastei 50 no lanche"
+       ↓
+Tool: cria expense → INSERT
+       ↓
+✅ Sucesso (primeira vez)
+
+User: "gastei 50 no lanche" (mesma descrição)
+       ↓
+Tool: detecta duplicata semântica (Jaccard 1.0)
+       ↓
+Tool retorna: { duplicate_detected: true, similarity: 1.0, ... }
+       ↓
+TED: 🤔 Achei um lançamento parecido... quer registrar mesmo assim?
+
+User: "sim"
+       ↓
+TED: [retry com force: true] → ✅ Anotado!
+```
+
+### Novo Parâmetro: `force`
+
+Todas as 5 tools de criação agora aceitam `force: boolean`:
+
+```typescript
+parameters: Type.Object({
+  // ... outros params
+  force: Type.Optional(Type.Boolean({ 
+    description: "Skip duplicate detection. Use after the user has confirmed they want to register anyway." 
+  })),
+})
+```
+
+**Comportamento**:
+- `force: false` (padrão) — Verifica duplicatas, retorna warning se encontrar
+- `force: true` — Pula verificação, registra direto
+
+### Arquivos Criados/Modificados
+
+| Arquivo | Linhas | Tipo |
+|---------|--------|------|
+| `tools/duplicate-detector.ts` | 195 | 🆕 NOVO |
+| `tools/create_expense.ts` | +35 | ✏️ Modificado |
+| `tools/create_income.ts` | +30 | ✏️ Modificado |
+| `tools/create_transfer.ts` | +30 | ✏️ Modificado |
+| `tools/create_account.ts` | +25 | ✏️ Modificado |
+| `tools/create_category.ts` | +25 | ✏️ Modificado |
+| `tsconfig.json` | 18 | 🆕 NOVO |
+| `package.json` | 10 | ✏️ Modificado (versão 1.1.0) |
+
+### Validação (testes manuais)
+
+| Teste | Resultado | Validação |
+|-------|-----------|-----------|
+| Jaccard "lanche" vs "Lanche" | 1.00 | ✅ |
+| Jaccard "lanche" vs "lanche no nubank" | 0.50 | ✅ |
+| Jaccard "cinema" vs "Cinema IMAX com a galera" | 0.33 | ✅ |
+| Jaccard "banana" vs "Lanche" | 0.00 | ✅ |
+| `findDuplicate` em receita existente | Match semantic 1.00 | ✅ |
+| `findDuplicate` em despesa existente | Match semantic 1.00 | ✅ |
+| `findDuplicate` com valor diferente | Sem match (correto) | ✅ |
+| `create_expense` com `force: true` | Bypassa detecção | ✅ |
+| TypeScript typecheck (duplicate-detector.ts) | 0 erros | ✅ |
+| Sessão do pi (cache) | ⚠️ Cache do Node, reiniciar para testar ao vivo | ℹ️ |
+
+### Constraint UNIQUE no Banco (já aplicada)
+
+```sql
+ALTER TABLE transactions 
+ADD CONSTRAINT transactions_idempotency_key_unique 
+UNIQUE (household_id, idempotency_key);
+```
+
+Esta constraint é o **safety net final** caso a detecção semântica falhe ou ocorra race condition no nível da aplicação.
+
+### Padrão de Resposta (Tool Output)
+
+```typescript
+// Caso 1: Sem duplicata → Sucesso
+{
+  content: [{ type: "text", text: "✅ Despesa registrada: ..." }],
+  details: { transaction_id: "..." }
+}
+
+// Caso 2: Duplicata detectada → Warning
+{
+  content: [{ type: "text", text: "🤔 Achei um lançamento bem parecido:\n• ..." }],
+  details: {
+    duplicate_detected: true,
+    existing_transaction_id: "...",
+    match_type: "semantic",  // ou "idempotency_key" ou "exact_name"
+    similarity: 0.85,         // 0-1, apenas para semantic
+    hint: "Ask the user to confirm. If they want to register anyway, retry with force=true."
+  }
+}
+```
+
+### Como o TED Deve Agir
+
+Documentado em `prompts/duplicate-detection.md`. Resumo:
+
+| Resposta do Usuário | Ação do TED |
+|---------------------|-------------|
+| "sim" / "isso" / "mesmo" | Retry com `force: true` |
+| "atualiza" / "edita" | Usar `update_transaction` |
+| "deleta o antigo" | `delete_transaction` no antigo, depois criar normal |
+| "não" / silêncio | Esperar — NÃO criar |
+
+**⚠️ REGRA CRÍTICA**: Nunca chamar com `force: true` sem perguntar antes ao usuário. A pergunta é **sempre obrigatória**.
+
+### Próximos Passos Recomendados
+
+1. ✅ Reiniciar a sessão do pi para testar a detecção ao vivo
+2. ✅ Adicionar teste de regressão para race condition
+3. ✅ Considerar adicionar constraint UNIQUE também em `(household_id, name)` para accounts/categories
+4. ✅ Avaliar uso de `INSERT ... ON CONFLICT` para ser ainda mais robusto
+
+---
+
 **Autor**: Agent Pi (TED)
 **Data**: 2026-06-06
-**Status**: 📝 Pronto para revisão
+**Status**: ✅ Detecção implementada e validada via duplicate-detector.ts
