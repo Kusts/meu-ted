@@ -3,11 +3,17 @@
  *
  * Detects duplicates before inserting. Returns `duplicate_detected` when a
  * similar transfer (same accounts, same amount, nearby date) is found.
+ *
+ * Auto-extracts structured fields from the description:
+ * - method: PIX (default), TED, DOC, TRANSFER, CASH
+ * - recipient_name: extracted from description (null for own-account transfers)
+ * - recipient_document: optional CPF/CNPJ
  */
 
 import { Type } from "typebox";
 import { randomUUID } from "node:crypto";
 import { findDuplicate, formatDuplicateWarning } from "./duplicate-detector.js";
+import { resolveMethod, extractRecipientName, isValidDocument, type TransferMethod } from "./transfer-parser.js";
 
 async function query<T extends { rows: unknown[] }>(text: string, params?: unknown[]): Promise<T> {
   const { default: pg } = await import("pg");
@@ -21,7 +27,7 @@ function isDate(s: string) { return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date
 export const createTransferTool = {
   name: "create_transfer",
   label: "Create Transfer",
-  description: "Transfer money between two accounts. Cannot transfer to the same account. Detects duplicates (idempotency_key or semantic similarity) and asks the user to confirm. Pass force=true to override.",
+  description: "Transfer money between two accounts (own or third-party via PIX, TED, DOC, etc.). Method defaults to PIX. Recipient name and document (CPF/CNPJ) auto-extracted from description or can be passed explicitly. Detects duplicates. Pass force=true to override.",
   parameters: Type.Object({
     fromAccountId: Type.String(),
     toAccountId: Type.String(),
@@ -31,6 +37,9 @@ export const createTransferTool = {
     householdId: Type.String(),
     sourceMessageId: Type.Optional(Type.String()),
     idempotencyKey: Type.Optional(Type.String()),
+    method: Type.Optional(Type.String({ description: "PIX, TED, DOC, TRANSFER, CASH. Auto-detected from description, defaults to PIX." })),
+    recipientName: Type.Optional(Type.String({ description: "Recipient name for third-party transfers. Auto-extracted from description." })),
+    recipientDocument: Type.Optional(Type.String({ description: "CPF (11 digits) or CNPJ (14 digits) of recipient." })),
     force: Type.Optional(Type.Boolean({ description: "Skip duplicate detection." })),
   }),
 
@@ -42,6 +51,14 @@ export const createTransferTool = {
     if (!params.description?.trim()) throw new Error("description cannot be empty");
     if (!isDate(params.date)) throw new Error("date must be YYYY-MM-DD");
     if (!isUUID(params.householdId)) throw new Error("household_id must be a valid UUID");
+    if (params.recipientDocument && !isValidDocument(params.recipientDocument)) {
+      throw new Error("recipient_document must be a valid CPF (11 digits) or CNPJ (14 digits)");
+    }
+
+    // Resolve method (parameter > auto-detect > default PIX)
+    const method: TransferMethod = resolveMethod(params.description, params.method, "PIX");
+    // Resolve recipient (parameter > auto-extract from description)
+    const recipientName = params.recipientName ?? extractRecipientName(params.description);
 
     // Duplicate detection (unless force=true)
     if (!params.force) {
@@ -84,15 +101,42 @@ export const createTransferTool = {
 
     const rid = randomUUID();
     const r = await query<{ rows: { id: string }[] }>(
-      `INSERT INTO transactions (id, household_id, kind, amount_cents, description, from_account_id, to_account_id, date, status, source_message_id, idempotency_key, created_at)
-       VALUES ($1, $2, 'transfer', $3, $4, $5, $6, $7, 'confirmed', $8, $9, NOW()) RETURNING id`,
-      [rid, params.householdId, params.amountCents, params.description.trim(), params.fromAccountId, params.toAccountId, params.date, params.sourceMessageId ?? null, params.idempotencyKey ?? null]
+      `INSERT INTO transactions (
+        id, household_id, kind, amount_cents, description,
+        from_account_id, to_account_id, date, status,
+        source_message_id, idempotency_key,
+        method, recipient_name, recipient_document,
+        created_at
+       )
+       VALUES ($1, $2, 'transfer', $3, $4, $5, $6, $7, 'confirmed', $8, $9, $10, $11, $12, NOW())
+       RETURNING id`,
+      [rid, params.householdId, params.amountCents, params.description.trim(),
+       params.fromAccountId, params.toAccountId, params.date,
+       params.sourceMessageId ?? null, params.idempotencyKey ?? null,
+       method, recipientName, params.recipientDocument ?? null]
     );
 
     onUpdate?.({ content: [{ type: "text", text: "Registrando transferência..." }] });
+
+    // Build a friendly summary
+    const amountFmt = `R$ ${(params.amountCents / 100).toFixed(2)}`;
+    let summary: string;
+    if (recipientName) {
+      summary = `✅ ${method} ${amountFmt} para ${recipientName}`;
+    } else {
+      summary = `✅ ${method} ${amountFmt} transferido`;
+    }
+    summary += ` em ${params.date}`;
+
     return {
-      content: [{ type: "text", text: `✅ Transferência registrada: ${params.description} — R$ ${(params.amountCents / 100).toFixed(2)} em ${params.date}` }],
-      details: { transaction_id: r.rows[0].id },
+      content: [{ type: "text", text: summary }],
+      details: {
+        transaction_id: r.rows[0].id,
+        method,
+        recipient_name: recipientName,
+        recipient_document: params.recipientDocument ?? null,
+        is_third_party: !!recipientName,
+      },
     };
   },
 };
