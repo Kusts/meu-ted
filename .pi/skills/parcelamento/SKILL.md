@@ -190,7 +190,10 @@ Após criar parcelamento:
 |---------|--------|
 | `tools/installment-plan.ts` | Helpers (calculatePayment, buildSchedule, etc) |
 | `tools/create_installment_plan.ts` | 2 tools (create, list) |
-| `tools/pay_installment.ts` | 2 tools (pay, list_due) |
+| `tools/pay_installment.ts` | 3 tools (pay, list_due, check_due_soon) |
+| `tools/prepay_installments.ts` | 2 tools (prepay, simulate) |
+| `tools/installment_score.ts` | 1 tool (score) |
+| `tools/installment-score.ts` | Helpers (computeScore, formatScore) |
 
 ## Schema
 
@@ -218,3 +221,132 @@ ALTER TABLE transactions
     CHECK ('scheduled' OR 'paid' OR 'overdue'),
   ADD COLUMN paid_date DATE;
 ```
+
+## Antecipação de Parcelas
+
+### Quando usar
+
+- "quero antecipar 3 parcelas do financiamento"
+- "posso quitar as próximas 5 com desconto?"
+- "se eu pagar antecipado, ganho desconto?"
+
+### Tools
+
+**`simulate_prepayment`**: simula sem modificar, mostra múltiplos cenários
+- Sem desconto, 5%, 10%, 15%
+- Útil para mostrar ao usuário quanto economizaria
+
+**`prepay_installments`**: executa a antecipação
+- Marca N parcelas como `paid`
+- Suporta 2 tipos de desconto:
+  - `simple`: X% sobre o valor cheio
+  - `present_value`: recalcula usando fórmula VP
+
+### Fórmula de Valor Presente
+
+```
+PV = PMT * (1 - (1+i)^-n) / i
+```
+
+Onde:
+- `PMT` = valor da parcela
+- `i` = taxa de juros mensal
+- `n` = número de parcelas restantes
+
+**Exemplo**: 6 parcelas restantes de R$ 100, juros 2% a.m.
+- Sem desconto: 6 × R$ 100 = R$ 600
+- Com VP (2%): R$ 558,85
+- **Economia: R$ 41,15 (6,9%)**
+
+### Exemplo de uso
+
+```typescript
+// Simular primeiro
+const sim = await simulate_prepayment({
+  planId: "...",
+  numberOfInstallments: 6,
+  discountRate: 0.1,
+  discountType: "present_value",
+});
+// Mostrar para o usuário: "Se antecipar 6 com 10% desconto, paga R$ X"
+
+// Após confirmação
+const result = await prepay_installments({
+  planId: "...",
+  numberOfInstallments: 6,
+  discountRate: 0.1,
+  discountType: "present_value",
+});
+```
+
+## Alerta Proativo
+
+### `check_due_soon`
+
+Deve ser chamado no **início de cada conversa** do TED, junto com `refresh_statements` e `list_due_installments`.
+
+Retorna 4 categorias:
+- 🚨 **overdue**: parcelas com data passada (CRÍTICO)
+- 🔥 **dueToday**: vence hoje (URGENTE)
+- ⚠️ **dueThisWeek**: vence em 7 dias (ATENÇÃO)
+- 📅 **dueThisMonth**: vence em 30 dias (INFO)
+
+```typescript
+const alert = await check_due_soon({ householdId });
+if (alert.hasUrgent) {
+  // Mostrar alerta imediatamente
+  return `🚨 Você tem ${alert.counts.overdue} parcela(s) atrasada(s) e ${alert.counts.dueToday} vence(m) hoje!`;
+}
+```
+
+## Score de Parcelamento
+
+### `installment_score`
+
+Calcula um score **0-100** de saúde financeira baseado em parcelamentos.
+
+**Componentes** (com pesos):
+- **Dívida/Renda** (40%): quanto da renda está comprometida
+  - < 10% = 100 (saudável)
+  - 10-30% = 80-100 (atenção)
+  - 30-50% = 50-80 (arriscado)
+  - \> 50% = 0-50 (crítico)
+- **Atrasos** (25%): 0 = 100, cada atraso -25
+- **Diversificação** (15%): 1-5 planos = bom, > 6 = fragmentado
+- **Concentração cartão** (20%): < 50% cartão = 100
+
+**Ratings**:
+- 🌟 80-100: Excelente
+- ✅ 60-80: Bom
+- ⚠️ 40-60: Regular
+- 🔴 20-40: Ruim
+- 🚨 0-20: Crítico
+
+**Output exemplo**:
+```
+✅ Score de Parcelamento: 67/100 — Bom
+
+📊 Métricas:
+   Dívida em parcelas: R$ 8778.95
+   Renda mensal: R$ 14865.75
+   Comprometimento: 59.1%
+   Parcelas atrasadas: 1
+   Planos ativos: 5
+
+📋 Breakdown:
+   Dívida/Renda (40%): 41 ████░░░░░░
+      Crítico: > 50% da renda em parcelas
+   Atrasos (25%): 75 ████████░░
+      1 parcela(s) atrasada(s)
+   ...
+
+💡 Recomendações:
+   💡 Considere antecipar parcelas para reduzir o comprometimento de renda
+   🚨 Quite as parcelas atrasadas o quanto antes para evitar juros
+```
+
+### Quando mostrar
+
+- Usuário pergunta "como estão minhas finanças?"
+- Mensalmente como resumo
+- Quando há mudanças significativas (novo plano, etc.)

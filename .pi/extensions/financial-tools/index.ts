@@ -56,7 +56,9 @@ import { spendingInsights } from "./tools/spending_insights.js";
 
 // Installment plans
 import { createInstallmentPlan, listInstallmentPlans } from "./tools/create_installment_plan.js";
-import { payInstallment, listDueInstallments } from "./tools/pay_installment.js";
+import { payInstallment, listDueInstallments, checkDueSoon } from "./tools/pay_installment.js";
+import { prepayInstallments, simulatePrepayment } from "./tools/prepay_installments.js";
+import { installmentScore } from "./tools/installment_score.js";
 
 export default function (pi: ExtensionAPI) {
   // Read tools
@@ -108,4 +110,8 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(listInstallmentPlans);
   pi.registerTool(payInstallment);
   pi.registerTool(listDueInstallments);
+  pi.registerTool(checkDueSoon);
+  pi.registerTool(prepayInstallments);
+  pi.registerTool(simulatePrepayment);
+  pi.registerTool(installmentScore);
 }

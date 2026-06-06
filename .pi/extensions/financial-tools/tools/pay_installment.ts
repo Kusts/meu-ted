@@ -106,6 +106,138 @@ export const payInstallment: ToolDefinition = {
 };
 
 /**
+ * check_due_soon — Proactive check of upcoming installments for alerts
+ *
+ * Returns a structured alert with:
+ * - overdue: critical (red)
+ * - due_today: urgent (orange)
+ * - due_this_week: warning (yellow)
+ * - due_this_month: info (blue)
+ *
+ * Should be called at the start of each TED session.
+ */
+export const checkDueSoon: ToolDefinition = {
+  name: "check_due_soon",
+  description: "Verifica parcelas próximas do vencimento. Retorna alertas categorizados por urgência.",
+  parameters: Type.Object({
+    householdId: Type.String(),
+  }),
+  execute: async (params: { householdId: string }) => {
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const todayDate = new Date(today);
+
+      const result = await pool.query<{ rows: any[] }>(
+        `SELECT t.id, t.description, t.amount_cents, t.date::text as due,
+                t.installment_number, t.installments_total,
+                p.id as plan_id, p.description as plan_description,
+                a.name as account_name
+         FROM transactions t
+         JOIN installment_plans p ON p.id = t.installment_plan_id
+         JOIN accounts a ON a.id = t.from_account_id
+         WHERE t.household_id = $1
+           AND t.installment_plan_id IS NOT NULL
+           AND t.installment_status = 'scheduled'
+           AND p.type = 'out_of_card'
+           AND t.deleted_at IS NULL
+           AND t.date <= CURRENT_DATE + INTERVAL '30 days'
+         ORDER BY t.date ASC`,
+        [params.householdId]
+      );
+
+      const overdue: any[] = [];
+      const dueToday: any[] = [];
+      const dueThisWeek: any[] = [];
+      const dueThisMonth: any[] = [];
+
+      for (const r of result.rows) {
+        const amount = parseInt(r.amount_cents, 10);
+        const dueDate = new Date(r.due);
+        const daysUntil = Math.floor((dueDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
+        const item = {
+          transactionId: r.id,
+          planId: r.plan_id,
+          planDescription: r.plan_description,
+          installmentLabel: `${r.installment_number}/${r.installments_total}`,
+          amountCents: amount,
+          dueDate: r.due,
+          daysUntil,
+          accountName: r.account_name,
+        };
+        if (daysUntil < 0) overdue.push(item);
+        else if (daysUntil === 0) dueToday.push(item);
+        else if (daysUntil <= 7) dueThisWeek.push(item);
+        else dueThisMonth.push(item);
+      }
+
+      // Build alert message
+      const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
+      const lines: string[] = [];
+      let hasUrgent = false;
+
+      if (overdue.length > 0) {
+        hasUrgent = true;
+        const total = overdue.reduce((s, i) => s + i.amountCents, 0);
+        lines.push(`🚨 ${overdue.length} ATRASADA(S) — total: ${fmt(total)}`);
+        for (const i of overdue.slice(0, 5)) {
+          lines.push(`   • ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)} — venceu há ${Math.abs(i.daysUntil)} dia(s)`);
+        }
+        if (overdue.length > 5) {
+          lines.push(`   ... e mais ${overdue.length - 5}`);
+        }
+      }
+      if (dueToday.length > 0) {
+        hasUrgent = true;
+        const total = dueToday.reduce((s, i) => s + i.amountCents, 0);
+        lines.push(`🔥 ${dueToday.length} VENCE HOJE — total: ${fmt(total)}`);
+        for (const i of dueToday) {
+          lines.push(`   • ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)}`);
+        }
+      }
+      if (dueThisWeek.length > 0) {
+        const total = dueThisWeek.reduce((s, i) => s + i.amountCents, 0);
+        lines.push(`⚠️ ${dueThisWeek.length} vence(m) esta semana — total: ${fmt(total)}`);
+        for (const i of dueThisWeek.slice(0, 3)) {
+          lines.push(`   • ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)} — em ${i.daysUntil} dia(s)`);
+        }
+        if (dueThisWeek.length > 3) {
+          lines.push(`   ... e mais ${dueThisWeek.length - 3}`);
+        }
+      }
+      if (dueThisMonth.length > 0) {
+        const total = dueThisMonth.reduce((s, i) => s + i.amountCents, 0);
+        lines.push(`📅 ${dueThisMonth.length} vence(m) este mês — total: ${fmt(total)}`);
+      }
+      if (lines.length === 0) {
+        lines.push(`✅ Nenhuma parcela prevista para os próximos 30 dias`);
+      }
+
+      return {
+        success: true,
+        hasUrgent,
+        counts: {
+          overdue: overdue.length,
+          dueToday: dueToday.length,
+          dueThisWeek: dueThisWeek.length,
+          dueThisMonth: dueThisMonth.length,
+        },
+        totalDueCents: result.rows.reduce((s, r) => s + parseInt(r.amount_cents, 10), 0),
+        overdue,
+        dueToday,
+        dueThisWeek,
+        dueThisMonth,
+        message: lines.join("\n"),
+      };
+    } catch (e: any) {
+      return { success: false, error: "db_error", message: e.message };
+    } finally {
+      await pool.end();
+    }
+  },
+};
+
+/**
  * list_due_installments — List all installments that are due (or overdue)
  */
 export const listDueInstallments: ToolDefinition = {
