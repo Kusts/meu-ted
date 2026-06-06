@@ -202,6 +202,39 @@ Após chamar a tool, verificar:
 4. ✅ Mensagem de confirmação faz sentido para o usuário
 5. ✅ Idempotency key foi gerada baseada em `sourceMessageId` para evitar duplicatas
 
+## Estatísticas de Transferências
+
+Use `getTransferStats(pool, householdId, startDate, endDate)` para mostrar insights:
+
+**Usuário**: "quanto eu mandei pro João esse mês?"
+**TED**: 
+```
+📊 Transferências em Julho 2026 (2026-07-01 → 2026-07-31)
+
+💸 Enviado: 3 transferências, total R$ 1.230,00
+💰 Recebido: 1 transferências, total R$ 150,00
+
+👥 Por destinatário (top 3):
+  • Imobiliária São José: enviou 1× (R$ 2.500,00) [TED×1]
+  • Carlos Silva: enviou 2× (R$ 130,00) [PIX×2]
+  • Maria das Dores: enviou 1× (R$ 75,00) [PIX×1]
+```
+
+**Usuário**: "quanto eu já mandei pro Carlos Silva?"
+**TED**: 
+```
+👤 Carlos Silva em 2026
+💸 Enviado: 3× (R$ 160,00)
+   Última vez: 2026-08-03
+📊 Métodos: PIX×3
+```
+
+**Funções disponíveis em `tools/transfer-stats.ts`**:
+- `getTransferStats(pool, householdId, startDate, endDate)` — agregado por período
+- `getRecipientStats(pool, householdId, recipientName, startDate?, endDate?)` — por destinatário
+- `formatTransferStats(stats, periodLabel)` — formata para exibição
+- `formatRecipientStats(stats, periodLabel)` — formata para exibição
+
 ## Casos Especiais
 
 ### Transferência entre contas próprias com detecção ambígua

@@ -8,6 +8,7 @@
 import { Type } from "typebox";
 import { randomUUID } from "node:crypto";
 import { findDuplicate, formatDuplicateWarning } from "./duplicate-detector.js";
+import { resolveMethod, extractRecipientName, isValidDocument, type TransferMethod } from "./transfer-parser.js";
 
 async function query<T extends { rows: unknown[] }>(text: string, params?: unknown[]): Promise<T> {
   const { default: pg } = await import("pg");
@@ -21,7 +22,7 @@ function isDate(s: string) { return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date
 export const createIncomeTool = {
   name: "create_income",
   label: "Create Income",
-  description: "Register an income transaction. Detects duplicates (idempotency_key or semantic similarity) and asks the user to confirm before registering twice. Pass force=true to override.",
+  description: "Register an income transaction. Detects duplicates (idempotency_key or semantic similarity) and asks the user to confirm before registering twice. Pass force=true to override. For incoming transfers (PIX, TED, etc.), set method and recipientName to enable statistics.",
   parameters: Type.Object({
     description: Type.String(),
     amountCents: Type.Number(),
@@ -31,6 +32,9 @@ export const createIncomeTool = {
     householdId: Type.String(),
     sourceMessageId: Type.Optional(Type.String()),
     idempotencyKey: Type.Optional(Type.String()),
+    method: Type.Optional(Type.String({ description: "PIX, TED, DOC, TRANSFER, CASH. Auto-detected from description. Useful for transfer statistics." })),
+    senderName: Type.Optional(Type.String({ description: "Sender name for incoming transfers (e.g. PIX received). Auto-extracted from description." })),
+    senderDocument: Type.Optional(Type.String({ description: "CPF or CNPJ of sender." })),
     force: Type.Optional(Type.Boolean({ description: "Skip duplicate detection." })),
   }),
 
@@ -41,6 +45,15 @@ export const createIncomeTool = {
     if (!isUUID(params.accountId)) throw new Error("account_id must be a valid UUID");
     if (!isUUID(params.householdId)) throw new Error("household_id must be a valid UUID");
     if (!isDate(params.date)) throw new Error("date must be YYYY-MM-DD");
+    if (params.senderDocument && !isValidDocument(params.senderDocument)) {
+      throw new Error("sender_document must be a valid CPF (11 digits) or CNPJ (14 digits)");
+    }
+
+    // Resolve method and sender (used for transfer income)
+    const method: TransferMethod | null = params.method
+      ? resolveMethod(params.description, params.method, "PIX")
+      : null;
+    const senderName = params.senderName ?? extractRecipientName(params.description);
 
     // Duplicate detection (unless force=true)
     if (!params.force) {
@@ -82,15 +95,23 @@ export const createIncomeTool = {
 
     const rid = randomUUID();
     const r = await query<{ rows: { id: string }[] }>(
-      `INSERT INTO transactions (id, household_id, kind, amount_cents, description, category_id, to_account_id, date, status, source_message_id, idempotency_key, created_at)
-       VALUES ($1, $2, 'income', $3, $4, $5, $6, $7, 'confirmed', $8, $9, NOW()) RETURNING id`,
-      [rid, params.householdId, params.amountCents, params.description.trim(), params.categoryId, params.accountId, params.date, params.sourceMessageId ?? null, params.idempotencyKey ?? null]
+      `INSERT INTO transactions (
+        id, household_id, kind, amount_cents, description, category_id,
+        to_account_id, date, status, source_message_id, idempotency_key,
+        method, recipient_name, recipient_document, created_at
+       )
+       VALUES ($1, $2, 'income', $3, $4, $5, $6, $7, 'confirmed', $8, $9, $10, $11, $12, NOW()) RETURNING id`,
+      [rid, params.householdId, params.amountCents, params.description.trim(), params.categoryId, params.accountId, params.date, params.sourceMessageId ?? null, params.idempotencyKey ?? null, method, senderName, params.senderDocument ?? null]
     );
 
     onUpdate?.({ content: [{ type: "text", text: "Registrando receita..." }] });
     return {
       content: [{ type: "text", text: `✅ Receita registrada: ${params.description} — R$ ${(params.amountCents / 100).toFixed(2)} em ${params.date}` }],
-      details: { transaction_id: r.rows[0].id },
+      details: {
+        transaction_id: r.rows[0].id,
+        method,
+        recipient_name: senderName,
+      },
     };
   },
 };

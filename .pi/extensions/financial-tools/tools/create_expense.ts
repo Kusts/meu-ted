@@ -12,6 +12,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { randomUUID } from "node:crypto";
 import { findDuplicate, formatDuplicateWarning } from "./duplicate-detector.js";
+import { resolveMethod, extractRecipientName, isValidDocument, type TransferMethod } from "./transfer-parser.js";
 
 async function query<T extends { rows: unknown[] }>(text: string, params?: unknown[]): Promise<T> {
   const { default: pg } = await import("pg");
@@ -35,7 +36,7 @@ function isValidDate(s: string): boolean {
 export const createExpenseTool = {
   name: "create_expense",
   label: "Create Expense",
-  description: "Register an expense transaction. amount_cents is always positive; sign is encoded as kind='expense'. Detects duplicates (idempotency_key or semantic similarity) and asks the user to confirm before registering twice. Pass force=true to override.",
+  description: "Register an expense transaction. amount_cents is always positive; sign is encoded as kind='expense'. Detects duplicates (idempotency_key or semantic similarity) and asks the user to confirm before registering twice. Pass force=true to override. For third-party transfers (PIX, TED, etc.), set method and recipientName to enable statistics.",
   parameters: Type.Object({
     description: Type.String({ description: "Description of the expense" }),
     amountCents: Type.Number({ description: "Amount in cents (positive integer)" }),
@@ -45,6 +46,9 @@ export const createExpenseTool = {
     householdId: Type.String({ description: "Household UUID" }),
     sourceMessageId: Type.Optional(Type.String()),
     idempotencyKey: Type.Optional(Type.String()),
+    method: Type.Optional(Type.String({ description: "PIX, TED, DOC, TRANSFER, CASH. Auto-detected from description. Useful for transfer statistics." })),
+    recipientName: Type.Optional(Type.String({ description: "Recipient name for third-party expenses (e.g. PIX sent). Auto-extracted from description." })),
+    recipientDocument: Type.Optional(Type.String({ description: "CPF or CNPJ of recipient." })),
     force: Type.Optional(Type.Boolean({ description: "Skip duplicate detection. Use after the user has confirmed they want to register anyway." })),
   }),
 
@@ -59,6 +63,9 @@ export const createExpenseTool = {
       householdId: string;
       sourceMessageId?: string;
       idempotencyKey?: string;
+      method?: string;
+      recipientName?: string;
+      recipientDocument?: string;
       force?: boolean;
     },
     _signal: AbortSignal,
@@ -72,6 +79,15 @@ export const createExpenseTool = {
     if (!isValidUUID(params.accountId)) throw new Error("account_id must be a valid UUID");
     if (!isValidUUID(params.householdId)) throw new Error("household_id must be a valid UUID");
     if (!isValidDate(params.date)) throw new Error("date must be in YYYY-MM-DD format");
+    if (params.recipientDocument && !isValidDocument(params.recipientDocument)) {
+      throw new Error("recipient_document must be a valid CPF (11 digits) or CNPJ (14 digits)");
+    }
+
+    // Resolve method and recipient (used for transfer expenses)
+    const method: TransferMethod | null = params.method
+      ? resolveMethod(params.description, params.method, "PIX")
+      : null;
+    const recipientName = params.recipientName ?? extractRecipientName(params.description);
 
     // Duplicate detection (unless force=true)
     if (!params.force) {
@@ -122,10 +138,14 @@ export const createExpenseTool = {
     // Insert transaction
     const id = randomUUID();
     const result = await query<{ rows: { id: string }[] }>(
-      `INSERT INTO transactions (id, household_id, kind, amount_cents, description, category_id, from_account_id, date, status, source_message_id, idempotency_key, created_at)
-       VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, 'confirmed', $8, $9, NOW())
+      `INSERT INTO transactions (
+        id, household_id, kind, amount_cents, description, category_id,
+        from_account_id, date, status, source_message_id, idempotency_key,
+        method, recipient_name, recipient_document, created_at
+       )
+       VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, 'confirmed', $8, $9, $10, $11, $12, NOW())
        RETURNING id`,
-      [id, params.householdId, params.amountCents, params.description.trim(), params.categoryId, params.accountId, params.date, params.sourceMessageId ?? null, params.idempotencyKey ?? null]
+      [id, params.householdId, params.amountCents, params.description.trim(), params.categoryId, params.accountId, params.date, params.sourceMessageId ?? null, params.idempotencyKey ?? null, method, recipientName, params.recipientDocument ?? null]
     );
 
     onUpdate?.({ content: [{ type: "text", text: "Registrando despesa..." }] });
@@ -135,7 +155,11 @@ export const createExpenseTool = {
         type: "text",
         text: `✅ Despesa registrada: ${params.description} — R$ ${(params.amountCents / 100).toFixed(2)} em ${params.date}`,
       }],
-      details: { transaction_id: result.rows[0].id },
+      details: {
+        transaction_id: result.rows[0].id,
+        method,
+        recipient_name: recipientName,
+      },
     };
   },
 };
