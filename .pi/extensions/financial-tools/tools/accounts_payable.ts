@@ -24,6 +24,7 @@ import {
   type AccountPayableWithDetails,
 } from "./accounts-payable.js";
 import { autoCategorize } from "./categorizer.js";
+import { addMonths } from "./installment-plan.js";
 
 const HOUSEHOLD_DEFAULT = process.env.HOUSEHOLD_ID || "550e8400-e29b-41d4-a716-446655440000";
 
@@ -211,6 +212,7 @@ export const markAccountPaid: ToolDefinition = {
     payableId: Type.String(),
     paidDate: Type.Optional(Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" })),
     createTransaction: Type.Optional(Type.Boolean()),
+    prepayMonths: Type.Optional(Type.Integer({ minimum: 1, maximum: 24 })),
   }),
   execute: async (params: any) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -260,36 +262,87 @@ export const markAccountPaid: ToolDefinition = {
 
       // If recurring, prepare next occurrence
       let nextDueDate: string | null = null;
+      let prepaidMonths = 0;
+      const paidAccounts: any[] = [];
+
       if (ap.type === "recurring" && ap.frequency) {
         const today = new Date().toISOString().slice(0, 10);
         nextDueDate = getNextDueDate(ap, today);
 
-        // Create next occurrence if not already exists and end_date not passed
+        // Prepay N additional months if requested
+        const prepay = params.prepayMonths || 0;
+        let currentDue = nextDueDate;
         const endDate = ap.end_date ? new Date(ap.end_date) : null;
-        if (!endDate || endDate > new Date(today)) {
-          const exists = await pool.query(
-            `SELECT id FROM accounts_payable
-             WHERE description = $1 AND due_date = $2::date
-               AND household_id = $3 AND deleted_at IS NULL`,
-            [ap.description, nextDueDate, householdId]
+
+        for (let i = 0; i < prepay; i++) {
+          // Advance to next period
+          const monthsToAdd = ap.frequency === "monthly" ? 1
+            : ap.frequency === "quarterly" ? 3 : 12;
+          currentDue = addMonths(currentDue, monthsToAdd);
+
+          if (endDate && new Date(currentDue) > endDate) break;
+
+          // Create + immediately mark as paid
+          const result = await pool.query<{ rows: any[] }>(
+            `INSERT INTO accounts_payable
+             (household_id, account_id, category_id, description, amount_cents,
+              type, frequency, due_date, end_date, reminder_days_before, source_message_id,
+              status, paid_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9::date, $10, $11, 'paid', $12::date)
+             RETURNING id, due_date::text, amount_cents`,
+            [
+              ap.household_id, ap.account_id, ap.category_id, ap.description,
+              ap.amount_cents, ap.type, ap.frequency, currentDue,
+              ap.end_date, ap.reminder_days_before, ap.source_message_id,
+              paidDate,
+            ]
           );
-          if (exists.rows.length === 0) {
-            await pool.query(
-              `INSERT INTO accounts_payable
-               (household_id, account_id, category_id, description, amount_cents,
-                type, frequency, due_date, end_date, reminder_days_before, source_message_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9::date, $10, $11)`,
-              [
-                ap.household_id, ap.account_id, ap.category_id, ap.description,
-                ap.amount_cents, ap.type, ap.frequency, nextDueDate,
-                ap.end_date, ap.reminder_days_before, ap.source_message_id,
-              ]
+          paidAccounts.push({
+            payableId: result.rows[0].id,
+            dueDate: result.rows[0].due_date,
+            amountCents: parseInt(result.rows[0].amount_cents, 10),
+          });
+          prepaidMonths++;
+        }
+
+        // Create the natural next occurrence (only if not pre-paid)
+        if (prepaidMonths === 0) {
+          if (!endDate || endDate > new Date(today)) {
+            const exists = await pool.query(
+              `SELECT id FROM accounts_payable
+               WHERE description = $1 AND due_date = $2::date
+                 AND household_id = $3 AND deleted_at IS NULL`,
+              [ap.description, nextDueDate, householdId]
             );
+            if (exists.rows.length === 0) {
+              await pool.query(
+                `INSERT INTO accounts_payable
+                 (household_id, account_id, category_id, description, amount_cents,
+                  type, frequency, due_date, end_date, reminder_days_before, source_message_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::date, $9::date, $10, $11)`,
+                [
+                  ap.household_id, ap.account_id, ap.category_id, ap.description,
+                  ap.amount_cents, ap.type, ap.frequency, nextDueDate,
+                  ap.end_date, ap.reminder_days_before, ap.source_message_id,
+                ]
+              );
+            }
+          } else {
+            nextDueDate = null;  // end_date passed
           }
         } else {
-          nextDueDate = null;  // end_date passed
+          // Next after pre-paid months
+          const lastPrepaid = paidAccounts[paidAccounts.length - 1];
+          if (lastPrepaid) {
+            nextDueDate = getNextDueDate(
+              { ...ap, due_date: lastPrepaid.dueDate } as any,
+              today
+            );
+          }
         }
       }
+
+      const totalCents = parseInt(ap.amount_cents, 10) * (1 + prepaidMonths);
 
       return {
         success: true,
@@ -300,9 +353,14 @@ export const markAccountPaid: ToolDefinition = {
         transactionCreated: createTx,
         transactionId,
         nextDueDate,
-        message: createTx
-          ? `✅ ${ap.description} paga (${fmt(ap.amount_cents)}) — expense criada${nextDueDate ? `, próxima: ${nextDueDate}` : ""}`
-          : `✅ ${ap.description} marcada como paga${nextDueDate ? `, próxima: ${nextDueDate}` : ""}`,
+        prepaidMonths,
+        prepaidAccounts: paidAccounts,
+        totalPaidCents: totalCents,
+        message: prepaidMonths > 0
+          ? `✅ ${ap.description} paga adiantado: ${1 + prepaidMonths} mês(es), total ${fmt(totalCents)} (próxima: ${nextDueDate})`
+          : createTx
+            ? `✅ ${ap.description} paga (${fmt(ap.amount_cents)}) — expense criada${nextDueDate ? `, próxima: ${nextDueDate}` : ""}`
+            : `✅ ${ap.description} marcada como paga${nextDueDate ? `, próxima: ${nextDueDate}` : ""}`,
       };
     } catch (e: any) {
       return { success: false, error: "db_error", message: e.message };

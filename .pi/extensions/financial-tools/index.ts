@@ -69,6 +69,15 @@ import {
   checkPayableReminders,
   refreshPayableStatus,
 } from "./tools/accounts_payable.js";
+import {
+  createPayableTemplate,
+  createPayableFromTemplate,
+  listPayableTemplates,
+  autoCreateFromTemplates,
+} from "./tools/payable_templates.js";
+import { paymentScore } from "./tools/payment_score.js";
+import { monthlyProjection } from "./tools/monthly_projection.js";
+import { checkPriceAlerts } from "./tools/price-alerts.js";
 
 export default function (pi: ExtensionAPI) {
   // Read tools
@@ -132,4 +141,15 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(cancelAccountPayable);
   pi.registerTool(checkPayableReminders);
   pi.registerTool(refreshPayableStatus);
+
+  // Accounts Payable Templates
+  pi.registerTool(createPayableTemplate);
+  pi.registerTool(createPayableFromTemplate);
+  pi.registerTool(listPayableTemplates);
+  pi.registerTool(autoCreateFromTemplates);
+
+  // Score & Analytics
+  pi.registerTool(paymentScore);
+  pi.registerTool(monthlyProjection);
+  pi.registerTool(checkPriceAlerts);
 }

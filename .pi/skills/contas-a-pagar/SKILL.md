@@ -240,3 +240,156 @@ ALTER TABLE transactions
 8. ✅ `cancel` muda status para cancelled
 9. ✅ `mark_paid` em cancelled → erro
 10. ✅ `mark_paid` em paid → erro
+
+## Templates de Contas Recorrentes
+
+### Quando usar
+
+- "todo dia 10 tenho conta de luz de R$ 185"
+- "Netflix sempre dia 15, R$ 39,90"
+- "cria a conta de luz desse mês"
+
+### Tools
+
+**`create_payable_template`**: salva template
+- name (ex: "Netflix")
+- description (ex: "Mensalidade Netflix")
+- amount, frequency, day_of_month
+- Auto-cria primeira ocorrência
+
+**`create_payable_from_template`**: cria conta a partir de template
+- Por `templateId` ou `templateName`
+- `amountOverrideCents`: alterar valor para esta ocorrência
+- `dueDate`: custom (default: próximo calculado)
+- Detecta duplicata (mesma description + dueDate)
+
+**`list_payable_templates`**: lista templates
+- Calcula `nextDue` baseado em `dayOfMonth`
+
+**`auto_create_from_templates`**: batch
+- Cria contas para todos os templates ativos
+- `daysAhead`: janela de criação (default 30)
+- Pula templates com conta já existente
+
+### Cálculo de Próximo Vencimento
+
+```
+dayOfMonth + today
+├── se hoje < próximo_dayOfMonth → este mês
+└── se hoje >= próximo_dayOfMonth → próximo mês
+```
+
+Exemplos com `dayOfMonth=15` e `today=2026-06-06`:
+- → 2026-06-15 (este mês, futuro)
+- → 2026-07-15 (se hoje fosse 2026-06-20)
+
+## Antecipação Múltipla (prepayMonths)
+
+### Quando usar
+
+- "paga 3 meses de internet adiantado"
+- "quitar o ano de Netflix"
+
+### Tool
+
+**`mark_account_paid`** com `prepayMonths: N`:
+- Marca a conta atual como paga
+- Cria N contas futuras com status `paid` e `paid_date` = data do pagamento
+- Respeita `end_date` (se passado, para de criar)
+- Próxima `nextDueDate` = após último pré-pago
+
+### Exemplo
+
+```typescript
+await mark_account_paid({
+  payableId: "uuid",
+  prepayMonths: 3,
+});
+// Resultado: 4 meses pagos de uma vez (1 atual + 3 adiantados)
+// nextDueDate = 2026-09-10 (4 meses após 2026-06-10)
+```
+
+## Score de Pagamentos
+
+### `payment_score`
+
+Calcula % de pontualidade nos últimos N meses (default 6).
+
+**Categorias**:
+- `onTime`: pagas no dia exato
+- `early`: pagas adiantadas (dias < 0)
+- `late`: pagas atrasadas (dias > 0)
+- `cancelled`: status cancelled
+
+**Score**:
+```
+100 * onTimeRate + 50 * earlyRate - 50 * lateRate
+```
+
+**Ratings**:
+- 🌟 90-100: Excelente
+- ✅ 75-90: Bom
+- ⚠️ 50-75: Regular
+- 🔴 25-50: Ruim
+- 🚨 0-25: Crítico
+
+## Projeção Mensal
+
+### `monthly_projection`
+
+Soma todas as contas (pending/overdue) do mês.
+
+**Output**:
+- Total a pagar
+- Breakdown por dia de vencimento
+- Breakdown por categoria (top 5)
+- Saldo após pagar (income - total)
+- % de comprometimento da renda
+
+```typescript
+await monthly_projection({ yearMonth: "2026-07" });
+```
+
+## Alerta de Variação de Preço
+
+### `check_price_alerts`
+
+Detecta contas recorrentes com valor muito diferente da média histórica.
+
+**Threshold** (default 15%):
+- `info`: ≥ 15%
+- `warning`: ≥ 25%
+- `alert`: ≥ 50%
+
+**Compara**:
+- Atual: próxima ocorrência `pending`/`overdue`
+- Histórico: últimas 6 ocorrências `paid` (12 meses)
+
+**Casos de uso**:
+- Conta de luz subiu 40% (clima, bandeira tarifária)
+- Internet subiu (reajuste anual)
+- Streaming mudou de preço
+
+```typescript
+await check_price_alerts({ thresholdPercent: 15 });
+```
+
+## Início de Conversa (Procedimento Recomendado)
+
+```typescript
+await refresh_payable_status({});          // pending → overdue
+await check_payable_reminders({ markAsSent: true });
+await monthly_projection({});              // projeção do mês
+await check_price_alerts({});              // alertas de preço
+```
+
+## Arquivos Adicionais
+
+| Arquivo | Função |
+|---------|--------|
+| `tools/payable_templates.ts` | 4 tools (template CRUD + auto) |
+| `tools/payment_score.ts` | 1 tool (score) |
+| `tools/payment-score.ts` | Helpers (computeScore, format) |
+| `tools/monthly_projection.ts` | 1 tool (projeção) |
+| `tools/price-alerts.ts` | 1 tool (alerta) |
+| `scripts/apply-templates.ts` | Migração schema |
