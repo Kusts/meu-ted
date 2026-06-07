@@ -45,6 +45,38 @@ Cada configuração é por `chat_id` (conversa do WhatsApp):
 - Não envia novamente no mesmo dia (para resumos)
 - Horário exato: tolera 5 min após
 
+### Agrupamento (default ON)
+
+Por padrão, múltiplas notificações do mesmo chat são agrupadas em **1 mensagem**:
+- 5 vencidas + 1 vence hoje + 1 próxima = 1 mensagem com 3 seções
+- Ordenado por severidade (urgent > alert > warning > info)
+- Respeita `grouping_max_items` (default 5)
+- Mostra "X suprimidos" se exceder
+
+**Configuração por notificação**:
+- `grouping_enabled`: on/off
+- `grouping_max_items`: tipos máximos (1-20)
+- `grouping_window_minutes`: janela de agrupamento (5-1440)
+
+**Exemplo de mensagem agrupada**:
+```
+📨 Você tem 3 lembrete(s):
+
+🚨 1 vencida(s) — R$ 300.00
+   • Test Vencida 1: R$ 100.00
+   • Test Vencida 2: R$ 100.00
+   • Test Vencida 3: R$ 100.00
+
+🔥 1 vence(m) hoje — R$ 200.00
+   • Test Hoje 1: R$ 100.00
+   • Test Hoje 2: R$ 100.00
+
+📅 1 próxima(s) — R$ 100.00
+   • Test 5d: R$ 100.00 (5d)
+
+(limitado a 3 tipos, 1 suprimidos)
+```
+
 ## Fluxo de Decisão
 
 ```
@@ -75,6 +107,7 @@ await configure_notification({
   chatId: "5511999999999",
   notificationType: "overdue_reminder",
   scheduleHour: 9,
+  groupingMaxItems: 3,  // agrupa até 3 tipos
 });
 
 // Resumo diário às 8h
@@ -223,6 +256,9 @@ CREATE TABLE notification_settings (
   days_of_week SMALLINT[],  -- [0-6]
   threshold_days SMALLINT,
   threshold_percent SMALLINT,
+  grouping_enabled BOOLEAN DEFAULT true,
+  grouping_max_items SMALLINT DEFAULT 5,
+  grouping_window_minutes SMALLINT DEFAULT 30,
   last_sent_at TIMESTAMPTZ,
   UNIQUE (household_id, chat_id, notification_type)
 );
@@ -242,8 +278,9 @@ CREATE TABLE notification_log (
 );
 ```
 
-## Validação (10/10 testes)
+## Validação (18/18 testes)
 
+### Sistema base (10/10)
 1. shouldSendNotification: lógica de horário, dia da semana, idempotência
 2. configure_notification: criar 4 tipos + UPSERT
 3. list_notifications: 4 configurações listadas
@@ -254,3 +291,13 @@ CREATE TABLE notification_log (
 8. test_notification: preview sem enviar
 9. Idempotência: 1ª=3, 2ª=0, 3ª=0
 10. delete_notification: remover
+
+### Agrupamento (8/8)
+1. configure com groupingMaxItems: 5 settings
+2. seed 7 contas (3 vencidas + 2 hoje + 1 5d + 1 7d)
+3. process (grouped=true): 5 notifications → 2 chats (1 mensagem por chat)
+4. process (grouped=false): 5 notifications → 5 individuais
+5. groupNotifications lógica: 3 types diferentes, ordenados por severidade
+6. Mesmo tipo aparece 2x: agrupa em 1 item com count=2
+7. Respeita grouping_max_items=2: 4 notifications → 2 items + "2 suprimidos"
+8. Idempotência com agrupamento: 1ª=2 chats, 2ª=0, 3ª=0

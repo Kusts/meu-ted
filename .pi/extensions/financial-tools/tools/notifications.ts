@@ -46,6 +46,9 @@ export interface NotificationSetting {
   threshold_days: number | null;
   threshold_percent: number | null;
   last_sent_at: string | null;
+  grouping_enabled: boolean;
+  grouping_max_items: number;
+  grouping_window_minutes: number;
 }
 
 export interface NotificationMessage {
@@ -189,7 +192,7 @@ export async function buildDueTodayNotification(
 }
 
 /**
- * Get accounts due in N days.
+ * Get accounts due in N days (excluding today — that's due_today_reminder).
  */
 export async function buildUpcomingNotification(
   pool: Pool,
@@ -202,7 +205,7 @@ export async function buildUpcomingNotification(
      FROM accounts_payable
      WHERE household_id = $1
        AND status = 'pending'
-       AND due_date BETWEEN CURRENT_DATE AND (CURRENT_DATE + $2 * INTERVAL '1 day')
+       AND due_date BETWEEN (CURRENT_DATE + INTERVAL '1 day') AND (CURRENT_DATE + $2 * INTERVAL '1 day')
        AND deleted_at IS NULL
      ORDER BY due_date ASC
      LIMIT 10`,
@@ -443,4 +446,176 @@ export async function processPendingNotifications(
   }
 
   return toSend;
+}
+
+/**
+ * Group multiple notifications from the same chat into a single message.
+ *
+ * Agrupa por chat_id + janela de tempo.
+ * Ex: 3 contas vencidas + 1 resumo + 1 vencem hoje = 1 mensagem
+ *
+ * Output format:
+ *   📨 [3] [13:45] Você tem 3 notificações:
+ *   🚨 2 vencida(s) — R$ 250,00
+ *   🔥 1 vence hoje — R$ 100,00
+ *
+ * Lógica de agrupamento:
+ * - Agrupa por chat_id
+ * - Mantém a ordem de severidade (urgent > warning > info)
+ * - Respeita grouping_max_items
+ * - Mantém contexto (cada item mostra: emoji, contagem, total)
+ */
+export interface GroupedNotification {
+  chatId: string;
+  items: Array<{
+    type: NotificationType;
+    severity: "info" | "warning" | "alert" | "urgent";
+    count: number;
+    totalLabel: string;
+    details: string;
+  }>;
+  totalCount: number;
+  totalCents: number;
+  message: string;
+  hasUrgent: boolean;
+}
+
+const SEVERITY_RANK: Record<"info" | "warning" | "alert" | "urgent", number> = {
+  urgent: 0,
+  alert: 1,
+  warning: 2,
+  info: 3,
+};
+
+export function groupNotifications(
+  items: Array<{ setting: NotificationSetting; notification: NotificationMessage }>
+): GroupedNotification[] {
+  // Agrupa por chat_id
+  const byChat = new Map<string, Array<{ setting: NotificationSetting; notification: NotificationMessage }>>();
+  for (const item of items) {
+    const cid = item.setting.chat_id;
+    if (!byChat.has(cid)) byChat.set(cid, []);
+    byChat.get(cid)!.push(item);
+  }
+
+  const result: GroupedNotification[] = [];
+  for (const [chatId, chatItems] of byChat) {
+    // Respeita grouping_max_items do setting (pega o primeiro)
+    const maxItems = chatItems[0]?.setting.grouping_max_items ?? 5;
+    const truncate = chatItems.length > maxItems;
+
+    // Agrupa por tipo (caso tenha múltiplos do mesmo tipo)
+    const byType = new Map<NotificationType, { count: number; cents: number; first: NotificationMessage }>();
+    for (const item of chatItems) {
+      const key = item.notification.type;
+      if (!byType.has(key)) {
+        byType.set(key, { count: 0, cents: 0, first: item.notification });
+      }
+      const group = byType.get(key)!;
+      group.count += 1;
+      // Extrai totalCents do payload
+      const cents = (item.notification.payload as any)?.totalCents;
+      if (typeof cents === "number") group.cents += cents;
+    }
+
+    // Constrói items ordenados por severidade
+    const groupedItems = Array.from(byType.entries()).map(([type, group]) => {
+      const first = group.first;
+      let totalLabel = "";
+      let details = "";
+
+      if (type === "overdue_reminder") {
+        const accs = (first.payload as any)?.accounts || [];
+        totalLabel = `R$ ${(group.cents / 100).toFixed(2)}`;
+        details = accs.slice(0, 3).map((a: any) =>
+          `   • ${a.description}: ${fmt(a.amountCents)}`
+        ).join("\n");
+        if (accs.length > 3) {
+          details += `\n   ... +${accs.length - 3} mais`;
+        }
+      } else if (type === "due_today_reminder") {
+        totalLabel = `R$ ${(group.cents / 100).toFixed(2)}`;
+        const accs = (first.payload as any)?.accounts || [];
+        details = accs.slice(0, 3).map((a: any) =>
+          `   • ${a.description}: ${fmt(a.amountCents)}`
+        ).join("\n");
+      } else if (type === "upcoming_reminder") {
+        totalLabel = `R$ ${(group.cents / 100).toFixed(2)}`;
+        const accs = (first.payload as any)?.accounts || [];
+        details = accs.slice(0, 3).map((a: any) =>
+          `   • ${a.description}: ${fmt(a.amountCents)} (${a.daysUntil}d)`
+        ).join("\n");
+      } else {
+        // daily_summary, weekly_summary, etc
+        details = (first.message || "").split("\n").slice(1, 4).map((l: string) => `   ${l.trim()}`).join("\n");
+        const match = (first.message || "").match(/R\$\s+([\d.,]+)/);
+        if (match) totalLabel = `R$ ${match[1]}`;
+      }
+
+      return {
+        type,
+        severity: first.severity,
+        count: group.count,
+        totalLabel,
+        details,
+      };
+    });
+
+    // Ordena por severidade (urgent primeiro) e trunca por max_items
+    groupedItems.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
+
+    const truncateByMax = groupedItems.length > maxItems;
+    if (truncateByMax) {
+      groupedItems.length = maxItems;
+    }
+
+    const totalCents = groupedItems.reduce((s, i) => {
+      const match = i.totalLabel.match(/[\d,]+/);
+      if (!match) return s;
+      return s + Math.round(parseFloat(match[0].replace(/\./g, "").replace(",", ".")) * 100);
+    }, 0);
+
+    const hasUrgent = groupedItems.some((i) => i.severity === "urgent" || i.severity === "alert");
+
+    // Monta a mensagem
+    const lines: string[] = [];
+    lines.push(`📨 Você tem ${groupedItems.length} lembrete(s):`);
+    lines.push("");
+
+    for (const item of groupedItems) {
+      const icon = item.severity === "urgent" ? "🚨"
+        : item.severity === "alert" ? "🔴"
+        : item.severity === "warning" ? "🔥"
+        : "📅";
+      const typeLabel: Record<NotificationType, string> = {
+        overdue_reminder: "vencida(s)",
+        due_today_reminder: "vence(m) hoje",
+        upcoming_reminder: "próxima(s)",
+        daily_summary: "resumo diário",
+        weekly_summary: "resumo semanal",
+        card_closing_soon: "fatura fechando",
+        limit_alert: "limite",
+      };
+      lines.push(`${icon} ${item.count} ${typeLabel[item.type] || item.type} — ${item.totalLabel}`);
+      if (item.details) {
+        lines.push(item.details);
+      }
+      lines.push("");
+    }
+
+    if (truncate) {
+      lines.push(`(limitado a ${maxItems} tipos, ${chatItems.length - maxItems} suprimidos)`);
+    }
+
+    result.push({
+      chatId,
+      items: groupedItems,
+      totalCount: groupedItems.reduce((s, i) => s + i.count, 0),
+      totalCents,
+      message: lines.join("\n").trim(),
+      hasUrgent,
+    });
+  }
+
+  return result;
 }

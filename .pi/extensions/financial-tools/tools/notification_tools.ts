@@ -19,6 +19,7 @@ import {
   logNotification,
   processPendingNotifications,
   shouldSendNotification,
+  groupNotifications,
   type NotificationType,
   type NotificationMessage,
 } from "./notifications.js";
@@ -50,6 +51,9 @@ export const configureNotification: ToolDefinition = {
     daysOfWeek: Type.Optional(Type.Array(Type.Integer({ minimum: 0, maximum: 6 }))),
     thresholdDays: Type.Optional(Type.Integer({ minimum: 0, maximum: 90 })),
     thresholdPercent: Type.Optional(Type.Integer({ minimum: 0, maximum: 100 })),
+    groupingEnabled: Type.Optional(Type.Boolean()),
+    groupingMaxItems: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+    groupingWindowMinutes: Type.Optional(Type.Integer({ minimum: 5, maximum: 1440 })),
   }),
   execute: async (params: any) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -59,8 +63,9 @@ export const configureNotification: ToolDefinition = {
       const result = await pool.query<{ rows: any[] }>(
         `INSERT INTO notification_settings
          (household_id, chat_id, notification_type, enabled,
-          schedule_hour, schedule_minute, days_of_week, threshold_days, threshold_percent)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          schedule_hour, schedule_minute, days_of_week, threshold_days, threshold_percent,
+          grouping_enabled, grouping_max_items, grouping_window_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          ON CONFLICT (household_id, chat_id, notification_type)
          DO UPDATE SET
            enabled = COALESCE(EXCLUDED.enabled, notification_settings.enabled),
@@ -69,6 +74,9 @@ export const configureNotification: ToolDefinition = {
            days_of_week = COALESCE(EXCLUDED.days_of_week, notification_settings.days_of_week),
            threshold_days = COALESCE(EXCLUDED.threshold_days, notification_settings.threshold_days),
            threshold_percent = COALESCE(EXCLUDED.threshold_percent, notification_settings.threshold_percent),
+           grouping_enabled = COALESCE(EXCLUDED.grouping_enabled, notification_settings.grouping_enabled),
+           grouping_max_items = COALESCE(EXCLUDED.grouping_max_items, notification_settings.grouping_max_items),
+           grouping_window_minutes = COALESCE(EXCLUDED.grouping_window_minutes, notification_settings.grouping_window_minutes),
            updated_at = NOW()
          RETURNING *`,
         [
@@ -79,6 +87,9 @@ export const configureNotification: ToolDefinition = {
           params.daysOfWeek ?? null,
           params.thresholdDays ?? null,
           params.thresholdPercent ?? null,
+          params.groupingEnabled ?? true,
+          params.groupingMaxItems ?? 5,
+          params.groupingWindowMinutes ?? 30,
         ]
       );
 
@@ -98,6 +109,9 @@ export const configureNotification: ToolDefinition = {
       if (s.threshold_percent !== null) {
         lines.push(`   📊 Threshold: ${s.threshold_percent}%`);
       }
+      if (s.grouping_enabled) {
+        lines.push(`   📦 Agrupamento: até ${s.grouping_max_items} tipos (janela: ${s.grouping_window_minutes}min)`);
+      }
 
       return {
         success: true,
@@ -105,6 +119,8 @@ export const configureNotification: ToolDefinition = {
         chatId: s.chat_id,
         notificationType: s.notification_type,
         enabled: s.enabled,
+        groupingEnabled: s.grouping_enabled,
+        groupingMaxItems: s.grouping_max_items,
         message: lines.join("\n"),
       };
     } catch (e: any) {
@@ -251,11 +267,13 @@ export const processNotifications: ToolDefinition = {
   parameters: Type.Object({
     householdId: Type.Optional(Type.String()),
     dryRun: Type.Optional(Type.Boolean()),
+    grouped: Type.Optional(Type.Boolean({ description: "Agrupa múltiplas notificações em 1 mensagem (default: true)" })),
   }),
   execute: async (params: any) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
     try {
       const householdId = params.householdId || HOUSEHOLD_DEFAULT;
+      const grouped = params.grouped !== false;  // default true
       const now = new Date();
 
       // Filtra por household
@@ -291,9 +309,32 @@ export const processNotifications: ToolDefinition = {
         }
       }
 
+      // Modo agrupado: 1 mensagem por chat
+      if (grouped) {
+        const groupedItems = groupNotifications(toSend);
+        return {
+          success: true,
+          dryRun: params.dryRun || false,
+          mode: "grouped",
+          chatCount: groupedItems.length,
+          notificationCount: toSend.length,
+          skippedCount: skipped.length,
+          skippedReasons: skipped.map((s) => ({
+            type: s.setting.notification_type,
+            reason: s.reason,
+          })),
+          groups: groupedItems,
+          message: groupedItems.length === 0
+            ? "Nenhuma notificação pendente no momento"
+            : `🔔 ${groupedItems.length} mensagem(ns) agrupada(s) pronta(s) para envio`,
+        };
+      }
+
+      // Modo individual (legacy)
       return {
         success: true,
         dryRun: params.dryRun || false,
+        mode: "individual",
         count: toSend.length,
         skippedCount: skipped.length,
         skippedReasons: skipped.map((s) => ({
