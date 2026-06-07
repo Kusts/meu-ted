@@ -1,7 +1,7 @@
 /**
  * goals_budgets — Tools para metas e orçamentos
  *
- * 8 tools:
+ * 11 tools:
  * - create_goal: cria meta
  * - list_goals: lista metas com progresso
  * - contribute_to_goal: adiciona contribuição
@@ -19,6 +19,8 @@ import {
   computeGoalProgress,
   computeBudgetStatus,
   getAllBudgetStatuses,
+  getBudgetTrends,
+  getBudgetAdjustmentSuggestion,
   refreshGoals,
   type Goal,
   type Budget,
@@ -514,6 +516,156 @@ export const refreshGoalsTool: ToolDefinition = {
         achieved: result.achieved,
         atRisk: result.atRisk,
         message: `🔄 ${result.checked} metas verificadas: ${result.achieved} atingida(s), ${result.atRisk} falhada(s)`,
+      };
+    } catch (e: any) {
+      return { success: false, error: "db_error", message: e.message };
+    } finally {
+      await pool.end();
+    }
+  },
+};
+
+// ============================================================
+// TOOLS: Budget Trends + Adjustment Suggestions
+// ============================================================
+
+/**
+ * budget_trends
+ */
+export const budgetTrendsTool: ToolDefinition = {
+  name: "budget_trends",
+  description: "Mostra gasto vs orçamento ao longo dos últimos meses (tendência).",
+  parameters: Type.Object({
+    householdId: Type.Optional(Type.String()),
+    budgetId: Type.String({ description: "ID do orçamento" }),
+    monthsBack: Type.Optional(Type.Integer({ minimum: 1, maximum: 12, default: 3 })),
+  }),
+  execute: async (params: any) => {
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    try {
+      const householdId = params.householdId || HOUSEHOLD_DEFAULT;
+      const monthsBack = params.monthsBack || 3;
+
+      const bResult = await pool.query<{ rows: Budget[] }>(
+        `SELECT * FROM budgets WHERE id = $1 AND household_id = $2`,
+        [params.budgetId, householdId]
+      );
+      if (!bResult.rows.length) {
+        return { success: false, error: "not_found", message: "Orçamento não encontrado" };
+      }
+
+      const trends = await getBudgetTrends(pool, bResult.rows[0], monthsBack);
+      return {
+        success: true,
+        budgetId: trends.budgetId,
+        name: trends.name,
+        categoryName: trends.categoryName,
+        period: trends.period,
+        months: trends.months,
+        avgSpentCents: trends.avgSpentCents,
+        avgPercentUsed: trends.avgPercentUsed,
+        trend: trends.trend,
+        message: trends.formatted,
+      };
+    } catch (e: any) {
+      return { success: false, error: "db_error", message: e.message };
+    } finally {
+      await pool.end();
+    }
+  },
+};
+
+/**
+ * suggest_budget_adjustment
+ */
+export const suggestBudgetAdjustmentTool: ToolDefinition = {
+  name: "suggest_budget_adjustment",
+  description: "Sugere ajuste de orçamento baseado na média de gastos dos últimos meses.",
+  parameters: Type.Object({
+    householdId: Type.Optional(Type.String()),
+    budgetId: Type.String({ description: "ID do orçamento" }),
+  }),
+  execute: async (params: any) => {
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    try {
+      const householdId = params.householdId || HOUSEHOLD_DEFAULT;
+
+      const bResult = await pool.query<{ rows: Budget[] }>(
+        `SELECT * FROM budgets WHERE id = $1 AND household_id = $2`,
+        [params.budgetId, householdId]
+      );
+      if (!bResult.rows.length) {
+        return { success: false, error: "not_found", message: "Orçamento não encontrado" };
+      }
+
+      const suggestion = await getBudgetAdjustmentSuggestion(pool, bResult.rows[0]);
+      return {
+        success: true,
+        budgetId: suggestion.budgetId,
+        name: suggestion.name,
+        categoryName: suggestion.categoryName,
+        currentLimitCents: suggestion.currentLimitCents,
+        suggestedLimitCents: suggestion.suggestedLimitCents,
+        avgSpentCents: suggestion.avgSpentCents,
+        action: suggestion.action,
+        percentChange: suggestion.percentChange,
+        reason: suggestion.reason,
+        message: suggestion.formatted,
+      };
+    } catch (e: any) {
+      return { success: false, error: "db_error", message: e.message };
+    } finally {
+      await pool.end();
+    }
+  },
+};
+
+/**
+ * update_budget
+ */
+export const updateBudgetTool: ToolDefinition = {
+  name: "update_budget",
+  description: "Atualiza limite ou configurações de um orçamento existente.",
+  parameters: Type.Object({
+    householdId: Type.Optional(Type.String()),
+    budgetId: Type.String({ description: "ID do orçamento" }),
+    name: Type.Optional(Type.String()),
+    amountCents: Type.Optional(Type.Number({ minimum: 1 })),
+    alertThreshold: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+    rollover: Type.Optional(Type.Boolean()),
+  }),
+  execute: async (params: any) => {
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    try {
+      const householdId = params.householdId || HOUSEHOLD_DEFAULT;
+      const sets: string[] = [];
+      const vals: any[] = [];
+      let idx = 1;
+
+      if (params.name !== undefined) { sets.push(`name = $${idx++}`); vals.push(params.name); }
+      if (params.amountCents !== undefined) { sets.push(`amount_cents = $${idx++}`); vals.push(params.amountCents); }
+      if (params.alertThreshold !== undefined) { sets.push(`alert_threshold = $${idx++}`); vals.push(params.alertThreshold); }
+      if (params.rollover !== undefined) { sets.push(`rollover = $${idx++}`); vals.push(params.rollover); }
+
+      if (sets.length === 0) {
+        return { success: false, error: "no_changes", message: "Nenhum campo para atualizar" };
+      }
+
+      sets.push(`updated_at = NOW()`);
+      vals.push(params.budgetId, householdId);
+
+      const r = await pool.query(
+        `UPDATE budgets SET ${sets.join(", ")} WHERE id = $${idx++} AND household_id = $${idx} RETURNING *`,
+        vals
+      );
+      if (!r.rows.length) {
+        return { success: false, error: "not_found", message: "Orçamento não encontrado" };
+      }
+
+      return {
+        success: true,
+        budgetId: r.rows[0].id,
+        message: `✅ Orçamento "${r.rows[0].name}" atualizado`,
       };
     } catch (e: any) {
       return { success: false, error: "db_error", message: e.message };

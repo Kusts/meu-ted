@@ -293,7 +293,33 @@ export async function computeBudgetStatus(
   );
   const categoryName = catResult.rows[0]?.name || null;
 
-  const amountCents = parseInt(budget.amount_cents, 10);
+  let amountCents = parseInt(budget.amount_cents, 10);
+
+  // === ROLLOVER: carry over unused from previous period ===
+  if (budget.rollover) {
+    const prevStart = new Date(period.start);
+    const prevEnd = new Date(period.start);
+    if (budget.period === "monthly") prevEnd.setMonth(prevEnd.getMonth() - 1);
+    else if (budget.period === "weekly") prevEnd.setDate(prevEnd.getDate() - 7);
+    else if (budget.period === "quarterly") prevEnd.setMonth(prevEnd.getMonth() - 3);
+    else if (budget.period === "yearly") prevEnd.setFullYear(prevEnd.getFullYear() - 1);
+    const prevStartStr = prevStart.toISOString().slice(0, 10);
+    const prevEndStr = prevEnd.toISOString().slice(0, 10);
+
+    const prevSpent = await pool.query<{ rows: Array<{ total: string }> }>(
+      `SELECT COALESCE(SUM(amount_cents), 0) as total
+       FROM transactions
+       WHERE household_id = $1 AND category_id = $2 AND kind = 'expense' AND deleted_at IS NULL
+         AND date >= $3::date AND date < $4::date`,
+      [budget.household_id, budget.category_id, prevStartStr, prevEndStr]
+    );
+    const prevSpentCents = parseInt(prevSpent.rows[0].total, 10);
+    const leftover = Math.max(0, parseInt(budget.amount_cents, 10) - prevSpentCents);
+    if (leftover > 0) {
+      amountCents += leftover;
+    }
+  }
+
   const remainingCents = amountCents - spentCents;
   const percentUsed = amountCents > 0 ? (spentCents / amountCents) * 100 : 0;
 
@@ -355,4 +381,224 @@ export async function getAllBudgetStatuses(
     statuses.push(await computeBudgetStatus(pool, budget));
   }
   return statuses;
+}
+
+// ============================================================
+// BUDGET TRENDS — gasto vs orçamento ao longo dos meses
+// ============================================================
+
+export interface BudgetTrendMonth {
+  yearMonth: string; // YYYY-MM
+  periodStart: string;
+  periodEnd: string;
+  spentCents: number;
+  limitCents: number;
+  percentUsed: number;
+  isCurrent: boolean;
+}
+
+export interface BudgetTrends {
+  budgetId: string;
+  name: string;
+  categoryName: string | null;
+  period: BudgetPeriod;
+  months: BudgetTrendMonth[];
+  avgSpentCents: number;
+  avgPercentUsed: number;
+  trend: "up" | "down" | "stable" | "insufficient_data";
+  formatted: string;
+}
+
+/**
+ * Get spending vs budget for the last N periods (months for monthly, weeks for weekly, etc.)
+ */
+export async function getBudgetTrends(
+  pool: Pool,
+  budget: Budget,
+  monthsBack: number = 3,
+  today: string = new Date().toISOString().slice(0, 10)
+): Promise<BudgetTrends> {
+  const t = new Date(today);
+  const months: BudgetTrendMonth[] = [];
+  const limitCents = parseInt(budget.amount_cents, 10);
+
+  // Get category name
+  const catResult = await pool.query(`SELECT name FROM categories WHERE id = $1`, [budget.category_id]);
+  const categoryName = catResult.rows[0]?.name || null;
+
+  for (let i = monthsBack; i >= 0; i--) {
+    let periodStart: Date;
+    let periodEnd: Date;
+
+    if (budget.period === "monthly") {
+      periodStart = new Date(t.getFullYear(), t.getMonth() - i, 1);
+      periodEnd = new Date(t.getFullYear(), t.getMonth() - i + 1, 1);
+    } else if (budget.period === "weekly") {
+      // Approx: go back i*7 days, find start of week (mostra 4 semanas = ~1 mês)
+      const d = new Date(t);
+      d.setDate(d.getDate() - i * 7);
+      periodStart = new Date(d);
+      periodStart.setDate(periodStart.getDate() - periodStart.getDay()); // start of week (Sun)
+      periodEnd = new Date(periodStart);
+      periodEnd.setDate(periodEnd.getDate() + 7);
+    } else if (budget.period === "quarterly") {
+      periodStart = new Date(t.getFullYear(), t.getMonth() - i * 3, 1);
+      periodEnd = new Date(t.getFullYear(), t.getMonth() - i * 3 + 3, 1);
+    } else {
+      periodStart = new Date(t.getFullYear() - i, 0, 1);
+      periodEnd = new Date(t.getFullYear() - i + 1, 0, 1);
+    }
+
+    const startStr = periodStart.toISOString().slice(0, 10);
+    const endStr = periodEnd.toISOString().slice(0, 10);
+
+    // Use getCurrentPeriod to get the actual budget period boundaries
+    const actualPeriod = getCurrentPeriod(budget.period, budget.start_date, startStr);
+
+    const spent = await pool.query<{ rows: Array<{ total: string }> }>(
+      `SELECT COALESCE(SUM(amount_cents), 0) as total
+       FROM transactions
+       WHERE household_id = $1 AND category_id = $2 AND kind = 'expense' AND deleted_at IS NULL
+         AND date >= $3::date AND date < $4::date`,
+      [budget.household_id, budget.category_id, actualPeriod.start, actualPeriod.end]
+    );
+    const spentCents = parseInt(spent.rows[0].total, 10);
+
+    months.push({
+      yearMonth: startStr.slice(0, 7),
+      periodStart: actualPeriod.start,
+      periodEnd: actualPeriod.end,
+      spentCents,
+      limitCents,
+      percentUsed: limitCents > 0 ? (spentCents / limitCents) * 100 : 0,
+      isCurrent: i === 0,
+    });
+  }
+
+  // Compute trend
+  const nonZeroMonths = months.filter(m => m.limitCents > 0);
+  const avgSpentCents = nonZeroMonths.length > 0
+    ? Math.round(nonZeroMonths.reduce((s, m) => s + m.spentCents, 0) / nonZeroMonths.length)
+    : 0;
+  const avgPercentUsed = limitCents > 0 ? (avgSpentCents / limitCents) * 100 : 0;
+
+  let trend: BudgetTrends["trend"] = "insufficient_data";
+  if (months.length >= 2) {
+    const first = months[0].spentCents;
+    const last = months[months.length - 1].spentCents;
+    if (first > 0) {
+      const change = ((last - first) / first) * 100;
+      if (change > 20) trend = "up";
+      else if (change < -20) trend = "down";
+      else trend = "stable";
+    } else {
+      trend = "stable";
+    }
+  }
+
+  // Format
+  const lines: string[] = [];
+  lines.push(`📊 ${budget.name} (${categoryName || "?"}) — ${budget.period}`);
+  lines.push(`   Últimos ${monthsBack + 1} períodos:`);
+  for (const m of months) {
+    const icon = m.isCurrent ? "◀ " : "  ";
+    const bar = "█".repeat(Math.min(20, Math.round(m.percentUsed / 5)));
+    lines.push(`   ${icon}${m.yearMonth}: ${fmt(m.spentCents)} / ${fmt(m.limitCents)} (${m.percentUsed.toFixed(0)}%) ${bar}`);
+  }
+  lines.push(`   Média: ${fmt(avgSpentCents)}/período (${avgPercentUsed.toFixed(0)}% do limite)`);
+  const trendIcons: Record<string, string> = { up: "📈", down: "📉", stable: "➡️", insufficient_data: "❓" };
+  lines.push(`   Tendência: ${trendIcons[trend]} ${trend}`);
+
+  return {
+    budgetId: budget.id,
+    name: budget.name,
+    categoryName,
+    period: budget.period,
+    months,
+    avgSpentCents,
+    avgPercentUsed,
+    trend,
+    formatted: lines.join("\n"),
+  };
+}
+
+// ============================================================
+// BUDGET ADJUSTMENT SUGGESTION — auto-adjust based on avg
+// ============================================================
+
+export interface BudgetAdjustmentSuggestion {
+  budgetId: string;
+  name: string;
+  categoryName: string | null;
+  currentLimitCents: number;
+  suggestedLimitCents: number;
+  avgSpentCents: number;
+  reason: string;
+  action: "increase" | "decrease" | "keep";
+  percentChange: number;
+  formatted: string;
+}
+
+/**
+ * Suggest budget adjustment based on average spending.
+ * Uses last 3 periods of actual spending as reference.
+ */
+export async function getBudgetAdjustmentSuggestion(
+  pool: Pool,
+  budget: Budget,
+  today: string = new Date().toISOString().slice(0, 10)
+): Promise<BudgetAdjustmentSuggestion> {
+  const trends = await getBudgetTrends(pool, budget, 3, today);
+  const currentLimit = parseInt(budget.amount_cents, 10);
+  const avgSpent = trends.avgSpentCents;
+
+  // Get category name
+  const catResult = await pool.query(`SELECT name FROM categories WHERE id = $1`, [budget.category_id]);
+  const categoryName = catResult.rows[0]?.name || null;
+
+  // Suggestion logic: add 10% buffer to average
+  const suggestedLimit = Math.max(100, Math.round(avgSpent * 1.1));
+  const percentChange = currentLimit > 0
+    ? ((suggestedLimit - currentLimit) / currentLimit) * 100
+    : 100;
+
+  let action: BudgetAdjustmentSuggestion["action"];
+  let reason: string;
+
+  if (avgSpent === 0) {
+    action = "keep";
+    reason = "Nenhum gasto registrado nos últimos períodos. Mantenha o limite atual.";
+  } else if (suggestedLimit > currentLimit * 1.15) {
+    action = "increase";
+    reason = `Gasto médio (${fmt(avgSpent)}) está bem acima do limite (${fmt(currentLimit)}). Considere aumentar.`;
+  } else if (suggestedLimit < currentLimit * 0.85) {
+    action = "decrease";
+    reason = `Gasto médio (${fmt(avgSpent)}) está bem abaixo do limite (${fmt(currentLimit)}). Dá pra reduzir sem apertar.`;
+  } else {
+    action = "keep";
+    reason = `Gasto médio (${fmt(avgSpent)}) está alinhado com o limite (${fmt(currentLimit)}).`;
+  }
+
+  const lines: string[] = [];
+  const actionIcons: Record<string, string> = { increase: "📈", decrease: "📉", keep: "✅" };
+  lines.push(`${actionIcons[action]} ${budget.name} (${categoryName || "?"})`);
+  lines.push(`   Limite atual: ${fmt(currentLimit)}`);
+  if (action !== "keep") {
+    lines.push(`   Sugestão: ${fmt(suggestedLimit)} (${percentChange > 0 ? "+" : ""}${percentChange.toFixed(0)}%)`);
+  }
+  lines.push(`   Média de gastos: ${fmt(avgSpent)}/período`);
+  lines.push(`   ${reason}`);
+
+  return {
+    budgetId: budget.id,
+    name: budget.name,
+    categoryName,
+    currentLimitCents: currentLimit,
+    suggestedLimitCents: suggestedLimit,
+    avgSpentCents: avgSpent,
+    reason,
+    action,
+    percentChange,
+    formatted: lines.join("\n"),
+  };
 }

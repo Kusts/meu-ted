@@ -99,6 +99,9 @@ import {
   listBudgets,
   checkBudgets,
   refreshGoalsTool,
+  budgetTrendsTool,
+  suggestBudgetAdjustmentTool,
+  updateBudgetTool,
 } from "./tools/goals_budgets.js";
 
 export default function (pi: ExtensionAPI) {
@@ -192,4 +195,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(listBudgets);
   pi.registerTool(checkBudgets);
   pi.registerTool(refreshGoalsTool);
+  pi.registerTool(budgetTrendsTool);
+  pi.registerTool(suggestBudgetAdjustmentTool);
+  pi.registerTool(updateBudgetTool);
 }
