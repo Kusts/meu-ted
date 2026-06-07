@@ -71,39 +71,58 @@ async function testRollover() {
   budgetId = r.budgetId;
   console.log(`  Budget criado: ${budgetId.slice(0, 8)}`);
 
-  // Spend R$ 100 this month (10% of limit)
-  await exec(createExpenseTool, {
-    householdId: HH, accountId: debitoId, categoryId: catId,
-    description: "Test EV gasto mes 1", amountCents: 1000, date: today(), force: true,
-  });
-  console.log(`  1 expense criada (R$ 10,00 gasto)`);
-
-  // Check budget status - should show rollover didn't apply yet (no previous month)
-  const status1 = await checkBudgets.execute({ householdId: HH });
-  console.log(`  Status 1: ${status1.alerts.length > 0 ? status1.alerts[0].status : "ok"} ${fmt(status1.totalSpentCents)}`);
-  // Rollover from previous month would be 0 since there's no previous month data
-  // So effective limit is still 10000
-
-  // Manually verify rollover computation
+  // Get the current budget period boundaries
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const bResult = await pool.query<{ rows: Budget[] }>(
     `SELECT * FROM budgets WHERE id = $1`, [budgetId]
   );
   const budget = bResult.rows[0];
-  const comp = await computeBudgetStatus(pool, budget);
-  console.log(`  computeBudgetStatus: limit=${fmt(comp.amountCents)} spent=${fmt(comp.spentCents)} remaining=${fmt(comp.remainingCents)}`);
-  console.log(`  budget.rollover = ${budget.rollover}, effective limit = ${fmt(comp.amountCents)}`);
 
-  // Now simulate having a previous month - directly check
-  // Budget has rollover=true. Since no previous spending, leftover is 0 anyway
-  // The rollover feature is working: it checks previous period spending
+  // CASE 1: Budget started 3 months ago. Current period has history.
+  // No spending in previous period → leftover = 10000 - 0 = 10000
+  // Effective limit = 10000 (base) + 10000 (leftover) = 20000
+  const comp1 = await computeBudgetStatus(pool, budget);
+  console.log(`  Caso 1: sem gasto no mês anterior`);
+  console.log(`    effectiveLimit=${fmt(comp1.amountCents)} base=10000 prevSpent=0 leftover=10000`);
+  console.log(`    esperado=20000 obtido=${comp1.amountCents} ${comp1.amountCents === 20000 ? "✅" : "❌"}`);
 
-  // Test with explicit check: set a lower amount spent in prev period
-  // We'll verify the logic is correct by examining the query structure
+  // CASE 2: Insert spending in previous period
+  // prev period: (current period start - 1 month) to (current period start)
+  // We need to spend in that range
+  const curStart = new Date(comp1.periodStart);
+  curStart.setMonth(curStart.getMonth() - 1);  // go to previous period start
+  const prevPeriodDate = `${curStart.getFullYear()}-${pad(curStart.getMonth() + 1)}-15`;
+  await pool.query(
+    `INSERT INTO transactions (id, household_id, kind, amount_cents, description, category_id, from_account_id, date, created_at)
+     VALUES (gen_random_uuid(), $1, 'expense', $2, $3, $4, $5, $6::date, NOW())`,
+    [HH, 6000, "Test EV gasto mes anterior", catId, debitoId, prevPeriodDate]
+  );
+  console.log(`  Gasto de R$ 60 inserido no período anterior (${prevPeriodDate})`);
 
+  const comp2 = await computeBudgetStatus(pool, budget);
+  // prevSpent = 6000, leftover = 10000 - 6000 = 4000, effective = 10000 + 4000 = 14000
+  console.log(`  Caso 2: com R$ 60 gasto no mês anterior`);
+  console.log(`    effectiveLimit=${fmt(comp2.amountCents)} prevSpent=6000 leftover=4000`);
+  console.log(`    esperado=14000 obtido=${comp2.amountCents} ${comp2.amountCents === 14000 ? "✅" : "❌"}`);
+
+  // CASE 3: Spending exceeded limit in previous period → no rollover
+  await pool.query(
+    `INSERT INTO transactions (id, household_id, kind, amount_cents, description, category_id, from_account_id, date, created_at)
+     VALUES (gen_random_uuid(), $1, 'expense', $2, $3, $4, $5, $6::date, NOW())`,
+    [HH, 8000, "Test EV gasto extra", catId, debitoId, prevPeriodDate]
+  );
+  console.log(`  Mais R$ 80 inserido → total anterior = R$ 140 (> R$ 100 = limite estourado)`);
+
+  const comp3 = await computeBudgetStatus(pool, budget);
+  // prevSpent = 14000, leftover = max(0, 10000 - 14000) = 0, effective = 10000
+  console.log(`  Caso 3: orçamento anterior estourado`);
+  console.log(`    effectiveLimit=${fmt(comp3.amountCents)} (esperado=10000, sem rollover)`);
+  console.log(`    ${comp3.amountCents === 10000 ? "✅" : "❌"} limite voltou ao base`);
+
+  const ok = comp1.amountCents === 20000 && comp2.amountCents === 14000 && comp3.amountCents === 10000;
   await pool.end();
-  console.log("  ✅ Rollover implementado (verificação de período anterior)");
-  return true;
+  console.log(`  ${ok ? "✅" : "❌"} Rollover OK`);
+  return ok;
 }
 
 // ============================================================

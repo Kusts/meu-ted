@@ -296,13 +296,26 @@ export async function computeBudgetStatus(
   let amountCents = parseInt(budget.amount_cents, 10);
 
   // === ROLLOVER: carry over unused from previous period ===
-  if (budget.rollover) {
+  // Só rola se (a) rollover true, (b) já passou pelo menos 1 período desde o início
+  // NOTA: pg retorna start_date como Date, não string. Converter pra string pra comparar.
+  const startDateStr = typeof budget.start_date === "string"
+    ? budget.start_date
+    : new Date(budget.start_date as any).toISOString().slice(0, 10);
+  if (budget.rollover && period.start > startDateStr) {
+    // Período anterior = (current period start - 1 period) até (current period start)
     const prevStart = new Date(period.start);
     const prevEnd = new Date(period.start);
-    if (budget.period === "monthly") prevEnd.setMonth(prevEnd.getMonth() - 1);
-    else if (budget.period === "weekly") prevEnd.setDate(prevEnd.getDate() - 7);
-    else if (budget.period === "quarterly") prevEnd.setMonth(prevEnd.getMonth() - 3);
-    else if (budget.period === "yearly") prevEnd.setFullYear(prevEnd.getFullYear() - 1);
+
+    if (budget.period === "monthly") {
+      prevStart.setMonth(prevStart.getMonth() - 1);
+    } else if (budget.period === "weekly") {
+      prevStart.setDate(prevStart.getDate() - 7);
+    } else if (budget.period === "quarterly") {
+      prevStart.setMonth(prevStart.getMonth() - 3);
+    } else if (budget.period === "yearly") {
+      prevStart.setFullYear(prevStart.getFullYear() - 1);
+    }
+
     const prevStartStr = prevStart.toISOString().slice(0, 10);
     const prevEndStr = prevEnd.toISOString().slice(0, 10);
 
@@ -316,6 +329,7 @@ export async function computeBudgetStatus(
     const prevSpentCents = parseInt(prevSpent.rows[0].total, 10);
     const leftover = Math.max(0, parseInt(budget.amount_cents, 10) - prevSpentCents);
     if (leftover > 0) {
+      // Limite efetivo = limite base + sobra do período anterior
       amountCents += leftover;
     }
   }
