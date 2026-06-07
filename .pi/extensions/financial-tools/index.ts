@@ -89,6 +89,18 @@ import {
   testNotification,
 } from "./tools/notification_tools.js";
 
+// Goals & Budgets
+import {
+  createGoal,
+  listGoals,
+  contributeToGoal,
+  cancelGoal,
+  createBudget,
+  listBudgets,
+  checkBudgets,
+  refreshGoalsTool,
+} from "./tools/goals_budgets.js";
+
 export default function (pi: ExtensionAPI) {
   // Read tools
   pi.registerTool(listAccountsTool);
@@ -170,4 +182,14 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(processNotifications);
   pi.registerTool(getNotificationLog);
   pi.registerTool(testNotification);
+
+  // Goals & Budgets
+  pi.registerTool(createGoal);
+  pi.registerTool(listGoals);
+  pi.registerTool(contributeToGoal);
+  pi.registerTool(cancelGoal);
+  pi.registerTool(createBudget);
+  pi.registerTool(listBudgets);
+  pi.registerTool(checkBudgets);
+  pi.registerTool(refreshGoalsTool);
 }
