@@ -60,6 +60,16 @@ import { payInstallment, listDueInstallments, checkDueSoon } from "./tools/pay_i
 import { prepayInstallments, simulatePrepayment } from "./tools/prepay_installments.js";
 import { installmentScore } from "./tools/installment_score.js";
 
+// Accounts Payable
+import {
+  createAccountPayable,
+  listAccountsPayable,
+  markAccountPaid,
+  cancelAccountPayable,
+  checkPayableReminders,
+  refreshPayableStatus,
+} from "./tools/accounts_payable.js";
+
 export default function (pi: ExtensionAPI) {
   // Read tools
   pi.registerTool(listAccountsTool);
@@ -114,4 +124,12 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(prepayInstallments);
   pi.registerTool(simulatePrepayment);
   pi.registerTool(installmentScore);
+
+  // Accounts Payable
+  pi.registerTool(createAccountPayable);
+  pi.registerTool(listAccountsPayable);
+  pi.registerTool(markAccountPaid);
+  pi.registerTool(cancelAccountPayable);
+  pi.registerTool(checkPayableReminders);
+  pi.registerTool(refreshPayableStatus);
 }
