@@ -79,6 +79,16 @@ import { paymentScore } from "./tools/payment_score.js";
 import { monthlyProjection } from "./tools/monthly_projection.js";
 import { checkPriceAlerts } from "./tools/price-alerts.js";
 
+// Notifications
+import {
+  configureNotification,
+  listNotifications,
+  deleteNotification,
+  processNotifications,
+  getNotificationLog,
+  testNotification,
+} from "./tools/notification_tools.js";
+
 export default function (pi: ExtensionAPI) {
   // Read tools
   pi.registerTool(listAccountsTool);
@@ -152,4 +162,12 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(paymentScore);
   pi.registerTool(monthlyProjection);
   pi.registerTool(checkPriceAlerts);
+
+  // Notifications
+  pi.registerTool(configureNotification);
+  pi.registerTool(listNotifications);
+  pi.registerTool(deleteNotification);
+  pi.registerTool(processNotifications);
+  pi.registerTool(getNotificationLog);
+  pi.registerTool(testNotification);
 }
