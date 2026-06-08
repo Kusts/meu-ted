@@ -81,6 +81,10 @@ export const getBalanceTool = {
     onUpdate?.({ content: [{ type: "text", text: `Calculando saldo de ${name}...` }] });
 
     return {
+        success: true,
+
+        balanceCents: calculated,
+        accountId: params.accountId,
       content: [{ type: "text", text: `Saldo de ${name}: ${formatted}` }],
       details: { account_id: params.accountId, balance_cents: calculated },
     };

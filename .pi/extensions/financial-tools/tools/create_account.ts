@@ -42,6 +42,7 @@ export const createAccountTool = {
         const ex = existing.rows[0];
         const exBal = (parseInt(ex.initial_balance_cents, 10) / 100).toFixed(2);
         return {
+          success: false,
           content: [{
             type: "text",
             text: `⚠️ Já existe uma conta com esse nome:
@@ -69,8 +70,12 @@ Quer criar mesmo assim? Responda "sim" para confirmar (será criada como conta s
 
     onUpdate?.({ content: [{ type: "text", text: "Criando conta..." }] });
     return {
+      success: true,
+        accountId: r.rows[0].id,
       content: [{ type: "text", text: `✅ Conta criada: ${params.name.trim()} com saldo inicial de R$ ${(params.initialBalanceCents / 100).toFixed(2)}` }],
       details: { account_id: r.rows[0].id },
+      account_id: r.rows[0].id,
+      message: `Conta criada: ${params.name.trim()} com saldo inicial R$ ${(params.initialBalanceCents / 100).toFixed(2)}`,
     };
   },
 };

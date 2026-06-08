@@ -35,7 +35,9 @@ export const auditLogsTool = {
 
     const r = await query<{ rows: LogRow[] }>(sql, args);
 
-    if (!r.rows.length) return { content: [{ type: "text", text: "Nenhum registro de auditoria encontrado." }], details: { logs: [] } };
+    if (!r.rows.length) return {
+        success: true,
+ content: [{ type: "text", text: "Nenhum registro de auditoria encontrado." }], details: { logs: [] } };
 
     const text = r.rows.map(l => {
       const before = l.before_json ? JSON.stringify(l.before_json).slice(0, 60) : "";
@@ -44,6 +46,9 @@ export const auditLogsTool = {
     }).join("\n");
 
     onUpdate?.({ content: [{ type: "text", text: "Carregando logs de auditoria..." }] });
-    return { content: [{ type: "text", text }], details: { logs: r.rows } };
+    return {
+        success: true,
+        logs: r.rows,
+ content: [{ type: "text", text }], details: { logs: r.rows } };
   },
 };

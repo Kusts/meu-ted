@@ -82,10 +82,13 @@ export const payStatement: ToolDefinition = {
 
       // 3. Check duplicate
       if (!params.force) {
-        const dup = await findDuplicate(pool, "expense", params.householdId, {
+        const dup = await findDuplicate(pool, {
+          householdId: params.householdId,
+          kind: "expense",
           description: `Pagamento fatura ${stmt.cycle_year_month}`,
           amountCents: params.amountCents,
           date: new Date().toISOString().slice(0, 10),
+          fromAccountId: params.fromAccountId,
         });
         if (dup) {
           return {

@@ -52,6 +52,12 @@ export const getMonthSummaryTool = {
 
     onUpdate?.({ content: [{ type: "text", text: "Calculando resumo..." }] });
 
-    return { content: [{ type: "text", text }], details: { year_month: params.yearMonth, income_cents: income, expense_cents: expense, balance_cents: balance } };
+    return {
+        success: true,
+        incomeCents: income,
+        expenseCents: expense,
+        balanceCents: balance,
+        yearMonth: params.yearMonth,
+ content: [{ type: "text", text }], details: { year_month: params.yearMonth, income_cents: income, expense_cents: expense, balance_cents: balance } };
   },
 };

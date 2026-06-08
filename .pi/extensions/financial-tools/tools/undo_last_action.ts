@@ -22,7 +22,9 @@ export const undoLastActionTool = {
        ORDER BY created_at DESC LIMIT 1`,
       [params.householdId]
     );
-    if (!lastLog.rows.length) return { content: [{ type: "text", text: "Nenhuma ação para desfazer." }], details: {} };
+    if (!lastLog.rows.length) return {
+        success: true,
+ content: [{ type: "text", text: "Nenhuma ação para desfazer." }], details: {} };
 
     const log = lastLog.rows[0];
     let undone = false;
@@ -51,6 +53,12 @@ export const undoLastActionTool = {
 
     onUpdate?.({ content: [{ type: "text", text: "Desfazendo ação..." }] });
     return {
+        success: true,
+
+        log_id: log.id,
+        action: log.action,
+        entity_type: log.entity_type,
+        entity_id: log.entity_id,
       content: [{ type: "text", text: undone ? `✅ Ação desfeita: ${log.action} ${log.entity_type}` : `⚠️ Não foi possível desfazer: ${log.action} ${log.entity_type}` }],
       details: { undone, log_id: log.id, action: log.action, entity_type: log.entity_type, entity_id: log.entity_id },
     };

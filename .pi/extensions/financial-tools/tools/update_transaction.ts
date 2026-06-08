@@ -60,6 +60,9 @@ export const updateTransactionTool = {
     if (!r.rows.length) throw new Error("Transaction not found or already deleted");
 
     onUpdate?.({ content: [{ type: "text", text: "Atualizando transação..." }] });
-    return { content: [{ type: "text", text: `✅ Transação atualizada.` }], details: { transaction_id: r.rows[0].id } };
+    return {
+        success: true,
+        transactionId: r.rows[0].id,
+ content: [{ type: "text", text: `✅ Transação atualizada.` }], details: { transaction_id: r.rows[0].id } };
   },
 };

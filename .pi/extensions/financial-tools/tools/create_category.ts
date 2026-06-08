@@ -42,6 +42,8 @@ export const createCategoryTool = {
       if (existing.rows.length) {
         const ex = existing.rows[0];
         return {
+        success: false,
+
           content: [{
             type: "text",
             text: `⚠️ Já existe uma categoria com esse nome (${ex.kind}):
@@ -68,6 +70,9 @@ Quer criar mesmo assim? Responda "sim" para confirmar.`,
 
     onUpdate?.({ content: [{ type: "text", text: "Criando categoria..." }] });
     return {
+        success: true,
+
+        categoryId: r.rows[0].id,
       content: [{ type: "text", text: `✅ Categoria criada: ${params.name.trim()} (${params.kind})` }],
       details: { category_id: r.rows[0].id },
     };

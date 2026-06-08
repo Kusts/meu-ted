@@ -29,6 +29,9 @@ export const deactivateCategoryTool = {
     const r = await query<{ rows: { id: string }[] }>(`UPDATE categories SET deleted_at = NOW() WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL RETURNING id`, [params.categoryId, params.householdId]);
 
     onUpdate?.({ content: [{ type: "text", text: "Desativando categoria..." }] });
-    return { content: [{ type: "text", text: `✅ Categoria desativada.` }], details: { category_id: r.rows[0].id } };
+    return {
+        success: true,
+        categoryId: r.rows[0].id,
+ content: [{ type: "text", text: `✅ Categoria desativada.` }], details: { category_id: r.rows[0].id } };
   },
 };

@@ -100,6 +100,9 @@ export const createCreditCardAccount: ToolDefinition = {
       const id = result.rows[0].id;
       return {
         success: true,
+        limit: `R$ ${(params.creditLimitCents / 100).toFixed(2)}`,
+        closing: `dia ${params.closingDay}`,
+        due: `dia ${params.dueDay}`,
         id,
         name: params.name,
         creditLimitCents: params.creditLimitCents,

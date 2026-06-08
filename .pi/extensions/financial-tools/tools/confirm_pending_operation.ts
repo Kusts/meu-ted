@@ -64,6 +64,9 @@ export const confirmPendingOperationTool = {
 
     onUpdate?.({ content: [{ type: "text", text: "Confirmando operação..." }] });
     return {
+        success: true,
+
+        transactionId: rid,
       content: [{ type: "text", text: `✅ Operação confirmada e executada: ${op.description} — R$ ${(amountCents / 100).toFixed(2)}` }],
       details: { transaction_id: rid },
     };

@@ -41,6 +41,9 @@ export const updateAccountTool = {
     );
 
     onUpdate?.({ content: [{ type: "text", text: "Atualizando conta..." }] });
-    return { content: [{ type: "text", text: `✅ Conta atualizada: ${params.name.trim()}` }], details: { account_id: r.rows[0].id } };
+    return {
+        success: true,
+        accountId: r.rows[0].id,
+ content: [{ type: "text", text: `✅ Conta atualizada: ${params.name.trim()}` }], details: { account_id: r.rows[0].id } };
   },
 };

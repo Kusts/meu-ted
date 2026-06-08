@@ -39,6 +39,9 @@ export const updateCategoryTool = {
     );
 
     onUpdate?.({ content: [{ type: "text", text: "Atualizando categoria..." }] });
-    return { content: [{ type: "text", text: `✅ Categoria atualizada: ${params.name.trim()} (${params.kind})` }], details: { category_id: r.rows[0].id } };
+    return {
+        success: true,
+        categoryId: r.rows[0].id,
+ content: [{ type: "text", text: `✅ Categoria atualizada: ${params.name.trim()} (${params.kind})` }], details: { category_id: r.rows[0].id } };
   },
 };

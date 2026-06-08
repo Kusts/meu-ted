@@ -94,6 +94,8 @@ export const listAccountsTool = {
     onUpdate?.({ content: [{ type: "text", text: "Carregando contas..." }] });
 
     return {
+        success: true,
+        accounts,
       content: [{ type: "text", text }],
       details: { accounts },
     };

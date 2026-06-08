@@ -47,7 +47,9 @@ export const listRecentTransactionsTool = {
 
     const r = await query<{ rows: TxRow[] }>(sql, args);
 
-    if (!r.rows.length) return { content: [{ type: "text", text: "Nenhuma transação encontrada." }], details: { transactions: [] } };
+    if (!r.rows.length) return {
+        success: true,
+ content: [{ type: "text", text: "Nenhuma transação encontrada." }], details: { transactions: [] } };
 
     const text = r.rows.map(tx => {
       const sign = tx.kind === "expense" ? "-" : tx.kind === "income" ? "+" : "~";
@@ -57,6 +59,9 @@ export const listRecentTransactionsTool = {
 
     onUpdate?.({ content: [{ type: "text", text: "Listando transações..." }] });
 
-    return { content: [{ type: "text", text }], details: { transactions: r.rows } };
+    return {
+        success: true,
+        transactions: r.rows,
+ content: [{ type: "text", text }], details: { transactions: r.rows } };
   },
 };

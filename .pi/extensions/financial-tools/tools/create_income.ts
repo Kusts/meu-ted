@@ -72,6 +72,9 @@ export const createIncomeTool = {
         if (dup) {
           const warning = formatDuplicateWarning(dup, params.description);
           return {
+        success: false,
+
+        similarity: dup.similarity,
             content: [{ type: "text", text: warning }],
             details: {
               duplicate_detected: true,
@@ -106,6 +109,10 @@ export const createIncomeTool = {
 
     onUpdate?.({ content: [{ type: "text", text: "Registrando receita..." }] });
     return {
+        success: true,
+
+        transactionId: r.rows[0].id,
+        recipient_name: senderName,
       content: [{ type: "text", text: `✅ Receita registrada: ${params.description} — R$ ${(params.amountCents / 100).toFixed(2)} em ${params.date}` }],
       details: {
         transaction_id: r.rows[0].id,

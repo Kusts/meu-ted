@@ -23,6 +23,9 @@ export const deleteTransactionTool = {
     const r = await query<{ rows: { id: string }[] }>(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL RETURNING id`, [params.transactionId, params.householdId]);
 
     onUpdate?.({ content: [{ type: "text", text: "Deletando transação..." }] });
-    return { content: [{ type: "text", text: `✅ Transação deletada (soft delete).` }], details: { transaction_id: r.rows[0].id } };
+    return {
+        success: true,
+        transactionId: r.rows[0].id,
+ content: [{ type: "text", text: `✅ Transação deletada (soft delete).` }], details: { transaction_id: r.rows[0].id } };
   },
 };

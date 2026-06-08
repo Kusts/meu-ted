@@ -35,12 +35,17 @@ export const getPendingOperationTool = {
       [params.chatId]
     );
 
-    if (!r.rows.length) return { content: [{ type: "text", text: "Nenhuma operação pendente encontrada." }], details: { operation: null } };
+    if (!r.rows.length) return {
+        success: true,
+        operation: null,
+ content: [{ type: "text", text: "Nenhuma operação pendente encontrada." }], details: { operation: null } };
 
     const op = r.rows[0];
     const amount = (parseInt(op.amount_cents, 10) / 100).toFixed(2);
     onUpdate?.({ content: [{ type: "text", text: "Verificando operação pendente..." }] });
     return {
+        success: true,
+
       content: [{ type: "text", text: `⏳ Operação pendente: ${op.kind} (R$ ${amount}) — ${op.description} — expira em ${new Date(op.expires_at).toLocaleString("pt-BR")}` }],
       details: { ...op },
     };

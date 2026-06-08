@@ -21,7 +21,11 @@ export const cancelPendingOperationTool = {
     );
 
     onUpdate?.({ content: [{ type: "text", text: "Cancelando operação..." }] });
-    if (!r.rows.length) return { content: [{ type: "text", text: "Nenhuma operação pendente para cancelar." }], details: {} };
-    return { content: [{ type: "text", text: `✅ Operação cancelada.` }], details: {} };
+    if (!r.rows.length) return {
+        success: true,
+ content: [{ type: "text", text: "Nenhuma operação pendente para cancelar." }], details: {} };
+    return {
+        success: true,
+ content: [{ type: "text", text: `✅ Operação cancelada.` }], details: {} };
   },
 };

@@ -78,6 +78,9 @@ export const createTransferTool = {
         if (dup) {
           const warning = formatDuplicateWarning(dup, params.description);
           return {
+        success: false,
+
+        similarity: dup.similarity,
             content: [{ type: "text", text: warning }],
             details: {
               duplicate_detected: true,
@@ -129,6 +132,12 @@ export const createTransferTool = {
     summary += ` em ${params.date}`;
 
     return {
+        success: true,
+
+        transactionId: r.rows[0].id,
+        recipient_name: recipientName,
+        recipient_document: params.recipientDocument ?? null,
+        is_third_party: !!recipientName,
       content: [{ type: "text", text: summary }],
       details: {
         transaction_id: r.rows[0].id,

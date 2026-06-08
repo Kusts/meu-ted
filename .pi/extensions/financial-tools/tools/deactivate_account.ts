@@ -29,6 +29,9 @@ export const deactivateAccountTool = {
     const r = await query<{ rows: { id: string }[] }>(`UPDATE accounts SET deleted_at = NOW(), active = false WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL RETURNING id`, [params.accountId, params.householdId]);
 
     onUpdate?.({ content: [{ type: "text", text: "Desativando conta..." }] });
-    return { content: [{ type: "text", text: `✅ Conta desativada.` }], details: { account_id: r.rows[0].id } };
+    return {
+        success: true,
+        accountId: r.rows[0].id,
+ content: [{ type: "text", text: `✅ Conta desativada.` }], details: { account_id: r.rows[0].id } };
   },
 };

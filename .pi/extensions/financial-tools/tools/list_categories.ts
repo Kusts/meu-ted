@@ -36,11 +36,16 @@ export const listCategoriesTool = {
     const args = params.kind ? [params.householdId, params.kind] : [params.householdId];
     const r = await query<{ rows: CategoryRow[] }>(sql, args);
 
-    if (!r.rows.length) return { content: [{ type: "text", text: "Nenhuma categoria encontrada." }], details: { categories: [] } };
+    if (!r.rows.length) return {
+        success: true,
+ content: [{ type: "text", text: "Nenhuma categoria encontrada." }], details: { categories: [] } };
 
     const text = r.rows.map(c => `• ${c.name} (${c.kind})${!c.active ? " [inativa]" : ""}`).join("\n");
     onUpdate?.({ content: [{ type: "text", text: "Listando categorias..." }] });
 
-    return { content: [{ type: "text", text }], details: { categories: r.rows } };
+    return {
+        success: true,
+        categories: r.rows,
+ content: [{ type: "text", text }], details: { categories: r.rows } };
   },
 };

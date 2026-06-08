@@ -106,6 +106,9 @@ export const createExpenseTool = {
         if (dup) {
           const warning = formatDuplicateWarning(dup, params.description);
           return {
+        success: false,
+
+        similarity: dup.similarity,
             content: [{ type: "text", text: warning }],
             details: {
               duplicate_detected: true,
@@ -151,6 +154,10 @@ export const createExpenseTool = {
     onUpdate?.({ content: [{ type: "text", text: "Registrando despesa..." }] });
 
     return {
+        success: true,
+
+        transactionId: result.rows[0].id,
+        recipient_name: recipientName,
       content: [{
         type: "text",
         text: `✅ Despesa registrada: ${params.description} — R$ ${(params.amountCents / 100).toFixed(2)} em ${params.date}`,
