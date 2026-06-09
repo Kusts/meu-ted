@@ -1,7 +1,17 @@
 /**
  * list_accounts — Runtime implementation
  * Read-only tool: queries accounts table, no side effects.
- * Balance is calculated in get_balance — not stored here.
+ *
+ * ARCHITECTURAL NOTE:
+ * These runtime tools are standalone async functions (NOT Pi ToolDefinitions).
+ * They use a singleton Pool from '../db.js' and can be imported from any Node context.
+ * They exist because the Pi extension tools (in .pi/extensions/financial-tools/tools/)
+ * are ToolDefinition objects that only work within the Pi agent's execution context.
+ *
+ * The reminder script (scripts/reminder.ts) uses these directly via RealDataProvider.
+ *
+ * SQL is identical to the extension's list_accounts tool — see .pi/extensions/financial-tools/tools/list_accounts.ts
+ * for the canonical Pi tool. This runtime version is kept for standalone script execution.
  */
 
 import { query } from '../db.js';

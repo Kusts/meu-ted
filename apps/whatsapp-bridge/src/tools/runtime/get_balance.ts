@@ -2,7 +2,13 @@
  * get_balance — Runtime implementation
  * Read-only tool: calculates balance from transactions, no side effects.
  *
- * Balance formula (from spec):
+ * ARCHITECTURAL NOTE:
+ * Standalone async function (NOT a Pi ToolDefinition).
+ * Uses singleton Pool from '../db.js'. Callable from any Node context.
+ * See .pi/extensions/financial-tools/tools/get_balance.ts for the Pi agent version.
+ * SQL is identical — this version exists for scripts/reminder.ts (outside Pi context).
+ *
+ * Balance formula:
  * balance = initial_balance_cents
  *   + SUM(amount_cents) WHERE kind='income' AND to_account_id=X AND deleted_at IS NULL
  *   - SUM(amount_cents) WHERE kind='expense' AND from_account_id=X AND deleted_at IS NULL

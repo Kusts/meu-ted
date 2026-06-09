@@ -29,12 +29,13 @@ export function getPool(): pg.Pool {
  * Execute a query with parameters.
  * Returns the result directly from pg — no wrapping, no business logic.
  */
-export async function query<T extends pg.QueryResultRow>(
+export async function query<T>(
   text: string,
   params?: unknown[]
 ): Promise<pg.QueryResult<T>> {
   const pool = getPool();
-  return pool.query<T>(text, params);
+  const r = await pool.query(text, params);
+  return r as unknown as pg.QueryResult<T>;
 }
 
 /**
@@ -75,7 +76,7 @@ export async function closePool(): Promise<void> {
  */
 export async function isDatabaseHealthy(): Promise<boolean> {
   try {
-    const result = await query('SELECT 1 as healthy');
+    const result = await query<{ healthy: number }>('SELECT 1 as healthy');
     return result.rows.length > 0 && result.rows[0].healthy === 1;
   } catch {
     return false;

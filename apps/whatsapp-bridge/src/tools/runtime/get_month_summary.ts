@@ -2,6 +2,11 @@
  * get_month_summary — Runtime implementation
  * Read-only tool: aggregates transactions by month, no side effects.
  *
+ * ARCHITECTURAL NOTE:
+ * Standalone async function (NOT a Pi ToolDefinition).
+ * See .pi/extensions/financial-tools/tools/get_month_summary.ts for Pi version.
+ * SQL is identical — this version exists for scripts/reminder.ts (outside Pi context).
+ *
  * Aggregates:
  * - total_income_cents: SUM(amount_cents) WHERE kind='income' AND date in month
  * - total_expense_cents: SUM(amount_cents) WHERE kind='expense' AND date in month

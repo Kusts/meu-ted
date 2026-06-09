@@ -1,6 +1,11 @@
 /**
  * list_recent_transactions — Runtime implementation
  * Read-only tool: queries transactions with ordering, no side effects.
+ *
+ * ARCHITECTURAL NOTE:
+ * Standalone async function (NOT a Pi ToolDefinition).
+ * See .pi/extensions/financial-tools/tools/list_recent_transactions.ts for Pi version.
+ * SQL is identical — this version exists for scripts/reminder.ts (outside Pi context).
  */
 
 import { query } from '../db.js';
