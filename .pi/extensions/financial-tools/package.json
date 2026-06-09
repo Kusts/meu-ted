@@ -3,6 +3,9 @@
   "version": "1.1.0",
   "description": "Pi extension that registers financial assistant tools (accounts, categories, transactions) for WhatsApp-driven household finance management.",
   "main": "index.ts",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
