@@ -12,6 +12,7 @@ import {
   validateSender,
   extractPhone,
   extractMessageText,
+  isLikelyPromotionalNoise,
   type WebhookPayload,
   type UserRegistry,
   type SourceMessageStore,
@@ -220,6 +221,82 @@ describe('extractMessageText', () => {
   });
 });
 
+// ─── isLikelyPromotionalNoise unit tests ─────────────────────────────────────
+
+describe('isLikelyPromotionalNoise', () => {
+  it('returns true for cupom/desconto promotional text with emojis', () => {
+    expect(isLikelyPromotionalNoise('🚨 NOVO CUPOM AMAZON 🚨')).toBe(true);
+    expect(isLikelyPromotionalNoise('🎟️ SUPERTV Cupom')).toBe(true);
+    expect(isLikelyPromotionalNoise('✅ Madesa Kit')).toBe(true);
+    expect(isLikelyPromotionalNoise('🔥 CUPOM DE DESCONTO 30%')).toBe(true);
+    expect(isLikelyPromotionalNoise('🎁 CUPOM EXCLUSIVO CLIQUE AQUI')).toBe(true);
+  });
+
+  it('returns true for promotional links (bit.ly, amzn.to, etc)', () => {
+    expect(isLikelyPromotionalNoise('confira aqui https://bit.ly/3xXxXxXx')).toBe(true);
+    expect(isLikelyPromotionalNoise('compre agora https://amzn.to/abc123')).toBe(true);
+  });
+
+  it('returns true for offer/spam keywords in group context', () => {
+    expect(isLikelyPromotionalNoise('🎯 OFERTA IMPERDÍVEL!')).toBe(true);
+    expect(isLikelyPromotionalNoise('🚀 PROMOÇÃO RELÂMPAGO')).toBe(true);
+    expect(isLikelyPromotionalNoise('📢 GANHE DINHEIRO COMPRANDO')).toBe(true);
+  });
+
+  it('returns false for normal financial messages', () => {
+    expect(isLikelyPromotionalNoise('gastei 50 no mercado')).toBe(false);
+    expect(isLikelyPromotionalNoise('paguei a conta de luz')).toBe(false);
+    expect(isLikelyPromotionalNoise('recebi 200 de salario')).toBe(false);
+  });
+
+  it('returns false for casual greetings', () => {
+    expect(isLikelyPromotionalNoise('oi')).toBe(false);
+    expect(isLikelyPromotionalNoise('olá ted')).toBe(false);
+    expect(isLikelyPromotionalNoise('bom dia')).toBe(false);
+  });
+
+  it('returns false for short non-spam messages', () => {
+    expect(isLikelyPromotionalNoise('sim')).toBe(false);
+    expect(isLikelyPromotionalNoise('não')).toBe(false);
+    expect(isLikelyPromotionalNoise('ok')).toBe(false);
+  });
+
+  it('returns false for messages with links but no promo keywords', () => {
+    expect(isLikelyPromotionalNoise('aqui está o link do comprovante')).toBe(false);
+    expect(isLikelyPromotionalNoise('veja a foto da nota fiscal')).toBe(false);
+  });
+
+  it('returns false for financial messages with promo emoji but real text', () => {
+    expect(isLikelyPromotionalNoise('✅ gastei 50 mercado')).toBe(false);
+    expect(isLikelyPromotionalNoise('✅ paguei luz 120')).toBe(false);
+    expect(isLikelyPromotionalNoise('🔥 gastei 30 no café')).toBe(false);
+  });
+
+  it('returns false for financial action messages with promo keywords (allow-list overrides promo block)', () => {
+    expect(isLikelyPromotionalNoise('🔥 transferi 500 pro mano')).toBe(false);
+    expect(isLikelyPromotionalNoise('✅ boleto pago')).toBe(false);
+    expect(isLikelyPromotionalNoise('paguei a conta com desconto')).toBe(false);
+    expect(isLikelyPromotionalNoise('ganhei um desconto na farmácia')).toBe(false);
+    expect(isLikelyPromotionalNoise('🎯 meta: juntar 5 mil')).toBe(false);
+    // Additional financial keywords: pix, received, account, invoice, salary
+    expect(isLikelyPromotionalNoise('🔥 pix 50')).toBe(false);
+    expect(isLikelyPromotionalNoise('✅ recebi 200')).toBe(false);
+    expect(isLikelyPromotionalNoise('✅ conta luz 120')).toBe(false);
+    expect(isLikelyPromotionalNoise('🔥 fatura 300')).toBe(false);
+    expect(isLikelyPromotionalNoise('recebi salário hoje')).toBe(false);
+    expect(isLikelyPromotionalNoise('despesa do mês tá alta')).toBe(false);
+    // Savings/spending-saving keywords
+    expect(isLikelyPromotionalNoise('🎯 economizar 200 este mês')).toBe(false);
+    expect(isLikelyPromotionalNoise('✅ poupei 100')).toBe(false);
+  });
+
+  it('returns true for promo-only text that only has promo keyword without financial action', () => {
+    expect(isLikelyPromotionalNoise('DESCONTO imperdível de 30%')).toBe(true);
+    expect(isLikelyPromotionalNoise('OFERTA do dia')).toBe(true);
+    expect(isLikelyPromotionalNoise('CLIQUE AQUI para ganhar')).toBe(true);
+  });
+});
+
 // ─── processWebhook integration ─────────────────────────────────────────────
 
 describe('processWebhook', () => {
@@ -284,6 +361,109 @@ describe('processWebhook', () => {
     expect(pi.send).not.toHaveBeenCalled();
   });
 
+  it('ignores promotional noise (cupom/desconto/spam) without calling Pi (status=ignored)', async () => {
+    const spamTexts = [
+      '🚨 NOVO CUPOM AMAZON 🚨',
+      '🎟️ SUPERTV Cupom',
+      '✅ Madesa Kit',
+      '🔥 CUPOM DE DESCONTO 30%',
+      '🎁 CUPOM EXCLUSIVO CLIQUE AQUI',
+      '🎯 OFERTA IMPERDÍVEL!',
+      '🚀 PROMOÇÃO RELÂMPAGO',
+    ];
+    for (let i = 0; i < spamTexts.length; i++) {
+      const p = payload({ text: spamTexts[i], ID: `SPAM${i}` });
+      const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+      expect(res.status).toBe('ignored'), `failed for: ${spamTexts[i]}`;
+      expect(res.reason).toMatch(/promocional|spam|cupom|oferta/i), `no reason for: ${spamTexts[i]}`;
+      expect(pi.send).not.toHaveBeenCalled(), `Pi called for: ${spamTexts[i]}`;
+      expect(sender.send).not.toHaveBeenCalled(), `sender called for: ${spamTexts[i]}`;
+    }
+  });
+
+  it('ignores promotional noise in group chat without calling Pi (status=ignored)', async () => {
+    const p = payload({ text: '📢 GANHE DINHEIRO COMPRANDO AGORA', isGroup: true, ID: 'SPAMGRP1' });
+    p.data.Info.Chat = '120363045678901234@g.us';
+    const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+    expect(res.status).toBe('ignored');
+    expect(res.reason).toMatch(/promocional|spam|cupom|oferta/i);
+    expect(pi.send).not.toHaveBeenCalled();
+  });
+
+  it('forwards normal financial message even with emoji (not spam)', async () => {
+    const p = payload({ text: 'gastei 50 no mercado 🍎' });
+    const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+    expect(res.status).toBe('forwarded');
+    expect(pi.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards "olá ted" greeting without being filtered as spam', async () => {
+    const p = payload({ text: 'olá ted' });
+    const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+    expect(res.status).toBe('forwarded');
+    expect(pi.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards financial messages with promo emoji + real text (not spam)', async () => {
+    const cases = [
+      '✅ gastei 50 mercado',
+      '✅ paguei luz 120',
+      '🔥 gastei 30 no café',
+    ];
+    for (let i = 0; i < cases.length; i++) {
+      const p = payload({ text: cases[i], ID: `FIN${i}` });
+      const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+      expect(res.status).toBe('forwarded'), `failed for: ${cases[i]}`;
+      expect(pi.send).toHaveBeenCalled(), `Pi not called for: ${cases[i]}`;
+    }
+  });
+
+  it('forwards financial action messages with promo keywords (allow-list overrides promo block)', async () => {
+    const cases = [
+      '🔥 transferi 500 pro mano',
+      '✅ boleto pago',
+      'paguei a conta com desconto',
+      'ganhei um desconto na farmácia',
+      '🎯 meta: juntar 5 mil',
+    ];
+    for (let i = 0; i < cases.length; i++) {
+      const p = payload({ text: cases[i], ID: `FINA${i}` });
+      const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+      expect(res.status).toBe('forwarded'), `failed for: ${cases[i]}`;
+      expect(pi.send).toHaveBeenCalled(), `Pi not called for: ${cases[i]}`;
+    }
+  });
+
+  it('forwards financial messages with additional keywords (pix, recebi, conta, fatura, salário)', async () => {
+    const cases = [
+      '🔥 pix 50',
+      '✅ recebi 200',
+      '✅ conta luz 120',
+      '🔥 fatura 300',
+      'recebi salário hoje',
+      'despesa do mês tá alta',
+    ];
+    for (let i = 0; i < cases.length; i++) {
+      const p = payload({ text: cases[i], ID: `FKW${i}` });
+      const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+      expect(res.status).toBe('forwarded'), `failed for: ${cases[i]}`;
+      expect(pi.send).toHaveBeenCalled(), `Pi not called for: ${cases[i]}`;
+    }
+  });
+
+  it('forwards savings messages (economizar, poupar)', async () => {
+    const cases = [
+      '🎯 economizar 200 este mês',
+      '✅ poupei 100',
+    ];
+    for (let i = 0; i < cases.length; i++) {
+      const p = payload({ text: cases[i], ID: `SAV${i}` });
+      const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+      expect(res.status).toBe('forwarded'), `failed for: ${cases[i]}`;
+      expect(pi.send).toHaveBeenCalled(), `Pi not called for: ${cases[i]}`;
+    }
+  });
+
   it('forwards common message to Pi with the documented prompt', async () => {
     const p = payload({ text: 'oi tudo bem?' });
     const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
@@ -330,6 +510,21 @@ describe('processWebhook', () => {
     expect(sender.sent).toEqual([
       { chatId: '5511999999999@s.whatsapp.net', text: 'Registrado! ✅' },
     ]);
+  });
+
+  it('returns status=forwarded when responseSender.send() fails (non-critical — Evolution GO may reject unregistered numbers)', async () => {
+    pi = makePi({ response: 'Registrado!' });
+    // Simulate Evolution GO rejecting the number (fake/unregistered)
+    (sender.send as any).mockRejectedValue(new Error('Evolution GO API error: 400 — Number not found'));
+    const p = payload({ text: 'gastei 30 no cafe' });
+    const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+    // Pi succeeded → webhook is forwarded even though WhatsApp delivery failed
+    expect(res.status).toBe('forwarded');
+    expect(res.reason).toBeUndefined();
+    // message was still marked processed (no double-processing on retry)
+    expect(store.processed).toContain('3EB0_ABC');
+    // error is NOT saved since Pi succeeded (Evolution GO delivery is non-critical)
+    expect(store.errors).toEqual([]);
   });
 
   it('sends composing then paused presence around the call', async () => {
