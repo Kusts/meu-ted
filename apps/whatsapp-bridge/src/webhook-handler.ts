@@ -97,6 +97,34 @@ export interface PiClient {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Anti-spam: promotional noise filter
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PROMO_KEYWORD_RE = /\b(CUPOM|PROMO|OFERTA|DESCONTO|EXCLUSIVO|IMPERD[IÍ]VEL|REL[AÂ]MPAGO|CLIQUE AQUI|GANHE DINHEIRO|PROMOÇÃO)\b/i;
+const SHORT_URL_RE = /(?:bit\.ly|amzn\.to|tinyurl\.com|go\.to|cut\.ly|short\.to|buff\.ly)\b/i;
+// Matches promotional emoji set (with u flag for proper Unicode scalar values)
+const PROMO_EMOJI_RE = /[🚨🎟️✅🎁🔥🎯🚀📢]/u;
+// Spending/action keywords: allow-list overrides promo detection.
+// "paguei com desconto" → "paguei" wins. "ganhei um desconto" → "ganhei" wins.
+// "desconto" alone is NOT a financial action (it's a promo noun) — handled by PROMO_KEYWORD_RE.
+const FINANCIAL_ACTION_RE = /\b(gastei|paguei|gastou|pagou|comprei|comprou|vendi|vendeu|economizei|economizar|poupei|poupar|investi|investiu|meta|juntar|boleto|pago|ganhei|transferi|transferiu|transferir|pix|recebi|recebeu|conta|fatura|despesa|receita|salario|salário)\b/i;
+
+export function isLikelyPromotionalNoise(text: string): boolean {
+  // Short URLs are always spam
+  if (SHORT_URL_RE.test(text)) return true;
+  // Financial action always wins — allow-list overrides any promo keyword match
+  if (FINANCIAL_ACTION_RE.test(text)) return false;
+  // Promotional keyword without financial action → spam
+  if (PROMO_KEYWORD_RE.test(text)) return true;
+  // Short emoji-only promo phrases like "✅ Madesa Kit" are spam
+  if (PROMO_EMOJI_RE.test(text)) {
+    const stripped = text.replace(/\s/g, '');
+    if (stripped.length < 25) return true;
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Validation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -275,6 +303,12 @@ export async function processWebhook(
     return { status: 'ignored', sourceMessageId: sourceMsg.id, reason: 'texto vazio' };
   }
 
+  // 9) Promotional noise → ignore before Pi call
+  if (isLikelyPromotionalNoise(sourceMsg.text)) {
+    sourceStore.markProcessed(sourceMsg);
+    return { status: 'ignored', sourceMessageId: sourceMsg.id, reason: 'texto promocional ignorado' };
+  }
+
   // 9) Fire composing (non-blocking) and call Pi
   firePresence(sourceMsg.remoteJid, 'composing', responseSender);
 
@@ -282,24 +316,23 @@ export async function processWebhook(
   const householdId = groupHousehold ?? process.env.DEFAULT_HOUSEHOLD_ID ?? 'default';
   const prompt = buildBridgePrompt(sourceMsg, householdId);
 
-  // TEMP DIAGNOSTIC: log every stage
-  console.log('[webhook-handler] IN  providerMessageId=', sourceMsg.providerMessageId, 'text=', sourceMsg.text.slice(0, 50));
-
   try {
-    console.log('[webhook-handler] CALLING piClient.send()...');
     const result = await piClient.send(prompt, sourceMsg.senderPhone, {
       source: 'whatsapp',
       chatId: sourceMsg.remoteJid,
       providerMessageId: sourceMsg.providerMessageId,
       idempotencyKey: `whatsapp:${sourceMsg.providerMessageId}`,
     });
-    console.log('[webhook-handler] piClient.send() returned success=', result.success, 'reason=', result.reason);
 
     if (result.success && result.data?.message) {
-      console.log('[webhook-handler] responseSender.send() to', sourceMsg.remoteJid, 'message=', result.data.message.slice(0, 80));
-      await responseSender.send(sourceMsg.remoteJid, result.data.message);
+      try {
+        await responseSender.send(sourceMsg.remoteJid, result.data.message);
+      } catch (err) {
+        // Non-critical: Evolution GO may reject unregistered numbers in test/dev.
+        // The message was forwarded to Pi successfully — log and continue.
+        console.warn('[webhook-handler] responseSender.send() failed (non-critical):', err instanceof Error ? err.message : String(err));
+      }
       sourceStore.markProcessed(sourceMsg);
-      console.log('[webhook-handler] OUT  status=forwarded');
       return {
         status: 'forwarded',
         response: result.data.message,
@@ -310,10 +343,12 @@ export async function processWebhook(
     const reason = result.reason ?? 'erro';
     sourceMsg.errorReason = reason;
     sourceStore.saveError(sourceMsg.providerMessageId, reason);
-    console.log('[webhook-handler] responseSender.send() FALLBACK to', sourceMsg.remoteJid);
-    await responseSender.send(sourceMsg.remoteJid, '⚠️ Tive um problema aqui. Pode tentar de novo em instantes?');
+    try {
+      await responseSender.send(sourceMsg.remoteJid, '⚠️ Tive um problema aqui. Pode tentar de novo em instantes?');
+    } catch (err) {
+      console.warn('[webhook-handler] fallback send() failed (non-critical):', err instanceof Error ? err.message : String(err));
+    }
     sourceStore.markProcessed(sourceMsg);
-    console.log('[webhook-handler] OUT  status=failed reason=', reason);
     return { status: 'failed', reason, sourceMessageId: sourceMsg.id };
   } catch (err) {
     const reason = err instanceof Error ? err.message : 'erro desconhecido';
