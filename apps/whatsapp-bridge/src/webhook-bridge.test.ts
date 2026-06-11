@@ -60,15 +60,19 @@ function makeStore(): SourceMessageStore & {
   };
 }
 
+type PiSendContext = Parameters<PiClient['send']>[2];
+
+type PiCall = { message: string; phone: string; context: PiSendContext };
+
 function makePi(overrides: Partial<{
   response: string;
   success: boolean;
   reason: string;
-}> = {}): PiClient & { calls: Array<{ message: string; phone: string; context: any }> } {
-  const calls: Array<{ message: string; phone: string; context: any }> = [];
+}> = {}): PiClient & { calls: PiCall[] } {
+  const calls: PiCall[] = [];
   return {
     calls,
-    send: vi.fn(async (message, phone, context) => {
+    send: vi.fn(async (message: string, phone: string, context: PiSendContext) => {
       calls.push({ message, phone, context });
       if (overrides.success === false) {
         return { success: false, reason: overrides.reason ?? 'pi-error' };
