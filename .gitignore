@@ -42,3 +42,19 @@ data/
 *.lcov
 coverage/
 .nyc_output/*.tsbuildinfo
+
+# Local Pi runtime / secrets
+.env.pi
+.pnpm-store/
+backups/
+
+# Peer runtime state
+.pi/peers.json
+.pi/settings.json
+.pi/peer-control-ledger.jsonl
+.pi/peer-messages.json
+.pi/peer-org.json
+.pi/peer-setup-session.json
+
+# Temporary Pi workdirs
+temp-pi-*/
