@@ -7,6 +7,17 @@ import { query } from '../db.js';
 import type { AuditLogsResult } from '../types.js';
 import { validateUUID } from '../errors.js';
 
+interface AuditLogRow {
+  id: string;
+  household_id: string;
+  chat_id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  details: unknown;
+  created_at: Date;
+}
+
 export async function auditLogs(
   householdId: string,
   limit: number = 50
@@ -18,7 +29,7 @@ export async function auditLogs(
   }
 
   try {
-    const result = await query(
+    const result = await query<AuditLogRow>(
       `SELECT id, household_id, chat_id, action, entity_type, entity_id,
               details, created_at
        FROM audit_logs

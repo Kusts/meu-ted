@@ -8,6 +8,22 @@ import { query } from '../db.js';
 import type { ConfirmPendingOperationResult } from '../types.js';
 import { validateNonEmpty } from '../errors.js';
 
+interface PendingOpRow {
+  id: string;
+  kind: string;
+  operation_data: unknown;
+  from_account_id: string | null;
+  to_account_id: string | null;
+  category_id: string | null;
+  amount_cents: number;
+  description: string;
+  date: Date;
+}
+
+interface TransactionRow {
+  id: string;
+}
+
 export async function confirmPendingOperation(
   chatId: string,
   householdId: string
@@ -19,7 +35,7 @@ export async function confirmPendingOperation(
   }
 
   try {
-    const existing = await query(
+    const existing = await query<PendingOpRow>(
       `SELECT id, kind, operation_data, from_account_id, to_account_id, category_id, amount_cents, description, date
        FROM pending_operations
        WHERE chat_id = $1 AND expires_at > NOW() AND consumed_at IS NULL
@@ -33,8 +49,7 @@ export async function confirmPendingOperation(
 
     const pending = existing.rows[0];
 
-    // Execute the operation: insert the transaction
-    const result = await query(
+    const result = await query<TransactionRow>(
       `INSERT INTO transactions (id, household_id, kind, amount_cents, description, category_id, from_account_id, to_account_id, date, status, created_at)
        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', NOW())
        RETURNING id`,
@@ -50,7 +65,6 @@ export async function confirmPendingOperation(
       ]
     );
 
-    // Mark pending as consumed
     await query(
       `UPDATE pending_operations SET consumed_at = NOW(), status = 'confirmed' WHERE id = $1`,
       [pending.id]

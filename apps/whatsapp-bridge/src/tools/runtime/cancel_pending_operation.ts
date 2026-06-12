@@ -28,7 +28,7 @@ export async function cancelPendingOperation(
       return { success: false, error: 'No pending operation found or already expired' };
     }
 
-    const result = await query(
+    const result = await query<{ id: string }>(
       `UPDATE pending_operations SET consumed_at = NOW(), status = 'cancelled'
        WHERE id = $1 RETURNING id`,
       [existing.rows[0].id]
