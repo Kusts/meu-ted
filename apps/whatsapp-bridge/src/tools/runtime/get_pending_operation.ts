@@ -7,6 +7,15 @@ import { query } from '../db.js';
 import type { GetPendingOperationResult } from '../types.js';
 import { validateNonEmpty } from '../errors.js';
 
+interface PendingOperationRow {
+  id: string;
+  chat_id: string;
+  operation_type: string;
+  operation_data: unknown;
+  expires_at: Date;
+  created_at: Date;
+}
+
 export async function getPendingOperation(
   chatId: string
 ): Promise<GetPendingOperationResult> {
@@ -17,7 +26,7 @@ export async function getPendingOperation(
   }
 
   try {
-    const result = await query(
+    const result = await query<PendingOperationRow>(
       `SELECT id, chat_id, operation_type, operation_data, expires_at, created_at
        FROM pending_operations
        WHERE chat_id = $1 AND expires_at > NOW() AND consumed_at IS NULL

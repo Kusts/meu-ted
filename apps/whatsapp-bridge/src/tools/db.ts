@@ -4,7 +4,7 @@
  * All queries go through this pool — no financial logic here.
  */
 
-import pg from 'pg';
+import pg, { type QueryResultRow } from 'pg';
 
 const { Pool } = pg;
 
@@ -29,13 +29,13 @@ export function getPool(): pg.Pool {
  * Execute a query with parameters.
  * Returns the result directly from pg — no wrapping, no business logic.
  */
-export async function query<T>(
+export async function query<T extends QueryResultRow>(
   text: string,
   params?: unknown[]
 ): Promise<pg.QueryResult<T>> {
   const pool = getPool();
-  const r = await pool.query(text, params);
-  return r as unknown as pg.QueryResult<T>;
+  const r = await pool.query<T>(text, params);
+  return r;
 }
 
 /**
