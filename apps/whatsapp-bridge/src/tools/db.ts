@@ -28,14 +28,24 @@ export function getPool(): pg.Pool {
 /**
  * Execute a query with parameters.
  * Returns the result directly from pg — no wrapping, no business logic.
+ *
+ * Generic T defaults to QueryResultRow for backward compatibility.
+ * We accept any `object` type (including plain interfaces without index signatures)
+ * so that callers like `AccountInfo`, `BalanceAggregate` etc. don't need to extend
+ * QueryResultRow — only structural field compatibility with the SQL result is required.
+ *
+ * The pool.query internally requires QueryResultRow; the cast is centralized here
+ * so callers stay type-safe on their end (T is what they declared, rows are typed as T[]).
  */
-export async function query<T extends QueryResultRow>(
+export async function query<T extends object = QueryResultRow>(
   text: string,
   params?: unknown[]
 ): Promise<pg.QueryResult<T>> {
   const pool = getPool();
-  const r = await pool.query<T>(text, params);
-  return r;
+  // Cast is centralized: T is the caller's declared row type; pool needs QueryResultRow.
+  // The result.rows is typed as T[] via the return type, so callers get correct types.
+  const r = await pool.query<T & QueryResultRow>(text, params);
+  return r as unknown as pg.QueryResult<T>;
 }
 
 /**
