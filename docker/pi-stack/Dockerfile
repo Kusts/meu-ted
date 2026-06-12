@@ -10,8 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# pnpm (para regenerar symlinks dentro do container)
-RUN npm install -g pnpm
+# pnpm (pin to host version to avoid ERR_PNPM_IGNORED_BUILDS)
+RUN npm install -g pnpm@10.34.1
 
 # Pi CLI (instala em ~/.local/bin)
 RUN curl -fsSL https://pi.dev/install.sh | sh

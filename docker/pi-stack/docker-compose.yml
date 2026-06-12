@@ -26,6 +26,12 @@ services:
       - host.docker.internal:host-gateway
     ports:
       - "3000:3000"
-    command: ["sleep", "infinity"]
+    command: ["bash", "-lc", "cd /workspace && pnpm install --prefer-offline && pnpm --filter @pi-financeiro/whatsapp-bridge start"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     stdin_open: true
     tty: true
