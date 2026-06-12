@@ -37,11 +37,20 @@ function txLine(tx: { date: string; kind: string; amount_cents: number; descript
   return ` • ${date} — ${kindLabel[tx.kind] ?? tx.kind}: ${amount}${desc}${account ? ` ← ${account}` : ''}`;
 }
 
+function installmentLine(item: { planDescription: string; installmentLabel: string; amountCents: number; dueDate: string; daysUntil: number; accountName: string }): string {
+  const when = item.daysUntil < 0
+    ? `venceu há ${Math.abs(item.daysUntil)} dia(s)`
+    : item.daysUntil === 0
+      ? 'vence hoje'
+      : `vence em ${item.daysUntil} dia(s)`;
+  return ` • ${item.planDescription} (${item.installmentLabel}): ${fmtCents(item.amountCents)} — ${when} (${localeDateString(item.dueDate)}) ← ${item.accountName}`;
+}
+
 export function formatWeeklySummary(
   data: WeeklyData,
   weekLabel: string
 ): string {
-  const { accounts, weekTransactions, currentMonthSummary } = data;
+  const { accounts, weekTransactions, currentMonthSummary, dueInstallments = [] } = data;
 
   // Accounts block
   const accountLines = accounts.length === 0
@@ -54,6 +63,11 @@ export function formatWeeklySummary(
   const txLines = weekTransactions.length === 0
     ? ' Nenhuma transação esta semana'
     : weekTransactions.slice(0, 5).map(txLine).join('\n');
+
+  // Installment reminders
+  const installmentBlock = dueInstallments.length === 0
+    ? '✅ Nenhum parcelamento fora do cartão vencendo no período'
+    : dueInstallments.slice(0, 10).map(installmentLine).join('\n');
 
   // Month context
   const month = currentMonthSummary;
@@ -70,6 +84,9 @@ export function formatWeeklySummary(
     '',
     txHeader,
     txLines,
+    '',
+    `🚗 Parcelamentos fora do cartão vencendo:`,
+    installmentBlock,
     monthBlock ? '' : null,
     monthBlock,
   ].filter(line => line !== null).join('\n');

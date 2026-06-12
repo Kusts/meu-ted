@@ -77,8 +77,8 @@ export function buildInstallmentSchedule(
   firstDueDate: string,
   interestRate: number = 0
 ): InstallmentSchedule[] {
-  if (installmentsCount < 1 || installmentsCount > 48) {
-    throw new Error("installmentsCount deve estar entre 1 e 48");
+  if (installmentsCount < 1 || installmentsCount > 60) {
+    throw new Error("installmentsCount deve estar entre 1 e 60");
   }
   if (totalAmountCents <= 0) {
     throw new Error("totalAmountCents deve ser positivo");

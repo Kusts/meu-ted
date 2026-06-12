@@ -32,7 +32,7 @@ interface Params {
 const schema = Type.Object({
   householdId: Type.String(),
   planId: Type.String(),
-  numberOfInstallments: Type.Integer({ minimum: 1, maximum: 48 }),
+  numberOfInstallments: Type.Integer({ minimum: 1, maximum: 60 }),
   discountRate: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
   discountType: Type.Optional(Type.Union([Type.Literal("simple"), Type.Literal("present_value")])),
   paidDate: Type.Optional(Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" })),
@@ -175,7 +175,7 @@ export const simulatePrepayment: ToolDefinition = {
   parameters: Type.Object({
     householdId: Type.String(),
     planId: Type.String(),
-    numberOfInstallments: Type.Integer({ minimum: 1, maximum: 48 }),
+    numberOfInstallments: Type.Integer({ minimum: 1, maximum: 60 }),
     discountRate: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
     discountType: Type.Optional(Type.Union([Type.Literal("simple"), Type.Literal("present_value")])),
   }),

@@ -61,6 +61,28 @@ export interface NotificationMessage {
 
 const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
 
+const payableDueRowsSql = `
+  SELECT id, description, amount_cents, due_date::text as due, 'account_payable' as source
+  FROM accounts_payable
+  WHERE household_id = $1
+    AND deleted_at IS NULL
+`;
+
+const installmentDueRowsSql = `
+  SELECT t.id,
+         p.description || ' (' || t.installment_number || '/' || t.installments_total || ')' as description,
+         t.amount_cents,
+         t.date::text as due,
+         'installment' as source
+  FROM transactions t
+  JOIN installment_plans p ON p.id = t.installment_plan_id
+  WHERE t.household_id = $1
+    AND t.installment_plan_id IS NOT NULL
+    AND t.installment_status = 'scheduled'
+    AND p.type = 'out_of_card'
+    AND t.deleted_at IS NULL
+`;
+
 /**
  * Check if current time matches notification schedule.
  * - For daily/weekly: matches hour:minute
@@ -123,13 +145,14 @@ export async function buildOverdueNotification(
   thresholdDays: number = 0  // 0 = qualquer vencida
 ): Promise<NotificationMessage | null> {
   const result = await pool.query<{ rows: any[] }>(
-    `SELECT id, description, amount_cents, due_date::text as due
-     FROM accounts_payable
-     WHERE household_id = $1
+    `(${payableDueRowsSql}
        AND status = 'overdue'
-       AND deleted_at IS NULL
-       AND due_date <= (CURRENT_DATE - $2 * INTERVAL '1 day')
-     ORDER BY due_date ASC
+       AND due_date <= (CURRENT_DATE - $2 * INTERVAL '1 day'))
+     UNION ALL
+     (${installmentDueRowsSql}
+       AND t.date < CURRENT_DATE
+       AND t.date <= (CURRENT_DATE - $2 * INTERVAL '1 day'))
+     ORDER BY due ASC
      LIMIT 10`,
     [householdId, thresholdDays]
   );
@@ -148,6 +171,7 @@ export async function buildOverdueNotification(
         description: r.description,
         amountCents: parseInt(r.amount_cents, 10),
         dueDate: r.due,
+        source: r.source,
       })),
       totalCents,
     },
@@ -162,12 +186,12 @@ export async function buildDueTodayNotification(
   householdId: string
 ): Promise<NotificationMessage | null> {
   const result = await pool.query<{ rows: any[] }>(
-    `SELECT id, description, amount_cents
-     FROM accounts_payable
-     WHERE household_id = $1
+    `(${payableDueRowsSql}
        AND status = 'pending'
-       AND due_date = CURRENT_DATE
-       AND deleted_at IS NULL
+       AND due_date = CURRENT_DATE)
+     UNION ALL
+     (${installmentDueRowsSql}
+       AND t.date = CURRENT_DATE)
      ORDER BY amount_cents DESC
      LIMIT 10`,
     [householdId]
@@ -185,6 +209,7 @@ export async function buildDueTodayNotification(
         id: r.id,
         description: r.description,
         amountCents: parseInt(r.amount_cents, 10),
+        source: r.source,
       })),
       totalCents,
     },
@@ -200,14 +225,16 @@ export async function buildUpcomingNotification(
   thresholdDays: number
 ): Promise<NotificationMessage | null> {
   const result = await pool.query<{ rows: any[] }>(
-    `SELECT id, description, amount_cents, due_date::text as due,
-            (due_date - CURRENT_DATE)::int as days_until
-     FROM accounts_payable
-     WHERE household_id = $1
-       AND status = 'pending'
-       AND due_date BETWEEN (CURRENT_DATE + INTERVAL '1 day') AND (CURRENT_DATE + $2 * INTERVAL '1 day')
-       AND deleted_at IS NULL
-     ORDER BY due_date ASC
+    `SELECT *, (due::date - CURRENT_DATE)::int as days_until
+     FROM (
+       (${payableDueRowsSql}
+          AND status = 'pending'
+          AND due_date BETWEEN (CURRENT_DATE + INTERVAL '1 day') AND (CURRENT_DATE + $2 * INTERVAL '1 day'))
+       UNION ALL
+       (${installmentDueRowsSql}
+          AND t.date BETWEEN (CURRENT_DATE + INTERVAL '1 day') AND (CURRENT_DATE + $2 * INTERVAL '1 day'))
+     ) due_items
+     ORDER BY due ASC
      LIMIT 10`,
     [householdId, thresholdDays]
   );
@@ -226,6 +253,7 @@ export async function buildUpcomingNotification(
         amountCents: parseInt(r.amount_cents, 10),
         dueDate: r.due,
         daysUntil: r.days_until,
+        source: r.source,
       })),
       totalCents,
     },
@@ -256,11 +284,14 @@ export async function buildDailySummary(
   // Get accounts to pay soon
   const upcoming = await pool.query<{ rows: Array<{ count: string; total: string }> }>(
     `SELECT COUNT(*) as count, COALESCE(SUM(amount_cents), 0) as total
-     FROM accounts_payable
-     WHERE household_id = $1
-       AND status IN ('pending', 'overdue')
-       AND due_date <= CURRENT_DATE + INTERVAL '7 days'
-       AND deleted_at IS NULL`,
+     FROM (
+       (${payableDueRowsSql}
+          AND status IN ('pending', 'overdue')
+          AND due_date <= CURRENT_DATE + INTERVAL '7 days')
+       UNION ALL
+       (${installmentDueRowsSql}
+          AND t.date <= CURRENT_DATE + INTERVAL '7 days')
+     ) due_items`,
     [householdId]
   );
   const upcomingCount = parseInt(upcoming.rows[0]?.count || "0", 10);
@@ -319,11 +350,14 @@ export async function buildWeeklySummary(
   // Get accounts to pay this week
   const upcoming = await pool.query<{ rows: Array<{ count: string; total: string }> }>(
     `SELECT COUNT(*) as count, COALESCE(SUM(amount_cents), 0) as total
-     FROM accounts_payable
-     WHERE household_id = $1
-       AND status IN ('pending', 'overdue')
-       AND due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'
-       AND deleted_at IS NULL`,
+     FROM (
+       (${payableDueRowsSql}
+          AND status IN ('pending', 'overdue')
+          AND due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days')
+       UNION ALL
+       (${installmentDueRowsSql}
+          AND t.date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days')
+     ) due_items`,
     [householdId]
   );
   const upcomingCount = parseInt(upcoming.rows[0]?.count || "0", 10);

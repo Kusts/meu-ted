@@ -1,7 +1,7 @@
 /**
  * financial-tools — Pi Extension
  *
- * Registers all 22 financial assistant tools as Pi tools via pi.registerTool().
+ * Registers all financial assistant tools as Pi tools.
  * The Pi agent calls these tools to manage household finances via WhatsApp.
  *
  * Tools execute SQL directly against the Postgres database (DATABASE_URL).
@@ -10,7 +10,7 @@
  * Boundary: zero financial logic in Node. All decisions made by Pi agent via tools.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 // Read tools
 import { listAccountsTool } from "./tools/list_accounts.js";
@@ -104,98 +104,133 @@ import {
   updateBudgetTool,
 } from "./tools/goals_budgets.js";
 
+type TextBlock = { type: "text"; text: string };
+
+type MaybeToolResult = Partial<AgentToolResult> & Record<string, unknown>;
+
+function resultText(result: MaybeToolResult): string {
+  const message = typeof result.message === "string" ? result.message : undefined;
+  const error = typeof result.error === "string" ? result.error : undefined;
+  return message ?? error ?? JSON.stringify(result, null, 2);
+}
+
+function normalizeToolResult(result: unknown): AgentToolResult {
+  if (result && typeof result === "object" && Array.isArray((result as MaybeToolResult).content)) {
+    return result as AgentToolResult;
+  }
+
+  const objectResult = result && typeof result === "object" ? (result as MaybeToolResult) : { value: result };
+  return {
+    ...objectResult,
+    content: [{ type: "text", text: resultText(objectResult) } satisfies TextBlock],
+  } as AgentToolResult;
+}
+
+function registerTool(pi: ExtensionAPI, tool: ToolDefinition): void {
+  const execute = tool.execute.bind(tool);
+  pi.registerTool({
+    ...tool,
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      const result = execute.length <= 1
+        ? await (execute as (params: unknown) => Promise<unknown>)(params)
+        : await execute(toolCallId, params, signal, onUpdate, ctx);
+      return normalizeToolResult(result);
+    },
+  });
+}
+
 export default function (pi: ExtensionAPI) {
   // Read tools
-  pi.registerTool(listAccountsTool);
-  pi.registerTool(listCategoriesTool);
-  pi.registerTool(getBalanceTool);
-  pi.registerTool(getMonthSummaryTool);
-  pi.registerTool(listRecentTransactionsTool);
-  pi.registerTool(getPendingOperationTool);
-  pi.registerTool(auditLogsTool);
+  registerTool(pi, listAccountsTool);
+  registerTool(pi, listCategoriesTool);
+  registerTool(pi, getBalanceTool);
+  registerTool(pi, getMonthSummaryTool);
+  registerTool(pi, listRecentTransactionsTool);
+  registerTool(pi, getPendingOperationTool);
+  registerTool(pi, auditLogsTool);
 
   // Write tools
-  pi.registerTool(createAccountTool);
-  pi.registerTool(createCategoryTool);
-  pi.registerTool(createExpenseTool);
-  pi.registerTool(createIncomeTool);
-  pi.registerTool(createTransferTool);
-  pi.registerTool(updateAccountTool);
-  pi.registerTool(deactivateAccountTool);
-  pi.registerTool(updateCategoryTool);
-  pi.registerTool(deactivateCategoryTool);
-  pi.registerTool(updateTransactionTool);
-  pi.registerTool(deleteTransactionTool);
-  pi.registerTool(confirmPendingOperationTool);
-  pi.registerTool(cancelPendingOperationTool);
-  pi.registerTool(undoLastActionTool);
+  registerTool(pi, createAccountTool);
+  registerTool(pi, createCategoryTool);
+  registerTool(pi, createExpenseTool);
+  registerTool(pi, createIncomeTool);
+  registerTool(pi, createTransferTool);
+  registerTool(pi, updateAccountTool);
+  registerTool(pi, deactivateAccountTool);
+  registerTool(pi, updateCategoryTool);
+  registerTool(pi, deactivateCategoryTool);
+  registerTool(pi, updateTransactionTool);
+  registerTool(pi, deleteTransactionTool);
+  registerTool(pi, confirmPendingOperationTool);
+  registerTool(pi, cancelPendingOperationTool);
+  registerTool(pi, undoLastActionTool);
 
   // Credit card tools
-  pi.registerTool(createCreditCardAccount);
-  pi.registerTool(createCardPurchase);
-  pi.registerTool(createCardInstallments);
-  pi.registerTool(payStatement);
-  pi.registerTool(listStatements);
-  pi.registerTool(getStatementDetails);
-  pi.registerTool(cardInsights);
-  pi.registerTool(checkCardLimits);
-  pi.registerTool(refreshStatements);
+  registerTool(pi, createCreditCardAccount);
+  registerTool(pi, createCardPurchase);
+  registerTool(pi, createCardInstallments);
+  registerTool(pi, payStatement);
+  registerTool(pi, listStatements);
+  registerTool(pi, getStatementDetails);
+  registerTool(pi, cardInsights);
+  registerTool(pi, checkCardLimits);
+  registerTool(pi, refreshStatements);
 
   // Recurring purchases
-  pi.registerTool(createRecurringPurchase);
-  pi.registerTool(postDueRecurring);
-  pi.registerTool(listRecurringPurchases);
+  registerTool(pi, createRecurringPurchase);
+  registerTool(pi, postDueRecurring);
+  registerTool(pi, listRecurringPurchases);
 
   // Spending analysis
-  pi.registerTool(spendingInsights);
+  registerTool(pi, spendingInsights);
 
   // Installment plans
-  pi.registerTool(createInstallmentPlan);
-  pi.registerTool(listInstallmentPlans);
-  pi.registerTool(payInstallment);
-  pi.registerTool(listDueInstallments);
-  pi.registerTool(checkDueSoon);
-  pi.registerTool(prepayInstallments);
-  pi.registerTool(simulatePrepayment);
-  pi.registerTool(installmentScore);
+  registerTool(pi, createInstallmentPlan);
+  registerTool(pi, listInstallmentPlans);
+  registerTool(pi, payInstallment);
+  registerTool(pi, listDueInstallments);
+  registerTool(pi, checkDueSoon);
+  registerTool(pi, prepayInstallments);
+  registerTool(pi, simulatePrepayment);
+  registerTool(pi, installmentScore);
 
   // Accounts Payable
-  pi.registerTool(createAccountPayable);
-  pi.registerTool(listAccountsPayable);
-  pi.registerTool(markAccountPaid);
-  pi.registerTool(cancelAccountPayable);
-  pi.registerTool(checkPayableReminders);
-  pi.registerTool(refreshPayableStatus);
+  registerTool(pi, createAccountPayable);
+  registerTool(pi, listAccountsPayable);
+  registerTool(pi, markAccountPaid);
+  registerTool(pi, cancelAccountPayable);
+  registerTool(pi, checkPayableReminders);
+  registerTool(pi, refreshPayableStatus);
 
   // Accounts Payable Templates
-  pi.registerTool(createPayableTemplate);
-  pi.registerTool(createPayableFromTemplate);
-  pi.registerTool(listPayableTemplates);
-  pi.registerTool(autoCreateFromTemplates);
+  registerTool(pi, createPayableTemplate);
+  registerTool(pi, createPayableFromTemplate);
+  registerTool(pi, listPayableTemplates);
+  registerTool(pi, autoCreateFromTemplates);
 
   // Score & Analytics
-  pi.registerTool(paymentScore);
-  pi.registerTool(monthlyProjection);
-  pi.registerTool(checkPriceAlerts);
+  registerTool(pi, paymentScore);
+  registerTool(pi, monthlyProjection);
+  registerTool(pi, checkPriceAlerts);
 
   // Notifications
-  pi.registerTool(configureNotification);
-  pi.registerTool(listNotifications);
-  pi.registerTool(deleteNotification);
-  pi.registerTool(processNotifications);
-  pi.registerTool(getNotificationLog);
-  pi.registerTool(testNotification);
+  registerTool(pi, configureNotification);
+  registerTool(pi, listNotifications);
+  registerTool(pi, deleteNotification);
+  registerTool(pi, processNotifications);
+  registerTool(pi, getNotificationLog);
+  registerTool(pi, testNotification);
 
   // Goals & Budgets
-  pi.registerTool(createGoal);
-  pi.registerTool(listGoals);
-  pi.registerTool(contributeToGoal);
-  pi.registerTool(cancelGoal);
-  pi.registerTool(createBudget);
-  pi.registerTool(listBudgets);
-  pi.registerTool(checkBudgets);
-  pi.registerTool(refreshGoalsTool);
-  pi.registerTool(budgetTrendsTool);
-  pi.registerTool(suggestBudgetAdjustmentTool);
-  pi.registerTool(updateBudgetTool);
+  registerTool(pi, createGoal);
+  registerTool(pi, listGoals);
+  registerTool(pi, contributeToGoal);
+  registerTool(pi, cancelGoal);
+  registerTool(pi, createBudget);
+  registerTool(pi, listBudgets);
+  registerTool(pi, checkBudgets);
+  registerTool(pi, refreshGoalsTool);
+  registerTool(pi, budgetTrendsTool);
+  registerTool(pi, suggestBudgetAdjustmentTool);
+  registerTool(pi, updateBudgetTool);
 }

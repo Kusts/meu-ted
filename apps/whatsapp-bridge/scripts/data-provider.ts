@@ -20,10 +20,22 @@ export interface AccountSummary {
   balance_cents: number;
 }
 
+export interface DueInstallment {
+  transactionId: string;
+  planDescription: string;
+  installmentLabel: string;
+  amountCents: number;
+  dueDate: string;
+  daysUntil: number;
+  isOverdue: boolean;
+  accountName: string;
+}
+
 export interface WeeklyData {
   accounts: AccountSummary[];
   weekTransactions: TransactionRow[];
   currentMonthSummary: MonthSummary;
+  dueInstallments: DueInstallment[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,11 +71,15 @@ export class RealDataProvider {
       })
     );
 
-    const txResult = await listRecentTransactions(householdId, showDays);
+    const [txResult, dueInstallments] = await Promise.all([
+      listRecentTransactions(householdId, showDays),
+      getDueInstallments(householdId, showDays),
+    ]);
 
     return {
       accounts: accountBalances,
       weekTransactions: txResult.transactions ?? [],
+      dueInstallments,
       currentMonthSummary: {
         month: monthResult.month ?? `${year}-${month.toString().padStart(2, '0')}`,
         total_income_cents: monthResult.total_income_cents ?? 0,
@@ -78,6 +94,49 @@ export class RealDataProvider {
 // ─────────────────────────────────────────────────────────────────────────────
 // Fake implementation — used in tests
 // ─────────────────────────────────────────────────────────────────────────────
+
+async function getDueInstallments(householdId: string, daysAhead: number): Promise<DueInstallment[]> {
+  const { Pool } = await import('pg');
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  try {
+    const result = await pool.query(
+      `SELECT t.id, t.amount_cents, t.date::text as due,
+              t.installment_number, t.installments_total,
+              p.description as plan_description,
+              a.name as account_name
+       FROM transactions t
+       JOIN installment_plans p ON p.id = t.installment_plan_id
+       JOIN accounts a ON a.id = t.from_account_id
+       WHERE t.household_id = $1
+         AND t.installment_plan_id IS NOT NULL
+         AND t.installment_status = 'scheduled'
+         AND p.type = 'out_of_card'
+         AND t.deleted_at IS NULL
+         AND t.date <= CURRENT_DATE + $2 * INTERVAL '1 day'
+       ORDER BY t.date ASC
+       LIMIT 10`,
+      [householdId, daysAhead]
+    );
+
+    const today = new Date(new Date().toISOString().slice(0, 10));
+    return result.rows.map((r: any) => {
+      const due = new Date(r.due);
+      const daysUntil = Math.floor((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      return {
+        transactionId: r.id,
+        planDescription: r.plan_description,
+        installmentLabel: `${r.installment_number}/${r.installments_total}`,
+        amountCents: parseInt(r.amount_cents, 10),
+        dueDate: r.due,
+        daysUntil,
+        isOverdue: daysUntil < 0,
+        accountName: r.account_name,
+      };
+    });
+  } finally {
+    await pool.end();
+  }
+}
 
 export class FakeDataProvider {
   constructor(private data: WeeklyData) {}

@@ -60,6 +60,18 @@ const fakeData: WeeklyData = {
     net_balance_cents: 131000,
     transaction_count: 8,
   },
+  dueInstallments: [
+    {
+      transactionId: 'inst-1',
+      planDescription: 'Carro',
+      installmentLabel: '1/60',
+      amountCents: 100000,
+      dueDate: '2026-06-10',
+      daysUntil: 3,
+      isOverdue: false,
+      accountName: 'Itaú',
+    },
+  ],
 };
 
 const emptyData: WeeklyData = {
@@ -72,6 +84,7 @@ const emptyData: WeeklyData = {
     net_balance_cents: 0,
     transaction_count: 0,
   },
+  dueInstallments: [],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +134,14 @@ describe('formatWeeklySummary', () => {
     const msg = formatWeeklySummary(data, 'semana teste');
     expect(msg).toContain('tx0');
     expect(msg).not.toContain('tx6'); // only first 5 shown
+  });
+
+  it('includes out-of-card installment reminders', () => {
+    const msg = formatWeeklySummary(fakeData, 'semana teste');
+    expect(msg).toContain('Parcelamentos fora do cartão vencendo');
+    expect(msg).toContain('Carro (1/60): R$ 1.000,00');
+    expect(msg).toContain('vence em 3 dia(s)');
+    expect(msg).toContain('Itaú');
   });
 
   it('includes current month summary block when there are transactions', () => {

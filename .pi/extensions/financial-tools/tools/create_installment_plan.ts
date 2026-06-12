@@ -31,7 +31,7 @@ interface Params {
   accountId: string;
   description: string;
   totalAmountCents: number;
-  installmentsCount: number;  // 1-48
+  installmentsCount: number;  // 1-60 (out_of_card), 1-48 (credit_card)
   type: PlanType;  // 'credit_card' or 'out_of_card'
   firstDueDate: string;  // YYYY-MM-DD
   interestRate?: number;  // 0 to 1, e.g. 0.0299 for 2.99%/month
@@ -45,7 +45,7 @@ const schema = Type.Object({
   accountId: Type.String(),
   description: Type.String({ minLength: 1 }),
   totalAmountCents: Type.Integer({ minimum: 100 }),  // min R$ 1
-  installmentsCount: Type.Integer({ minimum: 1, maximum: 48 }),
+  installmentsCount: Type.Integer({ minimum: 1, maximum: 60 }),
   type: Type.Union([Type.Literal("credit_card"), Type.Literal("out_of_card")]),
   firstDueDate: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
   interestRate: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
@@ -61,6 +61,14 @@ export const createInstallmentPlan: ToolDefinition = {
   execute: async (params: Params) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
     try {
+      if (params.type === "credit_card" && params.installmentsCount > 48) {
+        return {
+          success: false,
+          error: "installments_limit",
+          message: "Parcelamento no cartão é limitado a 48x. Use type=out_of_card para até 60x.",
+        };
+      }
+
       // 1. Validate account type
       const accResult = await pool.query<{ rows: Array<{ is_credit_card: boolean; name: string }> }>(
         `SELECT is_credit_card, name FROM accounts WHERE id = $1 AND deleted_at IS NULL`,

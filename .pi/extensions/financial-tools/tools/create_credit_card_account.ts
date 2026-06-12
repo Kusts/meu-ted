@@ -32,17 +32,17 @@ export const createCreditCardAccount: ToolDefinition = {
   name: "create_credit_card_account",
   description: "Cria uma conta de cartão de crédito com limite, dia de fechamento e dia de vencimento.",
   parameters: schema,
-  execute: async (params: Params) => {
+  execute: async (_id: string, params: Params, _sig: AbortSignal, onUpdate?: (u: { content: { type: "text"; text: string }[] }) => void) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
     try {
       if (!isValidDay(params.closingDay)) {
-        return { success: false, error: "closingDay deve estar entre 1 e 31" };
+        return { success: false, error: "closingDay deve estar entre 1 e 31", content: [{ type: "text", text: "closingDay deve estar entre 1 e 31" }] };
       }
       if (!isValidDay(params.dueDay)) {
-        return { success: false, error: "dueDay deve estar entre 1 e 31" };
+        return { success: false, error: "dueDay deve estar entre 1 e 31", content: [{ type: "text", text: "dueDay deve estar entre 1 e 31" }] };
       }
       if (params.creditLimitCents <= 0) {
-        return { success: false, error: "creditLimitCents deve ser positivo" };
+        return { success: false, error: "creditLimitCents deve ser positivo", content: [{ type: "text", text: "creditLimitCents deve ser positivo" }] };
       }
 
       // Check duplicates (by name)
@@ -54,11 +54,13 @@ export const createCreditCardAccount: ToolDefinition = {
           [params.householdId, params.name]
         );
         if (dupResult.rows.length > 0) {
+          const message = `Já existe conta com nome similar: ${dupResult.rows[0].name}`;
           return {
             success: false,
             error: "duplicate",
-            message: `Já existe conta com nome similar: ${dupResult.rows[0].name}`,
+            message,
             hint: "Passe force=true se quiser criar mesmo assim",
+            content: [{ type: "text", text: message }],
           };
         }
       }
@@ -73,16 +75,19 @@ export const createCreditCardAccount: ToolDefinition = {
           [params.householdId, params.closingDay, params.dueDay]
         );
         if (similar.rows.length > 0) {
+          const message = `Já existe cartão com mesmo fechamento/vencimento: ${similar.rows[0].name}`;
           return {
             success: false,
             error: "similar_card_exists",
-            message: `Já existe cartão com mesmo fechamento/vencimento: ${similar.rows[0].name}`,
+            message,
             hint: "Passe force=true se quiser criar mesmo assim",
+            content: [{ type: "text", text: message }],
           };
         }
       }
 
       // Create
+      onUpdate?.({ content: [{ type: "text", text: "Criando cartão de crédito..." }] });
       const result = await pool.query<{ rows: Array<{ id: string }> }>(
         `INSERT INTO accounts (
           id, household_id, name, name_normalized,
@@ -98,6 +103,7 @@ export const createCreditCardAccount: ToolDefinition = {
       );
 
       const id = result.rows[0].id;
+      const message = `✅ Cartão criado: ${params.name}`;
       return {
         success: true,
         limit: `R$ ${(params.creditLimitCents / 100).toFixed(2)}`,
@@ -108,7 +114,8 @@ export const createCreditCardAccount: ToolDefinition = {
         creditLimitCents: params.creditLimitCents,
         closingDay: params.closingDay,
         dueDay: params.dueDay,
-        message: `✅ Cartão criado: ${params.name}`,
+        message,
+        content: [{ type: "text", text: message }],
         details: {
           limit: `R$ ${(params.creditLimitCents / 100).toFixed(2)}`,
           closing: `dia ${params.closingDay}`,
@@ -116,7 +123,7 @@ export const createCreditCardAccount: ToolDefinition = {
         },
       };
     } catch (e: any) {
-      return { success: false, error: "db_error", message: e.message };
+      return { success: false, error: "db_error", message: e.message, content: [{ type: "text", text: e.message }] };
     } finally {
       await pool.end();
     }
