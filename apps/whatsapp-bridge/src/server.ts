@@ -89,18 +89,6 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
     process.env.DEFAULT_HOUSEHOLD_ID ?? 'default',
   );
 
-  // Pre-warm Pi client in background — does NOT block app.listen()
-  if (getAgentRuntime() === 'pi-native') {
-    (async () => {
-      try {
-        await (piClient as any).warmup();
-        console.log('[bridge] Pi client warmed up');
-      } catch (err) {
-        console.error('[bridge] Pi warmup failed:', err instanceof Error ? err.message : String(err));
-      }
-    })();
-  }
-
   app.get('/health', async () => ({ status: 'ok' }));
 
   app.post('/webhooks/evolution', async (req, reply) => {
@@ -133,16 +121,30 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
 
 async function main(): Promise<void> {
   void loadEnv(process.cwd());
-  console.log('[bridge] DATABASE_URL:', JSON.stringify(process.env.DATABASE_URL));
-  console.log('[bridge] PI_AGENT_RUNTIME:', JSON.stringify(process.env.PI_AGENT_RUNTIME));
+  console.log('[bridge] PI_AGENT_RUNTIME:', process.env.PI_AGENT_RUNTIME ?? 'unset');
   console.log('[bridge] cwd:', process.cwd());
   const host = process.env.HOST ?? '0.0.0.0';
   const port = parseInt(process.env.PORT ?? '3000', 10);
 
-  const app = createApp();
+  // Create PiClient BEFORE createApp so the same instance is used by webhooks
+  const piClient = createPiClient(process.env.DEFAULT_HOUSEHOLD_ID ?? 'default');
+  const app = createApp({ piClient });
+
   try {
     await app.listen({ port, host });
     console.log(`[bridge] listening on http://${host}:${port}`);
+
+    // Warm up the SAME piClient instance after HTTP is listening — does NOT block /health
+    if (getAgentRuntime() === 'pi-native') {
+      setImmediate(async () => {
+        try {
+          await (piClient as any).warmup?.();
+          console.log('[bridge] Pi client warmed up');
+        } catch (err) {
+          console.error('[bridge] Pi warmup failed (non-critical):', err instanceof Error ? err.message : String(err));
+        }
+      });
+    }
   } catch (err) {
     app.log.error(err);
     process.exit(1);

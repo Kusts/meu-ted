@@ -12,19 +12,19 @@ Banco de dados Postgres acessado via `host.docker.internal`.
 
 ## Variáveis obrigatórias
 
+⚠️ **Segurança:** `.env.pi` contém `MINIMAX_API_KEY` e outras credenciais.
+Nunca comite `.env.pi` no git. Ele já está no `.gitignore` do projeto.
+
 O compose usa defaults que funcionam com o projeto local.
 Para sobrescrever, exporte as vars antes de rodar o compose:
 
 ```bash
-# Ajuste DATABASE_URL se seu banco tiver credenciais diferentes
 export DATABASE_URL="postgresql://postgres:postgres@host.docker.internal:5432/pi_financeiro"
-
-# Ajuste Evolution API se a porta/IP for diferente
 export EVOLUTION_GO_API_URL="http://host.docker.internal:4000"
 export EVOLUTION_GO_INSTANCE_TOKEN="seu-token-aqui"
 ```
 
-Ou crie `.env.pi` com todas as vars e use `--env-file`:
+Ou use `.env.pi` com `--env-file`:
 
 ```bash
 docker compose -f docker/pi-stack/docker-compose.yml --env-file .env.pi up -d
@@ -38,26 +38,46 @@ docker compose -f docker/pi-stack/docker-compose.yml --env-file .env.pi up -d
 # Build
 docker compose -f docker/pi-stack/docker-compose.yml build
 
-# Subir container
+# Subir container (bridge HTTP sobe automaticamente)
 docker compose -f docker/pi-stack/docker-compose.yml up -d
+
+# Verificar se o bridge está respondendo
+curl http://localhost:3000/health
+# → {"status":"ok"}
+
+# Ver logs
+docker compose -f docker/pi-stack/docker-compose.yml logs -f
 
 # Verificar Pi acessível
 docker compose -f docker/pi-stack/docker-compose.yml exec pi-stack pi --version
 
-# Testar RPC (resposta do Pi)
-docker compose -f docker/pi-stack/docker-compose.yml exec pi-stack bash -c \
-  'cd /workspace/apps/whatsapp-bridge && npx tsx --input-type=module -e "
-import { createPiClient } from \"./src/pi-client-factory.js\";
-const c = createPiClient(\"default\");
-await c.warmup();
-const r = await c.send(\"Liste contas\", \"+\", {source:\"t\",chatId:\"t\",providerMessageId:\"t\"});
-console.log(r.success, r.data?.message?.substring(0,200));
-await c.stop();
-"'
-
 # Parar
 docker compose -f docker/pi-stack/docker-compose.yml down
 ```
+
+## Healthcheck
+
+O compose inclui healthcheck que valida `GET /health` a cada 10s.
+O bridge responde `{"status":"ok"}` imediatamente — warmup do Pi
+acontece em background após o HTTP estar no ar e não bloqueia health.
+
+## Troubleshooting
+
+### `curl` retorna empty reply ou connection refused
+O container ainda não subiu. Aguarde ~15s (start_period do healthcheck).
+Verifique com: `docker compose -f docker/pi-stack/docker-compose.yml ps`
+
+### `pnpm install` falha com `ERR_PNPM_IGNORED_BUILDS`
+Versão do pnpm do container é incompatível com o lockfile do host.
+No Dockerfile, pnpm está pinned em `10.34.1`. Rebuild: `docker compose build --no-cache`.
+
+### Pi agent não responde (PI_AGENT_RUNTIME=pi-native)
+Verifique `MINIMAX_API_KEY` no `.env.pi` e `PI_RPC_PROVIDER`.
+Logs: `docker compose logs -f | grep -i pi`
+
+### Bridge lento na primeira requisição
+Normal — Pi client faz warmup em background na primeira chamada.
+Warmup não bloqueia `/health` mas pode afetar `/webhooks/evolution` na primeira vez.
 
 ## Env vars completas
 
