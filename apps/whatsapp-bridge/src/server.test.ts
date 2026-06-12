@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import type { AddressInfo } from 'node:net';
 import { createApp } from './server.js';
 import type { PiClient, UserRegistry, SourceMessageStore, ResponseSender } from './webhook-handler.js';
 
@@ -53,13 +54,12 @@ describe('server /health', () => {
     // Pass piClient explicitly — same pattern as main()
     app = createApp({ piClient: pi, registry: reg, store, sender });
 
-    const addresses = await app.listen({ port: 0 });
-    const url = addresses as string;
-    const port = parseInt(url.split(':').pop() ?? '0', 10);
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const address = (app as unknown as { server: { address(): AddressInfo | string | null } }).server.address() as AddressInfo;
 
     try {
       // Health responds immediately — warmup is deferred to main(), not createApp
-      const res = await fetch(`http://localhost:${port}/health`);
+      const res = await fetch(`http://127.0.0.1:${address.port}/health`);
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json).toEqual({ status: 'ok' });

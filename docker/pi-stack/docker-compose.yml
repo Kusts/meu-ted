@@ -8,6 +8,8 @@ services:
     container_name: pi-stack
     volumes:
       - ../../:/workspace
+      - pi_stack_node_modules:/workspace/node_modules
+      - pi_stack_bridge_node_modules:/workspace/apps/whatsapp-bridge/node_modules
     env_file:
       - ../../.env.pi
     environment:
@@ -35,3 +37,7 @@ services:
       start_period: 15s
     stdin_open: true
     tty: true
+
+volumes:
+  pi_stack_node_modules:
+  pi_stack_bridge_node_modules:

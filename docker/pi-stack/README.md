@@ -71,6 +71,11 @@ Verifique com: `docker compose -f docker/pi-stack/docker-compose.yml ps`
 Versão do pnpm do container é incompatível com o lockfile do host.
 No Dockerfile, pnpm está pinned em `10.34.1`. Rebuild: `docker compose build --no-cache`.
 
+### `node_modules` do host quebra depois de subir Docker
+O compose usa volumes nomeados para `/workspace/node_modules` e
+`/workspace/apps/whatsapp-bridge/node_modules`, isolando dependências Linux do
+container das dependências Windows do host.
+
 ### Pi agent não responde (PI_AGENT_RUNTIME=pi-native)
 Verifique `MINIMAX_API_KEY` no `.env.pi` e `PI_RPC_PROVIDER`.
 Logs: `docker compose logs -f | grep -i pi`
