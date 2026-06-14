@@ -9,10 +9,12 @@ import { createPostgresReadModelStore } from '../read-models/postgres-store.js';
 import { createPostgresWriteStore, createPostgresIdempotencyStore } from '../writes/postgres.js';
 import { runMigrations } from '../read-models/sql/migrate.js';
 import { loadConfig } from '../env.js';
+import { registerCors } from './cors.js';
 
 const start = async (): Promise<void> => {
   const cfg = loadConfig();
   const app = Fastify({ logger: true });
+  registerCors(app);
 
   if (cfg.databaseUrl) {
     const pool = createPool({ connectionString: cfg.databaseUrl });

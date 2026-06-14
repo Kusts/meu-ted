@@ -73,7 +73,9 @@ Env:
 |---|---|---|
 | `PORT` | `3001` | |
 | `HOST` | `0.0.0.0` | |
-| `DATABASE_URL` | unset | When set, uses Postgres. Format: `postgresql://user:pw@host:port/db?sslmode=...` |
+| `CORS_ORIGIN` | unset | Set to the PWA domain for browser CORS (e.g. `https://pi-finance-web.pages.dev`) |
+
+## Deploy (production on Windows)
 
 ## Layout
 
@@ -99,6 +101,38 @@ tests/
 - Read-only: no POST/PATCH/DELETE in V1.
 - Single household derived server-side; multi-tenant SaaS is out of scope.
 - Bridge stays untouched.
+
+## Deploy (production on Windows)
+
+The API runs locally on the user's PC and is exposed via Cloudflare Tunnel for HTTPS access from the PWA.
+
+### Setup
+
+1. Install cloudflared: `winget install cloudflare.cloudflared` (or from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+2. `cloudflared tunnel login` — opens browser, authorizes your Cloudflare account.
+3. `cloudflared tunnel create pi-finance-api` — generates a tunnel UUID and credentials file.
+4. `cloudflared tunnel route dns pi-finance-api api.pi-finance.example.com` — maps the tunnel to a DNS record.
+5. Copy `cloudflared-config.example.yml` to `~/.cloudflared/config.yml`.
+6. Update `config.yml` with your tunnel UUID and hostname.
+
+### Run
+
+```bash
+# Terminal 1 — API
+cp .env.example .env   # configure DATABASE_URL, CORS_ORIGIN, PORT
+pnpm start             # or: pnpm db:migrate && pnpm start
+
+# Terminal 2 — Tunnel
+cloudflared tunnel run pi-finance-api
+```
+
+The API is now accessible at `https://api.pi-finance.example.com`.
+
+### CORS
+
+Set `CORS_ORIGIN=https://pi-finance-web.pages.dev` in `.env` to allow the PWA to call the API from the browser.
+
+CORS is disabled by default (no open CORS). When `CORS_ORIGIN` is set, the API adds `Access-Control-Allow-Origin`, `Access-Control-Allow-Credentials`, and handles OPTIONS preflight.
 
 ## Persistence
 

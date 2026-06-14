@@ -4,6 +4,7 @@ import { createInMemoryReadModelStore, type ReadModelStore } from '../src/read-m
 import { createInMemoryStores, type InMemoryState } from '../src/writes/in-memory.js';
 import { createInMemoryIdempotencyStore } from '../src/writes/idempotency.js';
 import { type DeviceTokenStore } from '../src/auth/device-token.js';
+import { registerCors } from '../src/server/cors.js';
 import { HOUSEHOLD_A, HOUSEHOLD_B } from './fixtures/seed.js';
 import type { Account, Category, Transaction } from '../src/types/domain.js';
 
@@ -36,6 +37,7 @@ export const buildTestApp = (seed: { accounts?: Account[]; categories?: Category
     accounts: state.accounts, categories: state.categories, transactions: state.transactions, deletedTransactionIds: state.deletedTransactions,
   });
   const app = Fastify({ logger: false });
+  registerCors(app);
   registerRoutes(app, { store, writes, tokenStore: createTestTokenStore(), idempotency: createInMemoryIdempotencyStore() });
   return { app, store, state };
 };

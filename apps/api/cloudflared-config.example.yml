@@ -1,0 +1,15 @@
+# cloudflared tunnel configuration
+# After running `cloudflared tunnel login` and `cloudflared tunnel create pi-finance-api`:
+#
+#   cloudflared tunnel route dns pi-finance-api api.pi-finance.example.com
+#   cloudflared tunnel run pi-finance-api
+#
+# Place this file at ~/.cloudflared/config.yml or run with --config
+
+tunnel: pi-finance-api
+credentials-file: C:/Users/walis/.cloudflared/<tunnel-uuid>.json
+
+ingress:
+  - hostname: api.pi-finance.example.com
+    service: http://localhost:3001
+  - service: http_status:404
