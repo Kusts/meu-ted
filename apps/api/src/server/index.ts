@@ -1,20 +1,40 @@
 import Fastify from 'fastify';
 import { registerRoutes } from '../routes/index.js';
-import { createInMemoryReadModelStore } from '../read-models/store.js';
-
-const PORT = Number(process.env.PORT ?? 3001);
-const HOST = process.env.HOST ?? '0.0.0.0';
+import { createInMemoryReadModelStore, createInMemoryReadModelStoreFromState } from '../read-models/store.js';
+import { createInMemoryStores } from '../writes/in-memory.js';
+import { createInMemoryIdempotencyStore } from '../writes/idempotency.js';
+import { createInMemoryDeviceTokenStore, createPostgresDeviceTokenStore } from '../auth/device-token.js';
+import { createPool } from '../db/pool.js';
+import { createPostgresReadModelStore } from '../read-models/postgres-store.js';
+import { createPostgresWriteStore, createPostgresIdempotencyStore } from '../writes/postgres.js';
+import { runMigrations } from '../read-models/sql/migrate.js';
+import { loadConfig } from '../env.js';
 
 const start = async (): Promise<void> => {
+  const cfg = loadConfig();
   const app = Fastify({ logger: true });
-  const store = createInMemoryReadModelStore();
-  registerRoutes(app, { store });
-  try {
-    await app.listen({ port: PORT, host: HOST });
-  } catch (err) {
-    app.log.error(err);
-    process.exit(1);
+
+  if (cfg.databaseUrl) {
+    const pool = createPool({ connectionString: cfg.databaseUrl });
+    const result = await runMigrations(pool);
+    app.log.info({ database: 'postgres', appliedMigrations: result.applied }, 'using postgres stores');
+    const store = createPostgresReadModelStore({ pool });
+    const writes = createPostgresWriteStore({ pool });
+    const tokenStore = createPostgresDeviceTokenStore(pool);
+    const idempotency = createPostgresIdempotencyStore({ pool });
+    registerRoutes(app, { store, writes, tokenStore, idempotency });
+    app.log.info('postgres device token store active');
+    app.addHook('onClose', async () => { await pool.end(); });
+  } else {
+    app.log.info('using in-memory stores (no DATABASE_URL)');
+    const { state, writes } = createInMemoryStores();
+    const store = createInMemoryReadModelStoreFromState(state);
+    const tokenStore = createInMemoryDeviceTokenStore();
+    registerRoutes(app, { store, writes, tokenStore, idempotency: createInMemoryIdempotencyStore() });
   }
+
+  try { await app.listen({ port: cfg.port, host: cfg.host }); }
+  catch (err) { app.log.error(err); process.exit(1); }
 };
 
 void start();

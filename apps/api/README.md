@@ -73,6 +73,7 @@ Env:
 |---|---|---|
 | `PORT` | `3001` | |
 | `HOST` | `0.0.0.0` | |
+| `DATABASE_URL` | unset | When set, uses Postgres. Format: `postgresql://user:pw@host:port/db?sslmode=...` |
 
 ## Layout
 
@@ -97,12 +98,67 @@ tests/
 
 - Read-only: no POST/PATCH/DELETE in V1.
 - Single household derived server-side; multi-tenant SaaS is out of scope.
-- In-memory read models; persistence adapter is a future swap.
 - Bridge stays untouched.
+
+## Persistence
+
+Two `ReadModelStore` implementations behind one interface:
+
+| Backend | When | File |
+|---|---|---|
+| In-memory | `DATABASE_URL` unset (dev/test default) | `src/read-models/store.ts` |
+| Postgres | `DATABASE_URL` set | `src/read-models/postgres-store.ts` |
+
+The in-memory store is the dev/test fallback. Postgres becomes the
+backend when `DATABASE_URL` is set; the server runs migrations on
+startup. Both backends are exercised by the **same contract suite** at
+`tests/contract/read-model-store.contract.ts`.
+
+### Schema & migrations
+
+SQL lives in `src/read-models/sql/V###__*.sql`. The forward-only
+runner (`src/read-models/sql/migrate.ts`) applies pending migrations
+and records them in `_migrations`.
+
+```bash
+pnpm db:migrate                  # apply pending migrations
+# Uses DATABASE_URL from .env or environment.
+```
+
+### Postgres integration test (gated)
+
+```bash
+# 1. Create a dedicated test database (idempotent)
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/pi_finance_api_test \
+  pnpm tsx src/scripts/create-test-db.ts
+
+# 2. Run migrations
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/pi_finance_api_test \
+  pnpm db:migrate
+
+# 3. Run the full suite (in-memory + postgres contract)
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/pi_finance_api_test \
+  pnpm test
+```
+
+Without `DATABASE_URL` set, the Postgres contract suite is skipped and
+the in-memory contract still proves the same behavior.
+
+### Seeding the demo household
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/pi_finance_api_test \
+  pnpm tsx src/scripts/seed-demo.ts
+```
+
+Inserts the V1 demo accounts, categories, transactions, and a
+`dev-token-1` device token pointing at the demo household — exactly
+what the in-memory store serves by default.
 
 ## Next slices (planned)
 
 - CRUD endpoints for accounts, categories, transactions
 - Card module endpoints (module 2)
-- Real persistence adapter behind the same `ReadModelStore` interface
+- Postgres-backed device-token store (table exists; auth still uses
+  in-memory lookup for V1)
 - Device registration + revocation flow

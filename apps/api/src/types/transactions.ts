@@ -75,8 +75,8 @@ export const dashboardSummarySchema = z.object({
   totalBalanceCents: moneyCents,
   monthIncomeCents: moneyCents,
   monthExpenseCents: moneyCents,
-  monthNetCents: z.number().int(),
-  cashFlowLast30DaysCents: z.number().int(),
+  monthNetCents: moneyCents,
+  cashFlowLast30DaysCents: moneyCents,
   topExpenses: z.array(
     z.object({
       transactionId: z.string().uuid(),
@@ -86,6 +86,10 @@ export const dashboardSummarySchema = z.object({
       categoryName: z.string().optional(),
     }),
   ),
+  topExpenseCategories: z.array(z.object({ categoryId: z.string().uuid().optional(), categoryName: z.string(), totalCents: moneyCents })),
+  topIncomeCategories: z.array(z.object({ categoryId: z.string().uuid().optional(), categoryName: z.string(), totalCents: moneyCents })),
+  monthOverMonth: z.object({ incomeChangePercent: z.number().nullable(), expenseChangePercent: z.number().nullable(), netChangeCents: moneyCents }),
+  alerts: z.array(z.object({ id: z.string(), message: z.string(), severity: z.enum(['info', 'warn', 'good']) })),
 });
 
 export const quickInsightSchema = z.object({

@@ -90,4 +90,26 @@ describe('GET /dashboard/summary', () => {
     const res = await app.inject({ method: 'GET', url: '/dashboard/summary' });
     expect(res.statusCode).toBe(401);
   });
+
+  it('returns top expense categories aggregated', async () => {
+    const { app } = buildTestApp(seed);
+    const res = await app.inject({ method: 'GET', url: '/dashboard/summary', headers: { 'x-device-token': TOKEN_A } });
+    const cats = res.json().topExpenseCategories;
+    expect(cats.length).toBeGreaterThan(0);
+    expect(cats[0]).toMatchObject({ categoryName: expect.any(String), totalCents: expect.any(Number) });
+  });
+
+  it('returns month-over-month change', async () => {
+    const { app } = buildTestApp(seed);
+    const res = await app.inject({ method: 'GET', url: '/dashboard/summary', headers: { 'x-device-token': TOKEN_A } });
+    const mom = res.json().monthOverMonth;
+    expect(typeof mom.incomeChangePercent === 'number' || mom.incomeChangePercent === null).toBe(true);
+    expect(typeof mom.netChangeCents).toBe('number');
+  });
+
+  it('returns alerts array', async () => {
+    const { app } = buildTestApp(seed);
+    const res = await app.inject({ method: 'GET', url: '/dashboard/summary', headers: { 'x-device-token': TOKEN_A } });
+    expect(Array.isArray(res.json().alerts)).toBe(true);
+  });
 });

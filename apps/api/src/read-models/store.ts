@@ -37,10 +37,13 @@ export const createInMemoryReadModelStore = (seed?: {
   accounts?: Account[];
   categories?: Category[];
   transactions?: Transaction[];
+  /** Soft-deleted transaction ids to filter from reads. */
+  deletedTransactionIds?: Set<string>;
 }): ReadModelStore => {
   const accounts = seed?.accounts ?? DEMO_ACCOUNTS;
   const categories = seed?.categories ?? DEMO_CATEGORIES;
   const transactions = seed?.transactions ?? DEMO_TRANSACTIONS;
+  const deletedIds = seed?.deletedTransactionIds ?? new Set<string>();
 
   return {
     async listAccounts(householdId) {
@@ -64,6 +67,7 @@ export const createInMemoryReadModelStore = (seed?: {
 
       const filtered = transactions
         .filter((t) => t.householdId === householdId)
+        .filter((t) => !deletedIds.has(t.id))
         .filter((t) => inRange(t.date, clean.startDate, clean.endDate))
         .filter((t) => (clean.accountId ? t.accountId === clean.accountId : true))
         .filter((t) => (clean.categoryId ? t.categoryId === clean.categoryId : true))
@@ -82,9 +86,25 @@ export const createInMemoryReadModelStore = (seed?: {
       return { items, total };
     },
     async listAllTransactions(householdId) {
-      return transactions.filter((t) => t.householdId === householdId);
+      return transactions
+        .filter((t) => t.householdId === householdId)
+        .filter((t) => !deletedIds.has(t.id));
     },
   };
+};
+
+export const createInMemoryReadModelStoreFromState = (state: {
+  accounts: Account[];
+  categories: Category[];
+  transactions: Transaction[];
+  deletedTransactions: Set<string>;
+}): ReadModelStore => {
+  return createInMemoryReadModelStore({
+    accounts: state.accounts,
+    categories: state.categories,
+    transactions: state.transactions,
+    deletedTransactionIds: state.deletedTransactions,
+  });
 };
 
 export const DEMO_HOUSEHOLDS = [DEMO_HOUSEHOLD_ID] as const;

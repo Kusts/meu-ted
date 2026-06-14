@@ -71,6 +71,14 @@ export type DashboardSummary = {
     date: ISODate;
     categoryName?: string;
   }>;
+  topExpenseCategories: Array<{ categoryId?: UUID; categoryName: string; totalCents: MoneyCents }>;
+  topIncomeCategories: Array<{ categoryId?: UUID; categoryName: string; totalCents: MoneyCents }>;
+  monthOverMonth: {
+    incomeChangePercent: number | null;
+    expenseChangePercent: number | null;
+    netChangeCents: number;
+  };
+  alerts: Array<{ id: string; message: string; severity: 'info' | 'warn' | 'good' }>;
 };
 
 export type QuickInsight = {

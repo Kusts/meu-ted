@@ -3,6 +3,8 @@
  * Single household, mixed bank + cash accounts, no credit cards (per V1 spec:
  * "V1 Carteira shows bank/cash accounts only; credit-card accounts appear
  * after module 2").
+ *
+ * IDs use real UUIDv4-style hex so they fit a Postgres UUID column.
  */
 
 import type { Account, Category, Transaction } from '../types/domain.js';
@@ -64,7 +66,7 @@ const monthStart = (): string => {
  */
 export const DEMO_TRANSACTIONS: Transaction[] = [
   {
-    id: 'tttttttt-tttt-4ttt-8ttt-tttttttt0001',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeee0001',
     householdId: DEMO_HOUSEHOLD_ID,
     kind: 'income',
     description: 'Salário mensal',
@@ -74,7 +76,7 @@ export const DEMO_TRANSACTIONS: Transaction[] = [
     categoryId: DEMO_CATEGORIES[5]!.id,
   },
   {
-    id: 'tttttttt-tttt-4ttt-8ttt-tttttttt0002',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeee0002',
     householdId: DEMO_HOUSEHOLD_ID,
     kind: 'expense',
     description: 'Aluguel apartamento',
@@ -84,7 +86,7 @@ export const DEMO_TRANSACTIONS: Transaction[] = [
     categoryId: DEMO_CATEGORIES[1]!.id,
   },
   {
-    id: 'tttttttt-tttt-4ttt-8ttt-tttttttt0003',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeee0003',
     householdId: DEMO_HOUSEHOLD_ID,
     kind: 'expense',
     description: 'Supermercado',
@@ -94,7 +96,7 @@ export const DEMO_TRANSACTIONS: Transaction[] = [
     categoryId: DEMO_CATEGORIES[0]!.id,
   },
   {
-    id: 'tttttttt-tttt-4ttt-8ttt-tttttttt0004',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeee0004',
     householdId: DEMO_HOUSEHOLD_ID,
     kind: 'expense',
     description: 'Conta de luz',
@@ -104,7 +106,7 @@ export const DEMO_TRANSACTIONS: Transaction[] = [
     categoryId: DEMO_CATEGORIES[2]!.id,
   },
   {
-    id: 'tttttttt-tttt-4ttt-8ttt-tttttttt0005',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeee0005',
     householdId: DEMO_HOUSEHOLD_ID,
     kind: 'expense',
     description: 'Internet fibra',
@@ -114,7 +116,7 @@ export const DEMO_TRANSACTIONS: Transaction[] = [
     categoryId: DEMO_CATEGORIES[3]!.id,
   },
   {
-    id: 'tttttttt-tttt-4ttt-8ttt-tttttttt0006',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeee0006',
     householdId: DEMO_HOUSEHOLD_ID,
     kind: 'expense',
     description: 'Combustível',
@@ -124,7 +126,7 @@ export const DEMO_TRANSACTIONS: Transaction[] = [
     categoryId: DEMO_CATEGORIES[4]!.id,
   },
   {
-    id: 'tttttttt-tttt-4ttt-8ttt-tttttttt0007',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeee0007',
     householdId: DEMO_HOUSEHOLD_ID,
     kind: 'expense',
     description: 'Mercado da semana',
@@ -134,7 +136,7 @@ export const DEMO_TRANSACTIONS: Transaction[] = [
     categoryId: DEMO_CATEGORIES[0]!.id,
   },
   {
-    id: 'tttttttt-tttt-4ttt-8ttt-tttttttt0008',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeee0008',
     householdId: DEMO_HOUSEHOLD_ID,
     kind: 'income',
     description: 'Pagamento freela',
@@ -144,7 +146,7 @@ export const DEMO_TRANSACTIONS: Transaction[] = [
     categoryId: DEMO_CATEGORIES[6]!.id,
   },
   {
-    id: 'tttttttt-tttt-4ttt-8ttt-tttttttt0009',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeee0009',
     householdId: DEMO_HOUSEHOLD_ID,
     kind: 'transfer',
     description: 'Itaú → Nubank',
@@ -154,7 +156,7 @@ export const DEMO_TRANSACTIONS: Transaction[] = [
     transferToAccountId: DEMO_ACCOUNTS[1]!.id,
   },
   {
-    id: 'tttttttt-tttt-4ttt-8ttt-tttttttt0010',
+    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeee000a',
     householdId: DEMO_HOUSEHOLD_ID,
     kind: 'expense',
     description: 'Mercado mensal grande',
