@@ -17,6 +17,7 @@ export type RouteDeps = {
   writes: WriteStore;
   tokenStore?: DeviceTokenStore;
   idempotency?: IdempotencyStore;
+  defaultHouseholdId?: string;
 };
 
 export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
@@ -25,7 +26,9 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   const resolveToken: AuthResolver = async (token) => tokenStore.resolve(token);
 
   app.get('/health', async () => ({ status: 'ok' }));
-  registerAuthRoutes(app, { resolveToken, tokenStore });
+  const authOpts: Parameters<typeof registerAuthRoutes>[1] = { resolveToken, tokenStore };
+  if (deps.defaultHouseholdId !== undefined) authOpts.defaultHouseholdId = deps.defaultHouseholdId;
+  registerAuthRoutes(app, authOpts);
   registerAccountRoutes(app, { store: deps.store, writes: deps.writes, resolveToken });
   registerCategoryRoutes(app, { store: deps.store, writes: deps.writes, resolveToken });
   registerTransactionRoutes(app, { store: deps.store, resolveToken });

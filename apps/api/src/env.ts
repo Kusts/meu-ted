@@ -45,11 +45,13 @@ export type AppConfig = {
   port: number;
   host: string;
   databaseUrl: string | null;
+  defaultHouseholdId: string;
 };
 
 export const loadConfig = (): AppConfig => {
   const port = Number(process.env.PORT ?? 3001);
   const host = process.env.HOST ?? '0.0.0.0';
   const databaseUrl = process.env.DATABASE_URL?.trim() || null;
-  return { port, host, databaseUrl };
+  const defaultHouseholdId = process.env.DEFAULT_HOUSEHOLD_ID?.trim() || '11111111-1111-4111-8111-111111111111';
+  return { port, host, databaseUrl, defaultHouseholdId };
 };

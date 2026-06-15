@@ -34,11 +34,11 @@ const appliedVersions = async (pool: DbPool): Promise<Set<number>> => {
   return new Set(res.rows.map((r) => r.version));
 };
 
-export const runMigrations = async (pool: DbPool): Promise<{ applied: number[] }> => {
+export const runMigrations = async (pool: DbPool, legacyOnly = false): Promise<{ applied: number[] }> => {
   await ensureMigrationsTable(pool);
   const applied = await appliedVersions(pool);
   const files = readdirSync(MIGRATIONS_DIR)
-    .filter((f) => MIGRATION_RE.test(f))
+    .filter((f) => MIGRATION_RE.test(f) && (!legacyOnly || f.startsWith('V003')))
     .sort((a, b) => a.localeCompare(b));
 
   const newlyApplied: number[] = [];

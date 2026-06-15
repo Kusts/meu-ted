@@ -9,7 +9,7 @@ const revokeInput = z.object({ token: z.string().trim().min(1) });
 
 export const registerAuthRoutes = (
   app: FastifyInstance,
-  opts: { resolveToken: AuthResolver; tokenStore: DeviceTokenStore },
+  opts: { resolveToken: AuthResolver; tokenStore: DeviceTokenStore; defaultHouseholdId?: string },
 ): void => {
   app.get('/auth/devices/me', async (req, reply) => {
     const token = req.headers[DEVICE_TOKEN_HEADER];
@@ -27,7 +27,8 @@ export const registerAuthRoutes = (
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     try {
       const { DEMO_HOUSEHOLD_ID } = await import('../read-models/demo-data.js');
-      const result = await opts.tokenStore.register(parsed.data.deviceName, DEMO_HOUSEHOLD_ID);
+      const householdId = opts.defaultHouseholdId ?? DEMO_HOUSEHOLD_ID;
+      const result = await opts.tokenStore.register(parsed.data.deviceName, householdId);
       return reply.code(201).send(result);
     } catch (e) {
       const err = e as { statusCode?: number; code?: string; message?: string };
