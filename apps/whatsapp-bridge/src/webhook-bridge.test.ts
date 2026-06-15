@@ -531,6 +531,75 @@ describe('processWebhook', () => {
     expect(store.errors).toEqual([]);
   });
 
+  it('normalizes leading whitespace/newlines from Pi response before sending', async () => {
+    pi = makePi({ response: '\n\n  ok' });
+    const p = payload({ text: 'qual o saldo?' });
+    const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+    expect(res.status).toBe('forwarded');
+    // responseSender.send receives trimmed text
+    expect(sender.sent).toEqual([
+      { chatId: '5511999999999@s.whatsapp.net', text: 'ok' },
+    ]);
+    // processWebhook returns normalized response
+    expect(res.response).toBe('ok');
+  });
+
+  it('normalizes leading whitespace/newlines from Pi response — only newline', async () => {
+    pi = makePi({ response: '\n\nok' });
+    const p = payload({ text: 'oi' });
+    const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+    expect(res.status).toBe('forwarded');
+    expect(sender.sent).toEqual([
+      { chatId: '5511999999999@s.whatsapp.net', text: 'ok' },
+    ]);
+    expect(res.response).toBe('ok');
+  });
+
+  it('does not alter message without leading whitespace', async () => {
+    pi = makePi({ response: 'Registrado! ✅' });
+    const p = payload({ text: 'gastei 50' });
+    const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+    expect(res.status).toBe('forwarded');
+    expect(sender.sent).toEqual([
+      { chatId: '5511999999999@s.whatsapp.net', text: 'Registrado! ✅' },
+    ]);
+    expect(res.response).toBe('Registrado! ✅');
+  });
+
+  // ─── ALLOW_DIRECT_MESSAGES gate ──────────────────────────────────────────
+
+  it('blocks direct chat when allowDirectMessages is false (ignored, reason claro)', async () => {
+    const p = payload({ text: 'oi' });
+    const res = await processWebhook(p, 'good-token', reg, store, pi, sender, false);
+    expect(res.status).toBe('ignored');
+    expect(res.reason).toBe('mensagem direta ignorada');
+    expect(pi.send).not.toHaveBeenCalled();
+    expect(sender.send).not.toHaveBeenCalled();
+  });
+
+  it('allows group message when allowDirectMessages is false', async () => {
+    const p = payload({ text: 'oi' });
+    p.data.Info.IsGroup = true;
+    p.data.Info.Chat = '120363045678901234@g.us';
+    const res = await processWebhook(p, 'good-token', reg, store, pi, sender, false);
+    expect(res.status).toBe('forwarded');
+    expect(pi.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows direct chat when allowDirectMessages is true (default)', async () => {
+    const p = payload({ text: 'oi' });
+    const res = await processWebhook(p, 'good-token', reg, store, pi, sender, true);
+    expect(res.status).toBe('forwarded');
+    expect(pi.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows direct chat when allowDirectMessages is omitted (default true)', async () => {
+    const p = payload({ text: 'oi' });
+    const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
+    expect(res.status).toBe('forwarded');
+    expect(pi.send).toHaveBeenCalledTimes(1);
+  });
+
   it('sends composing then paused presence around the call', async () => {
     const p = payload({ text: 'oi' });
     await processWebhook(p, 'good-token', reg, store, pi, sender);

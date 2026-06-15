@@ -35,6 +35,12 @@ function csv(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function parseAllowDirectMessages(): boolean {
+  const raw = process.env.ALLOW_DIRECT_MESSAGES?.toLowerCase();
+  if (raw === 'false' || raw === '0' || raw === 'no') return false;
+  return true;
+}
+
 function buildRegistry(): UserRegistry {
   const phones = new Set(csv(process.env.REGISTERED_PHONES ?? process.env.ADMIN_PHONES));
   const groups = new Set(csv(process.env.ALLOWED_GROUP_IDS ?? process.env.ALLOWED_GROUPS));
@@ -72,6 +78,7 @@ export interface AppOptions {
   registry?: UserRegistry;
   store?: SourceMessageStore;
   sender?: ResponseSender;
+  allowDirectMessages?: boolean;
 }
 
 export function createApp(options: AppOptions = {}): FastifyInstance {
@@ -88,6 +95,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
   const piClient = options.piClient ?? createPiClient(
     process.env.DEFAULT_HOUSEHOLD_ID ?? 'default',
   );
+  const allowDirectMessages = options.allowDirectMessages ?? parseAllowDirectMessages();
 
   app.get('/health', async () => ({ status: 'ok' }));
 
@@ -104,6 +112,7 @@ export function createApp(options: AppOptions = {}): FastifyInstance {
         store,
         piClient,
         sender,
+        allowDirectMessages,
       );
       return reply.code(200).send(result);
     } catch (err) {

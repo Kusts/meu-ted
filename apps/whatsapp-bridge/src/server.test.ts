@@ -61,7 +61,7 @@ describe('server /health', () => {
       // Health responds immediately — warmup is deferred to main(), not createApp
       const res = await fetch(`http://127.0.0.1:${address.port}/health`);
       expect(res.status).toBe(200);
-      const json = await res.json();
+      const json = await res.json() as { status: string };
       expect(json).toEqual({ status: 'ok' });
 
       // Verify Pi warmup was NOT called inside createApp
@@ -84,5 +84,161 @@ describe('server /health', () => {
     // If createApp had called createPiClient internally, pi.send would be a mock —
     // but we passed our own pi, so the test confirms the instance is used
     expect(pi.send).toBeDefined();
+  });
+});
+
+describe('server /webhooks/evolution', () => {
+  let app: Awaited<ReturnType<typeof createApp>>;
+  let pi: PiClient;
+  let sender: ReturnType<typeof makeSender>;
+
+  afterEach(() => {
+    if (app) app.close().catch(() => {/* ignore */});
+  });
+
+  const directMessagePayload = {
+    event: 'Message',
+    instanceId: 'instance-1',
+    instanceToken: 'good-token',
+    data: {
+      Info: {
+        Chat: '5511999999999@s.whatsapp.net',
+        Sender: '5511999999999:19@s.whatsapp.net',
+        IsFromMe: false,
+        IsGroup: false,
+        ID: 'MSG_001',
+        Type: 'text',
+        PushName: 'João',
+        Timestamp: '2024-10-10T17:17:44-03:00',
+      },
+      Message: { conversation: 'oi' },
+    },
+  };
+
+  it('blocks direct chat when allowDirectMessages is false via AppOptions', async () => {
+    pi = makePi();
+    sender = makeSender();
+    const reg = makeRegistry();
+    const store = makeStore();
+
+    app = createApp({
+      piClient: pi,
+      registry: reg,
+      store,
+      sender,
+      expectedInstanceToken: 'good-token',
+      allowDirectMessages: false,
+    });
+
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const address = (app as unknown as { server: { address(): AddressInfo | string | null } }).server.address() as AddressInfo;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${address.port}/webhooks/evolution`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(directMessagePayload),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json() as { status: string; reason?: string };
+      expect(json.status).toBe('ignored');
+      expect(json.reason).toBe('mensagem direta ignorada');
+      // Pi was never called
+      expect(pi.send).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('allows direct chat when allowDirectMessages is true via AppOptions', async () => {
+    pi = makePi();
+    sender = makeSender();
+    const reg = makeRegistry();
+    const store = makeStore();
+
+    app = createApp({
+      piClient: pi,
+      registry: reg,
+      store,
+      sender,
+      expectedInstanceToken: 'good-token',
+      allowDirectMessages: true,
+    });
+
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const address = (app as unknown as { server: { address(): AddressInfo | string | null } }).server.address() as AddressInfo;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${address.port}/webhooks/evolution`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(directMessagePayload),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json() as { status: string; reason?: string };
+      expect(json.status).toBe('forwarded');
+      expect(pi.send).toHaveBeenCalledTimes(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('forwards group message when allowDirectMessages is false (group-only mode)', async () => {
+    pi = makePi();
+    sender = makeSender();
+    // Registry allows group 120363045678901234@g.us
+    const phones = new Set(['5511999999999']);
+    const groups = new Set(['120363045678901234@g.us']);
+    const reg: UserRegistry = {
+      isPhoneRegistered: (p) => phones.has(p),
+      isGroupAllowed: (g) => groups.has(g),
+      getHouseholdIdForGroup: () => 'household-1',
+    };
+    const store = makeStore();
+
+    const groupPayload = {
+      event: 'Message',
+      instanceId: 'instance-1',
+      instanceToken: 'good-token',
+      data: {
+        Info: {
+          Chat: '120363045678901234@g.us',
+          Sender: '5511999999999:19@s.whatsapp.net',
+          IsFromMe: false,
+          IsGroup: true,
+          ID: 'MSG_GRP_001',
+          Type: 'text',
+          PushName: 'João',
+          Timestamp: '2024-10-10T17:17:44-03:00',
+        },
+        Message: { conversation: 'oi grupo' },
+      },
+    };
+
+    app = createApp({
+      piClient: pi,
+      registry: reg,
+      store,
+      sender,
+      expectedInstanceToken: 'good-token',
+      allowDirectMessages: false,
+    });
+
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const address = (app as unknown as { server: { address(): AddressInfo | string | null } }).server.address() as AddressInfo;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${address.port}/webhooks/evolution`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(groupPayload),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json() as { status: string; reason?: string };
+      expect(json.status).toBe('forwarded');
+      expect(pi.send).toHaveBeenCalledTimes(1);
+    } finally {
+      await app.close();
+    }
   });
 });

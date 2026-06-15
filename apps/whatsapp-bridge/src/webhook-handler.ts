@@ -243,6 +243,14 @@ function firePresence(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Outgoing message normalization
+// ─────────────────────────────────────────────────────────────────────────────
+
+function normalizeOutgoingMessage(message: string): string {
+  return message.trimStart();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main processor
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -252,7 +260,8 @@ export async function processWebhook(
   userRegistry: UserRegistry,
   sourceStore: SourceMessageStore,
   piClient: PiClient,
-  responseSender: ResponseSender
+  responseSender: ResponseSender,
+  allowDirectMessages = true
 ): Promise<ProcessedResult> {
   // 1) Only Message events
   const eventCheck = validateEventType(payload);
@@ -277,6 +286,11 @@ export async function processWebhook(
     if (!groupCheck.valid) {
       return { status: 'failed', reason: groupCheck.reason };
     }
+  }
+
+  // 4b) Block direct chats when group-only mode is active
+  if (!payload.data.Info.IsGroup && !allowDirectMessages) {
+    return { status: 'ignored', reason: 'mensagem direta ignorada' };
   }
 
   // 5) Sender
@@ -325,8 +339,9 @@ export async function processWebhook(
     });
 
     if (result.success && result.data?.message) {
+      const normalized = normalizeOutgoingMessage(result.data.message);
       try {
-        await responseSender.send(sourceMsg.remoteJid, result.data.message);
+        await responseSender.send(sourceMsg.remoteJid, normalized);
       } catch (err) {
         // Non-critical: Evolution GO may reject unregistered numbers in test/dev.
         // The message was forwarded to Pi successfully — log and continue.
@@ -335,7 +350,7 @@ export async function processWebhook(
       sourceStore.markProcessed(sourceMsg);
       return {
         status: 'forwarded',
-        response: result.data.message,
+        response: normalized,
         sourceMessageId: sourceMsg.id,
       };
     }
