@@ -190,16 +190,18 @@ Tarefas:
 
 | Slice | Descrição | Estimativa | Status |
 |---|---|---|---|
-| SLICE-0 | Scaffold + repo | 1h | ⬜ pendente |
-| SLICE-1 | Auth + PIN + API client | 3h | ⬜ pendente |
-| SLICE-2 | API client CRUD + hooks | 2h | ⬜ pendente |
-| SLICE-3 | Dashboard (Início) | 3h | ⬜ pendente |
-| SLICE-4 | Registros (CRUD) | 4h | ⬜ pendente |
-| SLICE-5 | Carteira | 2h | ⬜ pendente |
-| SLICE-6 | PWA + offline | 2h | ⬜ pendente |
-| SLICE-7 | Deploy + HTTPS | 1h | ⬜ pendente |
+| SLICE-0 | Scaffold + repo | 1h | ✅ concluído (`40e28e4`) |
+| SLICE-1 | Auth + PIN + API client | 3h | ✅ concluído (`7c74bbb`) |
+| SLICE-2 | API client CRUD + hooks | 2h | ✅ concluído (`90768df`) |
+| SLICE-3 | Dashboard (Início) | 3h | ✅ concluído (`863101d`…`5042797`, design) |
+| SLICE-4 | Registros (CRUD) | 4h | ✅ concluído (`8137537`) |
+| SLICE-5 | Carteira | 2h | ✅ concluído (`fda65d0`) |
+| SLICE-6 | PWA + offline | 2h | ✅ concluído (`1b15895`) |
+| SLICE-7 | Deploy + HTTPS | 1h | ⚠️ parcial — docs/instruções prontas (`7aaf244`), deploy real não confirmado |
 
 **Total estimado:** 18h
+
+> **Status 2026-06-15:** V1 concluído e verificado (typecheck + 21 testes + build ok). Divergências de arquitetura, REQs parciais (REQ-4/6/7/11) e pendências documentados em `docs/superpowers/specs/2026-06-14-pwa-companion-design.md` → seção *Status de implementação (as-built)*. Obs.: a numeração de SLICE nas mensagens de commit difere desta tabela (ex.: Registros foi commitado como "SLICE-3").
 
 ## File map (alvo)
 
