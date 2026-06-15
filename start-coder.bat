@@ -1,1 +1,0 @@
-pi --coms-name coder --model MiniMax-M3 --purpose "Implementa planos aprovados, edita arquivos, executa comandos, roda testes, faz review, faz commits, push, rebuild e reporta resultados. Aguarda aprovacao do planner antes de mudancas grandes." --project pi-financeiro --color "#FF7EDB"

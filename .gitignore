@@ -71,3 +71,10 @@ test-payload.json
 apps/whatsapp-bridge/scripts/debug-dbu-url.ts
 apps/whatsapp-bridge/scripts/trace-expense.ts
 apps/whatsapp-bridge/scripts/test-webhook-e2e.sh
+
+# Tooling runtime state
+.superpowers/
+
+# Local pi launcher scripts
+start-coder.bat
+start-planner.bat
