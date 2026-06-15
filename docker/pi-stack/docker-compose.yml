@@ -6,10 +6,6 @@ services:
       context: ../..
       dockerfile: docker/pi-stack/Dockerfile
     container_name: pi-stack
-    volumes:
-      - ../../:/workspace
-      - pi_stack_node_modules:/workspace/node_modules
-      - pi_stack_bridge_node_modules:/workspace/apps/whatsapp-bridge/node_modules
     env_file:
       - ../../.env.pi
     environment:
@@ -21,16 +17,16 @@ services:
       - PI_RPC_MODEL=${PI_RPC_MODEL:-MiniMax-M2.7:off}
       - PI_RPC_ARGS=["--mode","rpc"]
       - DEFAULT_HOUSEHOLD_ID=${DEFAULT_HOUSEHOLD_ID:-550e8400-e29b-41d4-a716-446655440000}
-      - PORT=${PORT:-3000}
+      - PORT=${PORT:-3945}
       - HOST=0.0.0.0
     working_dir: /workspace
     extra_hosts:
       - host.docker.internal:host-gateway
     ports:
-      - "3000:3000"
-    command: ["bash", "-lc", "cd /workspace && pnpm install --prefer-offline && pnpm --filter @pi-financeiro/whatsapp-bridge start"]
+      - "3945:3945"
+    command: ["bash", "-lc", "pnpm --filter @pi-financeiro/whatsapp-bridge start"]
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:3945/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -38,6 +34,3 @@ services:
     stdin_open: true
     tty: true
 
-volumes:
-  pi_stack_node_modules:
-  pi_stack_bridge_node_modules:

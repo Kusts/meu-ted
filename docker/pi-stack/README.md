@@ -42,7 +42,7 @@ docker compose -f docker/pi-stack/docker-compose.yml build
 docker compose -f docker/pi-stack/docker-compose.yml up -d
 
 # Verificar se o bridge está respondendo
-curl http://localhost:3000/health
+curl http://localhost:3945/health
 # → {"status":"ok"}
 
 # Ver logs
@@ -57,7 +57,7 @@ docker compose -f docker/pi-stack/docker-compose.yml down
 
 ## Healthcheck
 
-O compose inclui healthcheck que valida `GET /health` a cada 10s.
+O compose inclui healthcheck que valida `GET /health` na porta `3945` a cada 10s.
 O bridge responde `{"status":"ok"}` imediatamente — warmup do Pi
 acontece em background após o HTTP estar no ar e não bloqueia health.
 
@@ -98,7 +98,8 @@ Warmup não bloqueia `/health` mas pode afetar `/webhooks/evolution` na primeira
 | `PI_RPC_MODEL` | `MiniMax-M2.7:off` | `MiniMax-M2.7:off` |
 | `PI_RPC_TIMEOUT_MS` | `120000` | `120000` |
 | `DEFAULT_HOUSEHOLD_ID` | `default` | `default` |
-| `PORT` | `3000` | `3000` |
+| `PORT` | `3945` | `3945` |
+| Porta exposta no host | `3945` | definida em `ports: "3945:3945"` no compose |
 
 ## Estrutura do container
 
