@@ -119,7 +119,7 @@ e reconecta automaticamente quando detecta desconexão.
 
 | Var | Exemplo | Padrão |
 |---|---|---|
-| `EVOLUTION_GO_API_URL` | `http://host.docker.internal:4000` | `http://localhost:4000` |
+| `EVOLUTION_GO_API_URL` | `http://host.docker.internal:4000` (docker) / `http://localhost:4000` (standalone) | `http://localhost:4000` (runner default); docker compose overrides to `http://host.docker.internal:4000` |
 | `EVOLUTION_GO_INSTANCE_TOKEN` | `seu-token` | (obrigatória) |
 | `WATCHDOG_INTERVAL_MS` | `60000` | `60000` |
 | `WATCHDOG_MAX_RECONNECT_ATTEMPTS` | `3` | `3` |

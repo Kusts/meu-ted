@@ -39,7 +39,7 @@ async function fetchJson(baseUrl: string, token: string, path: string, init?: Re
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/** Query Evolution instance /instance/info and decide if healthy. */
+/** Query Evolution instance /instance/status and decide if healthy. */
 export async function checkHealth(baseUrl: string, token: string): Promise<HealthStatus> {
   try {
     const { ok, status, body } = await fetchJson(baseUrl, token, '/instance/status');
