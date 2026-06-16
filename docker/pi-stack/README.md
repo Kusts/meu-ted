@@ -110,7 +110,7 @@ Serviço auxiliar (`pi-watchdog`) que monitora a saúde da instância Evolution 
 e reconecta automaticamente quando detecta desconexão.
 
 **Como funciona:**
-- Polling periódico em `GET /instance/info` (padrão: 60s)
+- Polling periódico em `GET /instance/status` (padrão: 60s)
 - Critério de saúde: `Connected === true && LoggedIn === true`
 - Se unhealthy → chama `POST /instance/reconnect` com retry e backoff (3 tentativas, 8s entre elas)
 - Para de tentar se a saúde for restaurada

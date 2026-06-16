@@ -27,20 +27,20 @@ beforeEach(() => {
 
 describe('checkHealth', () => {
   it('returns healthy when Connected=true and LoggedIn=true', async () => {
-    mockHealthResponse(200, { Connected: true, LoggedIn: true });
+    mockHealthResponse(200, { data: { Connected: true, LoggedIn: true, Name: 'test' } });
 
     const result = await checkHealth(BASE, TOKEN);
 
     const expected: HealthStatus = { healthy: true, detail: { Connected: true, LoggedIn: true } };
     expect(result).toEqual(expected);
     expect(fetchMock).toHaveBeenCalledWith(
-      `${BASE}/instance/info`,
+      `${BASE}/instance/status`,
       expect.objectContaining({ headers: expect.objectContaining({ apikey: TOKEN }) }),
     );
   });
 
   it('returns unhealthy when Connected=false', async () => {
-    mockHealthResponse(200, { Connected: false, LoggedIn: true });
+    mockHealthResponse(200, { data: { Connected: false, LoggedIn: true } });
 
     const result = await checkHealth(BASE, TOKEN);
 
@@ -48,7 +48,7 @@ describe('checkHealth', () => {
   });
 
   it('returns unhealthy when LoggedIn=false', async () => {
-    mockHealthResponse(200, { Connected: true, LoggedIn: false });
+    mockHealthResponse(200, { data: { Connected: true, LoggedIn: false } });
 
     const result = await checkHealth(BASE, TOKEN);
 
@@ -113,7 +113,7 @@ describe('reconnect', () => {
 
 describe('watchOnce', () => {
   it('skips reconnect when healthy', async () => {
-    mockHealthResponse(200, { Connected: true, LoggedIn: true });
+    mockHealthResponse(200, { data: { Connected: true, LoggedIn: true } });
 
     const result = await watchOnce(BASE, TOKEN);
 
@@ -124,11 +124,11 @@ describe('watchOnce', () => {
 
   it('attempts reconnect when unhealthy and succeeds', async () => {
     // unhealthy check
-    mockHealthResponse(200, { Connected: false, LoggedIn: true });
+    mockHealthResponse(200, { data: { Connected: false, LoggedIn: true } });
     // reconnect success
     mockHealthResponse(200, { success: true });
     // post-reconnect health check — now healthy
-    mockHealthResponse(200, { Connected: true, LoggedIn: true });
+    mockHealthResponse(200, { data: { Connected: true, LoggedIn: true } });
 
     const result = await watchOnce(BASE, TOKEN);
 
@@ -137,7 +137,7 @@ describe('watchOnce', () => {
   });
 
   it('attempts reconnect when unhealthy and fails', async () => {
-    mockHealthResponse(200, { Connected: false, LoggedIn: true });
+    mockHealthResponse(200, { data: { Connected: false, LoggedIn: true } });
     mockHealthResponse(500, { error: 'fail' });
 
     const result = await watchOnce(BASE, TOKEN);
@@ -147,11 +147,11 @@ describe('watchOnce', () => {
 
   it('retries reconnect up to maxAttempts with backoff', async () => {
     // unhealthy
-    mockHealthResponse(200, { Connected: false, LoggedIn: false });
+    mockHealthResponse(200, { data: { Connected: false, LoggedIn: false } });
     // reconnect attempts fail
     for (let i = 0; i < 3; i++) {
       mockHealthResponse(200, { success: true }); // reconnect POST returns ok
-      mockHealthResponse(200, { Connected: false, LoggedIn: false }); // but health still bad
+      mockHealthResponse(200, { data: { Connected: false, LoggedIn: false } }); // but health still bad
     }
 
     const result = await watchOnce(BASE, TOKEN, { maxReconnectAttempts: 3, backoffMs: 1 });
@@ -162,11 +162,11 @@ describe('watchOnce', () => {
 
   it('stops reconnect early if health is restored', async () => {
     // unhealthy
-    mockHealthResponse(200, { Connected: false, LoggedIn: false });
+    mockHealthResponse(200, { data: { Connected: false, LoggedIn: false } });
     // reconnect success
     mockHealthResponse(200, { success: true });
     // health check after reconnect — healthy!
-    mockHealthResponse(200, { Connected: true, LoggedIn: true });
+    mockHealthResponse(200, { data: { Connected: true, LoggedIn: true } });
 
     const result = await watchOnce(BASE, TOKEN, { maxReconnectAttempts: 3, backoffMs: 1 });
 

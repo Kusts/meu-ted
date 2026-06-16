@@ -42,15 +42,17 @@ async function fetchJson(baseUrl: string, token: string, path: string, init?: Re
 /** Query Evolution instance /instance/info and decide if healthy. */
 export async function checkHealth(baseUrl: string, token: string): Promise<HealthStatus> {
   try {
-    const { ok, status, body } = await fetchJson(baseUrl, token, '/instance/info');
+    const { ok, status, body } = await fetchJson(baseUrl, token, '/instance/status');
     if (!ok) {
       return { healthy: false, detail: body, error: `HTTP ${status}` };
     }
-    const connected = body?.Connected === true || body?.connected === true;
-    const loggedIn = body?.LoggedIn === true || body?.loggedIn === true;
+    // Real Evolution API wraps status in a `data` envelope: { data: { Connected, LoggedIn, Name } }
+    const d = (body as Record<string, unknown>).data as Record<string, unknown> | undefined;
+    const connected = d?.Connected === true;
+    const loggedIn = d?.LoggedIn === true;
     return {
       healthy: connected && loggedIn,
-      detail: body,
+      detail: { Connected: connected, LoggedIn: loggedIn },
     };
   } catch (err) {
     return { healthy: false, error: err instanceof Error ? err.message : String(err) };
