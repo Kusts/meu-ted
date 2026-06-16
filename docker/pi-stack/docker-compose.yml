@@ -34,3 +34,26 @@ services:
     stdin_open: true
     tty: true
 
+  pi-watchdog:
+    build:
+      context: ../..
+      dockerfile: docker/pi-stack/Dockerfile
+    container_name: pi-watchdog
+    env_file:
+      - ../../.env.pi
+    environment:
+      - HOME=/home/pi-stack
+      - EVOLUTION_GO_API_URL=${EVOLUTION_GO_API_URL:-http://host.docker.internal:4000}
+      - EVOLUTION_GO_INSTANCE_TOKEN=${EVOLUTION_GO_INSTANCE_TOKEN}
+      - WATCHDOG_INTERVAL_MS=${WATCHDOG_INTERVAL_MS:-60000}
+      - WATCHDOG_MAX_RECONNECT_ATTEMPTS=${WATCHDOG_MAX_RECONNECT_ATTEMPTS:-3}
+      - WATCHDOG_BACKOFF_MS=${WATCHDOG_BACKOFF_MS:-8000}
+    working_dir: /workspace
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    command: ["bash", "-lc", "pnpm --filter @pi-financeiro/whatsapp-bridge watchdog"]
+    restart: unless-stopped
+    depends_on:
+      pi-stack:
+        condition: service_healthy
+

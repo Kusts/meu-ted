@@ -99,7 +99,42 @@ Warmup não bloqueia `/health` mas pode afetar `/webhooks/evolution` na primeira
 | `PI_RPC_TIMEOUT_MS` | `120000` | `120000` |
 | `DEFAULT_HOUSEHOLD_ID` | `default` | `default` |
 | `PORT` | `3945` | `3945` |
+| `WATCHDOG_INTERVAL_MS` | `60000` | `60000` |
+| `WATCHDOG_MAX_RECONNECT_ATTEMPTS` | `3` | `3` |
+| `WATCHDOG_BACKOFF_MS` | `8000` | `8000` |
 | Porta exposta no host | `3945` | definida em `ports: "3945:3945"` no compose |
+
+## Evolution Watchdog
+
+Serviço auxiliar (`pi-watchdog`) que monitora a saúde da instância Evolution GO
+e reconecta automaticamente quando detecta desconexão.
+
+**Como funciona:**
+- Polling periódico em `GET /instance/info` (padrão: 60s)
+- Critério de saúde: `Connected === true && LoggedIn === true`
+- Se unhealthy → chama `POST /instance/reconnect` com retry e backoff (3 tentativas, 8s entre elas)
+- Para de tentar se a saúde for restaurada
+
+**Env vars:**
+
+| Var | Exemplo | Padrão |
+|---|---|---|
+| `EVOLUTION_GO_API_URL` | `http://host.docker.internal:4000` | `http://localhost:4000` |
+| `EVOLUTION_GO_INSTANCE_TOKEN` | `seu-token` | (obrigatória) |
+| `WATCHDOG_INTERVAL_MS` | `60000` | `60000` |
+| `WATCHDOG_MAX_RECONNECT_ATTEMPTS` | `3` | `3` |
+| `WATCHDOG_BACKOFF_MS` | `8000` | `8000` |
+
+**Logs:**
+```bash
+docker compose -f docker/pi-stack/docker-compose.yml logs -f pi-watchdog
+```
+
+**Rodar standalone (sem Docker):**
+```bash
+cd apps/whatsapp-bridge
+EVOLUTION_GO_INSTANCE_TOKEN=seu-token npm run watchdog
+```
 
 ## Estrutura do container
 

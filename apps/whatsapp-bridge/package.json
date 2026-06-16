@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "reminder": "tsx scripts/reminder.ts"
+    "reminder": "tsx scripts/reminder.ts",
+    "watchdog": "tsx src/watchdog-runner.ts"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.78.0",
