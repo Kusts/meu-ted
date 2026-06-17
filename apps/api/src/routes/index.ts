@@ -4,6 +4,10 @@ import { type DeviceTokenStore, createInMemoryDeviceTokenStore } from '../auth/d
 import { type WriteStore } from '../writes/store.js';
 import { type IdempotencyStore, createInMemoryIdempotencyStore } from '../writes/idempotency.js';
 import type { AuthResolver } from './auth.js';
+import type { CardStore } from '../cards/store.js';
+import type { PayableStore } from '../payables/store.js';
+import type { BudgetStore } from '../budgets/store.js';
+import type { GoalStore } from '../goals/store.js';
 import { registerAuthRoutes } from './auth.js';
 import { registerAccountRoutes } from './accounts.js';
 import { registerCategoryRoutes } from './categories.js';
@@ -11,6 +15,10 @@ import { registerTransactionRoutes } from './transactions.js';
 import { registerTransactionWriteRoutes } from './transactions-write.js';
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerInsightRoutes } from './insights.js';
+import { registerCardRoutes } from './cards.js';
+import { registerPayableRoutes } from './payables.js';
+import { registerBudgetRoutes } from './budgets.js';
+import { registerGoalRoutes } from './goals.js';
 
 export type RouteDeps = {
   store: ReadModelStore;
@@ -18,6 +26,10 @@ export type RouteDeps = {
   tokenStore?: DeviceTokenStore;
   idempotency?: IdempotencyStore;
   defaultHouseholdId?: string;
+  cardStore?: CardStore;
+  payableStore?: PayableStore;
+  budgetStore?: BudgetStore;
+  goalStore?: GoalStore;
 };
 
 export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
@@ -35,4 +47,16 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   registerTransactionWriteRoutes(app, { store: deps.store, writes: deps.writes, resolveToken, idempotency });
   registerDashboardRoutes(app, { store: deps.store, resolveToken });
   registerInsightRoutes(app, { store: deps.store, resolveToken });
+  if (deps.cardStore) {
+    registerCardRoutes(app, { cardStore: deps.cardStore, resolveToken, idempotency });
+  }
+  if (deps.payableStore) {
+    registerPayableRoutes(app, { payableStore: deps.payableStore, resolveToken, idempotency });
+  }
+  if (deps.budgetStore) {
+    registerBudgetRoutes(app, { budgetStore: deps.budgetStore, resolveToken, idempotency });
+  }
+  if (deps.goalStore) {
+    registerGoalRoutes(app, { goalStore: deps.goalStore, resolveToken, idempotency });
+  }
 };

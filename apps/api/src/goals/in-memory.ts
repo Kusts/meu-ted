@@ -1,0 +1,50 @@
+import { randomUUID } from 'node:crypto';
+import type { Goal, GoalContribution } from '../types/domain.js';
+import type { GoalStore } from './store.js';
+import type { InMemoryState } from '../writes/in-memory.js';
+import { domainErrors } from '../writes/errors.js';
+
+function opt<T extends Record<string, unknown>>(obj: T, props: Partial<T>): T {
+  const result = { ...obj };
+  for (const [k, v] of Object.entries(props)) if (v !== undefined && v !== null) (result as any)[k] = v;
+  return result;
+}
+
+export const createInMemoryGoalStore = (state: InMemoryState): GoalStore => {
+  if (!(state as any)._goals) (state as any)._goals = [] as Goal[];
+  if (!(state as any)._contributions) (state as any)._contributions = [] as GoalContribution[];
+  const goals = (state as any)._goals as Goal[];
+  const contributions = (state as any)._contributions as GoalContribution[];
+
+  return {
+    async listGoals(householdId) {
+      return goals.filter(g => g.householdId === householdId).sort((a, b) => b.targetAmountCents - a.targetAmountCents);
+    },
+    async createGoal(householdId, input) {
+      const g = opt<Goal>(
+        { id: randomUUID(), householdId, name: input.name, goalType: input.goalType as Goal['goalType'], targetAmountCents: input.targetAmountCents, currentAmountCents: 0, startDate: input.startDate, status: 'active' as const },
+        { description: input.description, targetDate: input.targetDate, categoryId: input.categoryId, accountId: input.accountId, notes: input.notes } as Partial<Goal>,
+      );
+      goals.push(g);
+      return g;
+    },
+    async contributeToGoal(householdId, goalId, input) {
+      const g = goals.find(x => x.id === goalId && x.householdId === householdId);
+      if (!g) throw domainErrors.notFound('Meta');
+      g.currentAmountCents += input.amountCents;
+      if (g.currentAmountCents >= g.targetAmountCents) g.status = 'achieved';
+      const c = opt<GoalContribution>(
+        { id: randomUUID(), goalId, amountCents: input.amountCents, contributionDate: input.contributionDate ?? new Date().toISOString().slice(0, 10) },
+        { source: input.source, notes: input.notes } as Partial<GoalContribution>,
+      );
+      contributions.push(c);
+      return c;
+    },
+    async cancelGoal(householdId, goalId, _reason) {
+      const g = goals.find(x => x.id === goalId && x.householdId === householdId);
+      if (!g) throw domainErrors.notFound('Meta');
+      g.status = 'cancelled';
+      return g;
+    },
+  };
+};

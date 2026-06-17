@@ -35,6 +35,19 @@ export const ACCOUNT_B1: Account = {
   status: 'active',
 };
 
+/** Credit card account for testing card routes. */
+export const CARD_A1: Account = {
+  id: '11111111-1111-4111-8111-111111111114',
+  householdId: HOUSEHOLD_A,
+  name: 'Nubank Card',
+  kind: 'credit_card',
+  balanceCents: 0,
+  status: 'active',
+  creditLimitCents: 5_000_00,
+  closingDay: 15,
+  dueDay: 25,
+};
+
 export const CATEGORY_FOOD_A: Category = {
   id: '22222222-2222-4222-8222-222222222221',
   householdId: HOUSEHOLD_A,

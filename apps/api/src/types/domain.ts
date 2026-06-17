@@ -18,6 +18,12 @@ export type Account = {
   kind: AccountKind;
   balanceCents: MoneyCents;
   status: AccountStatus;
+  /** Credit-card only. Null for bank/cash accounts. */
+  creditLimitCents?: MoneyCents;
+  /** Credit-card only. Day of month the billing cycle closes (1-31). */
+  closingDay?: number;
+  /** Credit-card only. Day of month payment is due (1-31). */
+  dueDay?: number;
 };
 
 export type CategoryKind = 'expense' | 'income';
@@ -86,4 +92,148 @@ export type QuickInsight = {
   title: string;
   body: string;
   severity: 'info' | 'warn' | 'good';
+};
+
+// ── Credit card types ─────────────────────────────────────────────
+
+export type StatementStatus = 'open' | 'closed' | 'paid' | 'partial' | 'overdue' | 'cancelled';
+
+export type Statement = {
+  id: UUID;
+  householdId: UUID;
+  accountId: UUID;
+  cycleYearMonth: string;
+  closingDate: ISODate;
+  dueDate: ISODate;
+  totalCents: MoneyCents;
+  paidCents: MoneyCents;
+  status: StatementStatus;
+};
+
+export type StatementPurchase = {
+  id: UUID;
+  description: string;
+  amountCents: MoneyCents;
+  date: ISODate;
+  categoryName?: string;
+  installmentNumber?: number;
+  installmentsTotal?: number;
+  isRecurring?: boolean;
+};
+
+export type StatementDetail = Statement & {
+  purchases: StatementPurchase[];
+};
+
+export type RecurringFrequency = 'monthly' | 'quarterly' | 'yearly';
+
+export type RecurringPurchase = {
+  id: UUID;
+  householdId: UUID;
+  accountId: UUID;
+  description: string;
+  amountCents: MoneyCents;
+  frequency: RecurringFrequency;
+  startDate: ISODate;
+  endDate?: ISODate;
+  categoryId?: UUID;
+  status: 'active' | 'paused' | 'cancelled';
+};
+
+// ── Accounts Payable types ────────────────────────────────────────
+
+export type PayableType = 'one_time' | 'recurring';
+export type PayableStatus = 'pending' | 'paid' | 'overdue' | 'cancelled';
+
+export type Payable = {
+  id: UUID;
+  householdId: UUID;
+  accountId: UUID;
+  description: string;
+  amountCents: MoneyCents;
+  dueDate: ISODate;
+  type: PayableType;
+  frequency?: RecurringFrequency;
+  endDate?: ISODate;
+  status: PayableStatus;
+  paidDate?: ISODate;
+  paidAmountCents?: MoneyCents;
+  reminderDaysBefore?: number;
+  notes?: string;
+  categoryId?: UUID;
+};
+
+export type PayableTemplate = {
+  id: UUID;
+  householdId: UUID;
+  accountId: UUID;
+  name: string;
+  description: string;
+  amountCents: MoneyCents;
+  frequency: RecurringFrequency;
+  dayOfMonth: number;
+  reminderDaysBefore?: number;
+  notes?: string;
+  active: boolean;
+};
+
+export type NotificationType = 'overdue_reminder' | 'due_today_reminder' | 'upcoming_reminder' | 'daily_summary' | 'weekly_summary';
+
+export type NotificationConfig = {
+  id: UUID;
+  householdId: UUID;
+  chatId: string;
+  notificationType: NotificationType;
+  enabled: boolean;
+  scheduleHour?: number;
+  scheduleMinute?: number;
+  daysOfWeek?: number[];
+  thresholdDays?: number;
+};
+
+// ── Budget types ──────────────────────────────────────────────────
+
+export type BudgetPeriod = 'monthly' | 'quarterly' | 'yearly';
+
+export type Budget = {
+  id: UUID;
+  householdId: UUID;
+  categoryId: UUID;
+  name: string;
+  amountCents: MoneyCents;
+  period: BudgetPeriod;
+  startDate: ISODate;
+  endDate?: ISODate;
+  alertThreshold: number;
+  rollover: boolean;
+};
+
+export type BudgetStatus = Budget & {
+  spentCents: MoneyCents;
+  remainingCents: MoneyCents;
+  percentUsed: number;
+};
+
+export type BudgetTrend = {
+  yearMonth: string;
+  budgetCents: MoneyCents;
+  spentCents: MoneyCents;
+};
+
+// ── Goal types ────────────────────────────────────────────────────
+
+export type GoalType = 'savings' | 'purchase' | 'debt_payoff' | 'emergency_fund';
+export type GoalStatus = 'active' | 'paused' | 'achieved' | 'cancelled' | 'failed';
+
+export type Goal = {
+  id: UUID; householdId: UUID; name: string; description?: string;
+  goalType: GoalType; targetAmountCents: MoneyCents; currentAmountCents: MoneyCents;
+  startDate: ISODate; targetDate?: ISODate;
+  categoryId?: UUID; accountId?: UUID;
+  status: GoalStatus; notes?: string;
+};
+
+export type GoalContribution = {
+  id: UUID; goalId: UUID; amountCents: MoneyCents;
+  contributionDate: ISODate; source?: string; notes?: string;
 };

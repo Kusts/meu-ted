@@ -7,6 +7,10 @@ import { type DeviceTokenStore } from '../src/auth/device-token.js';
 import { registerCors } from '../src/server/cors.js';
 import { HOUSEHOLD_A, HOUSEHOLD_B } from './fixtures/seed.js';
 import type { Account, Category, Transaction } from '../src/types/domain.js';
+import { createInMemoryCardStore } from '../src/cards/in-memory.js';
+import { createInMemoryPayableStore } from '../src/payables/in-memory.js';
+import { createInMemoryBudgetStore } from '../src/budgets/in-memory.js';
+import { createInMemoryGoalStore } from '../src/goals/in-memory.js';
 
 export type TestApp = { app: FastifyInstance; store: ReadModelStore; state: InMemoryState };
 
@@ -36,9 +40,13 @@ export const buildTestApp = (seed: { accounts?: Account[]; categories?: Category
   const store = createInMemoryReadModelStore({
     accounts: state.accounts, categories: state.categories, transactions: state.transactions, deletedTransactionIds: state.deletedTransactions,
   });
+  const cardStore = createInMemoryCardStore(state);
+  const payableStore = createInMemoryPayableStore(state);
+  const budgetStore = createInMemoryBudgetStore(state);
+  const goalStore = createInMemoryGoalStore(state);
   const app = Fastify({ logger: false });
   registerCors(app);
-  registerRoutes(app, { store, writes, tokenStore: createTestTokenStore(), idempotency: createInMemoryIdempotencyStore() });
+  registerRoutes(app, { store, writes, tokenStore: createTestTokenStore(), idempotency: createInMemoryIdempotencyStore(), cardStore, payableStore, budgetStore, goalStore });
   return { app, store, state };
 };
 
