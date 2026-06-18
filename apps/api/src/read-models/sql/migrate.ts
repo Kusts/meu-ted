@@ -19,6 +19,12 @@ const MIGRATIONS_DIR = here;
 
 const MIGRATION_RE = /^V(\d+)__([\w-]+)\.sql$/;
 
+// Migrations safe to apply on the legacy pi_financeiro schema (DB_SCHEMA=legacy).
+// V003 = device_tokens/idempotency; V008 = additive feature tables. The canonical
+// V001/V002/V004-V007 are skipped because they assume the canonical schema and use
+// the set_updated_at() trigger function that the legacy DB does not define.
+const LEGACY_SAFE_PREFIXES = ['V003', 'V008'];
+
 const ensureMigrationsTable = async (pool: DbPool): Promise<void> => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS _migrations (
@@ -38,7 +44,7 @@ export const runMigrations = async (pool: DbPool, legacyOnly = false): Promise<{
   await ensureMigrationsTable(pool);
   const applied = await appliedVersions(pool);
   const files = readdirSync(MIGRATIONS_DIR)
-    .filter((f) => MIGRATION_RE.test(f) && (!legacyOnly || f.startsWith('V003')))
+    .filter((f) => MIGRATION_RE.test(f) && (!legacyOnly || LEGACY_SAFE_PREFIXES.some((p) => f.startsWith(p))))
     .sort((a, b) => a.localeCompare(b));
 
   const newlyApplied: number[] = [];

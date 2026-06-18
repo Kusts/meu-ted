@@ -17,10 +17,12 @@ import { createPostgresCardStore } from '../cards/postgres.js';
 import { createLegacyPostgresCardStore } from '../cards/legacy-postgres.js';
 import { createInMemoryPayableStore } from '../payables/in-memory.js';
 import { createPostgresPayableStore } from '../payables/postgres.js';
+import { createLegacyPostgresPayableStore } from '../payables/legacy-postgres.js';
 import { createInMemoryBudgetStore } from '../budgets/in-memory.js';
 import { createPostgresBudgetStore } from '../budgets/postgres.js';
 import { createInMemoryGoalStore } from '../goals/in-memory.js';
 import { createPostgresGoalStore } from '../goals/postgres.js';
+import { createLegacyPostgresGoalStore } from '../goals/legacy-postgres.js';
 
 const start = async (): Promise<void> => {
   const cfg = loadConfig();
@@ -39,9 +41,9 @@ const start = async (): Promise<void> => {
       const tokenStore = createPostgresDeviceTokenStore(pool);
       const idempotency = createPostgresIdempotencyStore({ pool });
       const cardStore = createLegacyPostgresCardStore(pool);
-      const payableStore = createPostgresPayableStore(pool);
+      const payableStore = createLegacyPostgresPayableStore(pool);
       const budgetStore = createPostgresBudgetStore(pool);
-      const goalStore = createPostgresGoalStore(pool);
+      const goalStore = createLegacyPostgresGoalStore(pool);
       registerRoutes(app, { store, writes, tokenStore, idempotency, defaultHouseholdId: cfg.defaultHouseholdId, cardStore, payableStore, budgetStore, goalStore });
     } else {
       const result = await runMigrations(pool);
