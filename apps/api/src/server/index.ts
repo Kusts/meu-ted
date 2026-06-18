@@ -14,6 +14,7 @@ import { loadConfig } from '../env.js';
 import { registerCors } from './cors.js';
 import { createInMemoryCardStore } from '../cards/in-memory.js';
 import { createPostgresCardStore } from '../cards/postgres.js';
+import { createLegacyPostgresCardStore } from '../cards/legacy-postgres.js';
 import { createInMemoryPayableStore } from '../payables/in-memory.js';
 import { createPostgresPayableStore } from '../payables/postgres.js';
 import { createInMemoryBudgetStore } from '../budgets/in-memory.js';
@@ -37,7 +38,7 @@ const start = async (): Promise<void> => {
       const writes = createLegacyPostgresWriteStore({ pool });
       const tokenStore = createPostgresDeviceTokenStore(pool);
       const idempotency = createPostgresIdempotencyStore({ pool });
-      const cardStore = createPostgresCardStore(pool);
+      const cardStore = createLegacyPostgresCardStore(pool);
       const payableStore = createPostgresPayableStore(pool);
       const budgetStore = createPostgresBudgetStore(pool);
       const goalStore = createPostgresGoalStore(pool);
