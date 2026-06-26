@@ -59,11 +59,13 @@ export default function AppShell({ children }: AppShellProps) {
   }, []);
 
   const activeNav: NavItem =
-    pathname === "/registros"
-      ? "records"
-      : pathname === "/a-pagar"
-        ? "payables"
-        : "home";
+    pathname === "/"
+      ? "home"
+      : pathname === "/registros"
+        ? "records"
+        : pathname === "/a-pagar"
+          ? "payables"
+          : "more";
 
   function openSheetLocal(mode: "new" | "more") {
     setSheetMode(mode);
