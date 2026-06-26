@@ -138,8 +138,10 @@ export default function GoalsPage() {
             )
           ) : debts.length === 0 ? (
             <div className="py-[50px] text-center text-text-muted">
-              <div className="text-[14px] font-semibold">Nenhuma dívida</div>
-              <div className="mt-1 text-[12px]">Registre suas dívidas para acompanhar.</div>
+              <div className="text-[14px] font-semibold">Dívidas em breve</div>
+              <div className="mt-1 text-[12px]">
+                O acompanhamento de dívidas ainda não está disponível.
+              </div>
             </div>
           ) : (
             debts.map((d) => {

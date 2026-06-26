@@ -9,6 +9,8 @@ import {
 } from "@/lib/auth/pin-store";
 import { apiGet, apiPost, ApiError } from "@/lib/api/client";
 import { resetLocalSession } from "@/lib/reset-session";
+import { SessionProvider } from "@/lib/auth/session-context";
+import { clearSnapshot } from "@/lib/state/snapshot-store";
 
 type AuthState = "loading" | "register" | "setup-pin" | "unlock" | "unlocked";
 
@@ -83,11 +85,20 @@ export function AuthGate({ children }: Props) {
 
   const handleReset = useCallback(() => {
     resetLocalSession();
+    clearSnapshot();
     setState("register");
     setError("Sessão limpa. Registre o dispositivo novamente.");
   }, []);
 
-  if (state === "unlocked") return <>{children}</>;
+  const expireSession = useCallback((message?: string) => {
+    resetLocalSession();
+    clearSnapshot();
+    setError(message ?? "Sessão expirada. Registre o dispositivo novamente.");
+    setState("register");
+  }, []);
+
+  if (state === "unlocked")
+    return <SessionProvider value={{ expireSession }}>{children}</SessionProvider>;
   if (state === "loading")
     return (
       <main className="flex h-dvh items-center justify-center text-text-secondary">

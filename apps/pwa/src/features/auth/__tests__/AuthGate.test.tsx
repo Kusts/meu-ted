@@ -105,6 +105,28 @@ describe("AuthGate", () => {
     ).toBeInTheDocument();
   });
 
+  it("clears snapshot when 'Trocar dispositivo' is used", async () => {
+    const { clearSnapshot } = await import("@/lib/state/snapshot-store");
+    const spy = vi.spyOn(
+      await import("@/lib/state/snapshot-store"),
+      "clearSnapshot",
+    );
+    // token present + pin set -> lands on unlock screen with the reset button
+    store["pi-finance:token"] = "tok";
+    store["pi-finance:pin-hash"] = "deadbeef";
+    store["pi-finance:pin-salt"] = "0102030405060708090a0b0c0d0e0f10";
+    render(
+      <AuthGate>
+        <div data-testid="app">App</div>
+      </AuthGate>,
+    );
+    const resetBtn = await screen.findByText(/Trocar dispositivo/);
+    await userEvent.click(resetBtn);
+    expect(spy).toHaveBeenCalled();
+    // silence unused import lint
+    void clearSnapshot;
+  });
+
   it("goes through setup-pin and unlocks", async () => {
     store["pi-finance:token"] = "token";
     vi.mocked(fetch).mockResolvedValueOnce({

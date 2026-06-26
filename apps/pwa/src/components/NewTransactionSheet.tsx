@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { ReactNode } from "react";
 import type { Account, Category } from "@/lib/state/types";
 
 /* ── Category icon helpers ── */
@@ -87,6 +88,43 @@ function formatBRL(cents: number): string {
 function parseBRLToCents(value: string): number {
   const cleaned = value.replace(/[.\s]/g, "").replace(",", ".");
   return Math.round(parseFloat(cleaned) * 100) || 0;
+}
+
+// ── Inline creation form (reusable) ───
+
+function InlineForm({
+  onSave: handleInlineSave,
+  onCancel,
+  fields,
+  saveLabel,
+}: {
+  onSave: () => void;
+  onCancel: () => void;
+  fields: ReactNode;
+  saveLabel: string;
+}) {
+  return (
+    <div className="rounded-[13px] border border-primary/30 bg-primary-tint p-3">
+      {fields}
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex-1 rounded-[10px] border border-border bg-surface py-2.5 text-[12px] font-bold text-text-secondary"
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          onClick={handleInlineSave}
+          aria-label={saveLabel}
+          className="flex-1 rounded-[10px] bg-primary py-2.5 text-[12px] font-bold text-white"
+        >
+          Salvar
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function NewTransactionSheet({
@@ -259,42 +297,6 @@ export default function NewTransactionSheet({
     { key: "income", label: "Receita" },
     { key: "transfer", label: "Transferência" },
   ];
-
-  // ── Inline creation form (reusable) ──
-  function InlineForm({
-    onSave: handleInlineSave,
-    onCancel,
-    fields,
-    saveLabel,
-  }: {
-    onSave: () => void;
-    onCancel: () => void;
-    fields: React.ReactNode;
-    saveLabel: string;
-  }) {
-    return (
-      <div className="rounded-[13px] border border-primary/30 bg-primary-tint p-3">
-        {fields}
-        <div className="mt-2 flex gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="flex-1 rounded-[10px] border border-border bg-surface py-2.5 text-[12px] font-bold text-text-secondary"
-          >
-            Cancelar
-          </button>
-          <button
-            type="button"
-            onClick={handleInlineSave}
-            aria-label={saveLabel}
-            className="flex-1 rounded-[10px] bg-primary py-2.5 text-[12px] font-bold text-white"
-          >
-            Salvar
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col gap-5">

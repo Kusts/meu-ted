@@ -7,6 +7,7 @@ import {
   useState,
   useCallback,
   useRef,
+  useMemo,
   type ReactNode,
 } from "react";
 import type {
@@ -31,15 +32,10 @@ import {
   mockSubscriptions,
 } from "./mock-data";
 import { isApiConfigured, getAuthToken } from "@/lib/api/client";
+import { type DomainKey, saveDomain, loadDomain } from "./snapshot-store";
+import { useSession } from "@/lib/auth/session-context";
+import { ApiError } from "@/lib/api/client";
 import * as endpoints from "@/lib/api/endpoints";
-
-// ── Idempotency key generator ─────────────────────────────────────
-
-let idemCounter = 0;
-function nextIdempotencyKey(): string {
-  idemCounter += 1;
-  return `pwa-${Date.now()}-${idemCounter}-${crypto.randomUUID().slice(0, 8)}`;
-}
 
 export interface AppState {
   // Data
@@ -52,6 +48,9 @@ export interface AppState {
   debts: Debt[];
   subscriptions: Subscription[];
   cardStatements: CardStatement[];
+  // Sync / mode
+  sync: Record<DomainKey, DomainSync>;
+  readOnly: boolean;
   // Fetch state
   loading: boolean;
   error: string | null;
@@ -117,44 +116,137 @@ export interface AppState {
 
 const AppStateContext = createContext<AppState | null>(null);
 
+// ── Sync / read-only types & constants ────────────────────────────
+
+export type DataSource = "live" | "snapshot" | "unavailable" | "mock";
+export interface DomainSync { source: DataSource; syncedAt: string | null }
+
+const ESSENTIAL_DOMAINS: DomainKey[] = [
+  "accounts", "categories", "transactions", "payables", "budgets", "goals",
+];
+
+const ALL_DOMAINS: DomainKey[] = [
+  ...ESSENTIAL_DOMAINS, "subscriptions", "cardStatements",
+];
+
+const STALE_SOURCES: DataSource[] = ["snapshot", "unavailable"];
+
+function initialSync(source: DataSource): Record<DomainKey, DomainSync> {
+  return Object.fromEntries(
+    ALL_DOMAINS.map((d) => [d, { source, syncedAt: null }]),
+  ) as Record<DomainKey, DomainSync>;
+}
+
 /** True when API base URL is configured AND an auth token exists */
 function apiUsable(): boolean {
   return isApiConfigured() && getAuthToken() !== undefined;
 }
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
-  // ── State — initialized with mock data ────────────────────────────
-  const [accounts, setAccounts] = useState<Account[]>(mockAccounts);
-  const [categories, setCategories] = useState<Category[]>(mockCategories);
+  const configured = isApiConfigured();
+  // ── State — empty when API configured, mock only when not ─────────
+  const [accounts, setAccounts] = useState<Account[]>(configured ? [] : mockAccounts);
+  const [categories, setCategories] = useState<Category[]>(configured ? [] : mockCategories);
   const [transactions, setTransactions] =
-    useState<Transaction[]>(ALL_MOCK_TRANSACTIONS);
-  const [payables, setPayables] = useState<Payable[]>(mockPayables);
-  const [budgets, setBudgets] = useState<Budget[]>(mockBudgets);
-  const [goals, setGoals] = useState<Goal[]>(mockGoals);
-  const [debts] = useState<Debt[]>(mockDebts);
+    useState<Transaction[]>(configured ? [] : ALL_MOCK_TRANSACTIONS);
+  const [payables, setPayables] = useState<Payable[]>(configured ? [] : mockPayables);
+  const [budgets, setBudgets] = useState<Budget[]>(configured ? [] : mockBudgets);
+  const [goals, setGoals] = useState<Goal[]>(configured ? [] : mockGoals);
+  const [debts] = useState<Debt[]>(configured ? [] : mockDebts);
   const [subscriptions, setSubscriptions] =
-    useState<Subscription[]>(mockSubscriptions);
+    useState<Subscription[]>(configured ? [] : mockSubscriptions);
   const [cardStatements, setCardStatements] = useState<CardStatement[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [sync, setSync] = useState<Record<DomainKey, DomainSync>>(() =>
+    initialSync(configured ? "live" : "mock"),
+  );
+  const setSyncFor = useCallback((domain: DomainKey, s: DomainSync) => {
+    setSync((prev) => ({ ...prev, [domain]: s }));
+  }, []);
+  const readOnly = useMemo(
+    () => ESSENTIAL_DOMAINS.some((d) => STALE_SOURCES.includes(sync[d].source)),
+    [sync],
+  );
+  const readOnlyRef = useRef(readOnly);
+  const { expireSession } = useSession();
+  const [loading, setLoading] = useState(apiUsable());
   const [error, setError] = useState<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
   const clearWriteError = useCallback(() => setWriteError(null), []);
 
+  const handleWriteError = useCallback(
+    (e: unknown) => {
+      if (e instanceof ApiError && e.status === 401) {
+        expireSession();
+        return;
+      }
+      if (e instanceof Error) setWriteError(e.message);
+    },
+    [expireSession],
+  );
+  const handleWriteErrorRef = useRef(handleWriteError);
+
+  const guardReadOnly = useCallback((): boolean => {
+    if (readOnlyRef.current) {
+      setWriteError("Backend indisponível — modo somente leitura.");
+      return true;
+    }
+    return false;
+  }, []);
+  const guardReadOnlyRef = useRef(guardReadOnly);
+
   // Refs to keep latest state accessible in callbacks without stale closures
   const payablesRef = useRef(payables);
-  payablesRef.current = payables;
   const accountsRef = useRef(accounts);
-  accountsRef.current = accounts;
   const subsRef = useRef(subscriptions);
-  subsRef.current = subscriptions;
   const txsRef = useRef(transactions);
-  txsRef.current = transactions;
   const categoriesRef = useRef(categories);
-  categoriesRef.current = categories;
   const stmtsRef = useRef(cardStatements);
-  stmtsRef.current = cardStatements;
 
   const loadedRef = useRef(false);
+
+  // Sync refs with latest state (avoids react-hooks/refs lint)
+  useEffect(() => {
+    readOnlyRef.current = readOnly;
+    handleWriteErrorRef.current = handleWriteError;
+    guardReadOnlyRef.current = guardReadOnly;
+    payablesRef.current = payables;
+    accountsRef.current = accounts;
+    subsRef.current = subscriptions;
+    txsRef.current = transactions;
+    categoriesRef.current = categories;
+    stmtsRef.current = cardStatements;
+  });
+
+  // Applies one settled list-domain result: live on success (+persist), snapshot if cached,
+  // else "unavailable" (empty + backend-down). NEVER mock.
+  const applyListDomain = useCallback(
+    function <K extends Exclude<DomainKey, "transactions">>(
+      domain: K,
+      result: PromiseSettledResult<unknown>,
+      token: string,
+      setData: (d: unknown) => void,
+    ): void {
+      if (result.status === "fulfilled") {
+        const value = result.value as never;
+        setData(value);
+        saveDomain(token, domain, value);
+        setSyncFor(domain, {
+          source: "live",
+          syncedAt: new Date().toISOString(),
+        });
+        return;
+      }
+      const snap = loadDomain(token, domain);
+      if (snap) {
+        setData(snap.data);
+        setSyncFor(domain, { source: "snapshot", syncedAt: snap.syncedAt });
+      } else {
+        setData([]);
+        setSyncFor(domain, { source: "unavailable", syncedAt: null });
+      }
+    },
+    [setSyncFor],
+  );
 
   // ── Fetch from API when configured + token exists ─────────────────
   useEffect(() => {
@@ -164,58 +256,104 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     const load = async () => {
+      const token = getAuthToken();
+      if (!token) return;
       setLoading(true);
       setError(null);
-      try {
-        const [accs, cats, txs, pays, buds, gos, subs, cards] =
-          await Promise.all([
-            endpoints.fetchAccounts(),
-            endpoints.fetchCategories(),
-            endpoints.fetchTransactions({ limit: 200 }),
-            endpoints.fetchPayables(),
-            endpoints.fetchBudgets(),
-            endpoints.fetchGoals(),
-            endpoints.fetchSubscriptions().catch(() => [] as Subscription[]),
-            endpoints.fetchCards().catch(() => [] as Account[]),
-          ]);
 
-        if (!cancelled) {
-          setAccounts(accs);
-          setCategories(cats);
-          setTransactions(txs.items);
-          setPayables(pays);
-          setBudgets(buds);
-          setGoals(gos);
-          setSubscriptions(subs);
-          if (cards.length > 0) {
-            endpoints.fetchStatements().then((stmts) => {
-              if (!cancelled) setCardStatements(stmts);
-            });
-          }
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setError((e as Error).message ?? "API fetch failed");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+      const results = await Promise.allSettled([
+        endpoints.fetchAccounts(),
+        endpoints.fetchCategories(),
+        endpoints.fetchTransactions({ limit: 200 }),
+        endpoints.fetchPayables(),
+        endpoints.fetchBudgets(),
+        endpoints.fetchGoals(),
+        endpoints.fetchSubscriptions(),
+        endpoints.fetchStatements(),
+      ]);
+      if (cancelled) return;
+
+      // Runtime 401 short-circuit across ALL domains (Task 5 wires the side-effect).
+      const unauthorized = results.some(
+        (r) =>
+          r.status === "rejected" &&
+          r.reason instanceof ApiError &&
+          r.reason.status === 401,
+      );
+      if (unauthorized) {
+        expireSession();
+        setLoading(false);
+        return;
       }
+
+      applyListDomain("accounts", results[0], token, (d) =>
+        setAccounts(d as Account[]),
+      );
+      applyListDomain("categories", results[1], token, (d) =>
+        setCategories(d as Category[]),
+      );
+      // transactions has shape { items, total }: unwrap before applying
+      if (results[2].status === "fulfilled") {
+        const items = (results[2].value as { items: Transaction[] }).items;
+        setTransactions(items);
+        saveDomain(token, "transactions", items);
+        setSyncFor("transactions", {
+          source: "live",
+          syncedAt: new Date().toISOString(),
+        });
+      } else {
+        const snap = loadDomain(token, "transactions");
+        if (snap) {
+          setTransactions(snap.data);
+          setSyncFor("transactions", {
+            source: "snapshot",
+            syncedAt: snap.syncedAt,
+          });
+        } else {
+          setTransactions([]);
+          setSyncFor("transactions", {
+            source: "unavailable",
+            syncedAt: null,
+          });
+        }
+      }
+      applyListDomain("payables", results[3], token, (d) =>
+        setPayables(d as Payable[]),
+      );
+      applyListDomain("budgets", results[4], token, (d) =>
+        setBudgets(d as Budget[]),
+      );
+      applyListDomain("goals", results[5], token, (d) =>
+        setGoals(d as Goal[]),
+      );
+      applyListDomain("subscriptions", results[6], token, (d) =>
+        setSubscriptions(d as Subscription[]),
+      );
+      applyListDomain("cardStatements", results[7], token, (d) =>
+        setCardStatements(d as CardStatement[]),
+      );
+
+      const anyFailed = results.some((r) => r.status === "rejected");
+      if (anyFailed)
+        setError("Alguns dados não puderam ser atualizados.");
+      setLoading(false);
     };
 
     load();
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Write actions ─────────────────────────────────────────────────
 
   const addTransaction = useCallback(async (tx: Transaction) => {
+    if (guardReadOnlyRef.current()) return;
     setTransactions((prev) => [tx, ...prev]);
 
     if (!apiUsable()) return;
 
-    const key = nextIdempotencyKey();
     try {
       if (tx.kind === "expense") {
         const created = await endpoints.createExpenseTransaction({
@@ -246,11 +384,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }
     } catch (e) {
       setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
-      if (e instanceof Error) setWriteError(e.message);
+      handleWriteErrorRef.current(e);
     }
   }, []);
 
   const deleteTransaction = useCallback(async (id: string) => {
+    if (guardReadOnlyRef.current()) return;
     const prev = txsRef.current.find((t) => t.id === id);
     setTransactions((prev) => prev.filter((t) => t.id !== id));
 
@@ -260,11 +399,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       await endpoints.deleteTransaction(id);
     } catch (e) {
       if (prev) setTransactions((curr) => [prev, ...curr]);
-      if (e instanceof Error) setWriteError(e.message);
+      handleWriteErrorRef.current(e);
     }
   }, []);
 
   const markPayablePaid = useCallback(async (id: string) => {
+    if (guardReadOnlyRef.current()) return;
     const prev = payablesRef.current.find((p) => p.id === id);
     const today = new Date().toISOString().slice(0, 10);
 
@@ -282,7 +422,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? prev : p)),
       );
-      if (e instanceof Error) setWriteError(e.message);
+      handleWriteErrorRef.current(e);
     }
   }, []);
 
@@ -292,6 +432,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       kind: "bank" | "cash" | "credit_card";
       initialBalanceCents: number;
     }) => {
+      if (guardReadOnlyRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
       const optimistic: Account = {
         id: optimisticId,
@@ -315,7 +456,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         );
       } catch (e) {
         setAccounts((prev) => prev.filter((a) => a.id !== optimisticId));
-        if (e instanceof Error) setWriteError(e.message);
+        handleWriteErrorRef.current(e);
       }
     },
     [],
@@ -327,6 +468,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       kind: "expense" | "income";
       parentId?: string;
     }) => {
+      if (guardReadOnlyRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
       const optimistic: Category = {
         id: optimisticId,
@@ -348,7 +490,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         );
       } catch (e) {
         setCategories((prev) => prev.filter((c) => c.id !== optimisticId));
-        if (e instanceof Error) setWriteError(e.message);
+        handleWriteErrorRef.current(e);
       }
     },
     [],
@@ -361,6 +503,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       closingDay: number;
       dueDay: number;
     }) => {
+      if (guardReadOnlyRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
       const optimistic: Account = {
         id: optimisticId,
@@ -387,7 +530,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         );
       } catch (e) {
         setAccounts((prev) => prev.filter((a) => a.id !== optimisticId));
-        if (e instanceof Error) setWriteError(e.message);
+        handleWriteErrorRef.current(e);
       }
     },
     [],
@@ -403,6 +546,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         dueDay?: number;
       },
     ) => {
+      if (guardReadOnlyRef.current()) return;
       const prev = accountsRef.current.find((a) => a.id === id);
       setAccounts((curr) =>
         curr.map((c) =>
@@ -435,7 +579,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setAccounts((curr) =>
           curr.map((a) => (a.id === id ? prev : a)),
         );
-        if (e instanceof Error) setWriteError(e.message);
+        handleWriteErrorRef.current(e);
       }
     },
     [],
@@ -449,6 +593,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       day: number;
       paymentMethod: string;
     }) => {
+      if (guardReadOnlyRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
       const optimistic: Subscription = {
         id: optimisticId,
@@ -471,13 +616,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         );
       } catch (e) {
         setSubscriptions((prev) => prev.filter((s) => s.id !== optimisticId));
-        if (e instanceof Error) setWriteError(e.message);
+        handleWriteErrorRef.current(e);
       }
     },
     [],
   );
 
   const cancelSubscription = useCallback(async (id: string) => {
+    if (guardReadOnlyRef.current()) return;
     const prev = subsRef.current.find((s) => s.id === id);
     setSubscriptions((curr) =>
       curr.map((s) =>
@@ -493,7 +639,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setSubscriptions((curr) =>
         curr.map((s) => (s.id === id ? prev : s)),
       );
-      if (e instanceof Error) setWriteError(e.message);
+      handleWriteErrorRef.current(e);
     }
   }, []);
 
@@ -505,6 +651,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       fromAccountId: string;
       toAccountId: string;
     }) => {
+      if (guardReadOnlyRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
       const optimisticTx: Transaction = {
         id: optimisticId,
@@ -541,7 +688,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       if (!apiUsable()) return;
 
-      const key = nextIdempotencyKey();
       try {
         await endpoints.createTransfer(input);
       } catch (e) {
@@ -556,7 +702,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             curr.map((a) => (a.id === input.toAccountId ? prevTo : a)),
           );
         }
-        if (e instanceof Error) setWriteError(e.message);
+        handleWriteErrorRef.current(e);
       }
     },
     [],
@@ -567,6 +713,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       statementId: string,
       input: { amountCents: number; fromAccountId: string },
     ) => {
+      if (guardReadOnlyRef.current()) return;
       const prevStmt = stmtsRef.current.find((s) => s.id === statementId);
       const prevAccount = accountsRef.current.find(
         (a) => a.id === input.fromAccountId,
@@ -624,7 +771,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             ),
           );
         }
-        if (e instanceof Error) setWriteError(e.message);
+        handleWriteErrorRef.current(e);
       }
     },
     [],
@@ -639,18 +786,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       installmentsTotal: number;
       categoryId?: string;
     }) => {
+      if (guardReadOnlyRef.current()) return;
       if (!apiUsable()) {
         setWriteError("API não configurada para parcelamentos");
         return;
       }
 
-      const key = nextIdempotencyKey();
       try {
         await endpoints.createInstallments(input);
         const stmts = await endpoints.fetchStatements(input.accountId);
         setCardStatements(stmts);
       } catch (e) {
-        if (e instanceof Error) setWriteError(e.message);
+        handleWriteErrorRef.current(e);
       }
     },
     [],
@@ -668,6 +815,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         debts,
         subscriptions,
         cardStatements,
+        sync,
+        readOnly,
         loading,
         error,
         writeError,

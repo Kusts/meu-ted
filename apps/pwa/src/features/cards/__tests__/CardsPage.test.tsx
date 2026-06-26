@@ -15,6 +15,17 @@ function defaultState(): AppState {
     debts: [], subscriptions: [], loading: false, error: null,
     addTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(),
     cardStatements: [], writeError: null, clearWriteError: vi.fn(),
+    sync: {
+      accounts: { source: "mock", syncedAt: null },
+      categories: { source: "mock", syncedAt: null },
+      transactions: { source: "mock", syncedAt: null },
+      payables: { source: "mock", syncedAt: null },
+      budgets: { source: "mock", syncedAt: null },
+      goals: { source: "mock", syncedAt: null },
+      subscriptions: { source: "mock", syncedAt: null },
+      cardStatements: { source: "mock", syncedAt: null },
+    },
+    readOnly: false,
     addAccount: vi.fn(), addCategory: vi.fn(), addCard: vi.fn(), updateCard: vi.fn(),
     addSubscription: vi.fn(), cancelSubscription: vi.fn(),
     createTransfer: vi.fn(), payStatement: vi.fn(), createInstallments: vi.fn(),
@@ -140,5 +151,16 @@ describe("CardsPage", () => {
 
   describe("error", () => {
     it("shows error banner alongside data", () => { vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ error: "Erro" })); render(<CardsPage />); expect(screen.getByText(/Erro/i)).toBeInTheDocument(); expect(screen.getByText("Nubank Crédito")).toBeInTheDocument(); });
+  });
+
+  describe("statement history", () => {
+    it("shows an honest empty state instead of synthetic months when no statements", async () => {
+      const user = userEvent.setup();
+      render(<CardsPage />);
+      await user.click(screen.getByText("Nubank Crédito"));
+      expect(
+        screen.getByText(/Nenhuma fatura anterior registrada/i),
+      ).toBeInTheDocument();
+    });
   });
 });

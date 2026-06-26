@@ -4,6 +4,7 @@ import { useState } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
+import { StaleBanner } from "@/components/StaleBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 
 function formatBRL(cents: number): string {
@@ -455,6 +456,8 @@ export default function CardsPage() {
           <div className="mx-5 mb-3 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger">⚠ {error}</div>
         )}
 
+        <StaleBanner domains={["accounts", "cardStatements", "transactions"]} />
+
         {!selectedCardId ? (
           <div className="flex flex-col gap-5 px-5">
             {cardsData.length === 0 && (
@@ -600,25 +603,9 @@ export default function CardsPage() {
                         );
                       })
                     ) : (
-                      // Fallback: synthetic if no real statements yet
-                      [1, 2, 3, 4, 5].map((i) => {
-                        const month = new Date();
-                        month.setMonth(month.getMonth() - i);
-                        const monthLabel = month.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
-                        const status = i === 1 ? "Paga" : "Fechada";
-                        const statusColor = status === "Paga" ? "#0E8C5A" : "#5C665E";
-                        const statusTint = status === "Paga" ? "#E7F3EC" : "#F4F5F2";
-                        const amtCents = Math.round(card.spentCents * (0.6 + (i % 3) * 0.15));
-                        return (
-                          <div key={i} className="flex items-center justify-between border-b border-fill-medium px-4 py-3.5 last:border-none">
-                            <div>
-                              <div className="text-[13px] font-semibold capitalize text-text-primary">{monthLabel}</div>
-                              <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: statusTint, color: statusColor }}>{status}</span>
-                            </div>
-                            <span className="font-mono text-[14px] font-semibold text-danger">{formatBRL(amtCents)}</span>
-                          </div>
-                        );
-                      })
+                      <div className="px-4 py-6 text-center text-[12px] text-text-muted">
+                        Nenhuma fatura anterior registrada.
+                      </div>
                     )}
                   </div>
                 </div>

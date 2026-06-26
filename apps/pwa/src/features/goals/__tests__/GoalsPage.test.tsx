@@ -14,6 +14,17 @@ function defaultState(): AppState {
     subscriptions: [], loading: false, error: null,
     addTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(),
     cardStatements: [], writeError: null, clearWriteError: vi.fn(),
+    sync: {
+      accounts: { source: "mock", syncedAt: null },
+      categories: { source: "mock", syncedAt: null },
+      transactions: { source: "mock", syncedAt: null },
+      payables: { source: "mock", syncedAt: null },
+      budgets: { source: "mock", syncedAt: null },
+      goals: { source: "mock", syncedAt: null },
+      subscriptions: { source: "mock", syncedAt: null },
+      cardStatements: { source: "mock", syncedAt: null },
+    },
+    readOnly: false,
     addAccount: vi.fn(), addCategory: vi.fn(), addCard: vi.fn(), updateCard: vi.fn(),
     addSubscription: vi.fn(), cancelSubscription: vi.fn(),
     createTransfer: vi.fn(), payStatement: vi.fn(), createInstallments: vi.fn(),
@@ -39,6 +50,20 @@ describe("GoalsPage", () => {
 
   describe("error", () => {
     it("shows error banner alongside data", () => { vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ error: "Erro API" })); render(<GoalsPage />); expect(screen.getByText(/Erro API/i)).toBeInTheDocument(); expect(screen.getByText("Metas")).toBeInTheDocument(); });
+  });
+
+  describe("debts tab — no debts (backend mode)", () => {
+    it("shows 'não implementado' state when debts is empty", async () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({ goals: [], debts: [] }),
+      );
+      const user = userEvent.setup();
+      render(<GoalsPage />);
+      await user.click(screen.getByText("Dívidas"));
+      expect(
+        screen.getByText(/não disponível|em breve|não implementad/i),
+      ).toBeInTheDocument();
+    });
   });
 
   describe("dead CTA signals", () => {

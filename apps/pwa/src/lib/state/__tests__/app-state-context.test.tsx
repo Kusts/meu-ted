@@ -1,6 +1,8 @@
 import { renderHook, act, waitFor } from "@/lib/test-utils";
 import { AppStateProvider, useAppState } from "../app-state-context";
 import * as endpoints from "@/lib/api/endpoints";
+import { ApiError } from "@/lib/api/client";
+import { SessionProvider } from "@/lib/auth/session-context";
 import type { Account, Transaction, Payable } from "@/lib/state/types";
 
 // ─── Spy setup ──────────────────────────────────────────────────────────────
@@ -34,6 +36,7 @@ function mockApiReads(
   // New reads
   vi.spyOn(endpoints, "fetchSubscriptions").mockResolvedValue([]);
   vi.spyOn(endpoints, "fetchCards").mockResolvedValue([]);
+  vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
 }
 
 function mockAccount(id: string, name: string): Account {
@@ -206,7 +209,29 @@ describe("AppStateProvider — API read path", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
   });
 
-  it("sets error on fetch failure and keeps mock data", async () => {
+  it("on fetch failure with NO snapshot: empty, unavailable, read-only, never mock", async () => {
+    vi.mocked(endpoints.fetchAccounts).mockRejectedValue(
+      new Error("Network error"),
+    );
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // failed domain is empty (NOT the 5 mock accounts)
+    expect(result.current.accounts).toHaveLength(0);
+    expect(result.current.error).not.toBeNull();
+    // essential domain down with no snapshot -> unavailable -> read-only ON
+    expect(result.current.sync.accounts.source).toBe("unavailable");
+    expect(result.current.readOnly).toBe(true);
+    // a healthy domain still applied live
+    expect(result.current.sync.categories.source).toBe("live");
+  });
+
+  it("on fetch failure WITH a prior snapshot: hydrates snapshot in read-only", async () => {
+    const { saveDomain } = await import("@/lib/state/snapshot-store");
+    saveDomain("test-token-abc", "accounts", [
+      mockAccount("snap-1", "Snapshot Nubank"),
+    ]);
     vi.mocked(endpoints.fetchAccounts).mockRejectedValue(
       new Error("Network error"),
     );
@@ -214,20 +239,42 @@ describe("AppStateProvider — API read path", () => {
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
     });
-
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.error).toBe("Network error");
-    expect(result.current.accounts.length).toBe(5);
-    expect(result.current.accounts[0].name).toBe("Nubank");
+    expect(result.current.accounts).toHaveLength(1);
+    expect(result.current.accounts[0].name).toBe("Snapshot Nubank");
+    expect(result.current.sync.accounts.source).toBe("snapshot");
+    expect(result.current.readOnly).toBe(true);
   });
 
-  it("skips API when token is missing", () => {
+  it("initializes empty (not mock) and not loading when configured without token", () => {
     localStorage.removeItem("pi-finance:token");
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
     });
+    // configured -> no mock leak; no token -> no fetch -> not stuck loading
     expect(result.current.loading).toBe(false);
-    expect(result.current.accounts).toHaveLength(5);
+    expect(result.current.accounts).toHaveLength(0);
+    expect(result.current.debts).toHaveLength(0);
+  });
+
+  it("initializes empty + loading=true when configured with token", () => {
+    vi.mocked(endpoints.fetchAccounts).mockImplementation(
+      () => new Promise(() => {}), // never resolves -> stays loading
+    );
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    expect(result.current.loading).toBe(true);
+    expect(result.current.accounts).toHaveLength(0);
+  });
+
+  it("exposes per-domain sync and a readOnly flag", async () => {
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.sync.accounts.source).toBe("live");
+    expect(result.current.readOnly).toBe(false);
   });
 });
 
@@ -866,5 +913,132 @@ describe("AppStateProvider — API write path", () => {
     expect(spy).toHaveBeenCalled();
     // The key is generated as `pwa-${Date.now()}-${counter}-${suffix}`
     // Can't check exact value, but we verify the call happened
+  });
+});
+
+describe("AppStateProvider — runtime 401", () => {
+  beforeEach(() => {
+    apiReady();
+    mockApiReads();
+  });
+
+  it("calls expireSession when a read returns 401", async () => {
+    const expireSession = vi.fn();
+    vi.mocked(endpoints.fetchAccounts).mockRejectedValue(
+      new ApiError(401, "auth.error", "Token inválido"),
+    );
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <SessionProvider value={{ expireSession }}>
+        <AppStateProvider>{children}</AppStateProvider>
+      </SessionProvider>
+    );
+    const { result } = renderHook(() => useAppState(), { wrapper });
+    await waitFor(() => expect(expireSession).toHaveBeenCalled());
+    // never falls back to mock on 401
+    expect(result.current.accounts).toHaveLength(0);
+  });
+
+  it("calls expireSession (not writeError) when a write returns 401", async () => {
+    const expireSession = vi.fn();
+    vi.spyOn(endpoints, "createExpenseTransaction").mockRejectedValue(
+      new ApiError(401, "auth.error", "Token inválido"),
+    );
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <SessionProvider value={{ expireSession }}>
+        <AppStateProvider>{children}</AppStateProvider>
+      </SessionProvider>
+    );
+    const { result } = renderHook(() => useAppState(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(() =>
+      result.current.addTransaction({
+        id: "tx-401",
+        description: "x",
+        amountCents: 100,
+        date: "2026-06-25",
+        kind: "expense",
+        categoryId: "cat1",
+        accountId: "acc1",
+      }),
+    );
+    expect(expireSession).toHaveBeenCalled();
+    expect(result.current.writeError).toBeNull();
+  });
+});
+
+describe("AppStateProvider — read-only guard", () => {
+  beforeEach(() => {
+    apiReady();
+    mockApiReads();
+  });
+
+  it("refuses writes (no optimistic change) when in snapshot read-only mode", async () => {
+    const { saveDomain } = await import("@/lib/state/snapshot-store");
+    saveDomain("test-token-abc", "accounts", [
+      mockAccount("snap-1", "Snap"),
+    ]);
+    vi.mocked(endpoints.fetchAccounts).mockRejectedValue(
+      new Error("down"),
+    );
+    const createSpy = vi
+      .spyOn(endpoints, "createExpenseTransaction")
+      .mockResolvedValue({} as Transaction);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.readOnly).toBe(true);
+    const txCountBefore = result.current.transactions.length;
+
+    await act(() =>
+      result.current.addTransaction({
+        id: "tx-ro",
+        description: "blocked",
+        amountCents: 100,
+        date: "2026-06-25",
+        kind: "expense",
+        categoryId: "cat1",
+        accountId: "acc1",
+      }),
+    );
+
+    // no optimistic insertion, no API call, explicit writeError
+    expect(result.current.transactions).toHaveLength(txCountBefore);
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(result.current.writeError).toMatch(/somente leitura|indisponível/i);
+  });
+
+  it("refuses writes when an essential domain is unavailable (backend down, no snapshot)", async () => {
+    // No snapshot saved -> failed essential domain becomes "unavailable" -> readOnly ON
+    vi.mocked(endpoints.fetchAccounts).mockRejectedValue(
+      new Error("down"),
+    );
+    const createSpy = vi
+      .spyOn(endpoints, "createExpenseTransaction")
+      .mockResolvedValue({} as Transaction);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.readOnly).toBe(true);
+    const txCountBefore = result.current.transactions.length;
+
+    await act(() =>
+      result.current.addTransaction({
+        id: "tx-unavail",
+        description: "blocked",
+        amountCents: 100,
+        date: "2026-06-25",
+        kind: "expense",
+        categoryId: "cat1",
+        accountId: "acc1",
+      }),
+    );
+
+    expect(result.current.transactions).toHaveLength(txCountBefore);
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(result.current.writeError).toMatch(/somente leitura|indisponível/i);
   });
 });

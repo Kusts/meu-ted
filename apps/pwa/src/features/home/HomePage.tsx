@@ -2,6 +2,7 @@
 
 import StatusBar from "@/components/StatusBar";
 import Link from "next/link";
+import { StaleBanner } from "@/components/StaleBanner";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import Badge from "@/components/ui/Badge";
@@ -309,6 +310,8 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   return (
     <div className="flex min-h-dvh flex-col bg-bg">
       <StatusBar />
+
+      <StaleBanner domains={["accounts", "transactions", "payables", "budgets"]} />
 
       {error && (
         <div className="mx-5 mt-2 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger">
