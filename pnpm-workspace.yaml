@@ -1,2 +1,9 @@
 packages:
   - 'apps/whatsapp-bridge'
+  - 'apps/pwa'
+
+ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver
+  - esbuild
+  - workerd

@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pi-finance-pwa",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-06-23",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "pi-finance-pwa"
+    }
+  ],
+  // Uncomment after creating the R2 bucket:
+  // "r2_buckets": [
+  //   {
+  //     "binding": "NEXT_INC_CACHE_R2_BUCKET",
+  //     "bucket_name": "pi-finance-pwa-opennext-cache"
+  //   }
+  // ],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "NEXT_PRIVATE_MINIMAL_MODE": "1",
+    "NEXT_PUBLIC_PI_FINANCE_API_BASE_URL": "https://api.synkroo.com.br"
+  }
+}

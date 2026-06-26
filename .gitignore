@@ -9,6 +9,10 @@ dist/
 .env.local
 .env.*.local
 
+# Cloudflare / OpenNext
+.open-next/
+.wrangler/
+
 # IDE
 .idea/
 .vscode/
@@ -74,7 +78,11 @@ apps/whatsapp-bridge/scripts/test-webhook-e2e.sh
 
 # Tooling runtime state
 .superpowers/
+.playwright-cli/
+
+tmp-pwa-*.log
 
 # Local pi launcher scripts
 start-coder.bat
 start-planner.bat
+start-agents.bat
