@@ -63,6 +63,7 @@ export async function apiFetch<T>(
 
   const requestHeaders: Record<string, string> = {
     Accept: "application/json",
+    ...(rest.body ? { "Content-Type": "application/json" } : {}),
     ...(resolvedToken ? { "x-device-token": resolvedToken } : {}),
     ...((optsHeaders as Record<string, string>) ?? {}),
   };

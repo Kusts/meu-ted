@@ -2,6 +2,32 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { apiFetch, isApiConfigured } from "./client";
 
+describe("apiFetch JSON content-type", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("adds application/json content-type when body is present", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await apiFetch("/transactions/expense", {
+      method: "POST",
+      body: JSON.stringify({ description: "Mercado" }),
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({ "Content-Type": "application/json" }),
+      }),
+    );
+  });
+});
+
 describe("api client base URL resolution", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
