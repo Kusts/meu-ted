@@ -1,4 +1,5 @@
 import { render, screen } from "@/lib/test-utils";
+import userEvent from "@testing-library/user-event";
 import ProfilePage from "../ProfilePage";
 
 const mockRouter = { push: vi.fn(), refresh: vi.fn() };
@@ -7,6 +8,10 @@ vi.mock("next/navigation", () => ({
 }));
 
 describe("ProfilePage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("renders the page header", () => {
     render(<ProfilePage />);
     expect(screen.getByText("Perfil")).toBeInTheDocument();
@@ -23,15 +28,17 @@ describe("ProfilePage", () => {
     expect(screen.getByText("Editar perfil")).toBeInTheDocument();
   });
 
-  it("renders Segurança and Notificações as disabled with Em breve label", () => {
+  it("opens notifications sheet", async () => {
+    const user = userEvent.setup();
+
     render(<ProfilePage />);
-    expect(screen.getByText("Segurança")).toBeInTheDocument();
-    expect(screen.getByText("Notificações")).toBeInTheDocument();
-    const breves = screen.getAllByText("Em breve");
-    expect(breves).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: /Notificações/ }));
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getAllByText("Notificações").length).toBeGreaterThan(0);
+    expect(screen.getByText("Resumo diário")).toBeInTheDocument();
   });
-
-
 
   it("renders Chat com Pi (WhatsApp) item", () => {
     render(<ProfilePage />);
@@ -43,9 +50,13 @@ describe("ProfilePage", () => {
     expect(screen.getByText("Sair da conta")).toBeInTheDocument();
   });
 
-it("logout button triggers navigation", () => {
+  it("logout button triggers navigation", async () => {
+    const user = userEvent.setup();
+
     render(<ProfilePage />);
-    screen.getByText("Sair da conta").click();
+
+    await user.click(screen.getByText("Sair da conta"));
+
     expect(mockRouter.push).toHaveBeenCalledWith("/");
     expect(mockRouter.refresh).toHaveBeenCalled();
   });

@@ -1,8 +1,11 @@
-# pi-financeiro (bridge)
+# pi-financeiro
 
-Bridge mínimo **WhatsApp ↔ Pi RPC**. Recebe webhooks da Evolution API,
-extrai a mensagem, valida permissões, e encaminha para o Agent Pi
-(`pi --mode rpc`) com contexto estruturado. O Agent Pi é responsável por
+Monorepo com 2 frentes ativas:
+- `apps/whatsapp-bridge` — bridge mínimo **WhatsApp ↔ Pi RPC**
+- `apps/pwa` — PWA canônico do produto dentro deste repositório
+
+O bridge recebe webhooks da Evolution API, extrai a mensagem, valida permissões,
+e encaminha para o Agent Pi (`pi --mode rpc`) com contexto estruturado. O Agent Pi é responsável por
 interpretar a mensagem, aplicar regras, chamar tools e persistir dados.
 
 > **O que mudou:** este repositório não é mais o sistema financeiro.
@@ -15,8 +18,9 @@ interpretar a mensagem, aplicar regras, chamar tools e persistir dados.
 
 | Camada | Tecnologia |
 |---|---|
-| Monorepo | pnpm workspaces (1 app) |
+| Monorepo | pnpm workspaces (2 apps) |
 | Bridge | Fastify + TypeScript |
+| PWA | Next.js 16 + Tailwind CSS v4 |
 | WhatsApp | Evolution GO API |
 | Agent | `pi --mode rpc` (Pi CLI, sem SDK) |
 | Testes | Vitest |
@@ -26,19 +30,25 @@ interpretar a mensagem, aplicar regras, chamar tools e persistir dados.
 ```
 .
 ├── apps/
-│   └── whatsapp-bridge/        # bridge único: webhook + Pi RPC + reminder
+│   ├── whatsapp-bridge/        # bridge: webhook + Pi RPC + reminder
+│   │   └── src/
+│   │       ├── webhook-handler.ts    # validação + forward
+│   │       ├── pi-client-factory.ts  # RpcClient upstream
+│   │       ├── evolution-client.ts   # ResponseSender Evolution
+│   │       ├── server.ts             # Fastify server
+│   │       ├── env.ts                # .env loader compartilhado
+│   │       └── tools/                # tools Pi (financial-tools extension)
+│   │   └── scripts/
+│   │       ├── reminder.ts           # resumo semanal (read-only)
+│   │       ├── data-provider.ts      # leituras para resumo
+│   │       ├── formatter.ts          # montagem da mensagem
+│   │       └── reminder.test.ts      # testes do pipeline
+│   └── pwa/                    # frontend canônico do produto
 │       └── src/
-│           ├── webhook-handler.ts    # validação + forward
-│           ├── pi-client-factory.ts  # RpcClient upstream
-│           ├── evolution-client.ts   # ResponseSender Evolution
-│           ├── server.ts             # Fastify server
-│           ├── env.ts                # .env loader compartilhado
-│           └── tools/                # tools Pi (financial-tools extension)
-│       └── scripts/
-│           ├── reminder.ts           # resumo semanal (read-only)
-│           ├── data-provider.ts      #抽象体 para DB reads
-│           ├── formatter.ts          # montagem da mensagem
-│           └── reminder.test.ts      # testes do pipeline
+│           ├── app/                  # rotas Next.js App Router
+│           ├── components/           # AppShell, sheets, nav
+│           ├── features/             # home, perfil, cartões, etc.
+│           └── lib/                  # auth, api client, state
 ├── docs/
 │   ├── bridge-simplification-inventory.md
 │   └── migrations/           # SQL migrations manuais por fase
@@ -57,6 +67,18 @@ pnpm install
 cp apps/whatsapp-bridge/.env.example apps/whatsapp-bridge/.env
 # (opcional) cp apps/whatsapp-bridge/.env.example .env  # se preferir raiz
 pnpm dev
+```
+
+## PWA
+
+O frontend oficial agora mora em `apps/pwa` neste monorepo.
+`../pi-finance-web` não é mais a fonte de verdade do produto.
+
+```bash
+cd apps/pwa
+pnpm dev
+pnpm test
+pnpm build
 ```
 
 ## Variáveis de ambiente (resumo)

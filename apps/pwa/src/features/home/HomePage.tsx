@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import { useAppState } from "@/lib/state/app-state-context";
+import NotificationsSheet from "@/features/profile/NotificationsSheet";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -57,8 +58,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   const { accounts, transactions, categories, payables, budgets, loading, error } =
     useAppState();
   const router = useRouter();
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [profileSub, setProfileSub] = useState<"" | "edit" | "security" | "chat">("");
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   const handleNew = (kind: "expense" | "income" | "transfer") => {
     if (onNewTransaction) onNewTransaction(kind);
@@ -335,7 +335,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
             <div className="flex items-center gap-2.5">
               <button
                 type="button"
-                onClick={() => setProfileOpen(true)}
+                onClick={() => router.push("/perfil")}
                 className="flex h-[38px] w-[38px] cursor-pointer items-center justify-center rounded-full font-mono text-[15px] font-semibold text-white"
                 style={{ background: "rgba(255,255,255,.18)" }}
               >
@@ -354,7 +354,11 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                 <div className="text-[15px] font-bold text-white">Marina</div>
               </div>
             </div>
-            <div className="relative flex h-[38px] w-[38px] items-center justify-center rounded-full text-white"
+            <button
+              type="button"
+              aria-label="Notificações"
+              onClick={() => setNotificationsOpen(true)}
+              className="relative flex h-[38px] w-[38px] items-center justify-center rounded-full text-white"
               style={{ background: "rgba(255,255,255,.14)" }}
             >
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -364,7 +368,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
               <div className="absolute right-[9px] top-[8px] h-[7px] w-[7px] rounded-full border-[1.5px]"
                 style={{ background: "#E0A33E", borderColor: "#0C4430" }}
               />
-            </div>
+            </button>
           </div>
 
           {/* Saldo */}
@@ -775,6 +779,11 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
           </div>
         </div>
       </main>
+
+      <NotificationsSheet
+        open={notificationsOpen}
+        onClose={() => setNotificationsOpen(false)}
+      />
     </div>
   );
 }

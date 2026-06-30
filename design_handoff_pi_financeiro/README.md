@@ -1,6 +1,6 @@
 # Handoff: Pi Financeiro — Redesign Completo do PWA
 
-> **Atenção ao desenvolvedor:** os arquivos nesta pasta são **protótipos de design em HTML** — referências visuais e de comportamento criadas para validar o produto, **não** código de produção para ser copiado. A tarefa é **recriar esses designs no codebase React existente** (`pi-finance-web/`) utilizando seus padrões, hooks e bibliotecas já estabelecidos. O arquivo `.dc.html` é a fonte-verdade visual.
+> **Atenção ao desenvolvedor:** os arquivos nesta pasta são **protótipos de design em HTML** — referências visuais e de comportamento criadas para validar o produto, **não** código de produção para ser copiado. A tarefa é **recriar esses designs no codebase React existente** (`apps/pwa/`) utilizando seus padrões, hooks e bibliotecas já estabelecidos. O arquivo `.dc.html` é a fonte-verdade visual.
 
 ---
 

@@ -2,35 +2,39 @@
 
 Container com bridge Node.js + Pi agent rodando juntos.
 O Pi é invocado pelo bridge via `RpcClient` (subprocess stdin/stdout).
-Banco de dados Postgres acessado via `host.docker.internal`.
 
-## Requisitos
+**Desde 2026-06-21, este stack roda na VPS Hostinger (187.77.249.47)**, junto com o
+Evolution GO e o Postgres (`pi_financeiro`). O que está documentado aqui serve para
+rodar uma cópia local pontual (debug), não é mais o ambiente principal.
+
+## Requisitos (para rodar local)
 
 - Docker Desktop (Windows)
-- Postgres rodando com banco `pi_financeiro`
-- Evolution API (WhatsApp) rodando no host (opcional)
+- Túnel SSH ativo para o Postgres da VPS (`docker/pi-stack/ssh-tunnel-postgres.bat`) —
+  o Postgres não tem porta pública, só é alcançável via túnel
+- Evolution API agora é acessada via `https://evo.synkroo.com.br` (HTTPS público, com API key) —
+  não precisa mais rodar nada localmente para isso
 
 ## Variáveis obrigatórias
 
-⚠️ **Segurança:** `.env.pi` contém `MINIMAX_API_KEY` e outras credenciais.
-Nunca comite `.env.pi` no git. Ele já está no `.gitignore` do projeto.
+⚠️ **Segurança:** `.env.pi` contém `MINIMAX_API_KEY`, `DATABASE_URL` (com a senha do Postgres
+da VPS) e `EVOLUTION_GO_INSTANCE_TOKEN`. Nunca comite `.env.pi` no git. Ele já está no
+`.gitignore` do projeto.
 
-O compose usa defaults que funcionam com o projeto local.
-Para sobrescrever, exporte as vars antes de rodar o compose:
-
-```bash
-export DATABASE_URL="postgresql://postgres:postgres@host.docker.internal:5432/pi_financeiro"
-export EVOLUTION_GO_API_URL="http://host.docker.internal:4000"
-export EVOLUTION_GO_INSTANCE_TOKEN="seu-token-aqui"
-```
-
-Ou use `.env.pi` com `--env-file`:
+O compose lê `DATABASE_URL` e `EVOLUTION_GO_API_URL` do `.env.pi` (via `env_file:`).
+Para rodar local:
 
 ```bash
-docker compose -f docker/pi-stack/docker-compose.yml --env-file .env.pi up -d
+# 1. Abrir o tunel SSH (deixe a janela aberta)
+docker\pi-stack\ssh-tunnel-postgres.bat
+
+# 2. Subir o stack (em outro terminal)
+docker compose -f docker/pi-stack/docker-compose.yml up -d
 ```
 
-**Nota:** `localhost` no seu `.env` vira `host.docker.internal` dentro do container.
+**Nota:** `host.docker.internal` dentro do container aponta para o seu `localhost` —
+é por isso que o túnel SSH (que escuta em `localhost:5432`) funciona com
+`DATABASE_URL=...@host.docker.internal:5432/...`.
 
 ## Uso
 
@@ -88,8 +92,8 @@ Warmup não bloqueia `/health` mas pode afetar `/webhooks/evolution` na primeira
 
 | Var | Exemplo | Padrão |
 |---|---|---|
-| `DATABASE_URL` | `postgresql://postgres:postgres@host.docker.internal:5432/pi_financeiro` | (projeto local) |
-| `EVOLUTION_GO_API_URL` | `http://host.docker.internal:4000` | `http://host.docker.internal:4000` |
+| `DATABASE_URL` | `postgresql://postgres:<senha>@host.docker.internal:5432/pi_financeiro` | via `.env.pi`, requer túnel SSH (VPS) |
+| `EVOLUTION_GO_API_URL` | `https://evo.synkroo.com.br` | `https://evo.synkroo.com.br` |
 | `EVOLUTION_GO_INSTANCE_NAME` | `ted` | `ted` |
 | `EVOLUTION_GO_INSTANCE_TOKEN` | `seu-token` | vazio |
 | `MINIMAX_API_KEY` | `sk-...` | vazio (preencher no `.env.pi`) |
@@ -119,7 +123,7 @@ e reconecta automaticamente quando detecta desconexão.
 
 | Var | Exemplo | Padrão |
 |---|---|---|
-| `EVOLUTION_GO_API_URL` | `http://host.docker.internal:4000` (docker) / `http://localhost:4000` (standalone) | `http://localhost:4000` (runner default); docker compose overrides to `http://host.docker.internal:4000` |
+| `EVOLUTION_GO_API_URL` | `https://evo.synkroo.com.br` | `https://evo.synkroo.com.br` |
 | `EVOLUTION_GO_INSTANCE_TOKEN` | `seu-token` | (obrigatória) |
 | `WATCHDOG_INTERVAL_MS` | `60000` | `60000` |
 | `WATCHDOG_MAX_RECONNECT_ATTEMPTS` | `3` | `3` |
@@ -143,5 +147,11 @@ container (pi-stack)
 ├── /workspace/.pi/                  → contrato do agente
 ├── /workspace/apps/whatsapp-bridge/ → bridge Node.js
 ├── /usr/local/bin/pi                → Pi CLI global
-└── host.docker.internal             → Postgres, Evolution API
+├── host.docker.internal:5432         → Postgres (via túnel SSH para a VPS)
+└── https://evo.synkroo.com.br        → Evolution API (HTTPS público, na VPS)
 ```
+
+**Em produção, este mesmo container roda direto na VPS** (`~/infra/pi-stack` em
+`187.77.249.47`), na mesma rede Docker do Evolution GO — lá ele acessa
+`evolution-postgres:5432` e `evolution-go:4000` direto pela rede interna, sem
+túnel nem HTTPS.

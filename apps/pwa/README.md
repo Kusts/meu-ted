@@ -3,7 +3,9 @@
 Progressive Web App companion for [Pi Financeiro](..), a personal finance tracker
 with WhatsApp integration.
 
-Runs inside the `apps/pwa` directory of the monorepo.
+Runs inside the `apps/pwa` directory of this monorepo.
+Este diretório é o frontend canônico atual do produto.
+`../pi-finance-web` deve ser tratado apenas como legado/histórico.
 
 ## Tech Stack
 

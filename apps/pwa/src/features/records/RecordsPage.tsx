@@ -8,6 +8,7 @@ import { StaleBanner } from "@/components/StaleBanner";
 import { TransactionActionSheet } from "./components/TransactionActionSheet";
 import { TransactionEditSheet } from "./components/TransactionEditSheet";
 import { useAppState } from "@/lib/state/app-state-context";
+import type { Transaction } from "@/lib/state/types";
 
 type TypeFilter = "all" | "expense" | "income" | "transfer";
 type PeriodFilter = "all" | 7 | 30 | 90;
@@ -39,8 +40,6 @@ interface Group {
   date: string;
   items: Transaction[];
 }
-
-import type { Transaction } from "@/lib/state/types";
 
 function categoryIconPaths(iconName: string): { d: string; tint: string; stroke: string } {
   const map: Record<string, { d: string; tint: string; stroke: string }> = {

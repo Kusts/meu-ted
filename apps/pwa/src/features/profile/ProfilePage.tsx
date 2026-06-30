@@ -7,15 +7,20 @@ import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import Icon from "@/components/ui/Icon";
 import Badge from "@/components/ui/Badge";
-import { getAuthToken } from "@/lib/api/client";
+import NotificationsSheet from "./NotificationsSheet";
 
-type ProfileSheet = "edit" | "chat" | null;
+type ProfileSheet = "edit" | "chat" | "notifications" | null;
 
 const PROFILE_ITEMS = [
   {
     key: "edit" as const,
     label: "Editar perfil",
     icon: <Icon name="user" size={17} />,
+  },
+  {
+    key: "notifications" as const,
+    label: "Notificações",
+    icon: <Icon name="bell" size={17} />,
   },
   {
     key: "chat" as const,
@@ -31,6 +36,7 @@ export default function ProfilePage() {
   function handleItem(key: string) {
     if (key === "edit") setOpen("edit");
     else if (key === "chat") setOpen("chat");
+    else if (key === "notifications") setOpen("notifications");
   }
 
   function handleLogout() {
@@ -85,29 +91,13 @@ export default function ProfilePage() {
 
         {/* Itens desabilitados */}
         <div className="rounded-[16px] bg-fill-light px-4 py-1 opacity-50">
-          {[
-            {
-              label: "Segurança",
-              icon: <Icon name="shield" size={17} />,
-            },
-            {
-              label: "Notificações",
-              icon: <Icon name="bell" size={17} />,
-            },
-          ].map((item, idx, arr) => (
-            <div
-              key={item.label}
-              className={`flex w-full items-center gap-3 py-3 ${
-                idx < arr.length - 1 ? "border-b border-border" : ""
-              }`}
-            >
-              {item.icon}
-              <span className="flex-1 text-left text-[14px] font-semibold text-text-muted">
-                {item.label}
-              </span>
-              <span className="text-[10px] font-bold text-text-muted">Em breve</span>
-            </div>
-          ))}
+          <div className="flex w-full items-center gap-3 py-3">
+            <Icon name="shield" size={17} />
+            <span className="flex-1 text-left text-[14px] font-semibold text-text-muted">
+              Segurança
+            </span>
+            <span className="text-[10px] font-bold text-text-muted">Em breve</span>
+          </div>
         </div>
 
         {/* Botão Sair */}
@@ -122,6 +112,10 @@ export default function ProfilePage() {
 
       <EditProfileSheet
         open={open === "edit"}
+        onClose={() => setOpen(null)}
+      />
+      <NotificationsSheet
+        open={open === "notifications"}
         onClose={() => setOpen(null)}
       />
       <ChatSheet open={open === "chat"} onClose={() => setOpen(null)} />

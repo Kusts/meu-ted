@@ -10,7 +10,8 @@ services:
       - ../../.env.pi
     environment:
       - HOME=/home/pi-stack
-      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@host.docker.internal:5432/pi_financeiro}
+      # DATABASE_URL e EVOLUTION_GO_API_URL vem do .env.pi (gitignored) - stack roda na VPS,
+      # Postgres so e alcancavel via tunel SSH (docker/pi-stack/ssh-tunnel-postgres.bat)
       - PI_AGENT_RUNTIME=pi-native
       - PI_RPC_TIMEOUT_MS=${PI_RPC_TIMEOUT_MS:-120000}
       - PI_RPC_PROVIDER=${PI_RPC_PROVIDER:-minimax}
@@ -43,7 +44,7 @@ services:
       - ../../.env.pi
     environment:
       - HOME=/home/pi-stack
-      - EVOLUTION_GO_API_URL=${EVOLUTION_GO_API_URL:-http://host.docker.internal:4000}
+      - EVOLUTION_GO_API_URL=${EVOLUTION_GO_API_URL:-https://evo.synkroo.com.br}
       - WATCHDOG_INTERVAL_MS=${WATCHDOG_INTERVAL_MS:-60000}
       - WATCHDOG_MAX_RECONNECT_ATTEMPTS=${WATCHDOG_MAX_RECONNECT_ATTEMPTS:-3}
       - WATCHDOG_BACKOFF_MS=${WATCHDOG_BACKOFF_MS:-8000}
