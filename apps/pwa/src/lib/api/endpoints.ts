@@ -226,6 +226,22 @@ export async function createIncomeTransaction(input: {
   });
 }
 
+export async function updateTransaction(
+  id: string,
+  input: {
+    description?: string;
+    date?: string;
+    amountCents?: number;
+    accountId?: string;
+    categoryId?: string;
+  },
+): Promise<Transaction> {
+  return apiFetch<Transaction>(`/transactions/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function deleteTransaction(id: string): Promise<void> {
   await apiFetch(`/transactions/${id}`, { method: "DELETE" });
 }

@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
+import { TransactionActionSheet } from "./components/TransactionActionSheet";
+import { TransactionEditSheet } from "./components/TransactionEditSheet";
 import { useAppState } from "@/lib/state/app-state-context";
 
 type TypeFilter = "all" | "expense" | "income" | "transfer";
@@ -53,7 +55,25 @@ function categoryIconPaths(iconName: string): { d: string; tint: string; stroke:
 }
 
 export default function RecordsPage() {
-  const { transactions, categories, accounts, loading, error, writeError, clearWriteError } = useAppState();
+  const { transactions, categories, accounts, loading, error, writeError, clearWriteError, deleteTransaction } = useAppState();
+  const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
+  const [actionOpen, setActionOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const handleRowClick = useCallback((tx: Transaction) => {
+    setSelectedTx(tx);
+    setActionOpen(true);
+  }, []);
+  const handleEdit = useCallback((tx: Transaction) => {
+    setActionOpen(false);
+    setSelectedTx(tx);
+    setEditOpen(true);
+  }, []);
+  const handleDelete = useCallback(
+    async (tx: Transaction) => {
+      await deleteTransaction(tx.id);
+    },
+    [deleteTransaction],
+  );
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
@@ -294,7 +314,8 @@ export default function RecordsPage() {
                     return (
                       <div
                         key={tx.id}
-                        className="flex items-center gap-3 border-b border-fill-medium px-4 py-3 last:border-none"
+                        onClick={() => handleRowClick(tx)}
+                        className="flex cursor-pointer items-center gap-3 border-b border-fill-medium px-4 py-3 last:border-none active:bg-fill-light"
                       >
                         <div
                           className="flex h-[38px] w-[38px] flex-none items-center justify-center rounded-[11px]"
@@ -341,6 +362,26 @@ export default function RecordsPage() {
           </div>
         )}
       </main>
+
+      <TransactionActionSheet
+        open={actionOpen}
+        transaction={selectedTx}
+        onClose={() => {
+          setActionOpen(false);
+          setSelectedTx(null);
+        }}
+        onEdit={handleEdit}
+        onDelete={handleDelete}
+      />
+
+      <TransactionEditSheet
+        open={editOpen}
+        transaction={selectedTx}
+        onClose={() => {
+          setEditOpen(false);
+          setSelectedTx(null);
+        }}
+      />
     </div>
   );
 }

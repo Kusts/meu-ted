@@ -58,6 +58,16 @@ export interface AppState {
   clearWriteError: () => void;
   // Write actions
   addTransaction: (tx: Transaction) => Promise<void>;
+  updateTransaction: (
+    id: string,
+    input: {
+      description?: string;
+      date?: string;
+      amountCents?: number;
+      accountId?: string;
+      categoryId?: string;
+    },
+  ) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
   markPayablePaid: (id: string) => Promise<void>;
   addAccount: (input: {
@@ -387,6 +397,60 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       handleWriteErrorRef.current(e);
     }
   }, []);
+
+  const updateTransaction = useCallback(
+    async (
+      id: string,
+      input: {
+        description?: string;
+        date?: string;
+        amountCents?: number;
+        accountId?: string;
+        categoryId?: string;
+      },
+    ) => {
+      if (guardReadOnlyRef.current()) return;
+      const prev = txsRef.current.find((t) => t.id === id);
+      if (!prev) return;
+
+      // Optimistic update — only mutate specified fields
+      setTransactions((curr) =>
+        curr.map((t) =>
+          t.id === id
+            ? {
+                ...t,
+                ...(input.description !== undefined
+                  ? { description: input.description }
+                  : {}),
+                ...(input.date !== undefined ? { date: input.date } : {}),
+                ...(input.amountCents !== undefined
+                  ? { amountCents: input.amountCents }
+                  : {}),
+                ...(input.accountId !== undefined
+                  ? { accountId: input.accountId }
+                  : {}),
+                ...(input.categoryId !== undefined
+                  ? { categoryId: input.categoryId }
+                  : {}),
+              }
+            : t,
+        ),
+      );
+
+      if (!apiUsable()) return;
+
+      try {
+        await endpoints.updateTransaction(id, input);
+      } catch (e) {
+        // Rollback to previous state
+        setTransactions((curr) =>
+          curr.map((t) => (t.id === id ? prev : t)),
+        );
+        handleWriteErrorRef.current(e);
+      }
+    },
+    [],
+  );
 
   const deleteTransaction = useCallback(async (id: string) => {
     if (guardReadOnlyRef.current()) return;
@@ -822,6 +886,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         writeError,
         clearWriteError,
         addTransaction,
+        updateTransaction,
         deleteTransaction,
         markPayablePaid,
         addAccount,

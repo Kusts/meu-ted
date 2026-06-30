@@ -127,6 +127,7 @@ describe("AppStateProvider — mock-data path (no API)", () => {
     expect(result.current.subscriptions).toBeDefined();
     expect(result.current.cardStatements).toBeDefined();
     expect(typeof result.current.addTransaction).toBe("function");
+    expect(typeof result.current.updateTransaction).toBe("function");
     expect(typeof result.current.deleteTransaction).toBe("function");
     expect(typeof result.current.markPayablePaid).toBe("function");
     expect(typeof result.current.addAccount).toBe("function");
@@ -168,6 +169,27 @@ describe("AppStateProvider — mock-data path (no API)", () => {
     const p = result.current.payables.find((p) => p.id === "p1");
     expect(p?.status).toBe("paid");
     expect(p?.paidDate).toBeDefined();
+  });
+
+  it("updates transaction locally when no API", async () => {
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() =>
+      expect(result.current.transactions.length).toBeGreaterThan(0),
+    );
+    const txId = result.current.transactions[0].id;
+
+    await act(() =>
+      result.current.updateTransaction(txId, {
+        description: "Updated locally",
+      }),
+    );
+
+    expect(result.current.transactions[0].description).toBe(
+      "Updated locally",
+    );
+    expect(result.current.writeError).toBeNull();
   });
 
   it("throws if useAppState is used outside provider", () => {
@@ -384,6 +406,54 @@ describe("AppStateProvider — API write path", () => {
     const p = result.current.payables.find((p) => p.id === "p1");
     expect(p?.status).toBe("pending");
     expect(result.current.writeError).toBe("API error");
+  });
+
+  // ── updateTransaction ──────────────────────────────────────────
+
+  it("calls updateTransaction API and rolls back on failure", async () => {
+    // Seed initial data
+    vi.spyOn(endpoints, "fetchTransactions").mockResolvedValue({
+      items: [
+        {
+          id: "tx-upd-1",
+          description: "Old desc",
+          amountCents: 1000,
+          date: "2026-06-25",
+          kind: "expense",
+          categoryId: "cat1",
+          accountId: "acc1",
+        },
+      ],
+      total: 1,
+    });
+
+    const spy = vi
+      .spyOn(endpoints, "updateTransaction")
+      .mockRejectedValue(new Error("Offline"));
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.transactions).toHaveLength(1);
+    const txId = result.current.transactions[0].id;
+
+    await act(() =>
+      result.current.updateTransaction(txId, {
+        description: "New desc",
+        amountCents: 2000,
+      }),
+    );
+
+    expect(spy).toHaveBeenCalledWith(txId, {
+      description: "New desc",
+      amountCents: 2000,
+    });
+    // API failed — rolled back to original values
+    expect(result.current.transactions[0].description).toBe("Old desc");
+    expect(result.current.transactions[0].amountCents).toBe(1000);
+    expect(result.current.writeError).toBe("Offline");
   });
 
   // ── deleteTransaction ──────────────────────────────────────────

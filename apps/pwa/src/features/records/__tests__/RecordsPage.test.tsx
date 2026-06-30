@@ -31,6 +31,7 @@ function defaultState(): AppState {
     },
     readOnly: false,
     addTransaction: vi.fn(),
+    updateTransaction: vi.fn(),
     deleteTransaction: vi.fn(),
     markPayablePaid: vi.fn(),
     addAccount: vi.fn(),
@@ -139,6 +140,15 @@ describe("RecordsPage", () => {
       render(<RecordsPage />);
       expect(screen.getByText(/carregando/i)).toBeInTheDocument();
       expect(screen.queryByText("Supermercado Extra")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("row actions", () => {
+    it("shows action sheet when a transaction row is clicked", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByText("Supermercado Extra"));
+      expect(screen.getByText("Editar")).toBeInTheDocument();
+      expect(screen.getByText("Excluir")).toBeInTheDocument();
     });
   });
 
