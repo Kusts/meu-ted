@@ -227,6 +227,8 @@ export default function PayablesPage() {
           </div>
         )}
 
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+
         <div className="px-5">
           {/* KPI card */}
           <div

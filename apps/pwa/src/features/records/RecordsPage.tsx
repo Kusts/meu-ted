@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
+import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 
 type TypeFilter = "all" | "expense" | "income" | "transfer";
@@ -51,7 +52,7 @@ function categoryIconPaths(iconName: string): { d: string; tint: string; stroke:
 }
 
 export default function RecordsPage() {
-  const { transactions, categories, accounts, loading, error } = useAppState();
+  const { transactions, categories, accounts, loading, error, writeError, clearWriteError } = useAppState();
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
@@ -156,6 +157,8 @@ export default function RecordsPage() {
             ⚠ {error}
           </div>
         )}
+
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
 
         {/* Search */}
         <div className="mx-5 mb-3">

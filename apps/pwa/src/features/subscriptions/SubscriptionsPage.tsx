@@ -5,6 +5,7 @@ import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import Badge from "@/components/ui/Badge";
+import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 
 function formatBRL(cents: number): string {
@@ -233,7 +234,7 @@ function NewSubscriptionSheet({
 }
 
 export default function SubscriptionsPage() {
-  const { subscriptions, addSubscription } = useAppState();
+  const { subscriptions, addSubscription, writeError, clearWriteError } = useAppState();
   const [tab, setTab] = useState<"active" | "cancelled">("active");
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -268,6 +269,8 @@ export default function SubscriptionsPage() {
             </button>
           }
         />
+
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
 
         {/* Monthly total hero */}
         <div

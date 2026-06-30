@@ -219,6 +219,8 @@ export default function BudgetsPage() {
           </div>
         )}
 
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+
         <div className="px-5">
           {/* Tabs */}
           <div className="mb-[6px] flex gap-1.5 rounded-xl bg-fill-light p-1">

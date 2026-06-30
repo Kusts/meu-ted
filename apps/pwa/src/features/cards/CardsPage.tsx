@@ -5,6 +5,7 @@ import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import { StaleBanner } from "@/components/StaleBanner";
+import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 
 function formatBRL(cents: number): string {
@@ -395,7 +396,7 @@ function EditSheet({
 
 export default function CardsPage() {
   const { accounts, transactions, categories, cardStatements, loading, error,
-    addCard, payStatement, updateCard } = useAppState();
+    addCard, payStatement, updateCard, writeError, clearWriteError } = useAppState();
   const [payCard, setPayCard] = useState<CardData | null>(null);
   const [editCard, setEditCard] = useState<CardData | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -455,6 +456,8 @@ export default function CardsPage() {
         {error && (
           <div className="mx-5 mb-3 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger">⚠ {error}</div>
         )}
+
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
 
         <StaleBanner domains={["accounts", "cardStatements", "transactions"]} />
 

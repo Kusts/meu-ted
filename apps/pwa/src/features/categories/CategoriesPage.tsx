@@ -208,6 +208,8 @@ export default function CategoriesPage() {
           <div className="mx-5 mb-3 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger">⚠ {error}</div>
         )}
 
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+
         <div className="flex flex-col gap-5 px-5 py-4">
           <section>
             <div className="mb-2.5 flex items-center gap-2">

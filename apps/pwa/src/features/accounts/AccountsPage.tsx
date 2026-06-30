@@ -6,6 +6,7 @@ import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import Icon from "@/components/ui/Icon";
 import Badge from "@/components/ui/Badge";
+import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 
 function formatBRL(cents: number): string {
@@ -171,7 +172,7 @@ function AccountFormSheet({
 }
 
 export default function AccountsPage() {
-  const { accounts, transactions, loading, error, addAccount } = useAppState();
+  const { accounts, transactions, loading, error, writeError, clearWriteError, addAccount } = useAppState();
   const [createOpen, setCreateOpen] = useState(false);
 
   const checkingAccounts = useMemo(
@@ -230,6 +231,8 @@ export default function AccountsPage() {
             ⚠ {error}
           </div>
         )}
+
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
 
         <div className="px-5">
           {/* Total balance card */}

@@ -4,6 +4,7 @@ import { useState } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
+import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 
 function formatBRL(cents: number): string {
@@ -39,7 +40,7 @@ function NewGoalSheet({ open, onClose }: { open: boolean; onClose: () => void })
 }
 
 export default function GoalsPage() {
-  const { goals, debts, loading, error } = useAppState();
+  const { goals, debts, loading, error, writeError, clearWriteError } = useAppState();
   const [tab, setTab] = useState<"goals" | "debts">("goals");
   const [expandedDebt, setExpandedDebt] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -82,6 +83,8 @@ export default function GoalsPage() {
         {error && (
           <div className="mx-5 mb-3 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger">⚠ {error}</div>
         )}
+
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
 
         <div className="px-5">
           <div className="mb-4 flex gap-1.5 rounded-[13px] border border-border bg-surface p-1">
