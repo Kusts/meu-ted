@@ -274,6 +274,33 @@ export async function deactivateCategory(id: string): Promise<void> {
   await apiFetch(`/categories/${id}/deactivate`, { method: "POST" });
 }
 
+export async function createPayable(input: {
+  accountId: string;
+  description: string;
+  amountCents: number;
+  dueDate: string;
+  categoryId?: string;
+  type?: "one_time" | "recurring";
+  frequency?: "monthly" | "quarterly" | "yearly";
+  reminderDaysBefore?: number;
+  notes?: string;
+}): Promise<Payable> {
+  return apiFetch<Payable>("/payables", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function cancelPayable(
+  id: string,
+  reason?: string
+): Promise<Payable> {
+  return apiFetch<Payable>(`/payables/${id}/cancel`, {
+    method: "POST",
+    body: reason ? JSON.stringify({ reason }) : undefined,
+  });
+}
+
 export async function markPayablePaid(
   id: string,
   paidDate?: string
@@ -283,4 +310,66 @@ export async function markPayablePaid(
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+export async function createBudget(input: {
+  categoryId: string;
+  name: string;
+  amountCents: number;
+  period: "monthly" | "quarterly" | "yearly";
+  startDate: string;
+  alertThreshold?: number;
+}): Promise<Budget> {
+  return apiFetch<Budget>("/budgets", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateBudget(
+  id: string,
+  input: {
+    amountCents?: number;
+    alertThreshold?: number;
+  },
+): Promise<Budget> {
+  return apiFetch<Budget>(`/budgets/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function createGoal(input: {
+  name: string;
+  goalType: "savings" | "purchase" | "debt_payoff" | "emergency_fund";
+  targetAmountCents: number;
+  startDate: string;
+  targetDate?: string;
+  description?: string;
+  categoryId?: string;
+  accountId?: string;
+}): Promise<Goal> {
+  return apiFetch<Goal>("/goals", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function contributeToGoal(
+  id: string,
+  input: {
+    amountCents: number;
+    contributionDate?: string;
+    source?: string;
+    notes?: string;
+  },
+): Promise<Goal> {
+  return apiFetch<Goal>(`/goals/${id}/contribute`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function cancelGoal(id: string): Promise<Goal> {
+  return apiFetch<Goal>(`/goals/${id}/cancel`, { method: "POST" });
 }

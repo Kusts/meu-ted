@@ -24,13 +24,26 @@ function formatInputBRL(value: string): string {
   return `${parseInt(intPart, 10).toLocaleString("pt-BR")},${decPart}`;
 }
 
+function parseBRLToCents(value: string): number {
+  const cleaned = value.replace(/[.\s]/g, "").replace(",", ".");
+  return Math.round(parseFloat(cleaned) * 100) || 0;
+}
+
 function NewBudgetSheet({
   open,
   onClose,
+  onSave,
   categories,
 }: {
   open: boolean;
   onClose: () => void;
+  onSave: (input: {
+    categoryId: string;
+    name: string;
+    amountCents: number;
+    period: "monthly" | "quarterly" | "yearly";
+    startDate: string;
+  }) => void;
   categories: { id: string; name: string; kind: string; icon?: string }[];
 }) {
   const [categoryId, setCategoryId] = useState("");
@@ -39,6 +52,19 @@ function NewBudgetSheet({
   const expenseCategories = categories.filter((c) => c.kind === "expense");
 
   function handleSave() {
+    if (!categoryId) return;
+    const amountCents = parseBRLToCents(amount);
+    if (amountCents <= 0) return;
+    const cat = categories.find((c) => c.id === categoryId);
+    onSave({
+      categoryId,
+      name: cat?.name ?? "Orçamento",
+      amountCents,
+      period: "monthly" as const,
+      startDate: new Date().toISOString().slice(0, 10),
+    });
+    setAmount("");
+    setCategoryId("");
     onClose();
   }
 
@@ -113,7 +139,7 @@ function formatPct(value: number): string {
 }
 
 export default function BudgetsPage() {
-  const { budgets, categories, loading, error, writeError, clearWriteError } = useAppState();
+  const { budgets, categories, loading, error, writeError, clearWriteError, createBudget } = useAppState();
   const [tab, setTab] = useState<"expense" | "income">("expense");
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -375,6 +401,7 @@ export default function BudgetsPage() {
       <NewBudgetSheet
         open={createOpen}
         onClose={() => setCreateOpen(false)}
+        onSave={createBudget}
         categories={categories}
       />
     </div>

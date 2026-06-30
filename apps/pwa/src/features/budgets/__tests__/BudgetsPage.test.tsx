@@ -11,7 +11,7 @@ function defaultState(): AppState {
     transactions: [...ALL_MOCK_TRANSACTIONS], payables: [...mockPayables],
     budgets: [...mockBudgets], goals: [...mockGoals],
     debts: [], subscriptions: [], loading: false, error: null,
-    addTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(),
+    addTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(), cancelPayable: vi.fn(), createPayable: vi.fn(), createBudget: vi.fn(), updateBudget: vi.fn(), createGoal: vi.fn(), contributeToGoal: vi.fn(), cancelGoal: vi.fn(),
     cardStatements: [], writeError: null, clearWriteError: vi.fn(),
     sync: {
       accounts: { source: "mock", syncedAt: null },

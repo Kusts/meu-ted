@@ -6,7 +6,9 @@ import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
+import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
+import type { Goal } from "@/lib/state/types";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -19,21 +21,144 @@ function formatPct(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
-function NewGoalSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+function formatInputBRL(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return "";
+  const padded = digits.padStart(3, "0");
+  const intPart = padded.slice(0, -2);
+  const decPart = padded.slice(-2);
+  return `${parseInt(intPart, 10).toLocaleString("pt-BR")},${decPart}`;
+}
+
+function parseBRLToCents(value: string): number {
+  const cleaned = value.replace(/[.\s]/g, "").replace(",", ".");
+  return Math.round(parseFloat(cleaned) * 100) || 0;
+}
+
+function NewGoalSheet({
+  open,
+  onClose,
+  onSave,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSave: (input: {
+    name: string;
+    goalType: "savings" | "purchase" | "debt_payoff" | "emergency_fund";
+    targetAmountCents: number;
+    startDate: string;
+  }) => void;
+}) {
+  const [name, setName] = useState("");
+  const [type, setType] = useState<"savings" | "purchase" | "debt_payoff" | "emergency_fund">("savings");
+  const [targetStr, setTargetStr] = useState("");
+
+  function handleSave() {
+    if (!name.trim()) return;
+    const targetAmountCents = parseBRLToCents(targetStr);
+    if (targetAmountCents <= 0) return;
+    onSave({
+      name: name.trim(),
+      goalType: type,
+      targetAmountCents,
+      startDate: new Date().toISOString().slice(0, 10),
+    });
+    setName("");
+    setTargetStr("");
+    onClose();
+  }
+
+  const types = [
+    { value: "savings" as const, label: "Poupança" },
+    { value: "purchase" as const, label: "Compra" },
+    { value: "debt_payoff" as const, label: "Quitar dívida" },
+    { value: "emergency_fund" as const, label: "Reserva" },
+  ];
+
   return (
     <BottomSheet open={open} onClose={onClose} title="Nova meta">
-      <div className="flex flex-col items-center gap-4 py-6">
-        <div className="flex h-[54px] w-[54px] items-center justify-center rounded-full bg-primary-tint">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" />
-          </svg>
-        </div>
-        <div className="text-center">
-          <div className="text-[14px] font-bold text-text-primary">Criação de metas em breve</div>
-          <div className="mt-1.5 text-[12px] text-text-muted">O backend de metas está sendo implementado. Por enquanto, acompanhe suas metas pré-configuradas.</div>
-        </div>
-        <button onClick={onClose} className="rounded-[13px] bg-fill-light px-5 py-2.5 text-[13px] font-bold text-text-secondary">
-          Fechar
+      <div className="flex flex-col gap-4">
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Nome
+          </label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+            placeholder="Ex: Viagem, Carro novo..."
+            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+        </fieldset>
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo</label>
+          <div className="flex flex-wrap gap-2">
+            {types.map((t) => (
+              <button key={t.value} type="button" onClick={() => setType(t.value)}
+                className={`rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${type === t.value ? "bg-primary text-white" : "bg-fill-light text-text-secondary"}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Valor alvo (R$)</label>
+          <input type="text" inputMode="numeric" value={targetStr}
+            onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setTargetStr(formatInputBRL(raw)); }}
+            placeholder="0,00"
+            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 font-mono text-[16px] font-semibold text-text-primary outline-none focus:border-primary" />
+        </fieldset>
+        <button type="button" onClick={handleSave}
+          className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90">
+          Salvar meta
+        </button>
+      </div>
+    </BottomSheet>
+  );
+}
+
+function ContributeSheet({
+  open,
+  goal,
+  onClose,
+  onContribute,
+}: {
+  open: boolean;
+  goal: Goal | null;
+  onClose: () => void;
+  onContribute: (id: string, amountCents: number) => void;
+}) {
+  const [amountStr, setAmountStr] = useState("");
+
+  function handleSave() {
+    if (!goal) return;
+    const amountCents = parseBRLToCents(amountStr);
+    if (amountCents <= 0) return;
+    onContribute(goal.id, amountCents);
+    setAmountStr("");
+    onClose();
+  }
+
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Adicionar valor">
+      <div className="flex flex-col gap-4">
+        {goal && (
+          <div className="text-center">
+            <div className="text-[13px] font-semibold text-text-primary">{goal.name}</div>
+            <div className="text-[11px] text-text-muted">
+              {formatPct(Math.min((goal.currentAmountCents / goal.targetAmountCents) * 100, 100))} concluído
+            </div>
+          </div>
+        )}
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Valor (R$)</label>
+          <div className="relative">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-semibold text-text-secondary">R$</span>
+            <input type="text" inputMode="numeric" value={amountStr}
+              onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setAmountStr(formatInputBRL(raw)); }}
+              placeholder="0,00"
+              className="w-full rounded-[13px] border border-border bg-transparent py-3 pl-11 pr-3.5 font-mono text-[16px] font-semibold text-text-primary outline-none focus:border-primary" />
+          </div>
+        </fieldset>
+        <button type="button" onClick={handleSave}
+          className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90">
+          Adicionar
         </button>
       </div>
     </BottomSheet>
@@ -41,10 +166,12 @@ function NewGoalSheet({ open, onClose }: { open: boolean; onClose: () => void })
 }
 
 export default function GoalsPage() {
-  const { goals, debts, loading, error, writeError, clearWriteError } = useAppState();
+  const { goals, debts, loading, error, writeError, clearWriteError, createGoal, contributeToGoal, cancelGoal } = useAppState();
   const [tab, setTab] = useState<"goals" | "debts">("goals");
   const [expandedDebt, setExpandedDebt] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [contributeGoal, setContributeGoal] = useState<Goal | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState<Goal | null>(null);
 
   if (loading) {
     return (
@@ -135,9 +262,19 @@ export default function GoalsPage() {
                     <div className="h-full rounded-full transition-all" style={{ width: `${g.pct}%`, background: "linear-gradient(90deg, #0E8C5A, #2FA56F)" }} />
                   </div>
                   <div className="mb-2 text-[11px] text-text-muted">{formatPct(g.pct)} concluído</div>
-                  <div className="flex justify-between text-[12px] text-text-secondary">
+                  <div className="mb-3 flex justify-between text-[12px] text-text-secondary">
                     <span className="font-mono font-semibold text-text-primary">{formatBRL(g.currentAmountCents)}</span>
                     <span>de {formatBRL(g.targetAmountCents)}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setContributeGoal(g)}
+                      className="flex-1 rounded-[10px] bg-primary py-2.5 text-center text-[12px] font-bold text-white">
+                      Adicionar
+                    </button>
+                    <button type="button" onClick={() => setConfirmCancel(g)}
+                      className="flex-1 rounded-[10px] bg-danger-tint py-2.5 text-center text-[12px] font-bold text-danger">
+                      Cancelar
+                    </button>
                   </div>
                 </div>
               ))
@@ -252,7 +389,29 @@ export default function GoalsPage() {
         </div>
       </main>
 
-      <NewGoalSheet open={createOpen} onClose={() => setCreateOpen(false)} />
+      <NewGoalSheet open={createOpen} onClose={() => setCreateOpen(false)} onSave={createGoal} />
+
+      <ContributeSheet
+        open={contributeGoal !== null}
+        goal={contributeGoal}
+        onClose={() => setContributeGoal(null)}
+        onContribute={(id, amountCents) =>
+          contributeToGoal(id, { amountCents })
+        }
+      />
+
+      <ConfirmActionDialog
+        open={confirmCancel !== null}
+        title="Cancelar meta"
+        message={`Tem certeza que deseja cancelar a meta "${confirmCancel?.name ?? ""}"? Esta ação pode ser desfeita.`}
+        confirmLabel="Cancelar meta"
+        danger
+        onConfirm={() => {
+          if (confirmCancel) cancelGoal(confirmCancel.id);
+          setConfirmCancel(null);
+        }}
+        onCancel={() => setConfirmCancel(null)}
+      />
     </div>
   );
 }

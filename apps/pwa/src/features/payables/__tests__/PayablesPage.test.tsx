@@ -20,6 +20,13 @@ function defaultState(): AppState {
     addTransaction: vi.fn(),
     deleteTransaction: vi.fn(),
     markPayablePaid: vi.fn(),
+    cancelPayable: vi.fn(),
+    createPayable: vi.fn(),
+    createBudget: vi.fn(),
+    updateBudget: vi.fn(),
+    createGoal: vi.fn(),
+    contributeToGoal: vi.fn(),
+    cancelGoal: vi.fn(),
     cardStatements: [],
     writeError: null,
     clearWriteError: vi.fn(),
@@ -139,12 +146,13 @@ describe("PayablesPage", () => {
     });
   });
 
-  describe("dead CTA signals", () => {
-    it("shows Em breve message when Nova conta is clicked", async () => {
+  describe("create payable", () => {
+    it("opens new payable form when Nova is clicked", async () => {
       const user = userEvent.setup();
       render(<PayablesPage />);
       await user.click(screen.getByText("Nova"));
-      expect(screen.getByText(/criação de contas em breve/i)).toBeInTheDocument();
+      expect(screen.getByText("Nova conta a pagar")).toBeInTheDocument();
+      expect(screen.getByText("Salvar conta")).toBeInTheDocument();
     });
   });
 });

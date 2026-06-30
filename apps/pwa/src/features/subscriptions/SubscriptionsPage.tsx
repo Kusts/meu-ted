@@ -7,6 +7,7 @@ import BottomSheet from "@/components/BottomSheet";
 import Badge from "@/components/ui/Badge";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
+import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
 
 function formatBRL(cents: number): string {
@@ -235,9 +236,10 @@ function NewSubscriptionSheet({
 }
 
 export default function SubscriptionsPage() {
-  const { subscriptions, addSubscription, writeError, clearWriteError } = useAppState();
+  const { subscriptions, addSubscription, cancelSubscription, writeError, clearWriteError } = useAppState();
   const [tab, setTab] = useState<"active" | "cancelled">("active");
   const [createOpen, setCreateOpen] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState<{ id: string; name: string } | null>(null);
 
   const active = subscriptions.filter((s) => s.status === "active");
   const cancelled = subscriptions.filter((s) => s.status === "cancelled");
@@ -343,6 +345,24 @@ export default function SubscriptionsPage() {
                       </span>
                     )}
                     {sub.status === "active" && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setConfirmCancel({
+                            id: sub.id,
+                            name: sub.name,
+                          })
+                        }
+                        className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+                        style={{
+                          color: "#C8483B",
+                          background: "#F7E9E7",
+                        }}
+                      >
+                        Cancelar
+                      </button>
+                    )}
+                    {sub.status === "active" && (
                       <span
                         className="rounded-full px-2 py-0.5 text-[10px] font-bold"
                         style={{ color: "#0E8C5A", background: "#0E8C5A1A" }}
@@ -357,6 +377,19 @@ export default function SubscriptionsPage() {
           )}
         </div>
       </main>
+
+      <ConfirmActionDialog
+        open={confirmCancel !== null}
+        title="Cancelar assinatura"
+        message={`Tem certeza que deseja cancelar "${confirmCancel?.name ?? ""}"? Você pode reativá-la depois.`}
+        confirmLabel="Cancelar assinatura"
+        danger
+        onConfirm={() => {
+          if (confirmCancel) cancelSubscription(confirmCancel.id);
+          setConfirmCancel(null);
+        }}
+        onCancel={() => setConfirmCancel(null)}
+      />
 
       <NewSubscriptionSheet
         open={createOpen}

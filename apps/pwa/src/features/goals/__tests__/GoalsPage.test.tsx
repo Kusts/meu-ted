@@ -12,7 +12,7 @@ function defaultState(): AppState {
     budgets: [...mockBudgets], goals: [...mockGoals],
     debts: [...mockDebts],
     subscriptions: [], loading: false, error: null,
-    addTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(),
+    addTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(), cancelPayable: vi.fn(), createPayable: vi.fn(), createBudget: vi.fn(), updateBudget: vi.fn(), createGoal: vi.fn(), contributeToGoal: vi.fn(), cancelGoal: vi.fn(),
     cardStatements: [], writeError: null, clearWriteError: vi.fn(),
     sync: {
       accounts: { source: "mock", syncedAt: null },
@@ -75,11 +75,12 @@ describe("GoalsPage", () => {
       expect(emBreves.length).toBeGreaterThanOrEqual(2); // one on card header, one on next installment
     });
 
-    it("shows Em breve message when Nova meta is clicked", async () => {
+    it("opens new goal form when Nova is clicked", async () => {
       const user = userEvent.setup();
       render(<GoalsPage />);
       await user.click(screen.getByText("Nova"));
-      expect(screen.getByText(/criação de metas em breve/i)).toBeInTheDocument();
+      expect(screen.getByText("Nova meta")).toBeInTheDocument();
+      expect(screen.getByText("Salvar meta")).toBeInTheDocument();
     });
   });
 });

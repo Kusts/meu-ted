@@ -130,6 +130,13 @@ describe("AppStateProvider — mock-data path (no API)", () => {
     expect(typeof result.current.updateTransaction).toBe("function");
     expect(typeof result.current.deleteTransaction).toBe("function");
     expect(typeof result.current.markPayablePaid).toBe("function");
+    expect(typeof result.current.cancelPayable).toBe("function");
+    expect(typeof result.current.createPayable).toBe("function");
+    expect(typeof result.current.createBudget).toBe("function");
+    expect(typeof result.current.updateBudget).toBe("function");
+    expect(typeof result.current.createGoal).toBe("function");
+    expect(typeof result.current.contributeToGoal).toBe("function");
+    expect(typeof result.current.cancelGoal).toBe("function");
     expect(typeof result.current.addAccount).toBe("function");
     expect(typeof result.current.updateAccount).toBe("function");
     expect(typeof result.current.deactivateAccount).toBe("function");

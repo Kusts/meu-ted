@@ -70,6 +70,36 @@ export interface AppState {
   ) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
   markPayablePaid: (id: string) => Promise<void>;
+  cancelPayable: (id: string) => Promise<void>;
+  createPayable: (input: {
+    accountId: string;
+    description: string;
+    amountCents: number;
+    dueDate: string;
+    categoryId?: string;
+  }) => Promise<void>;
+  createBudget: (input: {
+    categoryId: string;
+    name: string;
+    amountCents: number;
+    period: "monthly" | "quarterly" | "yearly";
+    startDate: string;
+  }) => Promise<void>;
+  updateBudget: (
+    id: string,
+    input: { amountCents?: number; alertThreshold?: number },
+  ) => Promise<void>;
+  createGoal: (input: {
+    name: string;
+    goalType: "savings" | "purchase" | "debt_payoff" | "emergency_fund";
+    targetAmountCents: number;
+    startDate: string;
+  }) => Promise<void>;
+  contributeToGoal: (
+    id: string,
+    input: { amountCents: number },
+  ) => Promise<void>;
+  cancelGoal: (id: string) => Promise<void>;
   addAccount: (input: {
     name: string;
     kind: "bank" | "cash" | "credit_card";
@@ -214,6 +244,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const subsRef = useRef(subscriptions);
   const txsRef = useRef(transactions);
   const categoriesRef = useRef(categories);
+  const budgetsRef = useRef(budgets);
+  const goalsRef = useRef(goals);
   const stmtsRef = useRef(cardStatements);
 
   const loadedRef = useRef(false);
@@ -228,6 +260,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     subsRef.current = subscriptions;
     txsRef.current = transactions;
     categoriesRef.current = categories;
+    budgetsRef.current = budgets;
+    goalsRef.current = goals;
     stmtsRef.current = cardStatements;
   });
 
@@ -864,6 +898,220 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // ── Payable create / cancel ─────────────────────────────────
+
+  const cancelPayable = useCallback(async (id: string) => {
+    if (guardReadOnlyRef.current()) return;
+    const prev = payablesRef.current.find((p) => p.id === id);
+
+    setPayables((curr) =>
+      curr.map((p) =>
+        p.id === id ? { ...p, status: "cancelled" as const } : p,
+      ),
+    );
+
+    if (!apiUsable() || !prev) return;
+
+    try {
+      await endpoints.cancelPayable(id);
+    } catch (e) {
+      setPayables((curr) =>
+        curr.map((p) => (p.id === id ? { ...prev } : p)),
+      );
+      handleWriteErrorRef.current(e);
+    }
+  }, []);
+
+  const createPayable = useCallback(
+    async (input: {
+      accountId: string;
+      description: string;
+      amountCents: number;
+      dueDate: string;
+      categoryId?: string;
+    }) => {
+      if (guardReadOnlyRef.current()) return;
+      const optimisticId = `opt-${crypto.randomUUID()}`;
+      const optimistic: Payable = {
+        id: optimisticId,
+        description: input.description,
+        amountCents: input.amountCents,
+        dueDate: input.dueDate,
+        status: "pending",
+        categoryId: input.categoryId,
+      };
+      setPayables((prev) => [optimistic, ...prev]);
+
+      if (!apiUsable()) return;
+
+      try {
+        const created = await endpoints.createPayable(input);
+        setPayables((curr) =>
+          curr.map((p) => (p.id === optimisticId ? created : p)),
+        );
+      } catch (e) {
+        setPayables((curr) => curr.filter((p) => p.id !== optimisticId));
+        handleWriteErrorRef.current(e);
+      }
+    },
+    [],
+  );
+
+  // ── Budget create / update ──────────────────────────────────
+
+  const createBudget = useCallback(
+    async (input: {
+      categoryId: string;
+      name: string;
+      amountCents: number;
+      period: "monthly" | "quarterly" | "yearly";
+      startDate: string;
+    }) => {
+      if (guardReadOnlyRef.current()) return;
+      const optimistic: Budget = {
+        id: `opt-${crypto.randomUUID()}`,
+        categoryId: input.categoryId,
+        name: input.name,
+        amountCents: input.amountCents,
+        spentCents: 0,
+        period: input.period,
+      };
+      setBudgets((prev) => [optimistic, ...prev]);
+
+      if (!apiUsable()) return;
+
+      try {
+        const created = await endpoints.createBudget(input);
+        setBudgets((curr) =>
+          curr.map((b) => (b.id === optimistic.id ? created : b)),
+        );
+      } catch (e) {
+        setBudgets((curr) => curr.filter((b) => b.id !== optimistic.id));
+        handleWriteErrorRef.current(e);
+      }
+    },
+    [],
+  );
+
+  const updateBudget = useCallback(
+    async (
+      id: string,
+      input: { amountCents?: number; alertThreshold?: number },
+    ) => {
+      if (guardReadOnlyRef.current()) return;
+      const prev = budgetsRef.current.find((b) => b.id === id);
+      if (!prev) return;
+
+      setBudgets((curr) =>
+        curr.map((b) =>
+          b.id === id
+            ? {
+                ...b,
+                ...(input.amountCents !== undefined
+                  ? { amountCents: input.amountCents }
+                  : {}),
+              }
+            : b,
+        ),
+      );
+
+      if (!apiUsable()) return;
+
+      try {
+        await endpoints.updateBudget(id, input);
+      } catch (e) {
+        setBudgets((curr) =>
+          curr.map((b) => (b.id === id ? prev : b)),
+        );
+        handleWriteErrorRef.current(e);
+      }
+    },
+    [],
+  );
+
+  // ── Goal create / contribute / cancel ───────────────────────
+
+  const createGoal = useCallback(
+    async (input: {
+      name: string;
+      goalType: "savings" | "purchase" | "debt_payoff" | "emergency_fund";
+      targetAmountCents: number;
+      startDate: string;
+    }) => {
+      if (guardReadOnlyRef.current()) return;
+      const optimistic: Goal = {
+        id: `opt-${crypto.randomUUID()}`,
+        name: input.name,
+        goalType: input.goalType,
+        targetAmountCents: input.targetAmountCents,
+        currentAmountCents: 0,
+      };
+      setGoals((prev) => [optimistic, ...prev]);
+
+      if (!apiUsable()) return;
+
+      try {
+        const created = await endpoints.createGoal(input);
+        setGoals((curr) =>
+          curr.map((g) => (g.id === optimistic.id ? created : g)),
+        );
+      } catch (e) {
+        setGoals((curr) => curr.filter((g) => g.id !== optimistic.id));
+        handleWriteErrorRef.current(e);
+      }
+    },
+    [],
+  );
+
+  const contributeToGoal = useCallback(
+    async (id: string, input: { amountCents: number }) => {
+      if (guardReadOnlyRef.current()) return;
+      const prev = goalsRef.current.find((g) => g.id === id);
+      if (!prev) return;
+
+      setGoals((curr) =>
+        curr.map((g) =>
+          g.id === id
+            ? {
+                ...g,
+                currentAmountCents:
+                  g.currentAmountCents + input.amountCents,
+              }
+            : g,
+        ),
+      );
+
+      if (!apiUsable()) return;
+
+      try {
+        await endpoints.contributeToGoal(id, input);
+      } catch (e) {
+        setGoals((curr) =>
+          curr.map((g) => (g.id === id ? { ...prev } : g)),
+        );
+        handleWriteErrorRef.current(e);
+      }
+    },
+    [],
+  );
+
+  const cancelGoal = useCallback(async (id: string) => {
+    if (guardReadOnlyRef.current()) return;
+    const prev = goalsRef.current.find((g) => g.id === id);
+    if (!prev) return;
+
+    setGoals((curr) => curr.filter((g) => g.id !== id));
+
+    if (!apiUsable()) return;
+
+    try {
+      await endpoints.cancelGoal(id);
+    } catch (e) {
+      setGoals((curr) => [prev, ...curr]);
+      handleWriteErrorRef.current(e);
+    }
+  }, []);
+
   const payStatement = useCallback(
     async (
       statementId: string,
@@ -981,6 +1229,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         updateTransaction,
         deleteTransaction,
         markPayablePaid,
+        cancelPayable,
+        createPayable,
+        createBudget,
+        updateBudget,
+        createGoal,
+        contributeToGoal,
+        cancelGoal,
         addAccount,
         updateAccount,
         deactivateAccount,

@@ -6,6 +6,7 @@ import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
+import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
 import type { Payable } from "@/lib/state/types";
 
@@ -18,27 +19,139 @@ function formatInputBRL(value: string): string {
   return `${parseInt(intPart, 10).toLocaleString("pt-BR")},${decPart}`;
 }
 
+function parseBRLToCents(value: string): number {
+  const cleaned = value.replace(/[.\s]/g, "").replace(",", ".");
+  return Math.round(parseFloat(cleaned) * 100) || 0;
+}
+
 function NewPayableSheet({
   open,
   onClose,
+  onSave,
+  accounts,
+  categories,
 }: {
   open: boolean;
   onClose: () => void;
+  onSave: (input: {
+    accountId: string;
+    description: string;
+    amountCents: number;
+    dueDate: string;
+    categoryId?: string;
+  }) => void;
+  accounts: { id: string; name: string }[];
+  categories: { id: string; name: string; kind: string }[];
 }) {
+  const [description, setDescription] = useState("");
+  const [amountStr, setAmountStr] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
+  const [categoryId, setCategoryId] = useState("");
+
+  function handleSave() {
+    if (!description.trim() || !dueDate) return;
+    const amountCents = parseBRLToCents(amountStr);
+    if (amountCents <= 0) return;
+    onSave({
+      accountId,
+      description: description.trim(),
+      amountCents,
+      dueDate,
+      categoryId: categoryId || undefined,
+    });
+    setDescription("");
+    setAmountStr("");
+    setDueDate("");
+    onClose();
+  }
+
+  const expenseCategories = categories.filter(
+    (c) => c.kind === "expense",
+  );
+
   return (
     <BottomSheet open={open} onClose={onClose} title="Nova conta a pagar">
-      <div className="flex flex-col items-center gap-4 py-6">
-        <div className="flex h-[54px] w-[54px] items-center justify-center rounded-full bg-primary-tint">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" />
-          </svg>
-        </div>
-        <div className="text-center">
-          <div className="text-[14px] font-bold text-text-primary">Criação de contas em breve</div>
-          <div className="mt-1.5 text-[12px] text-text-muted">O backend de contas a pagar está sendo implementado. Por enquanto você pode marcar contas como pagas.</div>
-        </div>
-        <button onClick={onClose} className="rounded-[13px] bg-fill-light px-5 py-2.5 text-[13px] font-bold text-text-secondary">
-          Fechar
+      <div className="flex flex-col gap-4">
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Descrição
+          </label>
+          <input
+            type="text"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Ex: Aluguel, Netflix..."
+            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary"
+          />
+        </fieldset>
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Valor (R$)
+          </label>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={amountStr}
+            onChange={(e) => {
+              const raw = e.target.value.replace(/\D/g, "");
+              if (raw.length > 12) return;
+              setAmountStr(formatInputBRL(raw));
+            }}
+            placeholder="0,00"
+            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 font-mono text-[16px] font-semibold text-text-primary outline-none focus:border-primary"
+          />
+        </fieldset>
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Vencimento
+          </label>
+          <input
+            type="date"
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
+            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary"
+          />
+        </fieldset>
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Conta
+          </label>
+          <select
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary"
+          >
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </fieldset>
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Categoria
+          </label>
+          <select
+            value={categoryId}
+            onChange={(e) => setCategoryId(e.target.value)}
+            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary"
+          >
+            <option value="">Sem categoria</option>
+            {expenseCategories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </fieldset>
+        <button
+          type="button"
+          onClick={handleSave}
+          className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90"
+        >
+          Salvar conta
         </button>
       </div>
     </BottomSheet>
@@ -84,9 +197,10 @@ interface PayableGroup {
 }
 
 export default function PayablesPage() {
-  const { payables, categories, markPayablePaid, loading, error, writeError, clearWriteError } = useAppState();
+  const { payables, categories, accounts, markPayablePaid, cancelPayable, createPayable, loading, error, writeError, clearWriteError } = useAppState();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState<Payable | null>(null);
 
   const deriveStatus = (p: Payable): "paid" | "overdue" | "pending" => {
     if (p.status === "paid") return "paid";
@@ -379,6 +493,15 @@ export default function PayablesPage() {
                               ✓ Pago
                             </button>
                           )}
+                        {p.status !== "cancelled" &&
+                          p.status !== "paid" && (
+                            <button
+                              onClick={() => setConfirmCancel(p)}
+                              className="text-[10px] font-bold text-danger"
+                            >
+                              Cancelar
+                            </button>
+                          )}
                       </div>
                     </div>
                   );
@@ -400,7 +523,26 @@ export default function PayablesPage() {
         </div>
       </main>
 
-      <NewPayableSheet open={createOpen} onClose={() => setCreateOpen(false)} />
+      <NewPayableSheet
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSave={createPayable}
+        accounts={accounts}
+        categories={categories}
+      />
+
+      <ConfirmActionDialog
+        open={confirmCancel !== null}
+        title="Cancelar conta a pagar"
+        message={`Tem certeza que deseja cancelar "${confirmCancel?.description ?? ""}"? Esta ação pode ser desfeita.`}
+        confirmLabel="Cancelar"
+        danger
+        onConfirm={() => {
+          if (confirmCancel) cancelPayable(confirmCancel.id);
+          setConfirmCancel(null);
+        }}
+        onCancel={() => setConfirmCancel(null)}
+      />
     </div>
   );
 }
