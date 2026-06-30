@@ -1,4 +1,4 @@
-import { render, screen } from "@/lib/test-utils";
+import { render, screen, fireEvent } from "@/lib/test-utils";
 import CategoriesPage from "../CategoriesPage";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
@@ -23,7 +23,9 @@ function defaultState(): AppState {
       cardStatements: { source: "mock", syncedAt: null },
     },
     readOnly: false,
-    addAccount: vi.fn(), addCategory: vi.fn(), addCard: vi.fn(), updateCard: vi.fn(),
+    addAccount: vi.fn(), updateAccount: vi.fn(), deactivateAccount: vi.fn(),
+    addCategory: vi.fn(), updateCategory: vi.fn(), deactivateCategory: vi.fn(),
+    addCard: vi.fn(), updateCard: vi.fn(),
     addSubscription: vi.fn(), cancelSubscription: vi.fn(),
     createTransfer: vi.fn(), payStatement: vi.fn(), createInstallments: vi.fn(),
   };
@@ -49,6 +51,27 @@ describe("CategoriesPage", () => {
 
   describe("error", () => {
     it("shows error banner alongside data", () => { vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ error: "API error" })); render(<CategoriesPage />); expect(screen.getByText(/API error/i)).toBeInTheDocument(); expect(screen.getByText("Despesas")).toBeInTheDocument(); });
+  });
+
+  describe("category actions", () => {
+    it("shows edit and desativar buttons on each category", () => {
+      render(<CategoriesPage />);
+      expect(screen.getAllByText("Editar").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Desativar").length).toBeGreaterThan(0);
+    });
+
+    it("opens edit sheet when editar is clicked", () => {
+      render(<CategoriesPage />);
+      fireEvent.click(screen.getAllByText("Editar")[0]);
+      expect(screen.getByText("Salvar")).toBeInTheDocument();
+    });
+
+    it("opens confirm dialog when desativar is clicked", async () => {
+      render(<CategoriesPage />);
+      expect(screen.getAllByText("Desativar").length).toBeGreaterThan(0);
+      fireEvent.click(screen.getAllByText("Desativar")[0]);
+      expect(await screen.findByText("Desativar categoria")).toBeInTheDocument();
+    });
   });
 
   describe("visual", () => {

@@ -75,11 +75,15 @@ export interface AppState {
     kind: "bank" | "cash" | "credit_card";
     initialBalanceCents: number;
   }) => Promise<void>;
+  updateAccount: (id: string, input: { name: string }) => Promise<void>;
+  deactivateAccount: (id: string) => Promise<void>;
   addCategory: (input: {
     name: string;
     kind: "expense" | "income";
     parentId?: string;
   }) => Promise<void>;
+  updateCategory: (id: string, input: { name: string }) => Promise<void>;
+  deactivateCategory: (id: string) => Promise<void>;
   addCard: (input: {
     name: string;
     creditLimitCents: number;
@@ -490,6 +494,94 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // ── Account update / deactivate ────────────────────────────
+
+  const updateAccount = useCallback(
+    async (id: string, input: { name: string }) => {
+      if (guardReadOnlyRef.current()) return;
+      const prev = accountsRef.current.find((a) => a.id === id);
+      if (!prev) return;
+
+      // Optimistic update
+      setAccounts((curr) =>
+        curr.map((a) => (a.id === id ? { ...a, name: input.name } : a)),
+      );
+
+      if (!apiUsable()) return;
+
+      try {
+        await endpoints.updateAccount(id, input);
+      } catch (e) {
+        setAccounts((curr) =>
+          curr.map((a) => (a.id === id ? prev : a)),
+        );
+        handleWriteErrorRef.current(e);
+      }
+    },
+    [],
+  );
+
+  const deactivateAccount = useCallback(async (id: string) => {
+    if (guardReadOnlyRef.current()) return;
+    const prev = accountsRef.current.find((a) => a.id === id);
+    if (!prev) return;
+
+    // Optimistic: remove from list
+    setAccounts((curr) => curr.filter((a) => a.id !== id));
+
+    if (!apiUsable()) return;
+
+    try {
+      await endpoints.deactivateAccount(id);
+    } catch (e) {
+      setAccounts((curr) => [prev, ...curr]);
+      handleWriteErrorRef.current(e);
+    }
+  }, []);
+
+  // ── Category update / deactivate ───────────────────────────
+
+  const updateCategory = useCallback(
+    async (id: string, input: { name: string }) => {
+      if (guardReadOnlyRef.current()) return;
+      const prev = categoriesRef.current.find((c) => c.id === id);
+      if (!prev) return;
+
+      setCategories((curr) =>
+        curr.map((c) => (c.id === id ? { ...c, name: input.name } : c)),
+      );
+
+      if (!apiUsable()) return;
+
+      try {
+        await endpoints.updateCategory(id, input);
+      } catch (e) {
+        setCategories((curr) =>
+          curr.map((c) => (c.id === id ? prev : c)),
+        );
+        handleWriteErrorRef.current(e);
+      }
+    },
+    [],
+  );
+
+  const deactivateCategory = useCallback(async (id: string) => {
+    if (guardReadOnlyRef.current()) return;
+    const prev = categoriesRef.current.find((c) => c.id === id);
+    if (!prev) return;
+
+    setCategories((curr) => curr.filter((c) => c.id !== id));
+
+    if (!apiUsable()) return;
+
+    try {
+      await endpoints.deactivateCategory(id);
+    } catch (e) {
+      setCategories((curr) => [prev, ...curr]);
+      handleWriteErrorRef.current(e);
+    }
+  }, []);
+
   const addAccount = useCallback(
     async (input: {
       name: string;
@@ -890,7 +982,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         deleteTransaction,
         markPayablePaid,
         addAccount,
+        updateAccount,
+        deactivateAccount,
         addCategory,
+        updateCategory,
+        deactivateCategory,
         addCard,
         updateCard,
         addSubscription,

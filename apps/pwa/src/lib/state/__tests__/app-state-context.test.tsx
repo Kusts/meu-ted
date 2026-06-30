@@ -131,7 +131,11 @@ describe("AppStateProvider — mock-data path (no API)", () => {
     expect(typeof result.current.deleteTransaction).toBe("function");
     expect(typeof result.current.markPayablePaid).toBe("function");
     expect(typeof result.current.addAccount).toBe("function");
+    expect(typeof result.current.updateAccount).toBe("function");
+    expect(typeof result.current.deactivateAccount).toBe("function");
     expect(typeof result.current.addCategory).toBe("function");
+    expect(typeof result.current.updateCategory).toBe("function");
+    expect(typeof result.current.deactivateCategory).toBe("function");
     expect(typeof result.current.addCard).toBe("function");
     expect(typeof result.current.updateCard).toBe("function");
     expect(typeof result.current.addSubscription).toBe("function");
@@ -845,6 +849,91 @@ describe("AppStateProvider — API write path", () => {
       result.current.accounts.find((a) => a.id === a1.id)?.balanceCents,
     ).toBe(balanceBefore);
     expect(result.current.writeError).toBe("Fail");
+  });
+
+  // ── Account update / deactivate ────────────────────────────
+
+  it("calls updateAccount API and rolls back on failure", async () => {
+    vi.spyOn(endpoints, "fetchAccounts").mockResolvedValue([
+      { id: "acc-upd-1", name: "Old Name",
+        balanceCents: 0, kind: "checking" } as Account,
+    ]);
+    vi.spyOn(endpoints, "updateAccount")
+      .mockRejectedValue(new Error("Fail"));
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(() =>
+      result.current.updateAccount("acc-upd-1", { name: "New Name" }),
+    );
+
+    expect(result.current.accounts[0].name).toBe("Old Name");
+    expect(result.current.writeError).toBe("Fail");
+  });
+
+  it("calls deactivateAccount API and rolls back on failure", async () => {
+    vi.spyOn(endpoints, "fetchAccounts").mockResolvedValue([
+      { id: "acc-del-1", name: "To Delete",
+        balanceCents: 0, kind: "checking" } as Account,
+    ]);
+    vi.spyOn(endpoints, "deactivateAccount")
+      .mockRejectedValue(new Error("Offline"));
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(() => result.current.deactivateAccount("acc-del-1"));
+
+    // Rolled back — account reappears
+    expect(result.current.accounts).toHaveLength(1);
+    expect(result.current.writeError).toBe("Offline");
+  });
+
+  // ── Category update / deactivate ────────────────────────────
+
+  it("calls updateCategory API and rolls back on failure", async () => {
+    vi.spyOn(endpoints, "fetchCategories").mockResolvedValue([
+      { id: "cat-upd-1", name: "Old Cat", kind: "expense",
+        icon: "Tag" } as unknown as Category,
+    ]);
+    vi.spyOn(endpoints, "updateCategory")
+      .mockRejectedValue(new Error("Fail"));
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(() =>
+      result.current.updateCategory("cat-upd-1", { name: "New Cat" }),
+    );
+
+    expect(result.current.categories[0].name).toBe("Old Cat");
+    expect(result.current.writeError).toBe("Fail");
+  });
+
+  it("calls deactivateCategory API and rolls back on failure", async () => {
+    vi.spyOn(endpoints, "fetchCategories").mockResolvedValue([
+      { id: "cat-del-1", name: "To Delete", kind: "income",
+        icon: "DollarSign" } as unknown as Category,
+    ]);
+    vi.spyOn(endpoints, "deactivateCategory")
+      .mockRejectedValue(new Error("Offline"));
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(() => result.current.deactivateCategory("cat-del-1"));
+
+    expect(result.current.categories).toHaveLength(1);
+    expect(result.current.writeError).toBe("Offline");
   });
 
   // ── addCategory ────────────────────────────────────────────────

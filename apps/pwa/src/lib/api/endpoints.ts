@@ -246,6 +246,34 @@ export async function deleteTransaction(id: string): Promise<void> {
   await apiFetch(`/transactions/${id}`, { method: "DELETE" });
 }
 
+export async function updateAccount(
+  id: string,
+  input: { name: string },
+): Promise<Account> {
+  return apiFetch<Account>(`/accounts/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deactivateAccount(id: string): Promise<void> {
+  await apiFetch(`/accounts/${id}/deactivate`, { method: "POST" });
+}
+
+export async function updateCategory(
+  id: string,
+  input: { name: string },
+): Promise<Category> {
+  return apiFetch<Category>(`/categories/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deactivateCategory(id: string): Promise<void> {
+  await apiFetch(`/categories/${id}/deactivate`, { method: "POST" });
+}
+
 export async function markPayablePaid(
   id: string,
   paidDate?: string

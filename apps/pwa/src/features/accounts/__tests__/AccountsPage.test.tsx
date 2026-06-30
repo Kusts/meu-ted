@@ -1,4 +1,4 @@
-import { render, screen } from "@/lib/test-utils";
+import { render, screen, fireEvent } from "@/lib/test-utils";
 import AccountsPage from "../AccountsPage";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
@@ -23,7 +23,9 @@ function defaultState(): AppState {
       cardStatements: { source: "mock", syncedAt: null },
     },
     readOnly: false,
-    addAccount: vi.fn(), addCategory: vi.fn(), addCard: vi.fn(), updateCard: vi.fn(),
+    addAccount: vi.fn(), updateAccount: vi.fn(), deactivateAccount: vi.fn(),
+    addCategory: vi.fn(), updateCategory: vi.fn(), deactivateCategory: vi.fn(),
+    addCard: vi.fn(), updateCard: vi.fn(),
     addSubscription: vi.fn(), cancelSubscription: vi.fn(),
     createTransfer: vi.fn(), payStatement: vi.fn(), createInstallments: vi.fn(),
   };
@@ -48,5 +50,28 @@ describe("AccountsPage", () => {
 
   describe("error", () => {
     it("shows error banner alongside data", () => { vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ error: "Offline" })); render(<AccountsPage />); expect(screen.getByText(/Offline/i)).toBeInTheDocument(); expect(screen.getByText("Contas")).toBeInTheDocument(); });
+  });
+
+  describe("account actions", () => {
+    it("shows edit and deactivate buttons on each account", () => {
+      render(<AccountsPage />);
+      const editBtns = screen.getAllByText("Editar");
+      const deactBtns = screen.getAllByText("Desativar");
+      expect(editBtns.length).toBeGreaterThan(0);
+      expect(deactBtns.length).toBeGreaterThan(0);
+    });
+
+    it("opens edit sheet when edit button is clicked", () => {
+      render(<AccountsPage />);
+      fireEvent.click(screen.getAllByText("Editar")[0]);
+      expect(screen.getByText("Salvar")).toBeInTheDocument();
+    });
+
+    it("opens confirm dialog when desativar is clicked", async () => {
+      render(<AccountsPage />);
+      expect(screen.getAllByText("Desativar").length).toBeGreaterThan(0);
+      fireEvent.click(screen.getAllByText("Desativar")[0]);
+      expect(await screen.findByText("Desativar conta")).toBeInTheDocument();
+    });
   });
 });

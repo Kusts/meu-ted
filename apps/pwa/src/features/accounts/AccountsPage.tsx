@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
@@ -8,6 +8,7 @@ import Icon from "@/components/ui/Icon";
 import Badge from "@/components/ui/Badge";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
+import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
 
 function formatBRL(cents: number): string {
@@ -172,9 +173,56 @@ function AccountFormSheet({
   );
 }
 
+function AccountEditSheet({ open, account, onClose, onSave }: {
+  open: boolean;
+  account: { id: string; name: string } | null;
+  onClose: () => void;
+  onSave: (id: string, name: string) => void;
+}) {
+  const [name, setName] = useState("");
+
+  useEffect(() => {
+    if (account) setName(account.name);
+  }, [account]);
+
+  function handleSave() {
+    if (!account || !name.trim()) return;
+    onSave(account.id, name.trim());
+    onClose();
+  }
+
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Editar conta">
+      <div className="flex flex-col gap-4">
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Nome
+          </label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary"
+          />
+        </fieldset>
+        <button
+          type="button"
+          onClick={handleSave}
+          className="w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90"
+        >
+          Salvar
+        </button>
+      </div>
+    </BottomSheet>
+  );
+}
+
 export default function AccountsPage() {
-  const { accounts, transactions, loading, error, writeError, clearWriteError, addAccount } = useAppState();
+  const { accounts, transactions, loading, error, writeError, clearWriteError, addAccount, updateAccount, deactivateAccount } = useAppState();
   const [createOpen, setCreateOpen] = useState(false);
+  const [editAccount, setEditAccount] = useState<{ id: string; name: string } | null>(null);
+  const [confirmDeactivate, setConfirmDeactivate] = useState<{ id: string; name: string } | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
 
   const checkingAccounts = useMemo(
     () => accounts.filter((a) => a.kind !== "credit_card"),
@@ -288,19 +336,28 @@ export default function AccountsPage() {
                       <div className="font-mono text-[14px] font-semibold text-text-primary">
                         {formatBRL(acc.balanceCents)}
                       </div>
-                      {/* Chevron right */}
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="#C9CEC8"
-                        strokeWidth="2.2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditAccount({ id: acc.id, name: acc.name });
+                          setEditOpen(true);
+                        }}
+                        className="flex-none rounded-full bg-fill-light px-2.5 py-1 text-[11px] font-semibold text-text-secondary"
                       >
-                        <path d="m9 6 6 6-6 6" />
-                      </svg>
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setConfirmDeactivate({
+                            id: acc.id,
+                            name: acc.name,
+                          })
+                        }
+                        className="flex-none rounded-full bg-danger-tint px-2.5 py-1 text-[11px] font-semibold text-danger"
+                      >
+                        Desativar
+                      </button>
                     </div>
                   </div>
 
@@ -365,6 +422,29 @@ export default function AccountsPage() {
       </main>
 
       <AccountFormSheet open={createOpen} onClose={() => setCreateOpen(false)} onAdd={addAccount} />
+
+      <AccountEditSheet
+        open={editOpen}
+        account={editAccount}
+        onClose={() => {
+          setEditOpen(false);
+          setEditAccount(null);
+        }}
+        onSave={(id, name) => updateAccount(id, { name })}
+      />
+
+      <ConfirmActionDialog
+        open={confirmDeactivate !== null}
+        title="Desativar conta"
+        message={`Tem certeza que deseja desativar a conta "${confirmDeactivate?.name ?? ""}"? Esta ação pode ser desfeita.`}
+        confirmLabel="Desativar"
+        danger
+        onConfirm={() => {
+          if (confirmDeactivate) deactivateAccount(confirmDeactivate.id);
+          setConfirmDeactivate(null);
+        }}
+        onCancel={() => setConfirmDeactivate(null)}
+      />
     </div>
   );
 }

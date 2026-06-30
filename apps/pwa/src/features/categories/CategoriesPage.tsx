@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import Icon from "@/components/ui/Icon";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
+import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
 
 const ICON_PRESETS = [
@@ -123,9 +124,11 @@ function CategoryIconView({ icon }: { icon: string }) {
 interface CategoryRowProps {
   cat: { id: string; name: string; icon: string; subcategories?: string[] };
   onAddSub?: (input: { name: string; kind: "expense" | "income"; parentId: string }) => void;
+  onEdit?: (cat: { id: string; name: string }) => void;
+  onDeactivate?: (cat: { id: string; name: string }) => void;
 }
 
-function CategoryRow({ cat, onAddSub }: CategoryRowProps) {
+function CategoryRow({ cat, onAddSub, onEdit, onDeactivate }: CategoryRowProps) {
   const [adding, setAdding] = useState(false);
   const [newSub, setNewSub] = useState("");
 
@@ -146,9 +149,16 @@ function CategoryRow({ cat, onAddSub }: CategoryRowProps) {
         <button type="button" onClick={() => setAdding(!adding)}
           className="rounded-full bg-fill-light px-[10px] py-[4px] text-[11px] font-semibold text-text-secondary"
           style={{ border: "1px solid #E0E3DE" }}>+ Sub</button>
-        <button type="button" className="px-0.5 text-text-muted">
-          <Icon name="chevron-right" size={16} />
-        </button>
+        {onEdit && (
+          <button type="button" onClick={() => onEdit({ id: cat.id, name: cat.name })}
+            className="rounded-full bg-fill-light px-[10px] py-[4px] text-[11px] font-semibold text-text-secondary"
+            style={{ border: "1px solid #E0E3DE" }}>Editar</button>
+        )}
+        {onDeactivate && (
+          <button type="button" onClick={() => onDeactivate({ id: cat.id, name: cat.name })}
+            className="rounded-full bg-danger-tint px-[10px] py-[4px] text-[11px] font-semibold text-danger"
+            style={{ border: "1px solid #F5C6C6" }}>Desativar</button>
+        )}
       </div>
 
       {cat.subcategories && cat.subcategories.length > 0 && (
@@ -175,9 +185,56 @@ function CategoryRow({ cat, onAddSub }: CategoryRowProps) {
   );
 }
 
+function CategoryEditSheet({ open, category, onClose, onSave }: {
+  open: boolean;
+  category: { id: string; name: string } | null;
+  onClose: () => void;
+  onSave: (id: string, name: string) => void;
+}) {
+  const [name, setName] = useState("");
+
+  useEffect(() => {
+    if (category) setName(category.name);
+  }, [category]);
+
+  function handleSave() {
+    if (!category || !name.trim()) return;
+    onSave(category.id, name.trim());
+    onClose();
+  }
+
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Editar categoria">
+      <div className="flex flex-col gap-4">
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Nome
+          </label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary"
+          />
+        </fieldset>
+        <button
+          type="button"
+          onClick={handleSave}
+          className="w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90"
+        >
+          Salvar
+        </button>
+      </div>
+    </BottomSheet>
+  );
+}
+
 export default function CategoriesPage() {
-  const { categories, loading, error, writeError, clearWriteError, addCategory } = useAppState();
+  const { categories, loading, error, writeError, clearWriteError, addCategory, updateCategory, deactivateCategory } = useAppState();
   const [createOpen, setCreateOpen] = useState(false);
+  const [editCategory, setEditCategory] = useState<{ id: string; name: string } | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [confirmDeactivate, setConfirmDeactivate] = useState<{ id: string; name: string } | null>(null);
 
   if (loading) {
     return (
@@ -221,7 +278,18 @@ export default function CategoriesPage() {
               <span className="text-[11px] font-bold uppercase tracking-wide text-text-muted">Despesas</span>
             </div>
             <div className="overflow-hidden rounded-[16px] border border-border bg-surface px-[14px]">
-              {expenseCategories.map((cat) => <CategoryRow key={cat.id} cat={cat} onAddSub={addCategory} />)}
+              {expenseCategories.map((cat) => (
+                <CategoryRow
+                  key={cat.id}
+                  cat={cat}
+                  onAddSub={addCategory}
+                  onEdit={(c) => {
+                    setEditCategory(c);
+                    setEditOpen(true);
+                  }}
+                  onDeactivate={(c) => setConfirmDeactivate(c)}
+                />
+              ))}
             </div>
           </section>
           <section>
@@ -230,12 +298,46 @@ export default function CategoriesPage() {
               <span className="text-[11px] font-bold uppercase tracking-wide text-text-muted">Receitas</span>
             </div>
             <div className="overflow-hidden rounded-[16px] border border-border bg-surface px-[14px]">
-              {incomeCategories.map((cat) => <CategoryRow key={cat.id} cat={cat} onAddSub={addCategory} />)}
+              {incomeCategories.map((cat) => (
+                <CategoryRow
+                  key={cat.id}
+                  cat={cat}
+                  onAddSub={addCategory}
+                  onEdit={(c) => {
+                    setEditCategory(c);
+                    setEditOpen(true);
+                  }}
+                  onDeactivate={(c) => setConfirmDeactivate(c)}
+                />
+              ))}
             </div>
           </section>
         </div>
       </main>
       <NewCategorySheet open={createOpen} onClose={() => setCreateOpen(false)} onAdd={addCategory} />
+
+      <CategoryEditSheet
+        open={editOpen}
+        category={editCategory}
+        onClose={() => {
+          setEditOpen(false);
+          setEditCategory(null);
+        }}
+        onSave={(id, name) => updateCategory(id, { name })}
+      />
+
+      <ConfirmActionDialog
+        open={confirmDeactivate !== null}
+        title="Desativar categoria"
+        message={`Tem certeza que deseja desativar a categoria "${confirmDeactivate?.name ?? ""}"? Esta ação pode ser desfeita.`}
+        confirmLabel="Desativar"
+        danger
+        onConfirm={() => {
+          if (confirmDeactivate) deactivateCategory(confirmDeactivate.id);
+          setConfirmDeactivate(null);
+        }}
+        onCancel={() => setConfirmDeactivate(null)}
+      />
     </div>
   );
 }
