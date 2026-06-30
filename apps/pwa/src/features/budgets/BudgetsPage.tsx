@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
+import { WriteErrorBanner } from "@/components/WriteErrorBanner";
+import { StaleBanner } from "@/components/StaleBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 
 function formatBRL(cents: number): string {
@@ -111,7 +113,7 @@ function formatPct(value: number): string {
 }
 
 export default function BudgetsPage() {
-  const { budgets, categories, loading, error } = useAppState();
+  const { budgets, categories, loading, error, writeError, clearWriteError } = useAppState();
   const [tab, setTab] = useState<"expense" | "income">("expense");
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -220,6 +222,8 @@ export default function BudgetsPage() {
         )}
 
         <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+
+        <StaleBanner domains={["budgets", "categories"]} />
 
         <div className="px-5">
           {/* Tabs */}

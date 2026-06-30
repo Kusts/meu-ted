@@ -5,6 +5,7 @@ import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
+import { StaleBanner } from "@/components/StaleBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 
 function formatBRL(cents: number): string {
@@ -85,6 +86,8 @@ export default function GoalsPage() {
         )}
 
         <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+
+        <StaleBanner domains={["goals"]} />
 
         <div className="px-5">
           <div className="mb-4 flex gap-1.5 rounded-[13px] border border-border bg-surface p-1">

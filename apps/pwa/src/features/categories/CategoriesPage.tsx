@@ -5,6 +5,8 @@ import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import Icon from "@/components/ui/Icon";
+import { WriteErrorBanner } from "@/components/WriteErrorBanner";
+import { StaleBanner } from "@/components/StaleBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 
 const ICON_PRESETS = [
@@ -174,7 +176,7 @@ function CategoryRow({ cat, onAddSub }: CategoryRowProps) {
 }
 
 export default function CategoriesPage() {
-  const { categories, loading, error, addCategory } = useAppState();
+  const { categories, loading, error, writeError, clearWriteError, addCategory } = useAppState();
   const [createOpen, setCreateOpen] = useState(false);
 
   if (loading) {
@@ -209,6 +211,8 @@ export default function CategoriesPage() {
         )}
 
         <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+
+        <StaleBanner domains={["categories"]} />
 
         <div className="flex flex-col gap-5 px-5 py-4">
           <section>

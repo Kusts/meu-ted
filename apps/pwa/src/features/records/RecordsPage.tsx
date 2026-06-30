@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
+import { StaleBanner } from "@/components/StaleBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 
 type TypeFilter = "all" | "expense" | "income" | "transfer";
@@ -159,6 +160,8 @@ export default function RecordsPage() {
         )}
 
         <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+
+        <StaleBanner domains={["transactions", "categories", "accounts"]} />
 
         {/* Search */}
         <div className="mx-5 mb-3">

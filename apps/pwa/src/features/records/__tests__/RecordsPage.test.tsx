@@ -142,6 +142,54 @@ describe("RecordsPage", () => {
     });
   });
 
+  describe("stale state", () => {
+    it("shows stale banner when transactions are from snapshot (read-only)", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({
+          sync: {
+            accounts: { source: "mock", syncedAt: null },
+            categories: { source: "mock", syncedAt: null },
+            transactions: {
+              source: "snapshot",
+              syncedAt: "2026-06-25T10:00:00.000Z",
+            },
+            payables: { source: "mock", syncedAt: null },
+            budgets: { source: "mock", syncedAt: null },
+            goals: { source: "mock", syncedAt: null },
+            subscriptions: { source: "mock", syncedAt: null },
+            cardStatements: { source: "mock", syncedAt: null },
+          },
+          readOnly: true,
+        }),
+      );
+      render(<RecordsPage />);
+      expect(screen.getByText(/desatualizados/i)).toBeInTheDocument();
+    });
+
+    it("shows unavailable banner when transactions are unavailable", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({
+          sync: {
+            accounts: { source: "mock", syncedAt: null },
+            categories: { source: "mock", syncedAt: null },
+            transactions: {
+              source: "unavailable",
+              syncedAt: null,
+            },
+            payables: { source: "mock", syncedAt: null },
+            budgets: { source: "mock", syncedAt: null },
+            goals: { source: "mock", syncedAt: null },
+            subscriptions: { source: "mock", syncedAt: null },
+            cardStatements: { source: "mock", syncedAt: null },
+          },
+          readOnly: true,
+        }),
+      );
+      render(<RecordsPage />);
+      expect(screen.getByText(/indisponível/i)).toBeInTheDocument();
+    });
+  });
+
   describe("error state", () => {
     it("shows error banner when error is set", () => {
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(

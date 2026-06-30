@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
+import { WriteErrorBanner } from "@/components/WriteErrorBanner";
+import { StaleBanner } from "@/components/StaleBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 import type { Payable } from "@/lib/state/types";
 
@@ -82,7 +84,7 @@ interface PayableGroup {
 }
 
 export default function PayablesPage() {
-  const { payables, categories, markPayablePaid, loading, error } = useAppState();
+  const { payables, categories, markPayablePaid, loading, error, writeError, clearWriteError } = useAppState();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -228,6 +230,8 @@ export default function PayablesPage() {
         )}
 
         <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+
+        <StaleBanner domains={["payables", "categories"]} />
 
         <div className="px-5">
           {/* KPI card */}

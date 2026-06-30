@@ -6,6 +6,7 @@ import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import Badge from "@/components/ui/Badge";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
+import { StaleBanner } from "@/components/StaleBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 
 function formatBRL(cents: number): string {
@@ -271,6 +272,8 @@ export default function SubscriptionsPage() {
         />
 
         <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+
+        <StaleBanner domains={["subscriptions"]} />
 
         {/* Monthly total hero */}
         <div
