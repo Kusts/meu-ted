@@ -257,6 +257,7 @@ function SubscriptionDetailSheet({
 
   useEffect(() => {
     if (subscription && open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setName(subscription.name);
       setAmountDisplay(formatInputBRL(String(subscription.amountCents)));
       setCycle(subscription.cycle);

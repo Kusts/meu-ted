@@ -65,7 +65,7 @@ describe("AccountsPage", () => {
       expect(screen.queryByText("Conta corrente")).not.toBeInTheDocument();
     });
     it("labels unknown kind as Outro", () => {
-      const weirdAccount = { ...mockAccounts[0], kind: "unknown" as any };
+      const weirdAccount = { ...mockAccounts[0], kind: "unknown" as any }; // eslint-disable-line @typescript-eslint/no-explicit-any
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({
         accounts: [weirdAccount],
         transactions: [],

@@ -37,6 +37,8 @@ function mockApiReads(
   vi.spyOn(endpoints, "fetchSubscriptions").mockResolvedValue([]);
   vi.spyOn(endpoints, "fetchCards").mockResolvedValue([]);
   vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+  vi.spyOn(endpoints, "fetchProfile").mockResolvedValue(null);
+  vi.spyOn(endpoints, "fetchQuickInsights").mockResolvedValue([]);
 }
 
 function mockAccount(id: string, name: string): Account {
@@ -516,6 +518,9 @@ describe("AppStateProvider — refreshSubscriptions (lazy load)", () => {
     vi.spyOn(endpoints, "fetchBudgets").mockResolvedValue([]);
     vi.spyOn(endpoints, "fetchGoals").mockResolvedValue([]);
     vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchCards").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchProfile").mockResolvedValue(null);
+    vi.spyOn(endpoints, "fetchQuickInsights").mockResolvedValue([]);
   });
 
   it("exposes refreshSubscriptions as a function", async () => {
@@ -1425,6 +1430,8 @@ describe("AppStateProvider — runtime 401", () => {
     await waitFor(() => expect(expireSession).toHaveBeenCalled());
     // never falls back to mock on 401
     expect(result.current.accounts).toHaveLength(0);
+    // loading state settled after bootstrap completes (even on 401)
+    expect(result.current.loading).toBe(false);
   });
 
   it("calls expireSession (not writeError) when a write returns 401", async () => {
@@ -1470,6 +1477,10 @@ describe("AppStateProvider — non-essential domain error isolation", () => {
     vi.spyOn(endpoints, "fetchPayables").mockResolvedValue([]);
     vi.spyOn(endpoints, "fetchBudgets").mockResolvedValue([]);
     vi.spyOn(endpoints, "fetchGoals").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchCards").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchProfile").mockResolvedValue(null);
+    vi.spyOn(endpoints, "fetchQuickInsights").mockResolvedValue([]);
   });
 
   it("does NOT set global error when only subscriptions fails (non-essential)", async () => {

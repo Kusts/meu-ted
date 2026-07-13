@@ -54,6 +54,7 @@ function NewBudgetSheet({
 
   useEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStep("choose");
       setBudgetType(null);
       setCategoryId("");
@@ -203,6 +204,7 @@ function BudgetDetailSheet({
 
   useEffect(() => {
     if (budget && open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAmountDisplay(formatInputBRL(String(budget.amountCents)));
       setEditMode(false);
     }

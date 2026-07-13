@@ -1,0 +1,61 @@
+name: PWA CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/pwa/**"
+      - "scripts/check-pwa-audit.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/pwa/**"
+      - "scripts/check-pwa-audit.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: pwa-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      matrix:
+        node-version: [20]
+        pnpm-version: [9]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ matrix.pnpm-version }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint PWA
+        run: pnpm --dir apps/pwa lint
+
+      - name: Test PWA
+        run: pnpm --dir apps/pwa exec vitest run
+
+      - name: Build PWA (Cloudflare)
+        run: pnpm --dir apps/pwa build:cloudflare
+
+      - name: Scoped audit
+        run: pnpm audit --json | node scripts/check-pwa-audit.mjs

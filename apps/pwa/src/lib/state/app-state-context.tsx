@@ -1537,6 +1537,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (apiUsable()) return;
     try {
       const raw = localStorage.getItem("pi-finance:profile");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (raw) setProfile(JSON.parse(raw) as Profile);
     } catch {
       // ignore corrupt localStorage

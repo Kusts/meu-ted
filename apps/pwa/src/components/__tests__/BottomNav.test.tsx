@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import BottomNav from "../BottomNav";
 
 describe("BottomNav", () => {
-  const noop = () => {};
   const handlers = {
     onFabClick: vi.fn(),
     onMoreClick: vi.fn(),

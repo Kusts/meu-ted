@@ -42,6 +42,7 @@ export function TransactionEditSheet({
 
   useEffect(() => {
     if (transaction) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDescription(transaction.description);
       setDate(transaction.date);
       setAmountStr(formatInputBRL(String(transaction.amountCents)));

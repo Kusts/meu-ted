@@ -139,7 +139,7 @@ describe("WalletPage", () => {
     { name: "Nubank", id: "acc1" },
     { name: "Itaú", id: "acc2" },
     { name: "Inter", id: "acc3" },
-  ])("account card for $name links to /contas?accountId=$id", ({ name, id }) => {
+  ])("account card for $name links to /contas?accountId=$id", ({ id }) => {
     render(<WalletPage />);
     const links = screen.getAllByRole("link");
     const cardLink = links.find((l) => l.getAttribute("href") === `/contas?accountId=${id}`);

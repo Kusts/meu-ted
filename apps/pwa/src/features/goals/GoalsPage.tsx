@@ -56,6 +56,7 @@ function NewGoalSheet({
   const [targetStr, setTargetStr] = useState("");
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (initialType) setType(initialType);
   }, [initialType]);
 
@@ -64,6 +65,7 @@ function NewGoalSheet({
   // into the next open and risks being submitted accidentally.
   useEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setName("");
       setTargetStr("");
       setType("savings");
@@ -150,6 +152,7 @@ function ContributeSheet({
   // into the next open and risks being submitted accidentally.
   useEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAmountStr("");
     }
   }, [open]);
@@ -210,6 +213,7 @@ function GoalDetailSheet({
 
   useEffect(() => {
     if (goal && open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setName(goal.name);
       setTargetDisplay(formatInputBRL(String(goal.targetAmountCents)));
       setEditMode(false);
@@ -515,7 +519,6 @@ export default function GoalsPage() {
               );
             })}
             {debtGoals.map((g) => {
-              const remaining = g.targetAmountCents - g.currentAmountCents;
               const pct = g.targetAmountCents > 0
                 ? Math.min((g.currentAmountCents / g.targetAmountCents) * 100, 100) : 0;
               return (

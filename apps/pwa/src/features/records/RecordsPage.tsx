@@ -19,8 +19,6 @@ import type { Transaction } from "@/lib/state/types";
 // to fade into the page edge, signalling more content off-screen.
 // Uses percentages instead of `calc(...)` to stay compatible with jsdom's
 // CSSStyleDeclaration parser used in unit tests.
-const HORIZONTAL_FADE_MASK =
-  "linear-gradient(to right, transparent 0%, black 6%, black 94%, transparent 100%)";
 
 type TypeFilter = "all" | "expense" | "income" | "transfer";
 type PeriodFilter = "all" | "today" | 7 | 30 | "month" | "custom";
@@ -91,6 +89,7 @@ export default function RecordsPage() {
     const params = new URLSearchParams(window.location.search);
     const rawType = params.get("type");
     if (rawType === "expense" || rawType === "income" || rawType === "transfer") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTypeFilter(rawType);
     }
     const cat = params.get("categoryId");

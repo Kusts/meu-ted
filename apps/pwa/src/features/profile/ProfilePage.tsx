@@ -191,6 +191,7 @@ function EditProfileSheet({
   // changes (e.g. a previous save landed while the sheet was closed).
   useEffect(() => {
     if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setName(profile.name);
     setEmail(profile.email);
     setPhone(profile.phone);

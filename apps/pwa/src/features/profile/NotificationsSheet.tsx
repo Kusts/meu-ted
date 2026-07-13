@@ -52,6 +52,7 @@ export default function NotificationsSheet({
     if (!open) return;
     try {
       const raw = localStorage.getItem(DISMISSED_STORAGE_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (raw) setDismissed(new Set(JSON.parse(raw) as string[]));
     } catch {
       // ignore

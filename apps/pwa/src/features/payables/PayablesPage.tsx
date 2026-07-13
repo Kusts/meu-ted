@@ -154,7 +154,6 @@ function DetailSheet({
   onUndoPay: (id: string) => void;
   onCancel: (p: Payable) => void;
 }) {
-  const isEditable = payable?.status === "pending" || payable?.status === "overdue" || payable?.status === "paid";
   const isCancelled = payable?.status === "cancelled";
   const [description, setDescription] = useState(payable?.description ?? "");
   const [amountStr, setAmountStr] = useState(payable ? formatInputBRL(String(payable.amountCents)) : "");
@@ -437,7 +436,7 @@ export default function PayablesPage() {
         onClose={() => { setDetailOpen(false); setDetailPayable(null); }}
         onSave={(id, input) => updatePayable(id, input)}
         onMarkPaid={(id) => markPayablePaid(id)}
-        onUndoPay={(id) => setConfirmUndo(detailPayable)}
+        onUndoPay={() => setConfirmUndo(detailPayable)}
         onCancel={(p) => setConfirmCancel(p)}
       />
 

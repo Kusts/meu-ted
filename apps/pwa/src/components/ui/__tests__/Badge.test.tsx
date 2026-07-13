@@ -1,4 +1,4 @@
-import { render, screen } from "@/lib/test-utils";
+import { render } from "@/lib/test-utils";
 import Badge from "../Badge";
 
 describe("Badge", () => {

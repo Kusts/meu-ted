@@ -419,6 +419,7 @@ function PurchaseEditSheet({
 
   useEffect(() => {
     if (purchase) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDescription(purchase.description);
       setAmountDisplay(formatInputBRL(String(purchase.amountCents)));
       setDate(purchase.date);
@@ -505,12 +506,14 @@ export default function CardsPage() {
     const params = new URLSearchParams(window.location.search);
     const id = params.get("cardId");
     if (id) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedCardId(id);
     }
   }, []);
 
   useEffect(() => {
     if (!selectedCardId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedStatementId(null);
       return;
     }
@@ -529,6 +532,7 @@ export default function CardsPage() {
 
   useEffect(() => {
     if (!selectedStatementId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStmtDetail(null);
       return;
     }

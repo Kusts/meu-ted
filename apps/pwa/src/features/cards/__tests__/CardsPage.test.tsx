@@ -240,9 +240,9 @@ describe("CardsPage", () => {
       const paySpy = vi.fn();
       vi.spyOn(endpoints, "fetchStatementDetail").mockImplementation(async (id: string) => {
         if (id === "stmt-may") {
-          return { id: "stmt-may", accountId: "acc4", cycleYearMonth: "2026-05", closingDate: "2026-05-15", dueDate: "2026-05-25", totalCents: 50000, paidCents: 0, status: "open", purchases: [{ id: "p-may", description: "Compra maio", amountCents: 50000, date: "2026-05-10", categoryName: "Mercado" }] } as any;
+          return { id: "stmt-may", accountId: "acc4", cycleYearMonth: "2026-05", closingDate: "2026-05-15", dueDate: "2026-05-25", totalCents: 50000, paidCents: 0, status: "open", purchases: [{ id: "p-may", description: "Compra maio", amountCents: 50000, date: "2026-05-10", categoryName: "Mercado" }] } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         }
-        return { id: "stmt-jun", accountId: "acc4", cycleYearMonth: "2026-06", closingDate: "2026-06-15", dueDate: "2026-06-25", totalCents: 77740, paidCents: 0, status: "open", purchases: [{ id: "p-jun", description: "Compra junho", amountCents: 77740, date: "2026-06-10", categoryName: "Mercado" }] } as any;
+        return { id: "stmt-jun", accountId: "acc4", cycleYearMonth: "2026-06", closingDate: "2026-06-15", dueDate: "2026-06-25", totalCents: 77740, paidCents: 0, status: "open", purchases: [{ id: "p-jun", description: "Compra junho", amountCents: 77740, date: "2026-06-10", categoryName: "Mercado" }] } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
       });
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(
         mockState({
@@ -277,7 +277,7 @@ describe("CardsPage", () => {
       const user = userEvent.setup();
       vi.spyOn(endpoints, "fetchStatementDetail").mockResolvedValue({
         id: "stmt-may", accountId: "acc4", cycleYearMonth: "2026-05", closingDate: "2026-05-15", dueDate: "2026-05-25", totalCents: 50000, paidCents: 50000, status: "paid", purchases: [],
-      } as any);
+      } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(
         mockState({
           cardStatements: [
@@ -300,7 +300,7 @@ describe("CardsPage", () => {
       const user = userEvent.setup();
       vi.spyOn(endpoints, "fetchStatementDetail").mockResolvedValue({
         id: "stmt-may", accountId: "acc4", cycleYearMonth: "2026-05", closingDate: "2026-05-15", dueDate: "2026-05-25", totalCents: 50000, paidCents: 50000, status: "paid", purchases: [],
-      } as any);
+      } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(
         mockState({
           cardStatements: [

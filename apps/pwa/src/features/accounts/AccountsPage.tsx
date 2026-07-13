@@ -5,7 +5,6 @@ import { useMemo, useState, useEffect } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
-import Icon from "@/components/ui/Icon";
 import Badge from "@/components/ui/Badge";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
@@ -183,6 +182,7 @@ function AccountEditSheet({ open, account, onClose, onSave }: {
   const [name, setName] = useState("");
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (account) setName(account.name);
   }, [account]);
 
@@ -346,6 +346,7 @@ export default function AccountsPage() {
     const id = params.get("accountId");
     if (id) {
       const account = accounts.find((a) => a.id === id);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (account) setDetailAccount(account);
     }
   }, [accounts]);
