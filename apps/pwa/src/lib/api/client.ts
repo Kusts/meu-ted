@@ -25,10 +25,8 @@ export function isApiConfigured(): boolean {
   return baseUrl() !== undefined;
 }
 
-/** Returns the auth token from env or localStorage (safe for client-side only) */
+/** Returns the auth token from localStorage (safe for client-side only) */
 export function getAuthToken(): string | undefined {
-  const envToken = process.env.NEXT_PUBLIC_PI_FINANCE_API_DEVICE_TOKEN;
-  if (envToken) return envToken;
   try {
     return localStorage.getItem("pi-finance:token") ?? undefined;
   } catch {

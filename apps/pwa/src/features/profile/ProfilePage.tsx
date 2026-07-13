@@ -58,11 +58,6 @@ export default function ProfilePage() {
 
   function handleLogout() {
     resetLocalSession();
-    try {
-      localStorage.removeItem("pi-finance:profile");
-    } catch {
-      /* noop */
-    }
     router.push("/");
     router.refresh();
   }

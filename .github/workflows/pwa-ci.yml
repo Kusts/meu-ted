@@ -59,3 +59,7 @@ jobs:
 
       - name: Scoped audit
         run: pnpm audit --json | node scripts/check-pwa-audit.mjs
+
+      - name: CORS contract (passive)
+        run: timeout 10 node apps/pwa/scripts/contract-cors.mjs
+        continue-on-error: true

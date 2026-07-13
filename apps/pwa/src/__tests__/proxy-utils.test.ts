@@ -1,0 +1,47 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { middleware } from "../middleware";
+import { SECURITY_HEADERS } from "../proxy-utils";
+
+function mockRequest(url = "https://example.com/"): Request {
+  return new Request(url);
+}
+
+describe("middleware", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("sets Content-Security-Policy header on response", () => {
+    const response = middleware(mockRequest());
+    const csp = response.headers.get("Content-Security-Policy");
+    expect(csp).toBeTruthy();
+    expect(csp).toContain("script-src 'nonce-");
+    expect(csp).toContain("style-src 'unsafe-inline'");
+    expect(csp).toContain("frame-ancestors 'none'");
+  });
+
+  it("sets x-nonce header on response", () => {
+    const response = middleware(mockRequest());
+    const nonce = response.headers.get("x-nonce");
+    expect(nonce).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("x-nonce in header matches CSP nonce", () => {
+    const response = middleware(mockRequest());
+    const nonce = response.headers.get("x-nonce")!;
+    const csp = response.headers.get("Content-Security-Policy")!;
+    expect(csp).toContain(`'nonce-${nonce}'`);
+  });
+
+  it("sets all SECURITY_HEADERS on response", () => {
+    const response = middleware(mockRequest());
+    for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
+      expect(response.headers.get(key)).toBe(value);
+    }
+  });
+
+  it("removes X-Powered-By header if present", () => {
+    const response = middleware(mockRequest());
+    expect(response.headers.get("X-Powered-By")).toBeNull();
+  });
+});

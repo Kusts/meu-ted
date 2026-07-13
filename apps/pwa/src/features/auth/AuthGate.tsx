@@ -3,9 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { getToken, setToken } from "@/lib/auth/token-store";
 import { apiGet, apiPost, ApiError } from "@/lib/api/client";
-import { resetLocalSession } from "@/lib/reset-session";
+import { clearSensitiveSession } from "@/lib/session";
 import { SessionProvider } from "@/lib/auth/session-context";
-import { clearSnapshot } from "@/lib/state/snapshot-store";
 
 type AuthState = "loading" | "register" | "unlocked";
 
@@ -29,7 +28,11 @@ export function AuthGate({ children }: Props) {
         await apiGet<unknown>("/auth/devices/me", token);
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) {
-          resetLocalSession();
+          clearSensitiveSession({
+            clearToken: true,
+            clearV1Snapshot: true,
+            clearProfile: true,
+          });
           setError("Sessão antiga expirada. Registre o dispositivo novamente.");
           setState("register");
           return;
@@ -49,7 +52,11 @@ export function AuthGate({ children }: Props) {
         deviceId: string;
         householdId: string;
       }>("/auth/devices/register", null, { deviceName });
-      resetLocalSession();
+      clearSensitiveSession({
+        clearToken: true,
+        clearV1Snapshot: true,
+        clearProfile: true,
+      });
       setToken(res.token);
       setState("unlocked");
     } catch (e: unknown) {
@@ -60,8 +67,13 @@ export function AuthGate({ children }: Props) {
   }, []);
 
   const expireSession = useCallback((message?: string) => {
-    resetLocalSession();
-    clearSnapshot();
+    // Synchronous cleanup completes BEFORE UI state transition.
+    // clearSensitiveSession has no async operations (all localStorage + callbacks).
+    clearSensitiveSession({
+      clearToken: true,
+      clearV1Snapshot: true,
+      clearProfile: true,
+    });
     setError(message ?? "Sessão expirada. Registre o dispositivo novamente.");
     setState("register");
   }, []);

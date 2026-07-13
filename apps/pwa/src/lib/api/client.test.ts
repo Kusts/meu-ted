@@ -49,6 +49,30 @@ describe("api client base URL resolution", () => {
     expect(isApiConfigured()).toBe(true);
   });
 
+  it("does NOT send x-device-token from NEXT_PUBLIC_PI_FINANCE_API_DEVICE_TOKEN", async () => {
+    vi.stubEnv(
+      "NEXT_PUBLIC_PI_FINANCE_API_BASE_URL",
+      "https://api.example.com",
+    );
+    vi.stubEnv(
+      "NEXT_PUBLIC_PI_FINANCE_API_DEVICE_TOKEN",
+      "should-not-appear",
+    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      );
+
+    await apiFetch("/ping", { method: "GET" });
+
+    const callHeaders = fetchMock.mock.calls[0][1]?.headers as Record<
+      string,
+      string
+    >;
+    expect(callHeaders["x-device-token"]).toBeUndefined();
+  });
+
   it("falls back to production API for the deployed worker hostname", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", undefined as unknown as string);
     vi.spyOn(window, "location", "get").mockReturnValue({
