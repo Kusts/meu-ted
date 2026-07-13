@@ -41,7 +41,14 @@ describe("CategoriesPage", () => {
     it("renders Receitas section", () => { render(<CategoriesPage />); expect(screen.getByText("Receitas")).toBeInTheDocument(); });
     it("renders expense category names", () => { render(<CategoriesPage />); expect(screen.getByText("Alimentação")).toBeInTheDocument(); expect(screen.getByText("Transporte")).toBeInTheDocument(); expect(screen.getByText("Moradia")).toBeInTheDocument(); });
     it("renders income category names", () => { render(<CategoriesPage />); expect(screen.getByText("Salário")).toBeInTheDocument(); expect(screen.getByText("Freelas")).toBeInTheDocument(); });
-    it("renders subcategory chips", () => { render(<CategoriesPage />); expect(screen.getByText("Mercado")).toBeInTheDocument(); expect(screen.getByText("Restaurante")).toBeInTheDocument(); expect(screen.getByText("Ifood")).toBeInTheDocument(); });
+    it("renders subcategory chips without fake remove button", () => {
+      render(<CategoriesPage />);
+      expect(screen.getByText("Mercado")).toBeInTheDocument();
+      expect(screen.getByText("Restaurante")).toBeInTheDocument();
+      expect(screen.getByText("Ifood")).toBeInTheDocument();
+      // Remove button (×) must NOT exist — no real backend support for subcategory deletion
+      expect(screen.queryByLabelText(/Remover/)).not.toBeInTheDocument();
+    });
     it("renders + Sub buttons", () => { render(<CategoriesPage />); expect(screen.getAllByText("+ Sub").length).toBeGreaterThan(0); });
   });
 
@@ -71,6 +78,28 @@ describe("CategoriesPage", () => {
       expect(screen.getAllByText("Desativar").length).toBeGreaterThan(0);
       fireEvent.click(screen.getAllByText("Desativar")[0]);
       expect(await screen.findByText("Desativar categoria")).toBeInTheDocument();
+    });
+  });
+
+  describe("category icon consistency", () => {
+    it("renders initial-letter badge instead of CategoryIconView for category rows", () => {
+      const { container } = render(<CategoriesPage />);
+      // Category row icons are now aria-hidden spans with initial letters
+      const badges = Array.from(container.querySelectorAll("span")).filter(
+        (s) => s.getAttribute("aria-hidden") === "true",
+      );
+      expect(badges.length).toBeGreaterThanOrEqual(3);
+      badges.forEach((s) => {
+        expect(s.textContent).toMatch(/^[A-ZÀ-Ú]$/);
+      });
+    });
+
+    it("new category sheet no longer shows fake icon/color picker controls", () => {
+      render(<CategoriesPage />);
+      fireEvent.click(screen.getByText("Nova"));
+      // Ícone and Cor pickers should be gone (they were never persisted)
+      expect(screen.queryByText("Ícone")).not.toBeInTheDocument();
+      expect(screen.queryByText("Cor")).not.toBeInTheDocument();
     });
   });
 

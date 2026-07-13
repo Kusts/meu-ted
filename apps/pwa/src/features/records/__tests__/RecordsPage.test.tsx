@@ -1,4 +1,11 @@
 import { render, screen, fireEvent } from "@/lib/test-utils";
+import userEvent from "@testing-library/user-event";
+
+const mockRouter = { push: vi.fn(), refresh: vi.fn() };
+vi.mock("next/navigation", () => ({
+  useRouter: () => mockRouter,
+}));
+
 import RecordsPage from "../RecordsPage";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
@@ -59,9 +66,9 @@ function mockState(overrides: Partial<AppState>): AppState {
 
 describe("RecordsPage", () => {
   beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-06-26T12:00:00Z"));
     vi.restoreAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-06-26T12:00:00Z"));
   });
 
   afterEach(() => {
@@ -81,23 +88,26 @@ describe("RecordsPage", () => {
       expect(screen.getByText("PIX para Nubank")).toBeInTheDocument();
     });
 
-    it("filters by type: only expenses", () => {
+    it("filters by type: only expenses (via filter sheet)", () => {
       render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
       fireEvent.click(screen.getByText("Despesas"));
       expect(screen.getByText("Supermercado Extra")).toBeInTheDocument();
       expect(screen.queryByText("Salário Junho")).not.toBeInTheDocument();
       expect(screen.queryByText("PIX para Nubank")).not.toBeInTheDocument();
     });
 
-    it("filters by type: only transfers", () => {
+    it("filters by type: only transfers (via filter sheet)", () => {
       render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
       fireEvent.click(screen.getByText("Transf."));
       expect(screen.getByText("PIX para Nubank")).toBeInTheDocument();
       expect(screen.queryByText("Supermercado Extra")).not.toBeInTheDocument();
     });
 
-    it("filters by period: 7d", () => {
+    it("filters by period 7d (via filter sheet)", () => {
       render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
       fireEvent.click(screen.getByText("7d"));
       expect(screen.getByText("Supermercado Extra")).toBeInTheDocument();
       expect(screen.queryByText("Aluguel")).not.toBeInTheDocument();
@@ -125,27 +135,103 @@ describe("RecordsPage", () => {
       expect(screen.getByText("Ifood")).toBeInTheDocument();
     });
 
-    it("renders type filter chips", () => {
+    it("renders a compact filter trigger button", () => {
       render(<RecordsPage />);
-      expect(screen.getByText("Tudo")).toBeInTheDocument();
-      expect(screen.getByText("Despesas")).toBeInTheDocument();
-      expect(screen.getByText("Receitas")).toBeInTheDocument();
-      expect(screen.getByText("Transf.")).toBeInTheDocument();
+      const trigger = screen.getByTestId("filter-trigger");
+      expect(trigger).toBeInTheDocument();
+      expect(trigger.textContent).toMatch(/Filtro/i);
     });
 
-    it("renders period filter chips", () => {
+    it("clicking filter trigger opens a BottomSheet", () => {
       render(<RecordsPage />);
-      expect(screen.getByText("7d")).toBeInTheDocument();
-      expect(screen.getByText("30d")).toBeInTheDocument();
-      expect(screen.getByText("90d")).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("filter-trigger"));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    it("filter sheet shows type, period with new options (Hoje, Este mes, Personalizado)", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
+      expect(screen.getByText("Despesas")).toBeInTheDocument();
+      expect(screen.getByText("Receitas")).toBeInTheDocument();
+      expect(screen.getByText("Hoje")).toBeInTheDocument();
+      expect(screen.getByText("Este mês")).toBeInTheDocument();
+      expect(screen.getByText("Personalizado")).toBeInTheDocument();
+    });
+
+    it("category is shown as single selector trigger, not chips", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
+      expect(screen.getByTestId("category-selector-trigger")).toBeInTheDocument();
+      expect(screen.queryByText("Alimentação")).not.toBeInTheDocument();
+    });
+
+    it("category selector opens a list with Voltar, Todas as categorias and categories", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
+      fireEvent.click(screen.getByTestId("category-selector-trigger"));
+      expect(screen.getByText("Voltar")).toBeInTheDocument();
+      expect(screen.getByText("Todas as categorias")).toBeInTheDocument();
+      expect(screen.getByText("Alimentação")).toBeInTheDocument();
+    });
+
+    it("selecting a category filters results and shows badge", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
+      fireEvent.click(screen.getByTestId("category-selector-trigger"));
+      fireEvent.click(screen.getByText("Alimentação"));
+      expect(screen.getByTestId("filter-trigger").textContent).toMatch(/Alimentação/);
+      expect(screen.getByText("Supermercado Extra")).toBeInTheDocument();
+      expect(screen.queryByText("Uber para casa")).not.toBeInTheDocument();
+    });
+
+    it("custom date inputs appear when Personalizado is selected", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
+      fireEvent.click(screen.getByText("Personalizado"));
+      expect(screen.getByText(/Data inicial/i)).toBeInTheDocument();
+      expect(screen.getByText(/Data final/i)).toBeInTheDocument();
+    });
+  });
+
+  describe("accountId filter from URL (?accountId=)", () => {
+    function setUrlSearch(search: string) {
+      Object.defineProperty(window, "location", {
+        value: { ...window.location, search },
+        writable: true,
+        configurable: true,
+      });
+    }
+
+    it("filters transactions by accountId when ?accountId= is in the URL", () => {
+      setUrlSearch("?accountId=acc1");
+      render(<RecordsPage />);
+      // Nubank (acc1) transactions should be visible
+      expect(screen.getByText("Supermercado Extra")).toBeInTheDocument();
+      // Itaú (acc2) transactions should be filtered out
+      expect(screen.queryByText("Aluguel")).not.toBeInTheDocument();
+    });
+
+    it("shows account name badge when account filter is active", () => {
+      setUrlSearch("?accountId=acc1");
+      render(<RecordsPage />);
+      const trigger = screen.getByTestId("filter-trigger");
+      expect(trigger.textContent).toMatch(/Nubank/);
+    });
+
+    it("shows all transactions when ?accountId is missing", () => {
+      setUrlSearch("");
+      render(<RecordsPage />);
+      expect(screen.getByText("Supermercado Extra")).toBeInTheDocument();
+      expect(screen.getByText("Aluguel")).toBeInTheDocument();
     });
   });
 
   describe("loading state", () => {
-    it("shows loading indicator when loading", () => {
+    it("shows loading skeleton elements when loading", () => {
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ loading: true }));
-      render(<RecordsPage />);
-      expect(screen.getByText(/carregando/i)).toBeInTheDocument();
+      const { container } = render(<RecordsPage />);
+      const skeleton = container.querySelector('[role="status"]');
+      expect(skeleton).toBeTruthy();
       expect(screen.queryByText("Supermercado Extra")).not.toBeInTheDocument();
     });
   });
@@ -180,7 +266,7 @@ describe("RecordsPage", () => {
         }),
       );
       render(<RecordsPage />);
-      expect(screen.getByText(/desatualizados/i)).toBeInTheDocument();
+      expect(screen.getByTestId("stale-banner")).toBeInTheDocument();
     });
 
     it("shows unavailable banner when transactions are unavailable", () => {
@@ -215,6 +301,30 @@ describe("RecordsPage", () => {
       render(<RecordsPage />);
       expect(screen.getByText(/Erro de rede/i)).toBeInTheDocument();
       expect(screen.getByText("Supermercado Extra")).toBeInTheDocument();
+    });
+  });
+
+  describe("edit sheet account selector includes cards", () => {
+    it("account options show 'Cartão' prefix for credit cards", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByText("Supermercado Extra"));
+      fireEvent.click(screen.getByText("Editar"));
+      const accountSelects = screen.getAllByRole("combobox");
+      const acctSelect = accountSelects[accountSelects.length - 1] as HTMLSelectElement;
+      const options = Array.from(acctSelect.options);
+      const cardOption = options.find((o) => o.textContent?.includes("Cartão"));
+      expect(cardOption).toBeTruthy();
+    });
+
+    it("account options show 'Conta' prefix for non-credit accounts", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByText("Supermercado Extra"));
+      fireEvent.click(screen.getByText("Editar"));
+      const accountSelects = screen.getAllByRole("combobox");
+      const acctSelect = accountSelects[accountSelects.length - 1] as HTMLSelectElement;
+      const options = Array.from(acctSelect.options);
+      const contaOption = options.find((o) => o.textContent?.startsWith("Conta"));
+      expect(contaOption).toBeTruthy();
     });
   });
 });

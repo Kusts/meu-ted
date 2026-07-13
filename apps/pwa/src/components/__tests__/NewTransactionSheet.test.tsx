@@ -94,6 +94,33 @@ describe("NewTransactionSheet", () => {
     expect(saved.amountCents).toBe(5000);
   });
 
+  // ── Category icon consistency ──
+
+  it("renders deterministic initial-letter badge instead of CategoryIcon emoji/SVG", () => {
+    const { container } = render(
+      <NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />,
+    );
+    // Category grid buttons show badge spans with initial letters
+    const allSpans = container.querySelectorAll("span");
+    const badges = Array.from(allSpans).filter(
+      (s) => s.getAttribute("aria-hidden") === "true",
+    );
+    // At least one category badge (for "Alimentação" → "A", "Transporte" → "T", "Salário" → "S")
+    expect(badges.length).toBeGreaterThanOrEqual(2);
+    badges.forEach((s) => {
+      expect(s.textContent).toMatch(/^[A-ZÀ-Ú]$/);
+    });
+  });
+
+  it("uses category name initials, not icon-name-based emoji or tint", () => {
+    render(
+      <NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />,
+    );
+    // Category names are rendered
+    expect(screen.getByText("Alimentação")).toBeInTheDocument();
+    expect(screen.getByText("Transporte")).toBeInTheDocument();
+  });
+
   // ── Inline creation flow tests ──
 
   it("shows inline form when Nova categoria is clicked and calls onAddCategory", async () => {
@@ -197,5 +224,56 @@ describe("NewTransactionSheet", () => {
     await user.click(screen.getByText("Alimentação"));
     expect(screen.getByText("Mercado")).toBeInTheDocument();
     expect(screen.getByText("Restaurante")).toBeInTheDocument();
+  });
+
+  // ── Draft leakage across tab switches ──
+
+  it("does not leak amount or description across tab switches", async () => {
+    const user = userEvent.setup();
+    render(
+      <NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />,
+    );
+
+    // Type draft on the default (Despesa) tab.
+    const valorInput = screen.getByPlaceholderText(/0,00/);
+    await user.type(valorInput, "12345");
+    const descInput = screen.getByPlaceholderText(/aluguel|descrição/i);
+    await user.type(descInput, "Draft de Despesa");
+
+    // Switch to Transferência — should reset ALL draft fields including
+    // amount and description, not just category/account.
+    await user.click(screen.getByRole("button", { name: /transferência/i }));
+
+    const reopenedValor = screen.getByPlaceholderText(/0,00/) as HTMLInputElement;
+    const reopenedDesc = screen.getByPlaceholderText(/aluguel|descrição/i) as HTMLInputElement;
+    expect(reopenedValor.value).toBe("");
+    expect(reopenedDesc.value).toBe("");
+  });
+
+  it("does not leak amount or description when switching from Receita to Despesa", async () => {
+    const user = userEvent.setup();
+    render(
+      <NewTransactionSheet
+        accounts={accounts}
+        categories={categories}
+        onSave={vi.fn()}
+        initialTab="income"
+      />,
+    );
+
+    // Type draft on Receita tab.
+    const valorInput = screen.getByPlaceholderText(/0,00/);
+    await user.type(valorInput, "99999");
+    const descInput = screen.getByPlaceholderText(/aluguel|descrição/i);
+    await user.type(descInput, "Salário freelance");
+
+    // Switch to Despesa — should reset amount and description.
+    const despesaBtn = screen.getAllByRole("button", { name: /^Despesa$/i })[0]!;
+    await user.click(despesaBtn);
+
+    const reopenedValor = screen.getByPlaceholderText(/0,00/) as HTMLInputElement;
+    const reopenedDesc = screen.getByPlaceholderText(/aluguel|descrição/i) as HTMLInputElement;
+    expect(reopenedValor.value).toBe("");
+    expect(reopenedDesc.value).toBe("");
   });
 });

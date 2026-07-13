@@ -1,8 +1,15 @@
 /**
  * Tinted badge — identity chip for accounts, cards, and subscriptions.
  *
- * Usage: <Badge label="NU" color="#820AD1" size="sm" />
- * Displays the first 1-2 characters of the label on a tinted background.
+ * Usage: <Badge label="Nubank Crédito" color="#820AD1" size="sm" />
+ *
+ * Abbreviation rules (kept compact, max 2 chars):
+ *   - 1 word  → first 2 chars uppercase ("Nubank" → "NU")
+ *   - 2+ words → initials of the first two words ("Nubank Crédito" → "NC")
+ *
+ * The full label is exposed via the `title` attribute as a native tooltip
+ * and for QA inspection. The element stays aria-hidden because the
+ * surrounding UI (account name text) is the canonical accessible label.
  */
 
 import type { CSSProperties } from "react";
@@ -12,6 +19,15 @@ interface BadgeProps {
   color?: string;
   size?: "sm" | "md" | "lg";
   className?: string;
+}
+
+function getAbbreviation(label: string): string {
+  const words = label.trim().split(/\s+/).filter((w) => w.length > 0);
+  if (words.length === 0) return "";
+  if (words.length === 1) {
+    return words[0].slice(0, 2).toUpperCase();
+  }
+  return (words[0][0] + words[1][0]).toUpperCase();
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -35,7 +51,7 @@ export default function Badge({
   className = "",
 }: BadgeProps) {
   const dims = SIZE_MAP[size];
-  const chars = label.slice(0, 2).toUpperCase();
+  const chars = getAbbreviation(label);
 
   const style: CSSProperties = {
     width: dims.size,
@@ -57,7 +73,10 @@ export default function Badge({
     <span
       className={`inline-flex items-center justify-center flex-none ${className}`}
       style={style}
+      title={label}
       aria-hidden="true"
+      data-testid="badge"
+      data-full-label={label}
     >
       {chars}
     </span>

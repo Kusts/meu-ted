@@ -14,6 +14,9 @@ import type {
   Subscription,
   CardStatement,
   StatementDetail,
+  StatementPurchase,
+  Profile,
+  QuickInsight,
 } from "@/lib/state/types";
 import { apiFetch } from "./client";
 
@@ -126,6 +129,21 @@ export async function fetchStatementDetail(id: string): Promise<StatementDetail>
   return apiFetch<StatementDetail>(`/cards/statements/${id}`);
 }
 
+export async function updateCardPurchase(
+  purchaseId: string,
+  input: {
+    description?: string;
+    amountCents?: number;
+    date?: string;
+    categoryId?: string;
+  },
+): Promise<StatementDetail> {
+  return apiFetch<StatementDetail>(`/cards/purchases/${purchaseId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function payStatement(
   statementId: string,
   input: { amountCents: number; fromAccountId: string },
@@ -208,6 +226,22 @@ export async function addSubscription(input: {
 export async function cancelSubscription(id: string): Promise<Subscription> {
   return apiFetch<Subscription>(`/subscriptions/${id}/cancel`, {
     method: "POST",
+  });
+}
+
+export async function updateSubscription(
+  id: string,
+  input: {
+    name?: string;
+    amountCents?: number;
+    cycle?: "monthly" | "yearly" | "weekly";
+    day?: number;
+    paymentMethod?: string;
+  },
+): Promise<Subscription> {
+  return apiFetch<Subscription>(`/subscriptions/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
   });
 }
 
@@ -301,6 +335,28 @@ export async function cancelPayable(
   });
 }
 
+export async function updatePayable(
+  id: string,
+  input: {
+    description?: string;
+    amountCents?: number;
+    dueDate?: string;
+    accountId?: string;
+    categoryId?: string;
+  },
+): Promise<Payable> {
+  return apiFetch<Payable>(`/payables/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function undoPayablePayment(id: string): Promise<Payable> {
+  return apiFetch<Payable>(`/payables/${id}/unpay`, {
+    method: "POST",
+  });
+}
+
 export async function markPayablePaid(
   id: string,
   paidDate?: string
@@ -373,3 +429,44 @@ export async function contributeToGoal(
 export async function cancelGoal(id: string): Promise<Goal> {
   return apiFetch<Goal>(`/goals/${id}/cancel`, { method: "POST" });
 }
+
+export async function updateGoal(
+  id: string,
+  input: {
+    name?: string;
+    targetAmountCents?: number;
+    targetDate?: string;
+  },
+): Promise<Goal> {
+  return apiFetch<Goal>(`/goals/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+// ─── Profile (Slice B / Resumo) ──────────────────────────
+
+export async function fetchProfile(): Promise<Profile | null> {
+  const res = await apiFetch<{ profile: Profile | null }>("/profile");
+  return res.profile;
+}
+
+export async function patchProfile(input: {
+  name?: string;
+  email?: string;
+  phone?: string;
+  avatarColor?: string;
+  greetingStyle?: Profile["greetingStyle"];
+}): Promise<Profile> {
+  const res = await apiFetch<{ profile: Profile }>("/profile", {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+  return res.profile;
+}
+
+export async function fetchQuickInsights(): Promise<QuickInsight[]> {
+  const res = await apiFetch<{ items: QuickInsight[] }>("/insights/quick");
+  return res.items;
+}
+

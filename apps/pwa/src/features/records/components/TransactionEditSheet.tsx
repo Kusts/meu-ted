@@ -161,7 +161,7 @@ export function TransactionEditSheet({
             >
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.name}
+                  {a.kind === "credit_card" ? `Cartão • ${a.name}` : `Conta • ${a.name}`}
                 </option>
               ))}
             </select>

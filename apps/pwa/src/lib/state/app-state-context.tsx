@@ -20,6 +20,8 @@ import type {
   Debt,
   Subscription,
   CardStatement,
+  Profile,
+  QuickInsight,
 } from "./types";
 import {
   ALL_MOCK_TRANSACTIONS,
@@ -48,6 +50,16 @@ export interface AppState {
   debts: Debt[];
   subscriptions: Subscription[];
   cardStatements: CardStatement[];
+  profile: Profile | null;
+  quickInsights?: QuickInsight[];
+  saveProfile: (input: {
+    name?: string;
+    email?: string;
+    phone?: string;
+    avatarColor?: string;
+    greetingStyle?: Profile["greetingStyle"];
+  }) => Promise<void>;
+  refreshProfile: () => Promise<void>;
   // Sync / mode
   sync: Record<DomainKey, DomainSync>;
   readOnly: boolean;
@@ -71,6 +83,14 @@ export interface AppState {
   deleteTransaction: (id: string) => Promise<void>;
   markPayablePaid: (id: string) => Promise<void>;
   cancelPayable: (id: string) => Promise<void>;
+  updatePayable: (id: string, input: {
+    description?: string;
+    amountCents?: number;
+    dueDate?: string;
+    accountId?: string;
+    categoryId?: string;
+  }) => Promise<void>;
+  undoPayablePayment: (id: string) => Promise<void>;
   createPayable: (input: {
     accountId: string;
     description: string;
@@ -100,6 +120,11 @@ export interface AppState {
     input: { amountCents: number },
   ) => Promise<void>;
   cancelGoal: (id: string) => Promise<void>;
+  updateGoal: (id: string, input: {
+    name?: string;
+    targetAmountCents?: number;
+    targetDate?: string;
+  }) => Promise<void>;
   addAccount: (input: {
     name: string;
     kind: "bank" | "cash" | "credit_card";
@@ -137,6 +162,15 @@ export interface AppState {
     paymentMethod: string;
   }) => Promise<void>;
   cancelSubscription: (id: string) => Promise<void>;
+  updateSubscription: (id: string, input: {
+    name?: string;
+    amountCents?: number;
+    cycle?: "monthly" | "yearly" | "weekly";
+    day?: number;
+    paymentMethod?: string;
+  }) => Promise<void>;
+  /** Lazy-load subscriptions on demand — not fetched during bootstrap */
+  refreshSubscriptions: () => Promise<void>;
   createTransfer: (input: {
     description: string;
     amountCents: number;
@@ -200,6 +234,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [subscriptions, setSubscriptions] =
     useState<Subscription[]>(configured ? [] : mockSubscriptions);
   const [cardStatements, setCardStatements] = useState<CardStatement[]>([]);
+  const [quickInsights, setQuickInsights] = useState<QuickInsight[]>([]);
+  // Profile starts as null; defaults are derived via `effectiveProfile`.
+  // We don't bake a "Marina" mock into the state because the spec wants
+  // the home/avatar to reflect the persisted profile (real data, not
+  // baked fixture).
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [sync, setSync] = useState<Record<DomainKey, DomainSync>>(() =>
     initialSync(configured ? "live" : "mock"),
   );
@@ -316,8 +356,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         endpoints.fetchPayables(),
         endpoints.fetchBudgets(),
         endpoints.fetchGoals(),
-        endpoints.fetchSubscriptions(),
         endpoints.fetchStatements(),
+        endpoints.fetchCards(),
+        endpoints.fetchProfile(),
+        endpoints.fetchQuickInsights(),
       ]);
       if (cancelled) return;
 
@@ -334,9 +376,63 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      applyListDomain("accounts", results[0], token, (d) =>
-        setAccounts(d as Account[]),
-      );
+      // ── Accounts + credit cards merge ────────────────────────
+      // /accounts (results[0]) returns checking/savings accounts.
+      // /cards/accounts (results[7]) returns credit card accounts.
+      // Merge both, deduplicating by id.
+      {
+        const accountsResult = results[0];
+        const cardsResult = results[7];
+        const accountsOk = accountsResult.status === "fulfilled";
+        const cardsOk = cardsResult.status === "fulfilled";
+        const cardsData = cardsOk ? (cardsResult.value as Account[]) : [];
+
+        if (accountsOk) {
+          // Accounts succeeded — merge cards in, keep live.
+          // /accounts returns some card accounts as kind="bank" (API quirk).
+          // /cards/accounts has the correct kind="credit_card" + card fields.
+          // Cards OVERWRITE same-id entries from accounts (kind normalization).
+          const merged: Account[] = [...(accountsResult.value as Account[])];
+          for (const c of cardsData) {
+            const idx = merged.findIndex((m) => m.id === c.id);
+            if (idx >= 0) {
+              merged[idx] = c; // overwrite with card data
+            } else {
+              merged.push(c);
+            }
+          }
+          setAccounts(merged);
+          saveDomain(token, "accounts", merged);
+          setSyncFor("accounts", {
+            source: "live",
+            syncedAt: new Date().toISOString(),
+          });
+        } else if (cardsData.length > 0) {
+          // Only cards available — use cards as partial accounts
+          setAccounts(cardsData);
+          saveDomain(token, "accounts", cardsData);
+          setSyncFor("accounts", {
+            source: "live",
+            syncedAt: new Date().toISOString(),
+          });
+        } else {
+          // Both failed or cards empty — snapshot or unavailable
+          const snap = loadDomain(token, "accounts");
+          if (snap) {
+            setAccounts(snap.data);
+            setSyncFor("accounts", {
+              source: "snapshot",
+              syncedAt: snap.syncedAt,
+            });
+          } else {
+            setAccounts([]);
+            setSyncFor("accounts", {
+              source: "unavailable",
+              syncedAt: null,
+            });
+          }
+        }
+      }
       applyListDomain("categories", results[1], token, (d) =>
         setCategories(d as Category[]),
       );
@@ -374,15 +470,35 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       applyListDomain("goals", results[5], token, (d) =>
         setGoals(d as Goal[]),
       );
-      applyListDomain("subscriptions", results[6], token, (d) =>
-        setSubscriptions(d as Subscription[]),
-      );
-      applyListDomain("cardStatements", results[7], token, (d) =>
+      applyListDomain("cardStatements", results[6], token, (d) =>
         setCardStatements(d as CardStatement[]),
       );
 
-      const anyFailed = results.some((r) => r.status === "rejected");
-      if (anyFailed)
+      // /profile (results[8]) — household profile. Failure is non-fatal
+      // because the page falls back to a default name/color via effectiveProfile.
+      {
+        const profileResult = results[8];
+        if (profileResult.status === "fulfilled") {
+          setProfile(profileResult.value);
+        }
+      }
+
+      {
+        const insightsResult = results[9];
+        if (insightsResult.status === "fulfilled") {
+          setQuickInsights(insightsResult.value as QuickInsight[]);
+        } else {
+          setQuickInsights([]);
+        }
+      }
+
+      // Only essential-domain failures trigger global banner;
+      // non-essential domains (subscriptions, cardStatements)
+      // degrade independently for their own pages.
+      const anyEssentialFailed = ESSENTIAL_DOMAINS.some(
+        (_, i) => results[i].status === "rejected",
+      );
+      if (anyEssentialFailed)
         setError("Alguns dados não puderam ser atualizados.");
       setLoading(false);
     };
@@ -833,6 +949,76 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const updateSubscription = useCallback(async (
+    id: string,
+    input: {
+      name?: string;
+      amountCents?: number;
+      cycle?: "monthly" | "yearly" | "weekly";
+      day?: number;
+      paymentMethod?: string;
+    },
+  ) => {
+    if (guardReadOnlyRef.current()) return;
+    const prev = subsRef.current.find((s) => s.id === id);
+    if (!prev) return;
+    // Optimistic update
+    setSubscriptions((curr) =>
+      curr.map((s) => s.id === id ? { ...s, ...input } : s),
+    );
+
+    if (!apiUsable()) return;
+
+    try {
+      await endpoints.updateSubscription(id, input);
+    } catch (e) {
+      // Rollback
+      setSubscriptions((curr) =>
+        curr.map((s) => (s.id === id ? prev : s)),
+      );
+      handleWriteErrorRef.current(e);
+    }
+  }, []);
+
+  // ── Lazy load subscriptions (not fetched during bootstrap) ────
+
+  const refreshSubscriptions = useCallback(async () => {
+    if (!apiUsable()) return; // keep existing data (mock or empty)
+
+    const token = getAuthToken();
+    if (!token) return;
+
+    try {
+      const data = await endpoints.fetchSubscriptions();
+      setSubscriptions(data);
+      saveDomain(token, "subscriptions", data);
+      setSyncFor("subscriptions", {
+        source: "live",
+        syncedAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        expireSession();
+        return;
+      }
+      // Fallback to snapshot or unavailable
+      const snap = loadDomain(token, "subscriptions");
+      if (snap) {
+        setSubscriptions(snap.data);
+        setSyncFor("subscriptions", {
+          source: "snapshot",
+          syncedAt: snap.syncedAt,
+        });
+      } else {
+        setSubscriptions([]);
+        setSyncFor("subscriptions", {
+          source: "unavailable",
+          syncedAt: null,
+        });
+      }
+    }
+  }, [setSyncFor, expireSession]);
+
   const createTransfer = useCallback(
     async (input: {
       description: string;
@@ -914,6 +1100,65 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     try {
       await endpoints.cancelPayable(id);
+    } catch (e) {
+      setPayables((curr) =>
+        curr.map((p) => (p.id === id ? { ...prev } : p)),
+      );
+      handleWriteErrorRef.current(e);
+    }
+  }, []);
+
+  const updatePayable = useCallback(
+    async (id: string, input: {
+      description?: string;
+      amountCents?: number;
+      dueDate?: string;
+      accountId?: string;
+      categoryId?: string;
+    }) => {
+      if (guardReadOnlyRef.current()) return;
+      const prev = payablesRef.current.find((p) => p.id === id);
+      if (!prev) return;
+
+      // Optimistic update
+      setPayables((curr) =>
+        curr.map((p) =>
+          p.id === id ? { ...p, ...input } : p,
+        ),
+      );
+
+      if (!apiUsable()) return;
+
+      try {
+        await endpoints.updatePayable(id, input);
+      } catch (e) {
+        setPayables((curr) =>
+          curr.map((p) => (p.id === id ? { ...prev } : p)),
+        );
+        handleWriteErrorRef.current(e);
+      }
+    },
+    [],
+  );
+
+  const undoPayablePayment = useCallback(async (id: string) => {
+    if (guardReadOnlyRef.current()) return;
+    const prev = payablesRef.current.find((p) => p.id === id);
+    if (!prev) return;
+
+    // Optimistic update: change status back to pending/overdue
+    const newStatus: Payable['status'] =
+      new Date().toISOString().slice(0, 10) <= prev.dueDate ? 'pending' : 'overdue';
+    setPayables((curr) =>
+      curr.map((p) =>
+        p.id === id ? { ...p, status: newStatus, paidDate: undefined as unknown as string | undefined } : p,
+      ),
+    );
+
+    if (!apiUsable()) return;
+
+    try {
+      await endpoints.undoPayablePayment(id);
     } catch (e) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? { ...prev } : p)),
@@ -1112,6 +1357,32 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const updateGoal = useCallback(async (
+    id: string,
+    input: {
+      name?: string;
+      targetAmountCents?: number;
+      targetDate?: string;
+    },
+  ) => {
+    if (guardReadOnlyRef.current()) return;
+    const prev = goalsRef.current.find((g) => g.id === id);
+    if (!prev) return;
+
+    setGoals((curr) =>
+      curr.map((g) => g.id === id ? { ...g, ...input } : g),
+    );
+
+    if (!apiUsable()) return;
+
+    try {
+      await endpoints.updateGoal(id, input);
+    } catch (e) {
+      setGoals((curr) => curr.map((g) => (g.id === id ? prev : g)));
+      handleWriteErrorRef.current(e);
+    }
+  }, []);
+
   const payStatement = useCallback(
     async (
       statementId: string,
@@ -1207,6 +1478,82 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // ── Profile save/load (Slice B) ───────────────────────────
+  // saveProfile updates the household profile. When API is configured
+  // and a token exists it PATCHes /profile and reflects the result;
+  // otherwise it falls back to a local-only update so the PWA is usable
+  // in mock mode (and that local value survives refreshes via
+  // localStorage because the initial state hydrates from it).
+  const saveProfile = useCallback(
+    async (input: {
+      name?: string;
+      email?: string;
+      phone?: string;
+      avatarColor?: string;
+      greetingStyle?: Profile["greetingStyle"];
+    }) => {
+      if (apiUsable()) {
+        try {
+          const updated = await endpoints.patchProfile(input);
+          setProfile(updated);
+        } catch (e) {
+          handleWriteErrorRef.current(e);
+        }
+        return;
+      }
+      // Local-only fallback. Use a stable synthetic household id so
+      // the persisted shape matches the API contract.
+      const householdId = profile?.householdId ?? "local-household";
+      const next: Profile = {
+        householdId,
+        name: input.name ?? profile?.name ?? "Usuário",
+        email: input.email ?? profile?.email ?? "",
+        phone: input.phone ?? profile?.phone ?? "",
+        avatarColor: input.avatarColor ?? profile?.avatarColor ?? "#0E8C5A",
+        greetingStyle: input.greetingStyle ?? profile?.greetingStyle ?? "auto",
+        updatedAt: new Date().toISOString(),
+      };
+      setProfile(next);
+    },
+    [profile],
+  );
+
+  const refreshProfile = useCallback(async () => {
+    if (!apiUsable()) return;
+    try {
+      const fresh = await endpoints.fetchProfile();
+      setProfile(fresh);
+    } catch {
+      // ignore — keep previous profile state
+    }
+  }, []);
+
+  // ── Local-mode persistence for profile (mock/local-storage) ─────────
+  // When the API is configured, saveProfile already persists server-side;
+  // in mock mode we hydrate from localStorage on mount and write back
+  // after every saveProfile call. This is what makes the spec test
+  // "edits survive a refresh" pass without a real backend.
+  useEffect(() => {
+    if (apiUsable()) return;
+    try {
+      const raw = localStorage.getItem("pi-finance:profile");
+      if (raw) setProfile(JSON.parse(raw) as Profile);
+    } catch {
+      // ignore corrupt localStorage
+    }
+  }, []);
+
+  useEffect(() => {
+    if (apiUsable()) return;
+    if (!profile) return;
+    try {
+      localStorage.setItem("pi-finance:profile", JSON.stringify(profile));
+    } catch {
+      // localStorage may be unavailable (private mode) — silently noop
+    }
+  }, [profile]);
+
+
   return (
     <AppStateContext.Provider
       value={{
@@ -1219,6 +1566,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         debts,
         subscriptions,
         cardStatements,
+        profile,
+        quickInsights,
+        saveProfile,
+        refreshProfile,
         sync,
         readOnly,
         loading,
@@ -1230,12 +1581,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         deleteTransaction,
         markPayablePaid,
         cancelPayable,
+        updatePayable,
+        undoPayablePayment,
         createPayable,
         createBudget,
         updateBudget,
         createGoal,
         contributeToGoal,
         cancelGoal,
+        updateGoal,
         addAccount,
         updateAccount,
         deactivateAccount,
@@ -1246,6 +1600,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         updateCard,
         addSubscription,
         cancelSubscription,
+        updateSubscription,
+        refreshSubscriptions,
         createTransfer,
         payStatement,
         createInstallments,

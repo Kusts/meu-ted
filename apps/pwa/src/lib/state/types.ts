@@ -19,7 +19,9 @@ export type AccountKind =
   | "checking"
   | "savings"
   | "investment"
-  | "credit_card";
+  | "credit_card"
+  | "bank"
+  | "cash";
 
 export interface Account {
   id: string;
@@ -134,6 +136,7 @@ export interface StatementPurchase {
   description: string;
   amountCents: number;
   date: string;
+  categoryId?: string;
   categoryName?: string;
   installmentNumber?: number;
   installmentsTotal?: number;
@@ -142,4 +145,23 @@ export interface StatementPurchase {
 
 export interface StatementDetail extends CardStatement {
   purchases: StatementPurchase[];
+}
+
+export interface QuickInsight {
+  id: string;
+  title: string;
+  body: string;
+  severity: "info" | "warn" | "good";
+}
+
+// ── Household profile (Slice B / Resumo) ─────────────────────────────
+
+export interface Profile {
+  householdId: string;
+  name: string;
+  email: string;
+  phone: string;
+  avatarColor: string;
+  greetingStyle: "auto" | "minimal" | "verbose";
+  updatedAt: string;
 }

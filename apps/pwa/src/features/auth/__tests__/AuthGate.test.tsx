@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { AuthGate } from "../AuthGate";
 
 // ─── localStorage mock ──────────────────────────────────────────────────────
@@ -64,10 +63,8 @@ describe("AuthGate", () => {
     expect(input).toBeInTheDocument();
   });
 
-  it("shows unlock screen when token exists and pin is set", async () => {
-    store["pi-finance:token"] = "existing-token";
-    store["pi-finance:pin-hash"] = "deadbeef";
-    store["pi-finance:pin-salt"] = "0102030405060708090a0b0c0d0e0f10";
+  it("shows app content when token exists and is valid", async () => {
+    store["pi-finance:token"] = "valid-token";
 
     render(
       <AuthGate>
@@ -75,9 +72,8 @@ describe("AuthGate", () => {
       </AuthGate>,
     );
 
-    // Should show PIN input after token validation passes
-    const pinBtn = await screen.findByText("0", {}, { timeout: 3000 });
-    expect(pinBtn).toBeInTheDocument();
+    const app = await screen.findByTestId("app", {}, { timeout: 3000 });
+    expect(app).toBeInTheDocument();
   });
 
   it("shows register with expired msg when token returns 401", async () => {
@@ -103,65 +99,5 @@ describe("AuthGate", () => {
     expect(
       screen.getByPlaceholderText(/Nome do dispositivo/),
     ).toBeInTheDocument();
-  });
-
-  it("clears snapshot when 'Trocar dispositivo' is used", async () => {
-    const { clearSnapshot } = await import("@/lib/state/snapshot-store");
-    const spy = vi.spyOn(
-      await import("@/lib/state/snapshot-store"),
-      "clearSnapshot",
-    );
-    // token present + pin set -> lands on unlock screen with the reset button
-    store["pi-finance:token"] = "tok";
-    store["pi-finance:pin-hash"] = "deadbeef";
-    store["pi-finance:pin-salt"] = "0102030405060708090a0b0c0d0e0f10";
-    render(
-      <AuthGate>
-        <div data-testid="app">App</div>
-      </AuthGate>,
-    );
-    const resetBtn = await screen.findByText(/Trocar dispositivo/);
-    await userEvent.click(resetBtn);
-    expect(spy).toHaveBeenCalled();
-    // silence unused import lint
-    void clearSnapshot;
-  });
-
-  it("goes through setup-pin and unlocks", async () => {
-    store["pi-finance:token"] = "token";
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({ deviceId: "d1", householdId: "h1" }),
-    } as Response);
-
-    render(
-      <AuthGate>
-        <div data-testid="app">App Content</div>
-      </AuthGate>,
-    );
-
-    // Token exists but no PIN → shows setup-pin ("Crie seu PIN")
-    await screen.findByText("Crie seu PIN", {}, { timeout: 3000 });
-
-    // Enter PIN "1234" → click Próximo
-    const user = userEvent.setup();
-    await user.click(screen.getByText("1"));
-    await user.click(screen.getByText("2"));
-    await user.click(screen.getByText("3"));
-    await user.click(screen.getByText("4"));
-    await user.click(screen.getByText("Próximo"));
-
-    // Confirm in — "Confirme o PIN"
-    await screen.findByText("Confirme o PIN", {}, { timeout: 1000 });
-    await user.click(screen.getByText("1"));
-    await user.click(screen.getByText("2"));
-    await user.click(screen.getByText("3"));
-    await user.click(screen.getByText("4"));
-    await user.click(screen.getByText("Salvar PIN"));
-
-    // Should now show app content (unlocked)
-    const app = await screen.findByTestId("app", {}, { timeout: 3000 });
-    expect(app).toBeInTheDocument();
   });
 });

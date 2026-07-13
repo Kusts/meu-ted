@@ -43,4 +43,39 @@ describe("SubscriptionsPage", () => {
       }
     }
   });
+
+  describe("clickable cards and detail sheet", () => {
+    it("cards are clickable buttons (no inline Cancelar)", () => {
+      render(<SubscriptionsPage />);
+      // No inline Cancelar button visible
+      expect(screen.queryAllByText("Cancelar").length).toBe(0);
+    });
+
+    it("clicking active card opens detail sheet", async () => {
+      const user = userEvent.setup();
+      render(<SubscriptionsPage />);
+      await user.click(screen.getByText("Netflix"));
+      expect(screen.getByText("Cancelar assinatura")).toBeInTheDocument();
+      expect(screen.getByText("Ativa")).toBeInTheDocument();
+    });
+
+    it("detail sheet for cancelled sub shows Cancelada but no cancel action", async () => {
+      const user = userEvent.setup();
+      render(<SubscriptionsPage />);
+      await user.click(screen.getByText("Canceladas"));
+      await user.click(screen.getByText("Vivo Internet"));
+      expect(screen.getByText("Cancelada")).toBeInTheDocument();
+      expect(screen.queryByText("Cancelar assinatura")).not.toBeInTheDocument();
+    });
+
+    it("clicking Cancelar assinatura in sheet opens confirm dialog", async () => {
+      const user = userEvent.setup();
+      render(<SubscriptionsPage />);
+      await user.click(screen.getByText("Netflix"));
+      await user.click(screen.getByText("Cancelar assinatura"));
+      // Both the sheet's cancel button and the confirm dialog have this text
+      expect(screen.getAllByText("Cancelar assinatura").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText(/Tem certeza/i)).toBeInTheDocument();
+    });
+  });
 });

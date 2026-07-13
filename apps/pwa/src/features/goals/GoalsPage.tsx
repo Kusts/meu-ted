@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
@@ -39,6 +39,7 @@ function NewGoalSheet({
   open,
   onClose,
   onSave,
+  initialType,
 }: {
   open: boolean;
   onClose: () => void;
@@ -48,10 +49,26 @@ function NewGoalSheet({
     targetAmountCents: number;
     startDate: string;
   }) => void;
+  initialType?: "debt_payoff";
 }) {
   const [name, setName] = useState("");
   const [type, setType] = useState<"savings" | "purchase" | "debt_payoff" | "emergency_fund">("savings");
   const [targetStr, setTargetStr] = useState("");
+
+  useEffect(() => {
+    if (initialType) setType(initialType);
+  }, [initialType]);
+
+  // Reset draft whenever the sheet closes (outside click, escape, programmatic
+  // close, or successful save). Without this, a typed-but-not-saved draft leaks
+  // into the next open and risks being submitted accidentally.
+  useEffect(() => {
+    if (!open) {
+      setName("");
+      setTargetStr("");
+      setType("savings");
+    }
+  }, [open]);
 
   function handleSave() {
     if (!name.trim()) return;
@@ -86,17 +103,19 @@ function NewGoalSheet({
             placeholder="Ex: Viagem, Carro novo..."
             className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
         </fieldset>
-        <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo</label>
-          <div className="flex flex-wrap gap-2">
-            {types.map((t) => (
-              <button key={t.value} type="button" onClick={() => setType(t.value)}
-                className={`rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${type === t.value ? "bg-primary text-white" : "bg-fill-light text-text-secondary"}`}>
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
+        {!initialType && (
+          <fieldset>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo</label>
+            <div className="flex flex-wrap gap-2">
+              {types.map((t) => (
+                <button key={t.value} type="button" onClick={() => setType(t.value)}
+                  className={`rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${type === t.value ? "bg-primary text-white" : "bg-fill-light text-text-secondary"}`}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        )}
         <fieldset>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Valor alvo (R$)</label>
           <input type="text" inputMode="numeric" value={targetStr}
@@ -125,6 +144,15 @@ function ContributeSheet({
   onContribute: (id: string, amountCents: number) => void;
 }) {
   const [amountStr, setAmountStr] = useState("");
+
+  // Reset draft whenever the sheet closes (outside click, escape, programmatic
+  // close, or successful save). Without this, a typed-but-not-saved amount leaks
+  // into the next open and risks being submitted accidentally.
+  useEffect(() => {
+    if (!open) {
+      setAmountStr("");
+    }
+  }, [open]);
 
   function handleSave() {
     if (!goal) return;
@@ -165,13 +193,109 @@ function ContributeSheet({
   );
 }
 
+function GoalDetailSheet({
+  goal,
+  open,
+  onClose,
+  onEdit,
+}: {
+  goal: Goal | null;
+  open: boolean;
+  onClose: () => void;
+  onEdit: (id: string, input: { name?: string; targetAmountCents?: number }) => void;
+}) {
+  const [editMode, setEditMode] = useState(false);
+  const [name, setName] = useState("");
+  const [targetDisplay, setTargetDisplay] = useState("");
+
+  useEffect(() => {
+    if (goal && open) {
+      setName(goal.name);
+      setTargetDisplay(formatInputBRL(String(goal.targetAmountCents)));
+      setEditMode(false);
+    }
+  }, [goal, open]);
+
+  if (!goal) return null;
+
+  const pct = goal.targetAmountCents > 0 ? Math.min((goal.currentAmountCents / goal.targetAmountCents) * 100, 100) : 0;
+
+  function handleSave() {
+    if (!goal) return;
+    const targetAmountCents = parseBRLToCents(targetDisplay);
+    if (targetAmountCents > 0) {
+      onEdit(goal.id, { name: name.trim() || undefined, targetAmountCents });
+    }
+    onClose();
+  }
+
+  return (
+    <BottomSheet open={open} onClose={onClose} title={editMode ? "Editar meta" : "Detalhes da meta"}>
+      {editMode ? (
+        <div className="flex flex-col gap-4">
+          <fieldset>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nome</label>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+              className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+          </fieldset>
+          <fieldset>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Valor alvo (R$)</label>
+            <input type="text" inputMode="numeric" value={targetDisplay}
+              onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setTargetDisplay(formatInputBRL(raw)); }}
+              placeholder="0,00"
+              className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 font-mono text-[16px] font-semibold text-text-primary outline-none focus:border-primary" />
+          </fieldset>
+          <button type="button" onClick={handleSave}
+            disabled={parseBRLToCents(targetDisplay) <= 0}
+            className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50">
+            Salvar alterações
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-[36px] w-[36px] items-center justify-center rounded-[11px] bg-primary-tint text-primary">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 22V4a1 1 0 0 1 1-1h12l-3 4 3 4H6" />
+              </svg>
+            </div>
+            <div>
+              <div className="text-[14px] font-semibold text-text-primary">{goal.name}</div>
+              <div className="text-[11px] text-text-muted">
+                {goal.goalType === "emergency_fund" ? "Reserva de emergência"
+                  : goal.goalType === "savings" ? "Poupança"
+                  : goal.goalType === "debt_payoff" ? "Quitação de dívida"
+                  : goal.goalType === "purchase" ? "Compra planejada" : "Meta"}
+              </div>
+            </div>
+          </div>
+          <div className="h-2 rounded-full bg-fill-medium">
+            <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: "linear-gradient(90deg, #0E8C5A, #2FA56F)" }} />
+          </div>
+          <div className="flex justify-between text-[12px]">
+            <span className="font-mono font-semibold text-text-primary">{formatBRL(goal.currentAmountCents)}</span>
+            <span className="text-text-muted">de {formatBRL(goal.targetAmountCents)}</span>
+          </div>
+          <div className="text-center text-[11px] text-text-muted">{formatPct(pct)} concluído</div>
+          <button type="button" onClick={() => setEditMode(true)}
+            className="w-full rounded-[14px] bg-fill-light py-[14px] text-center text-[14px] font-bold text-text-primary">
+            Editar
+          </button>
+        </div>
+      )}
+    </BottomSheet>
+  );
+}
+
 export default function GoalsPage() {
-  const { goals, debts, loading, error, writeError, clearWriteError, createGoal, contributeToGoal, cancelGoal } = useAppState();
+  const { goals, debts, loading, error, writeError, clearWriteError, createGoal, contributeToGoal, cancelGoal, updateGoal } = useAppState();
   const [tab, setTab] = useState<"goals" | "debts">("goals");
-  const [expandedDebt, setExpandedDebt] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createType, setCreateType] = useState<"goal" | "debt" | null>(null);
+  const [chooseOpen, setChooseOpen] = useState(false);
   const [contributeGoal, setContributeGoal] = useState<Goal | null>(null);
   const [confirmCancel, setConfirmCancel] = useState<Goal | null>(null);
+  const [detailGoal, setDetailGoal] = useState<Goal | null>(null);
 
   if (loading) {
     return (
@@ -193,6 +317,10 @@ export default function GoalsPage() {
     return { ...g, pct };
   });
 
+  // Dívidas tab shows both real Debt items and goals with goalType='debt_payoff'
+  const debtGoals = goals.filter((g) => g.goalType === "debt_payoff");
+  const visibleDebts = debts.length > 0 || debtGoals.length > 0;
+
   return (
     <div className="flex min-h-dvh flex-col bg-bg">
       <StatusBar />
@@ -200,7 +328,7 @@ export default function GoalsPage() {
         <PageHeader
           title="Metas & Dívidas"
           action={
-            <button type="button" onClick={() => setCreateOpen(true)}
+            <button type="button" onClick={() => setChooseOpen(true)}
               className="flex items-center gap-1.5 rounded-full bg-primary px-[15px] py-[9px] text-[12px] font-bold text-white">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
               Nova
@@ -239,6 +367,7 @@ export default function GoalsPage() {
             ) : (
               goalPcts.map((g) => (
                 <div key={g.id} className="rounded-[16px] border border-border bg-surface px-4 py-4 shadow-card">
+                  <div className="cursor-pointer" onClick={() => setDetailGoal(g)}>
                   <div className="mb-[10px] flex items-center justify-between">
                     <div className="flex items-center gap-[9px]">
                       <div className="flex h-[36px] w-[36px] items-center justify-center rounded-[11px] bg-primary-tint text-primary">
@@ -266,6 +395,7 @@ export default function GoalsPage() {
                     <span className="font-mono font-semibold text-text-primary">{formatBRL(g.currentAmountCents)}</span>
                     <span>de {formatBRL(g.targetAmountCents)}</span>
                   </div>
+                </div>
                   <div className="flex gap-2">
                     <button type="button" onClick={() => setContributeGoal(g)}
                       className="flex-1 rounded-[10px] bg-primary py-2.5 text-center text-[12px] font-bold text-white">
@@ -279,15 +409,16 @@ export default function GoalsPage() {
                 </div>
               ))
             )
-          ) : debts.length === 0 ? (
+          ) : !visibleDebts ? (
             <div className="py-[50px] text-center text-text-muted">
-              <div className="text-[14px] font-semibold">Dívidas em breve</div>
+              <div className="text-[14px] font-semibold">Nenhuma dívida</div>
               <div className="mt-1 text-[12px]">
-                O acompanhamento de dívidas ainda não está disponível.
+                Crie uma dívida pelo botão Nova.
               </div>
             </div>
           ) : (
-            debts.map((d) => {
+            <>
+            {debts.map((d) => {
               const remaining = d.totalAmountCents - d.paidAmountCents;
               const pct = d.totalAmountCents > 0
                 ? Math.min((d.paidAmountCents / d.totalAmountCents) * 100, 100) : 0;
@@ -307,9 +438,7 @@ export default function GoalsPage() {
                           {d.interestRate > 0 ? `${(d.interestRate * 100).toFixed(1)}% a.m.` : "Sem juros"} · {d.installmentsPaid}/{d.installmentsTotal} parcelas
                         </div>
                       </div>
-                      <span className="flex-none rounded-[9px] bg-fill-light px-3 py-[7px] text-[10px] font-bold text-text-muted opacity-50">
-                        Em breve
-                      </span>
+
                     </div>
 
                     <div className="mb-[14px] grid grid-cols-3 gap-2">
@@ -350,7 +479,7 @@ export default function GoalsPage() {
                             <div className="mb-0.5 text-[10px] font-bold uppercase tracking-wider" style={{ color: "#B8791F" }}>Próxima parcela</div>
                             <div className="text-[13px] font-semibold text-text-primary">{monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1)} · {formatBRL(monthlyAmount)}</div>
                           </div>
-                          <span className="rounded-[9px] bg-white/60 px-3 py-2 text-[10px] font-bold text-text-muted">Em breve</span>
+
                         </div>
                       );
                     })()}
@@ -384,12 +513,76 @@ export default function GoalsPage() {
                   </div>
                 </div>
               );
-            })
+            })}
+            {debtGoals.map((g) => {
+              const remaining = g.targetAmountCents - g.currentAmountCents;
+              const pct = g.targetAmountCents > 0
+                ? Math.min((g.currentAmountCents / g.targetAmountCents) * 100, 100) : 0;
+              return (
+                <div key={g.id} className="rounded-[16px] border border-border bg-surface px-4 py-4 shadow-card">
+                  <div className="cursor-pointer" onClick={() => setDetailGoal(g)}>
+                    <div className="mb-[10px] flex items-center gap-[9px]">
+                      <div className="flex h-[36px] w-[36px] items-center justify-center rounded-[11px] bg-danger-tint text-danger">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" />
+                        </svg>
+                      </div>
+                      <div>
+                        <div className="text-[14px] font-semibold text-text-primary">{g.name}</div>
+                        <div className="text-[11px] text-text-muted">Quitação de dívida</div>
+                      </div>
+                    </div>
+                    <div className="mb-[6px] h-2 rounded-full bg-fill-medium">
+                      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: "linear-gradient(90deg, #0E8C5A, #2FA56F)" }} />
+                    </div>
+                    <div className="flex justify-between text-[12px]">
+                      <span className="font-mono font-semibold text-text-primary">{formatBRL(g.currentAmountCents)}</span>
+                      <span className="text-text-muted">de {formatBRL(g.targetAmountCents)}</span>
+                    </div>
+                  </div>
+                  <div className="mt-3 text-[11px] text-text-muted">{formatPct(pct)} quitado</div>
+                  <div className="mt-3 flex gap-2">
+                    <button type="button"
+                      onClick={(e) => { e.stopPropagation(); setContributeGoal(g); }}
+                      className="flex-1 rounded-[10px] bg-primary py-2.5 text-center text-[12px] font-bold text-white">
+                      Adicionar
+                    </button>
+                    <button type="button"
+                      onClick={(e) => { e.stopPropagation(); setConfirmCancel(g); }}
+                      className="flex-1 rounded-[10px] bg-danger-tint py-2.5 text-center text-[12px] font-bold text-danger">
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            </>
           )}
         </div>
       </main>
 
-      <NewGoalSheet open={createOpen} onClose={() => setCreateOpen(false)} onSave={createGoal} />
+      {/* Chooser for Nova */}
+      <BottomSheet open={chooseOpen} onClose={() => setChooseOpen(false)} title="Nova entrada">
+        <div className="flex flex-col gap-4">
+          <button type="button" onClick={() => { setChooseOpen(false); setCreateType("goal"); setCreateOpen(true); }}
+            className="w-full rounded-[16px] border-2 border-border bg-surface p-5 text-center transition-colors hover:border-primary">
+            <div className="text-[16px] font-bold text-text-primary">Meta financeira</div>
+            <div className="mt-1 text-[12px] text-text-muted">Defina uma meta de poupança, reserva ou compra.</div>
+          </button>
+          <button type="button" onClick={() => { setChooseOpen(false); setCreateType("debt"); setCreateOpen(true); }}
+            className="w-full rounded-[16px] border-2 border-border bg-surface p-5 text-center transition-colors hover:border-primary">
+            <div className="text-[16px] font-bold text-text-primary">Dívida</div>
+            <div className="mt-1 text-[12px] text-text-muted">Registre uma dívida para acompanhar o pagamento.</div>
+          </button>
+        </div>
+      </BottomSheet>
+
+      <NewGoalSheet
+        open={createOpen}
+        onClose={() => { setCreateOpen(false); setCreateType(null); }}
+        onSave={createGoal}
+        initialType={createType === "debt" ? "debt_payoff" : undefined}
+      />
 
       <ContributeSheet
         open={contributeGoal !== null}
@@ -411,6 +604,13 @@ export default function GoalsPage() {
           setConfirmCancel(null);
         }}
         onCancel={() => setConfirmCancel(null)}
+      />
+
+      <GoalDetailSheet
+        goal={detailGoal}
+        open={detailGoal !== null}
+        onClose={() => setDetailGoal(null)}
+        onEdit={(id, input) => updateGoal(id, input)}
       />
     </div>
   );

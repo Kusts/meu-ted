@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState, useEffect } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
@@ -217,12 +218,137 @@ function AccountEditSheet({ open, account, onClose, onSave }: {
   );
 }
 
+function AccountDetailSheet({
+  account,
+  miniHistory,
+  open,
+  onClose,
+  onEdit,
+  onDeactivate,
+}: {
+  account: { id: string; name: string; balanceCents: number; kind: string; color?: string } | null;
+  miniHistory: { id: string; description: string; amountCents: number; date: string; kind: string }[];
+  open: boolean;
+  onClose: () => void;
+  onEdit: (id: string, name: string) => void;
+  onDeactivate: (id: string, name: string) => void;
+}) {
+  if (!account) return null;
+
+  function kindLabel(kind: string): string {
+    switch (kind) {
+      case "credit_card": return "Cartão";
+      case "checking": return "Conta corrente";
+      case "savings": return "Poupança";
+      case "investment": return "Investimento";
+      case "cash": return "Dinheiro";
+      case "bank": return "Conta";
+      default: return "Outro";
+    }
+  }
+
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Detalhes da conta">
+      <div className="flex flex-col gap-4">
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          <Badge label={account.name} color={account.color ?? "#4A5568"} size="md" />
+          <div className="flex-1">
+            <div className="text-[14px] font-semibold text-text-primary">{account.name}</div>
+            <div className="text-[11px] text-text-muted">{kindLabel(account.kind)}</div>
+          </div>
+          <div className="font-mono text-[14px] font-semibold text-text-primary">
+            {formatBRL(account.balanceCents)}
+          </div>
+        </div>
+
+        {/* Mini history */}
+        {miniHistory.length > 0 && (
+          <div className="border-t border-fill-medium pt-3">
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+              Últimos lançamentos
+            </div>
+            {miniHistory.map((tx) => {
+              const amountColor =
+                tx.kind === "expense"
+                  ? "var(--color-danger)"
+                  : tx.kind === "income"
+                    ? "var(--color-primary)"
+                    : "var(--color-info)";
+              const prefix =
+                tx.kind === "expense"
+                  ? "−"
+                  : tx.kind === "income"
+                    ? "+"
+                    : "";
+              return (
+                <div key={tx.id} className="flex items-center justify-between py-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] text-text-primary">{tx.description}</span>
+                    <span className="text-[10px] text-text-muted">
+                      {new Date(tx.date + "T12:00:00").toLocaleDateString("pt-BR")}
+                    </span>
+                  </div>
+                  <span className="font-mono text-[12px] font-semibold" style={{ color: amountColor }}>
+                    {prefix}
+                    {formatBRL(tx.amountCents)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* CTA to records */}
+        <Link
+          href={`/registros?accountId=${account.id}`}
+          className="flex items-center justify-center gap-2 rounded-[14px] bg-fill-light py-[14px] text-center text-[14px] font-bold text-text-primary transition-opacity hover:opacity-90"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+          </svg>
+          Ver todos os registros
+        </Link>
+
+        {/* Actions */}
+        <button
+          type="button"
+          onClick={() => onEdit(account.id, account.name)}
+          className="w-full rounded-[14px] bg-fill-light py-[14px] text-center text-[14px] font-bold text-text-primary"
+        >
+          Editar conta
+        </button>
+        <button
+          type="button"
+          onClick={() => onDeactivate(account.id, account.name)}
+          className="w-full rounded-[14px] bg-danger-tint py-[14px] text-center text-[14px] font-bold text-danger"
+        >
+          Desativar conta
+        </button>
+      </div>
+    </BottomSheet>
+  );
+}
+
 export default function AccountsPage() {
   const { accounts, transactions, loading, error, writeError, clearWriteError, addAccount, updateAccount, deactivateAccount } = useAppState();
   const [createOpen, setCreateOpen] = useState(false);
+  const [detailAccount, setDetailAccount] = useState<(typeof accounts)[0] | null>(null);
   const [editAccount, setEditAccount] = useState<{ id: string; name: string } | null>(null);
   const [confirmDeactivate, setConfirmDeactivate] = useState<{ id: string; name: string } | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+
+  // Read ?accountId=<id> from the URL on mount. Used by the Home page to
+  // deep-link — opens the detail sheet for the matching account.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("accountId");
+    if (id) {
+      const account = accounts.find((a) => a.id === id);
+      if (account) setDetailAccount(account);
+    }
+  }, [accounts]);
 
   const checkingAccounts = useMemo(
     () => accounts.filter((a) => a.kind !== "credit_card"),
@@ -307,111 +433,54 @@ export default function AccountsPage() {
 
           {/* Account cards */}
           <div className="flex flex-col gap-3">
-            {checkingAccounts.map((acc) => {
-              const miniHistory = getMiniHistory(acc.id);
-
-              return (
-                <div
-                  key={acc.id}
-                  className="rounded-[15px] border border-border bg-surface px-4 py-3.5 shadow-card"
-                >
-                  {/* Header */}
-                  <div className="mb-3 flex items-center gap-3">
-                    <Badge label={acc.name} color={acc.color ?? "#4A5568"} size="md" />
-                    <div className="flex-1">
-                      <div className="text-[14px] font-semibold text-text-primary">
-                        {acc.name}
-                      </div>
-                      <div className="text-[11px] text-text-muted">
-                        {acc.kind === "checking"
+            {checkingAccounts.map((acc) => (
+              <button
+                type="button"
+                key={acc.id}
+                data-testid="account-card"
+                data-account-id={acc.id}
+                data-highlighted={detailAccount?.id === acc.id ? "true" : "false"}
+                onClick={() => setDetailAccount(acc)}
+                className={`relative w-full rounded-[15px] border bg-surface px-4 py-3.5 pr-11 shadow-card transition-colors text-left ${
+                  detailAccount?.id === acc.id
+                    ? "border-primary ring-2 ring-primary/30"
+                    : "border-border"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Badge label={acc.name} color={acc.color ?? "#4A5568"} size="md" />
+                  <div className="flex-1">
+                    <div className="text-[14px] font-semibold text-text-primary">
+                      {acc.name}
+                    </div>
+                    <div className="text-[11px] text-text-muted">
+                      {acc.kind === "credit_card"
+                        ? "Cartão"
+                        : acc.kind === "checking"
                           ? "Conta corrente"
                           : acc.kind === "savings"
                             ? "Poupança"
                             : acc.kind === "investment"
                               ? "Investimento"
-                              : "Cartão"}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="font-mono text-[14px] font-semibold text-text-primary">
-                        {formatBRL(acc.balanceCents)}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditAccount({ id: acc.id, name: acc.name });
-                          setEditOpen(true);
-                        }}
-                        className="flex-none rounded-full bg-fill-light px-2.5 py-1 text-[11px] font-semibold text-text-secondary"
-                      >
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setConfirmDeactivate({
-                            id: acc.id,
-                            name: acc.name,
-                          })
-                        }
-                        className="flex-none rounded-full bg-danger-tint px-2.5 py-1 text-[11px] font-semibold text-danger"
-                      >
-                        Desativar
-                      </button>
+                              : acc.kind === "cash"
+                                ? "Dinheiro"
+                                : acc.kind === "bank"
+                                  ? "Conta"
+                                  : "Outro"}
                     </div>
                   </div>
-
-                  {/* Mini history */}
-                  {miniHistory.length > 0 && (
-                    <div className="border-t border-fill-medium pt-2.5">
-                      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
-                        Últimos lançamentos
-                      </div>
-                      {miniHistory.map((tx) => {
-                        const amountColor =
-                          tx.kind === "expense"
-                            ? "var(--color-danger)"
-                            : tx.kind === "income"
-                              ? "var(--color-primary)"
-                              : "var(--color-info)";
-                        const prefix =
-                          tx.kind === "expense"
-                            ? "−"
-                            : tx.kind === "income"
-                              ? "+"
-                              : "";
-
-                        return (
-                          <div
-                            key={tx.id}
-                            className="flex items-center justify-between py-1"
-                          >
-                            <div className="flex items-center gap-2">
-                              <span className="text-[12px] text-text-primary">
-                                {tx.description}
-                              </span>
-                              <span className="text-[10px] text-text-muted">
-                                {new Date(
-                                  tx.date + "T12:00:00",
-                                ).toLocaleDateString("pt-BR")}
-                              </span>
-                            </div>
-                            <span
-                              className="font-mono text-[12px] font-semibold"
-                              style={{ color: amountColor }}
-                            >
-                              {prefix}
-                              {formatBRL(tx.amountCents)}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                  <div className="font-mono text-[14px] font-semibold text-text-primary">
+                    {formatBRL(acc.balanceCents)}
+                  </div>
                 </div>
-              );
-            })}
-
+                {/* chevron */}
+                <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M9 18l6-6-6-6" />
+                  </svg>
+                </div>
+              </button>
+            ))}
             {checkingAccounts.length === 0 && (
               <div className="rounded-[16px] border border-dashed border-border bg-surface px-4 py-8 text-center text-[13px] text-text-muted">
                 Nenhuma conta cadastrada. Toque em Nova.
@@ -431,6 +500,22 @@ export default function AccountsPage() {
           setEditAccount(null);
         }}
         onSave={(id, name) => updateAccount(id, { name })}
+      />
+
+      <AccountDetailSheet
+        account={detailAccount}
+        miniHistory={detailAccount ? getMiniHistory(detailAccount.id) : []}
+        open={detailAccount !== null}
+        onClose={() => setDetailAccount(null)}
+        onEdit={(id, name) => {
+          setDetailAccount(null);
+          setEditAccount({ id, name });
+          setEditOpen(true);
+        }}
+        onDeactivate={(id, name) => {
+          setDetailAccount(null);
+          setConfirmDeactivate({ id, name });
+        }}
       />
 
       <ConfirmActionDialog

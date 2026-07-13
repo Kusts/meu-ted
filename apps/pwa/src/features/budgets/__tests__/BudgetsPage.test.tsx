@@ -32,14 +32,17 @@ function defaultState(): AppState {
 function mockState(o: Partial<AppState>): AppState { return { ...defaultState(), ...o }; }
 
 describe("BudgetsPage", () => {
-  beforeEach(() => { vi.restoreAllMocks(); });
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-06-26T12:00:00Z"));
+  });
+  afterEach(() => { vi.useRealTimers(); });
 
   describe("with data", () => {
     it("renders the page header", () => { render(<BudgetsPage />); expect(screen.getByText("Orçamentos")).toBeInTheDocument(); });
-    it("renders summary", () => { render(<BudgetsPage />); expect(screen.getByText(/329,\d{2}/)).toBeInTheDocument(); expect(screen.getByText(/650,\d{2}/)).toBeInTheDocument(); });
+    it("renders summary", () => { render(<BudgetsPage />); expect(screen.getByText(/306,\d{2}/)).toBeInTheDocument(); expect(screen.getByText(/650,\d{2}/)).toBeInTheDocument(); });
     it("renders expense budget cards", () => { render(<BudgetsPage />); expect(screen.getByText("Alimentação")).toBeInTheDocument(); expect(screen.getByText("Transporte")).toBeInTheDocument(); });
-    it("shows percentages", () => { render(<BudgetsPage />); expect(screen.getByText(/58\.4%/)).toBeInTheDocument(); expect(screen.getByText(/24\.8%/)).toBeInTheDocument(); });
-    it("shows progress bar", () => { render(<BudgetsPage />); expect(screen.getByText(/58\.4%/)).toBeInTheDocument(); expect(screen.getByText(/24\.8%/)).toBeInTheDocument(); });
+    it("shows percentages", () => { render(<BudgetsPage />); expect(screen.getByText(/57\.5%/)).toBeInTheDocument(); expect(screen.getByText(/12\.6%/)).toBeInTheDocument(); });
     it("switches to Receitas tab", async () => { const user = userEvent.setup(); render(<BudgetsPage />); await user.click(screen.getByText(/Receitas/)); expect(screen.getByText("Salário")).toBeInTheDocument(); });
     it("shows Despesas tab active by default", () => { render(<BudgetsPage />); expect(screen.getByText("Despesas")).toBeInTheDocument(); });
   });
@@ -50,5 +53,109 @@ describe("BudgetsPage", () => {
 
   describe("error", () => {
     it("shows error banner alongside data", () => { vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ error: "Falha" })); render(<BudgetsPage />); expect(screen.getByText(/Falha/i)).toBeInTheDocument(); expect(screen.getByText("Alimentação")).toBeInTheDocument(); });
+  });
+
+  describe("new budget flow — type chooser and category selector", () => {
+    it("Novo button opens type chooser", async () => {
+      const user = userEvent.setup();
+      render(<BudgetsPage />);
+      await user.click(screen.getByText("Novo"));
+      expect(screen.getByText("Orçamento de despesa")).toBeInTheDocument();
+      expect(screen.getByText("Previsão de receita")).toBeInTheDocument();
+    });
+
+    it("choosing despesa opens form with category selector trigger", async () => {
+      const user = userEvent.setup();
+      render(<BudgetsPage />);
+      await user.click(screen.getByText("Novo"));
+      await user.click(screen.getByText("Orçamento de despesa"));
+      const trigger = screen.getByTestId("category-selector-trigger");
+      expect(trigger).toBeInTheDocument();
+      expect(trigger.textContent).toMatch(/Selecionar categoria/i);
+    });
+
+    it("choosing receita filters categories to income only", async () => {
+      const user = userEvent.setup();
+      render(<BudgetsPage />);
+      await user.click(screen.getByText("Novo"));
+      await user.click(screen.getByText("Previsão de receita"));
+      // Open category selector
+      await user.click(screen.getByTestId("category-selector-trigger"));
+      expect(screen.getByText("Salário")).toBeInTheDocument();
+      expect(screen.getByText("Freelas")).toBeInTheDocument();
+    });
+
+    it("calls createBudget with expense category", async () => {
+      const createSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ createBudget: createSpy }));
+      const user = userEvent.setup();
+      render(<BudgetsPage />);
+      await user.click(screen.getByText("Novo"));
+      await user.click(screen.getByText("Orçamento de despesa"));
+      // Open category selector and pick
+      await user.click(screen.getByTestId("category-selector-trigger"));
+      const allAlim = screen.getAllByText("Alimentação");
+      const catBtn = allAlim.find(el => el.tagName === "BUTTON");
+      if (catBtn) await user.click(catBtn);
+      // Fill amount
+      const input = screen.getByPlaceholderText("0,00");
+      await user.type(input, "50000");
+      // Save
+      await user.click(screen.getByText("Salvar orçamento"));
+      expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({
+        categoryId: "cat1",
+        amountCents: 50000,
+        period: "monthly",
+      }));
+    });
+
+    it("categories use single selector trigger (not chips)", async () => {
+      const user = userEvent.setup();
+      render(<BudgetsPage />);
+      await user.click(screen.getByText("Novo"));
+      await user.click(screen.getByText("Orçamento de despesa"));
+      const selectTrigger = screen.getByTestId("category-selector-trigger");
+      expect(selectTrigger).toBeInTheDocument();
+      expect(selectTrigger.textContent).toMatch(/Selecionar categoria/i);
+    });
+  });
+
+  describe("clickable cards and detail/edit sheet", () => {
+    it("no inline edit button on cards", () => {
+      render(<BudgetsPage />);
+      expect(screen.queryAllByText("Editar").length).toBe(0);
+    });
+
+    it("clicking a budget card opens detail sheet with Editar button", async () => {
+      const user = userEvent.setup();
+      render(<BudgetsPage />);
+      await user.click(screen.getByText("Alimentação"));
+      // Detail sheet shows Editar button
+      expect(screen.getByText("Editar")).toBeInTheDocument();
+      // Percentage visible (appears in both card and sheet)
+      expect(screen.getAllByText(/57\.5%/).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("clicking Editar shows edit form with Salvar button", async () => {
+      const user = userEvent.setup();
+      render(<BudgetsPage />);
+      await user.click(screen.getByText("Alimentação"));
+      await user.click(screen.getByText("Editar"));
+      expect(screen.getByText("Salvar alterações")).toBeInTheDocument();
+    });
+
+    it("calls updateBudget when saving in edit mode", async () => {
+      const updateSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateBudget: updateSpy }));
+      const user = userEvent.setup();
+      render(<BudgetsPage />);
+      await user.click(screen.getByText("Alimentação"));
+      await user.click(screen.getByText("Editar"));
+      const input = screen.getByPlaceholderText("0,00");
+      await user.clear(input);
+      await user.type(input, "70000");
+      await user.click(screen.getByText("Salvar alterações"));
+      expect(updateSpy).toHaveBeenCalledWith("bud1", expect.objectContaining({ amountCents: 70000 }));
+    });
   });
 });

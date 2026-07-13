@@ -1,17 +1,29 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
+import BottomSheet from "@/components/BottomSheet";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
+import Skeleton from "@/components/ui/Skeleton";
 import { TransactionActionSheet } from "./components/TransactionActionSheet";
 import { TransactionEditSheet } from "./components/TransactionEditSheet";
+import { CategoryBadge } from "@/components/ui/CategoryBadge";
 import { useAppState } from "@/lib/state/app-state-context";
 import type { Transaction } from "@/lib/state/types";
 
+// Edge-fade mask that visually hints "this row scrolls horizontally".
+// Applied to overflow-x-auto rows so the leftmost/rightmost chips appear
+// to fade into the page edge, signalling more content off-screen.
+// Uses percentages instead of `calc(...)` to stay compatible with jsdom's
+// CSSStyleDeclaration parser used in unit tests.
+const HORIZONTAL_FADE_MASK =
+  "linear-gradient(to right, transparent 0%, black 6%, black 94%, transparent 100%)";
+
 type TypeFilter = "all" | "expense" | "income" | "transfer";
-type PeriodFilter = "all" | 7 | 30 | 90;
+type PeriodFilter = "all" | "today" | 7 | 30 | "month" | "custom";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -41,19 +53,8 @@ interface Group {
   items: Transaction[];
 }
 
-function categoryIconPaths(iconName: string): { d: string; tint: string; stroke: string } {
-  const map: Record<string, { d: string; tint: string; stroke: string }> = {
-    UtensilsCrossed: { d: "M17 2v4M7 2v4M3 6h18v1a6 6 0 0 1-6 6h-2", tint: "#E7F3EC", stroke: "#0E8C5A" },
-    Car: { d: "M14 16H9m10 0h3v-3.15a1 1 0 0 0-.84-.99L16 11l-2.7-3.6a1 1 0 0 0-.8-.4H5.5a1 1 0 0 0-.8.4L2 11v5h3m10 0a3 3 0 1 1-6 0m6 0a3 3 0 1 0-6 0", tint: "#FBF1E3", stroke: "#B8791F" },
-    Home: { d: "M3 12L12 3l9 9M5 10v9a1 1 0 0 0 1 1h4v-5h4v5h4a1 1 0 0 0 1-1v-9", tint: "#E8EFF7", stroke: "#3E6FB0" },
-    Heart: { d: "M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z", tint: "#F7E9E7", stroke: "#C8483B" },
-    DollarSign: { d: "M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6", tint: "#E7F3EC", stroke: "#0E8C5A" },
-    Laptop: { d: "M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1 3H3l1-3", tint: "#E8EFF7", stroke: "#3E6FB0" },
-  };
-  return map[iconName] ?? { d: "", tint: "#F4F5F2", stroke: "#98A29A" };
-}
-
 export default function RecordsPage() {
+  const router = useRouter();
   const { transactions, categories, accounts, loading, error, writeError, clearWriteError, deleteTransaction } = useAppState();
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [actionOpen, setActionOpen] = useState(false);
@@ -73,10 +74,34 @@ export default function RecordsPage() {
     },
     [deleteTransaction],
   );
+  const [filterOpen, setFilterOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [accountFilter, setAccountFilter] = useState<string | null>(null);
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
+  const [filterPage, setFilterPage] = useState<"main" | "category">("main");
   const [search, setSearch] = useState("");
+
+  // Read ?type=&categoryId= from the URL on mount. Used by the Home
+  // donut to deep-link the user onto a pre-filtered records view.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const rawType = params.get("type");
+    if (rawType === "expense" || rawType === "income" || rawType === "transfer") {
+      setTypeFilter(rawType);
+    }
+    const cat = params.get("categoryId");
+    if (cat) {
+      setCategoryFilter(cat);
+    }
+    const acct = params.get("accountId");
+    if (acct) {
+      setAccountFilter(acct);
+    }
+  }, []);
 
   const filtered = useMemo(() => {
     let result = [...transactions];
@@ -88,11 +113,31 @@ export default function RecordsPage() {
 
     // Period filter
     if (periodFilter !== "all") {
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - periodFilter);
+      const today = new Date();
+      let cutoff: Date;
+      if (periodFilter === "today") {
+        cutoff = new Date(today.toISOString().slice(0, 10) + "T00:00:00");
+      } else if (periodFilter === "month") {
+        cutoff = new Date(today.getFullYear(), today.getMonth(), 1);
+      } else if (periodFilter === "custom") {
+        cutoff = new Date("1970-01-01"); // handled below
+      } else {
+        cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - periodFilter);
+      }
       result = result.filter(
         (t) => new Date(t.date + "T12:00:00") >= cutoff,
       );
+    }
+
+    // Custom date range
+    if (periodFilter === "custom") {
+      if (customStartDate) {
+        result = result.filter((t) => t.date >= customStartDate);
+      }
+      if (customEndDate) {
+        result = result.filter((t) => t.date <= customEndDate);
+      }
     }
 
     // Search
@@ -105,6 +150,11 @@ export default function RecordsPage() {
       );
     }
 
+    // Account filter
+    if (accountFilter) {
+      result = result.filter((t) => t.accountId === accountFilter);
+    }
+
     // Category filter
     if (categoryFilter) {
       result = result.filter((t) => t.categoryId === categoryFilter);
@@ -113,7 +163,7 @@ export default function RecordsPage() {
     // Sort by date descending
     result.sort((a, b) => b.date.localeCompare(a.date));
     return result;
-  }, [transactions, typeFilter, periodFilter, search, categoryFilter]);
+  }, [transactions, typeFilter, periodFilter, search, categoryFilter, accountFilter, customStartDate, customEndDate]);
 
   // Group by date
   const groups = useMemo(() => {
@@ -147,21 +197,51 @@ export default function RecordsPage() {
   ];
 
   const periodChips: { key: PeriodFilter; label: string }[] = [
+    { key: "today", label: "Hoje" },
     { key: 7, label: "7d" },
     { key: 30, label: "30d" },
-    { key: 90, label: "90d" },
+    { key: "month", label: "Este mês" },
+    { key: "custom", label: "Personalizado" },
   ];
 
   if (loading) {
     return (
       <div className="flex min-h-dvh flex-col bg-bg">
         <StatusBar />
-        <div className="flex flex-1 items-center justify-center">
-          <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-fill-medium border-t-primary" />
-            <span className="text-[13px] font-semibold text-text-muted">Carregando...</span>
+        <PageHeader title="Registros" />
+        <main className="flex flex-1 flex-col gap-3 px-5 pb-[var(--tab-bar-height)] sm:px-8 lg:px-12">
+          {/* Search skeleton */}
+          <Skeleton variant="card" height={42} />
+          {/* Filter chip rows skeleton */}
+          <div className="flex gap-2">
+            <Skeleton width={64} height={30} />
+            <Skeleton width={88} height={30} />
+            <Skeleton width={80} height={30} />
+            <Skeleton width={56} height={30} />
+            <Skeleton width={56} height={30} />
           </div>
-        </div>
+          {/* Transaction groups skeleton */}
+          {[0, 1, 2].map((g) => (
+            <div key={g} className="flex flex-col gap-2">
+              <Skeleton variant="text" width={70} height={10} />
+              <div className="overflow-hidden rounded-[16px] border border-border bg-surface">
+                {[0, 1, 2].map((r) => (
+                  <div
+                    key={r}
+                    className="flex items-center gap-3 border-b border-fill-medium px-4 py-3 last:border-none"
+                  >
+                    <Skeleton variant="circle" width={38} height={38} />
+                    <div className="flex flex-1 flex-col gap-1.5">
+                      <Skeleton variant="text" width="70%" />
+                      <Skeleton variant="text" width="40%" height={9} />
+                    </div>
+                    <Skeleton variant="text" width={70} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </main>
       </div>
     );
   }
@@ -178,12 +258,19 @@ export default function RecordsPage() {
           </div>
         )}
 
-        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+        <WriteErrorBanner
+          message={writeError}
+          onDismiss={clearWriteError}
+          onRetry={() => router.refresh()}
+        />
 
-        <StaleBanner domains={["transactions", "categories", "accounts"]} />
+        <StaleBanner
+          domains={["transactions", "categories", "accounts"]}
+          onRetry={() => router.refresh()}
+        />
 
         {/* Search */}
-        <div className="mx-5 mb-3">
+        <div className="mx-5 mb-3 sm:mx-8 lg:mx-12">
           <div className="flex items-center gap-2 rounded-[12px] border border-border bg-surface px-3.5 py-2.5">
             <svg
               width="16"
@@ -208,84 +295,181 @@ export default function RecordsPage() {
           </div>
         </div>
 
-        {/* Type + Period filters */}
-        <div className="scrollbar-hide mx-5 mb-3 flex gap-2 overflow-x-auto">
-          {chips.map((chip) => (
-            <button
-              key={chip.key}
-              onClick={() =>
-                setTypeFilter(chip.key === typeFilter ? "all" : chip.key)
-              }
-              className={`flex-none rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${
-                typeFilter === chip.key
-                  ? "bg-primary text-white"
-                  : "bg-fill-light text-text-secondary"
-              }`}
-            >
-              {chip.label}
-            </button>
-          ))}
-          <span className="mx-1 my-1 w-px bg-border-strong" />
-          {periodChips.map((chip) => (
-            <button
-              key={chip.label}
-              onClick={() =>
-                setPeriodFilter(
-                  chip.key === periodFilter ? "all" : chip.key,
-                )
-              }
-              className={`flex-none rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${
-                periodFilter === chip.key
-                  ? "bg-primary text-white"
-                  : "bg-fill-light text-text-secondary"
-              }`}
-            >
-              {chip.label}
-            </button>
-          ))}
+        {/* Compact filter trigger */}
+        <div className="mx-5 mb-3 sm:mx-8 lg:mx-12">
+          <button
+            data-testid="filter-trigger"
+            onClick={() => setFilterOpen(true)}
+            className="flex w-full items-center gap-2 rounded-[12px] border border-border bg-surface px-3.5 py-2.5 text-left text-[13px] font-semibold text-text-primary"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />
+            </svg>
+            Filtro
+            {typeFilter !== "all" && <span className="ml-auto rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-white">{chips.find((c) => c.key === typeFilter)?.label}</span>}
+            {periodFilter !== "all" && periodFilter !== "custom" && <span className="rounded-full bg-fill-light px-2 py-0.5 text-[10px] font-bold text-text-secondary">{
+              periodFilter === "today" ? "Hoje" :
+              periodFilter === "month" ? "Este mês" :
+              `${periodFilter}d`
+            }</span>}
+            {periodFilter === "custom" && (customStartDate || customEndDate) && <span className="rounded-full bg-fill-light px-2 py-0.5 text-[10px] font-bold text-text-secondary">Personalizado</span>}
+            {accountFilter && <span className="rounded-full bg-fill-light px-2 py-0.5 text-[10px] font-bold text-text-secondary">{accounts.find((a) => a.id === accountFilter)?.name}</span>}
+            {categoryFilter && <span className="rounded-full bg-fill-light px-2 py-0.5 text-[10px] font-bold text-text-secondary">{categories.find((c) => c.id === categoryFilter)?.name}</span>}
+          </button>
         </div>
 
-        {/* Category filter chips */}
-        {categories.length > 0 && (
-          <div className="scrollbar-hide mx-5 mb-4 flex gap-1.5 overflow-x-auto">
-            <button
-              onClick={() => setCategoryFilter(null)}
-              className={`flex-none rounded-[100px] px-3 py-1.5 text-[11px] font-bold transition-colors ${
-                categoryFilter === null
-                  ? "bg-primary text-white"
-                  : "bg-fill-light text-text-secondary"
-              }`}
-            >
-              Todas
-            </button>
-            {categories.map((c) => (
-              <button
-                key={c.id}
-                onClick={() =>
-                  setCategoryFilter(categoryFilter === c.id ? null : c.id)
-                }
-                className={`flex-none rounded-[100px] px-3 py-1.5 text-[11px] font-bold transition-colors ${
-                  categoryFilter === c.id
-                    ? "bg-primary text-white"
-                    : "bg-fill-light text-text-secondary"
-                }`}
-              >
-                {c.name}
-              </button>
-            ))}
+        {/* Filter BottomSheet */}
+        <BottomSheet open={filterOpen} onClose={() => setFilterOpen(false)} title="Filtros">
+          {/* Type */}
+          <div className="mb-4">
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo</div>
+            <div className="flex flex-wrap gap-1.5">
+              {chips.map((chip) => (
+                <button
+                  key={chip.key}
+                  onClick={() => {
+                    setTypeFilter(chip.key === typeFilter ? "all" : chip.key);
+                    setFilterOpen(false);
+                  }}
+                  className={`rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${
+                    typeFilter === chip.key
+                      ? "bg-primary text-white"
+                      : "bg-fill-light text-text-secondary"
+                  }`}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
           </div>
-        )}
+
+          {/* Period */}
+          <div className="mb-4">
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-text-muted">Período</div>
+            <div className="flex flex-wrap gap-1.5">
+              {periodChips.map((chip) => (
+                <button
+                  key={String(chip.key)}
+                  onClick={() => {
+                    setPeriodFilter(chip.key === periodFilter ? "all" : chip.key);
+                    if (chip.key !== "custom") setFilterOpen(false);
+                  }}
+                  className={`rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${
+                    periodFilter === chip.key
+                      ? "bg-primary text-white"
+                      : "bg-fill-light text-text-secondary"
+                  }`}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+            {/* Custom date inputs — visible only when Personalizado is active */}
+            {periodFilter === "custom" && (
+              <div className="mt-3 flex gap-2">
+                <div className="flex-1">
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-muted">Data inicial</label>
+                  <input
+                    type="date"
+                    value={customStartDate}
+                    onChange={(e) => setCustomStartDate(e.target.value)}
+                    className="w-full rounded-[10px] border border-border bg-surface px-3 py-2 text-[12px] text-text-primary outline-none"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-muted">Data final</label>
+                  <input
+                    type="date"
+                    value={customEndDate}
+                    onChange={(e) => setCustomEndDate(e.target.value)}
+                    className="w-full rounded-[10px] border border-border bg-surface px-3 py-2 text-[12px] text-text-primary outline-none"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Category — single selector trigger */}
+          {categories.length > 0 && (
+            <div className="mb-4">
+              <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-text-muted">Categoria</div>
+              {filterPage === "main" ? (
+                <button
+                  data-testid="category-selector-trigger"
+                  onClick={() => setFilterPage("category")}
+                  className="flex w-full items-center gap-2 rounded-[10px] border border-border bg-surface px-3 py-2.5 text-left text-[13px] font-semibold text-text-primary"
+                >
+                  {categoryFilter
+                    ? categories.find((c) => c.id === categoryFilter)?.name ?? "Categoria"
+                    : "Todas as categorias"}
+                  <svg className="ml-auto" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </button>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <button
+                    onClick={() => setFilterPage("main")}
+                    className="mb-1 flex items-center gap-1 text-[12px] font-semibold text-primary"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <path d="m15 18-6-6 6-6" />
+                    </svg>
+                    Voltar
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCategoryFilter(null);
+                      setFilterPage("main");
+                    }}
+                    className={`w-full rounded-[10px] px-3 py-2.5 text-left text-[13px] font-semibold transition-colors ${
+                      categoryFilter === null ? "bg-primary-tint text-primary" : "text-text-primary hover:bg-fill-light"
+                    }`}
+                  >
+                    Todas as categorias
+                  </button>
+                  {categories.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        setCategoryFilter(c.id);
+                        setFilterPage("main");
+                      }}
+                      className={`w-full rounded-[10px] px-3 py-2.5 text-left text-[13px] font-semibold transition-colors ${
+                        categoryFilter === c.id ? "bg-primary-tint text-primary" : "text-text-primary hover:bg-fill-light"
+                      }`}
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={() => {
+              setTypeFilter("all");
+              setPeriodFilter("all");
+              setCategoryFilter(null);
+              setFilterOpen(false);
+            }}
+            className="mt-2 w-full rounded-[12px] border border-border bg-surface py-3 text-[13px] font-semibold text-text-secondary"
+          >
+            Limpar filtros
+          </button>
+        </BottomSheet>
 
         {/* Content */}
         {filtered.length === 0 ? (
-          <div className="px-5 py-[50px] text-center text-text-muted">
+          <div className="px-5 py-[50px] text-center text-text-muted sm:px-8 lg:px-12">
             <div className="text-[14px] font-semibold">Nada encontrado</div>
             <div className="mt-1 text-[12px]">
               Ajuste a busca ou os filtros.
             </div>
           </div>
         ) : (
-          <div className="flex flex-col gap-4 px-5">
+          <div data-testid="records-groups" className="flex flex-col gap-4 px-5 sm:px-8 lg:px-12">
             {groups.map((group) => (
               <div key={group.date}>
                 <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-text-muted">
@@ -296,7 +480,6 @@ export default function RecordsPage() {
                     const cat = categories.find(
                       (c) => c.id === tx.categoryId,
                     );
-                    const ico = categoryIconPaths(cat?.icon ?? "");
                     const amountColor =
                       tx.kind === "expense"
                         ? "var(--color-danger)"
@@ -316,24 +499,11 @@ export default function RecordsPage() {
                         onClick={() => handleRowClick(tx)}
                         className="flex cursor-pointer items-center gap-3 border-b border-fill-medium px-4 py-3 last:border-none active:bg-fill-light"
                       >
-                        <div
-                          className="flex h-[38px] w-[38px] flex-none items-center justify-center rounded-[11px]"
-                          style={{
-                            background: ico.tint,
-                          }}
-                        >
-                          <svg
-                            width="18"
-                            height="18"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke={ico.stroke}
-                            strokeWidth="1.8"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <path d={ico.d} />
-                          </svg>
+                        <div className="flex h-[38px] w-[38px] flex-none items-center justify-center rounded-[11px] bg-fill-light">
+                          <CategoryBadge
+                            name={cat?.name ?? ""}
+                            size={22}
+                          />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="text-[13px] font-semibold text-text-primary">

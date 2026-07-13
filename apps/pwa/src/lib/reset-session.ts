@@ -1,7 +1,13 @@
 import { clearToken } from "./auth/token-store";
-import { clearPin } from "./auth/pin-store";
 
 export function resetLocalSession(): void {
   clearToken();
-  clearPin();
+  // Legacy PIN cleanup for old clients that still have these keys
+  try {
+    localStorage.removeItem("pi-finance:pin-hash");
+    localStorage.removeItem("pi-finance:pin-salt");
+    localStorage.removeItem("pi-finance:pin");
+  } catch {
+    /* noop */
+  }
 }
