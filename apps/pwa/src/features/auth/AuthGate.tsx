@@ -28,7 +28,7 @@ export function AuthGate({ children }: Props) {
         await apiGet<unknown>("/auth/devices/me", token);
       } catch (e) {
         if (e instanceof ApiError && e.status === 401) {
-          clearSensitiveSession({
+          await clearSensitiveSession({
             clearToken: true,
             clearV1Snapshot: true,
             clearProfile: true,
@@ -52,7 +52,7 @@ export function AuthGate({ children }: Props) {
         deviceId: string;
         householdId: string;
       }>("/auth/devices/register", null, { deviceName });
-      clearSensitiveSession({
+      await clearSensitiveSession({
         clearToken: true,
         clearV1Snapshot: true,
         clearProfile: true,
@@ -66,10 +66,9 @@ export function AuthGate({ children }: Props) {
     }
   }, []);
 
-  const expireSession = useCallback((message?: string) => {
-    // Synchronous cleanup completes BEFORE UI state transition.
-    // clearSensitiveSession has no async operations (all localStorage + callbacks).
-    clearSensitiveSession({
+  const expireSession = useCallback(async (message?: string) => {
+    // Async: cleanup (including IndexedDB v2) completes BEFORE UI state transition.
+    await clearSensitiveSession({
       clearToken: true,
       clearV1Snapshot: true,
       clearProfile: true,

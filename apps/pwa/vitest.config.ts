@@ -5,6 +5,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // threads pool is reliable in this workspace (forks pool hangs under
+    // file-parallelism on this environment); keeps `pnpm test` runnable.
+    pool: "threads",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
   },

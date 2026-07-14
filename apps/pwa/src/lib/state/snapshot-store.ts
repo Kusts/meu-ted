@@ -1,99 +1,51 @@
+/**
+ * Snapshot store — v2 canonical offline snapshot.
+ *
+ * v2 (IndexedDB) is the single source of truth for offline reads/writes:
+ * - SHA-256 token fingerprint (the raw token is NEVER stored in IndexedDB)
+ * - Schema version 2
+ *
+ * v1 (localStorage) is ONLY a migration input consumed inside snapshot-db
+ * during `migrateV1toV2` before bootstrap; it is deleted after a successful
+ * v2 write+reread. No production code reads or writes v1 at runtime — the
+ * legacy `saveDomain`/`loadDomain` helpers were removed so there is no
+ * runtime v1 fallback path.
+ */
 import type {
-  Account,
-  Category,
-  Transaction,
-  Payable,
-  Budget,
-  Goal,
-  Subscription,
-  CardStatement,
+  Account, Category, Transaction, Payable,
+  Budget, Goal, Subscription, CardStatement,
 } from "./types";
-
-const SNAPSHOT_KEY = "pi-finance:snapshot:v1";
+import {
+  writeV2Snapshot, readV2Snapshot, migrateV1toV2 as migrateV1toV2Impl,
+} from "./snapshot-db";
 
 export type DomainKey =
-  | "accounts"
-  | "categories"
-  | "transactions"
-  | "payables"
-  | "budgets"
-  | "goals"
-  | "subscriptions"
-  | "cardStatements";
+  | "accounts" | "categories" | "transactions" | "payables"
+  | "budgets" | "goals" | "subscriptions" | "cardStatements";
 
 export interface SnapshotDomains {
-  accounts: Account[];
-  categories: Category[];
-  transactions: Transaction[];
-  payables: Payable[];
-  budgets: Budget[];
-  goals: Goal[];
-  subscriptions: Subscription[];
-  cardStatements: CardStatement[];
+  accounts: Account[]; categories: Category[]; transactions: Transaction[];
+  payables: Payable[]; budgets: Budget[]; goals: Goal[];
+  subscriptions: Subscription[]; cardStatements: CardStatement[];
 }
 
-interface SnapshotEnvelope {
-  version: 1;
-  token: string;
-  syncedAt: Partial<Record<DomainKey, string>>;
-  data: Partial<SnapshotDomains>;
+// ── v2 canonical API ───────────────────────────────────────────────
+
+/** Save one domain to the v2 (IndexedDB) snapshot. Only a SHA-256 fingerprint of the token is stored. */
+export async function saveSnapshotDomain<K extends DomainKey>(
+  token: string, domain: K, data: SnapshotDomains[K],
+): Promise<void> {
+  await writeV2Snapshot(token, domain, data);
 }
 
-function read(): SnapshotEnvelope | null {
-  try {
-    const raw = localStorage.getItem(SNAPSHOT_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as SnapshotEnvelope;
-    return parsed.version === 1 ? parsed : null;
-  } catch {
-    return null;
-  }
+/** Read one domain from the v2 snapshot. Returns null on owner mismatch, corrupt, or missing. */
+export async function loadSnapshotDomain<K extends DomainKey>(
+  token: string, domain: K,
+): Promise<{ data: SnapshotDomains[K]; syncedAt: string } | null> {
+  return readV2Snapshot(token, domain);
 }
 
-function write(env: SnapshotEnvelope): void {
-  try {
-    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(env));
-  } catch {
-    /* noop — quota or storage unavailable */
-  }
-}
-
-/** Persist one domain, stamped with token + ISO syncedAt. A token change discards the prior envelope. */
-export function saveDomain<K extends DomainKey>(
-  token: string,
-  domain: K,
-  data: SnapshotDomains[K],
-): void {
-  const existing = read();
-  const base: SnapshotEnvelope =
-    existing && existing.token === token
-      ? existing
-      : { version: 1, token, syncedAt: {}, data: {} };
-  write({
-    ...base,
-    data: { ...base.data, [domain]: data },
-    syncedAt: { ...base.syncedAt, [domain]: new Date().toISOString() },
-  });
-}
-
-/** Read one domain if it belongs to the current token; null otherwise. */
-export function loadDomain<K extends DomainKey>(
-  token: string,
-  domain: K,
-): { data: SnapshotDomains[K]; syncedAt: string } | null {
-  const env = read();
-  if (!env || env.token !== token) return null;
-  const data = env.data[domain];
-  const syncedAt = env.syncedAt[domain];
-  if (data === undefined || syncedAt === undefined) return null;
-  return { data: data as SnapshotDomains[K], syncedAt };
-}
-
-/** Clear the entire snapshot (on 401 / device switch). */
-export function clearSnapshot(): void {
-  try {
-    localStorage.removeItem(SNAPSHOT_KEY);
-  } catch {
-    /* noop */
-  }
+/** Migrate v1 localStorage → v2 IndexedDB before bootstrap. Idempotent; v1 deleted only after v2 write+reread. */
+export async function migrateV1toV2(token: string): Promise<void> {
+  await migrateV1toV2Impl(token);
 }

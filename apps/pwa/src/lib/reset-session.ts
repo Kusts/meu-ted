@@ -4,10 +4,10 @@ import { clearSensitiveSession } from "@/lib/session";
  * Clear all local session data on logout / 401 expiry.
  * Calls the canonical clearSensitiveSession with all flags on,
  * plus legacy PIN cleanup for old clients.
- * All operations are synchronous — cleanup completes before caller resumes.
+ * Async: awaits v2 IndexedDB cleanup before resolving.
  */
-export function resetLocalSession(): void {
-  clearSensitiveSession({
+export async function resetLocalSession(): Promise<void> {
+  await clearSensitiveSession({
     clearToken: true,
     clearV1Snapshot: true,
     clearProfile: true,

@@ -1,44 +1,77 @@
+/**
+ * Snapshot store (wrapper) tests — v2 canonical API surface.
+ *
+ * These exercise the production-facing wrapper in `snapshot-store.ts`
+ * (`saveSnapshotDomain`, `loadSnapshotDomain`, `migrateV1toV2`), which are the
+ * only functions production code calls. The lower-level IndexedDB behaviour
+ * lives in `snapshot-db.ts` and is covered by `snapshot-db.test.ts`.
+ */
 import { describe, it, expect, beforeEach } from "vitest";
-import { saveDomain, loadDomain, clearSnapshot } from "../snapshot-store";
-import type { Account } from "../types";
+import "fake-indexeddb/auto";
+import {
+  saveSnapshotDomain,
+  loadSnapshotDomain,
+  migrateV1toV2,
+} from "../snapshot-store";
+import type { SnapshotDomains } from "../snapshot-store";
 
-const acc: Account = {
-  id: "a1",
-  name: "Backend Nubank",
-  kind: "checking",
-  balanceCents: 1000,
-  status: "active",
-};
+const TEST_TOKEN = "wrapper-token-xyz";
+const V1_KEY = "pi-finance:snapshot:v1";
 
-describe("snapshot-store", () => {
-  beforeEach(() => localStorage.clear());
+function seedV1(token: string, data: Partial<SnapshotDomains>): void {
+  localStorage.setItem(
+    V1_KEY,
+    JSON.stringify({ version: 1, token, syncedAt: {}, data }),
+  );
+}
 
-  it("returns null when nothing saved", () => {
-    expect(loadDomain("tok", "accounts")).toBeNull();
+describe("snapshot-store wrapper — v2 canonical API", () => {
+  beforeEach(async () => {
+    const dbs = await indexedDB.databases();
+    for (const db of dbs) if (db.name) indexedDB.deleteDatabase(db.name);
+    localStorage.clear();
   });
 
-  it("round-trips a domain stamped with syncedAt for the same token", () => {
-    saveDomain("tok", "accounts", [acc]);
-    const got = loadDomain("tok", "accounts");
-    expect(got?.data).toEqual([acc]);
-    expect(typeof got?.syncedAt).toBe("string");
+  it("round-trips a domain through save/load snapshot (v2)", async () => {
+    await saveSnapshotDomain(TEST_TOKEN, "accounts", [
+      { id: "a1", name: "Nubank" },
+    ] as SnapshotDomains["accounts"]);
+
+    const got = await loadSnapshotDomain(TEST_TOKEN, "accounts");
+    expect(got).not.toBeNull();
+    expect(got!.data).toHaveLength(1);
+    expect((got!.data as unknown[])[0]).toMatchObject({ id: "a1", name: "Nubank" });
+    expect(typeof got!.syncedAt).toBe("string");
   });
 
-  it("does NOT return a snapshot saved under a different token", () => {
-    saveDomain("tok-A", "accounts", [acc]);
-    expect(loadDomain("tok-B", "accounts")).toBeNull();
+  it("returns null for a domain written by a different token (owner mismatch)", async () => {
+    await saveSnapshotDomain("token-A", "accounts", [
+      { id: "a1" },
+    ] as SnapshotDomains["accounts"]);
+
+    const got = await loadSnapshotDomain("token-B", "accounts");
+    expect(got).toBeNull();
   });
 
-  it("discards prior snapshot when the token changes on save", () => {
-    saveDomain("tok-A", "accounts", [acc]);
-    saveDomain("tok-B", "categories", []);
-    // tok-B save replaced the envelope; tok-A data is gone
-    expect(loadDomain("tok-A", "accounts")).toBeNull();
+  it("migrateV1toV2 removes the v1 source after a successful migration", async () => {
+    seedV1(TEST_TOKEN, { accounts: [{ id: "a1", name: "Seed" }] });
+
+    await migrateV1toV2(TEST_TOKEN);
+
+    expect(localStorage.getItem(V1_KEY)).toBeNull();
+    const v2 = await loadSnapshotDomain(TEST_TOKEN, "accounts");
+    expect(v2).not.toBeNull();
+    expect((v2!.data as unknown[])[0]).toMatchObject({ id: "a1" });
   });
 
-  it("clearSnapshot wipes everything", () => {
-    saveDomain("tok", "accounts", [acc]);
-    clearSnapshot();
-    expect(loadDomain("tok", "accounts")).toBeNull();
+  it("migrateV1toV2 preserves v1 when it belongs to another token", async () => {
+    seedV1("other-token", { accounts: [{ id: "a1" }] });
+
+    await migrateV1toV2(TEST_TOKEN);
+
+    // v1 untouched, nothing written for TEST_TOKEN
+    expect(localStorage.getItem(V1_KEY)).not.toBeNull();
+    const v2 = await loadSnapshotDomain(TEST_TOKEN, "accounts");
+    expect(v2).toBeNull();
   });
 });

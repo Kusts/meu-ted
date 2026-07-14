@@ -56,8 +56,8 @@ export default function ProfilePage() {
     else if (key === "notifications") setOpen("notifications");
   }
 
-  function handleLogout() {
-    resetLocalSession();
+  async function handleLogout() {
+    await resetLocalSession();
     router.push("/");
     router.refresh();
   }

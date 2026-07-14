@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto";
 import { renderHook, act, waitFor } from "@/lib/test-utils";
 import { AppStateProvider, useAppState } from "../app-state-context";
 import * as endpoints from "@/lib/api/endpoints";
@@ -7,9 +8,15 @@ import type { Account, Transaction, Payable } from "@/lib/state/types";
 
 // ─── Spy setup ──────────────────────────────────────────────────────────────
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.restoreAllMocks();
   localStorage.clear();
+  // v2 snapshot lives in IndexedDB — clear it between tests so a prior test's
+  // persisted snapshot can't leak in as a "snapshot" source.
+  const dbs = await indexedDB.databases();
+  for (const db of dbs) {
+    if (db.name) indexedDB.deleteDatabase(db.name);
+  }
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -52,6 +59,30 @@ function mockAccount(id: string, name: string): Account {
     updatedAt: "2026-01-01",
     balanceCents: 500_00,
   };
+}
+
+// Seeds a valid v1 (localStorage) snapshot. The production bootstrap migrates
+// this to v2 (IndexedDB) before rendering — this exercises the real migration
+// path (no direct v2 writes here, and no removed v1 helper calls).
+function seedV1Snapshot<T>(domain: string, data: T[], token = "test-token-abc"): void {
+  const V1_KEY = "pi-finance:snapshot:v1";
+  let base: { version: 1; token: string; syncedAt: Record<string, string>; data: Record<string, unknown> } = {
+    version: 1, token, syncedAt: {}, data: {},
+  };
+  try {
+    const raw = localStorage.getItem(V1_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.version === 1 && parsed.token === token) {
+        base = parsed;
+      }
+    }
+  } catch { /* ignore */ }
+  localStorage.setItem(V1_KEY, JSON.stringify({
+    ...base,
+    data: { ...base.data, [domain]: data },
+    syncedAt: { ...base.syncedAt, [domain]: new Date().toISOString() },
+  }));
 }
 
 const mockP1: Payable = {
@@ -263,10 +294,7 @@ describe("AppStateProvider — API read path", () => {
   });
 
   it("on fetch failure WITH a prior snapshot: hydrates snapshot in read-only", async () => {
-    const { saveDomain } = await import("@/lib/state/snapshot-store");
-    saveDomain("test-token-abc", "accounts", [
-      mockAccount("snap-1", "Snapshot Nubank"),
-    ]);
+    seedV1Snapshot("accounts", [mockAccount("snap-1", "Snapshot Nubank")]);
     vi.mocked(endpoints.fetchAccounts).mockRejectedValue(
       new Error("Network error"),
     );
@@ -589,9 +617,8 @@ describe("AppStateProvider — refreshSubscriptions (lazy load)", () => {
   });
 
   it("loads snapshot on fetch failure when snapshot exists", async () => {
-    // First, save a snapshot for subscriptions
-    const { saveDomain } = await import("@/lib/state/snapshot-store");
-    saveDomain("test-token-abc", "subscriptions", [
+    // First, seed a v1 snapshot for subscriptions (migrated to v2 at bootstrap)
+    seedV1Snapshot("subscriptions", [
       {
         id: "snap-s1",
         name: "Snap Netflix",
@@ -1570,10 +1597,7 @@ describe("AppStateProvider — read-only guard", () => {
   });
 
   it("refuses writes (no optimistic change) when in snapshot read-only mode", async () => {
-    const { saveDomain } = await import("@/lib/state/snapshot-store");
-    saveDomain("test-token-abc", "accounts", [
-      mockAccount("snap-1", "Snap"),
-    ]);
+    seedV1Snapshot("accounts", [mockAccount("snap-1", "Snap")]);
     vi.mocked(endpoints.fetchAccounts).mockRejectedValue(
       new Error("down"),
     );
