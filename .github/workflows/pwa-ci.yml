@@ -63,3 +63,8 @@ jobs:
       - name: CORS contract (passive)
         run: timeout 10 node apps/pwa/scripts/contract-cors.mjs
         continue-on-error: true
+
+      - name: E2E (Playwright offline shell)
+        run: |
+          pnpm --dir apps/pwa build:next:cloudflare
+          npx playwright test --config=apps/pwa/scripts/offline-shell-spike/playwright.config.ts

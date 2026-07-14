@@ -15,12 +15,17 @@
     "deploy": "pnpm build:cloudflare && wrangler deploy"
   },
   "dependencies": {
+    "@serwist/next": "9.5.11",
+    "@serwist/precaching": "9.5.11",
+    "@serwist/sw": "9.5.11",
     "next": "16.2.9",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "serwist": "9.5.11"
   },
   "devDependencies": {
     "@opennextjs/cloudflare": "^1.19.11",
+    "@playwright/test": "^1.61.1",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/typescript-checker": "^8.0.0",
     "@stryker-mutator/vitest-runner": "^9.6.1",

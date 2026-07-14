@@ -40,6 +40,8 @@ export interface CommandsContext {
   dispatch: (action: AppStateAction) => void;
   /** Endpoints module — the real network side. */
   api: typeof endpoints;
+  /** Optional dirty-track callback: call before write, run its return on success. */
+  trackWrite?: () => () => void;
 }
 
 export interface TransactionCreateInput {
@@ -238,10 +240,19 @@ function guarded<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   if (!ctx.online) return Promise.reject(new OfflineWriteError(methodName));
-  return fn().then((value) => {
-    ctx.dispatch({ type: "CLEAR_WRITE_ERROR" });
-    return value;
-  });
+  // Track dirty state — cleanup on success, retain on failure
+  const cleanup = ctx.trackWrite?.();
+  return fn()
+    .then((value) => {
+      ctx.dispatch({ type: "CLEAR_WRITE_ERROR" });
+      cleanup?.();
+      return value;
+    })
+    .catch((e) => {
+      // On failure: do NOT cleanup — retain dirty state so the UI knows
+      // there's a pending/incomplete write. The user must retry or cancel.
+      throw e;
+    });
 }
 
 /**

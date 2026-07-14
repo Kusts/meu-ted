@@ -4,24 +4,28 @@ import { isApiConfigured } from "@/lib/api/client";
 import { AuthGate } from "@/features/auth/AuthGate";
 import { AppStateProvider } from "@/lib/state/app-state-context";
 import { SheetProvider } from "@/lib/sheet-context";
+import { UnsavedChangesProvider } from "@/lib/unsaved-changes";
 
 export function RootProviders({ children }: { children: React.ReactNode }) {
-  // When API is not configured, skip AuthGate entirely and render mock UI
-  // directly. This avoids unnecessary /auth/devices/register requests and
-  // allows the PWA to work fully offline with mock data.
+  // UnsavedChangesProvider wraps both AppStateProvider and children so
+  // the AppState write functions can access trackWrite() via hooks.
+  const providers = (
+    <AppStateProvider>
+      <SheetProvider>
+        <UnsavedChangesProvider>
+          {children}
+        </UnsavedChangesProvider>
+      </SheetProvider>
+    </AppStateProvider>
+  );
+
   if (!isApiConfigured()) {
-    return (
-      <AppStateProvider>
-        <SheetProvider>{children}</SheetProvider>
-      </AppStateProvider>
-    );
+    return providers;
   }
 
   return (
     <AuthGate>
-      <AppStateProvider>
-        <SheetProvider>{children}</SheetProvider>
-      </AppStateProvider>
+      {providers}
     </AuthGate>
   );
 }

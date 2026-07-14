@@ -42,6 +42,7 @@ import { runBootstrap, type SnapshotPreload } from "./sync-engine";
 import type { AppStateAction } from "./state-reducer";
 import { migrateV1toV2, loadSnapshotDomain, saveSnapshotDomain } from "./snapshot-store";
 import { createCommands, type Commands } from "./commands";
+import { useUnsavedChangesSafe } from "@/lib/unsaved-changes";
 
 export interface AppState {
   // Data
@@ -391,6 +392,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // side-effects. Stored in a ref so write callbacks (which keep `[]`
   // deps to stay referentially stable) always read the latest commands
   // at call time.
+  const { trackWrite } = useUnsavedChangesSafe();
   const commandsRef = useRef<Commands | null>(null);
   useEffect(() => {
     commandsRef.current = createCommands({
@@ -398,8 +400,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       token: getAuthToken() ?? undefined,
       dispatch: bootstrapDispatch,
       api: endpoints,
+      trackWrite,
     });
-  }, [bootstrapDispatch]);
+  }, [bootstrapDispatch, trackWrite]);
 
   // ── Fetch from API when configured + token exists ─────────────────
   useEffect(() => {
