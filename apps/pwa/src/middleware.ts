@@ -4,15 +4,22 @@
  * Applies security headers and CSP nonce to all routes.
  * Uses experimental-edge runtime for Cloudflare compatibility via OpenNext.
  *
- * NOTE: Next.js 16 recommends src/proxy.ts as the proxy/middleware file.
- * However, proxy.ts runs on Node.js runtime and OpenNext throws:
- *   "ERROR Node.js middleware is not currently supported."
+ * ACCEPTED COMPATIBILITY EXCEPTION (Next.js 16 + OpenNext Cloudflare):
+ * Next.js 16 recommends src/proxy.ts but a Next 16 proxy.ts cannot set a
+ * runtime (build error: "Route segment config is not allowed in Proxy file.
+ * Proxy always runs on Node.js runtime.") and always runs on Node.js.
+ * OpenNext Cloudflare rejects Node.js middleware
+ * ("ERROR Node.js middleware is not currently supported."), which breaks
+ * `opennext build`. So the deprecated src/middleware.ts with
+ * `runtime = "experimental-edge"` is REQUIRED for the deploy to build.
+ * The Next 16 middleware.ts deprecation *warning* is non-fatal; the OpenNext
+ * Node.js rejection is fatal. Do NOT "fix" the warning by renaming to proxy.ts.
  *
- * Until OpenNext supports Node.js proxy, we use the deprecated middleware.ts
- * convention with `runtime = "experimental-edge"` which builds and bundles
- * correctly with OpenNext.
- *
- * Migrate to src/proxy.ts when OpenNext supports Node.js middleware.
+ * MIGRATION TRIGGER — switch to src/proxy.ts only when BOTH hold:
+ *   1. OpenNext Cloudflare no longer errors "Node.js middleware is not
+ *      currently supported" (after upgrading @opennextjs/cloudflare), AND
+ *   2. Next.js (16+) allows an Edge runtime in proxy.ts (a `runtime` export
+ *      is currently rejected).
  */
 
 import { NextResponse } from "next/server";

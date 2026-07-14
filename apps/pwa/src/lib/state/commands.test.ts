@@ -187,6 +187,14 @@ describe("commands — offline invariant (representative create/update/delete/pa
     ["payStatement", (c: Commands) => c.payStatement("st1",{amountCents:10000,fromAccountId:"a1"})],
     ["createInstallments", (c: Commands) => c.createInstallments({accountId:"a1",description:"X",totalAmountCents:10000,purchaseDate:"2026-07-01",installmentsTotal:3})],
     ["patchProfile", (c: Commands) => c.patchProfile({name:"U"})],
+    ["createCard", (c: Commands) => c.createCard({name:"Card",creditLimitCents:10000,closingDay:1,dueDay:10})],
+    ["updateCard", (c: Commands) => c.updateCard("c1",{name:"X"})],
+    ["createPayable", (c: Commands) => c.createPayable({accountId:"a1",description:"X",amountCents:1000,dueDate:"2026-08-01"})],
+    ["markPayablePaid", (c: Commands) => c.markPayablePaid("p1","2026-07-15")],
+    ["undoPayablePayment", (c: Commands) => c.undoPayablePayment("p1")],
+    ["cancelPayable", (c: Commands) => c.cancelPayable("p1")],
+    ["updatePayable", (c: Commands) => c.updatePayable("p1",{description:"Y"})],
+    ["addSubscription", (c: Commands) => c.addSubscription({name:"Sub",amountCents:1000,cycle:"monthly",day:1,paymentMethod:"card"})],
   ])("%s: online resolves, failure propagates, offline rejects", async (name, call) => {
     // Online success: mock resolves, method resolves, CLEAR_WRITE_ERROR dispatched
     vi.spyOn(endpoints, name as keyof typeof endpoints).mockResolvedValue({} as never);

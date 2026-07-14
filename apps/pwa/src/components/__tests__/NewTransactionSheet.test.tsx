@@ -1,4 +1,4 @@
-import { render, screen } from "@/lib/test-utils";
+import { render, screen, fireEvent } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import NewTransactionSheet from "../NewTransactionSheet";
 import type { Account, Category } from "@/lib/state/types";
@@ -275,5 +275,144 @@ describe("NewTransactionSheet", () => {
     const reopenedDesc = screen.getByPlaceholderText(/aluguel|descrição/i) as HTMLInputElement;
     expect(reopenedValor.value).toBe("");
     expect(reopenedDesc.value).toBe("");
+  });
+
+  describe("coverage: calendar, income, card, guards", () => {
+    it("opens the calendar and selects a day", async () => {
+      const user = userEvent.setup();
+      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
+      await user.click(screen.getByRole("button", { name: /de \d{4}/ }));
+      const dayButtons = screen.getAllByRole("button").filter((b) => /^\d+$/.test((b.textContent ?? "").trim()));
+      expect(dayButtons.length).toBeGreaterThan(0);
+      await user.click(dayButtons[0]!);
+      expect(screen.queryByText("Seg")).not.toBeInTheDocument();
+    });
+
+    it("navigates calendar months with prev/next", async () => {
+      const user = userEvent.setup();
+      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
+      await user.click(screen.getByRole("button", { name: /de \d{4}/ }));
+      await user.click(screen.getByText("‹"));
+      await user.click(screen.getByText("›"));
+      expect(screen.getByText("Seg")).toBeInTheDocument();
+    });
+
+    it("saves an income transaction", async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} initialTab="income" />);
+      await user.type(screen.getByPlaceholderText(/0,00/), "50000");
+      await user.type(screen.getByPlaceholderText(/aluguel|descrição/i), "Salário");
+      await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ kind: "income", amountCents: 50000 }));
+    });
+
+    it("saves expense with credit card selected (cardId branch)", async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={onSave} />);
+      await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+      await user.click(screen.getByText("Nubank Card"));
+      await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+      expect(onSave.mock.calls[0]![0].accountId).toBe("card1");
+    });
+
+    it("includes selected categoryId on save (expense)", async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
+      await user.click(screen.getByText("Alimentação"));
+      await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+      await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+      const saved = onSave.mock.calls[0]![0];
+      expect(saved.categoryId).toBe("cat1");
+      expect(saved.kind).toBe("expense");
+    });
+
+    it("shows inline account form in transfer tab via Nova", async () => {
+      const user = userEvent.setup();
+      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} onAddAccount={vi.fn()} />);
+      await user.click(screen.getByText("Transferência"));
+      await user.click(screen.getByText("Nova"));
+      expect(screen.getByPlaceholderText("Nome da conta")).toBeInTheDocument();
+    });
+
+    it("accepts a custom installment count via Outro input", async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={onSave} />);
+      await user.type(screen.getByPlaceholderText(/0,00/), "600000");
+      await user.click(screen.getByLabelText("Alternar parcelamento"));
+      await user.type(screen.getByPlaceholderText("18"), "5");
+      await user.click(screen.getByText("Nubank Card"));
+      await user.click(screen.getByText(/Salvar em/));
+      expect(onSave.mock.calls[0]![0].installmentsTotal).toBe(5);
+    });
+
+    it("ignores amount digits beyond 12", async () => {
+      const user = userEvent.setup();
+      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
+      const valor = screen.getByPlaceholderText(/0,00/) as HTMLInputElement;
+      await user.type(valor, "123456789012345");
+      expect(valor.value.replace(/\D/g, "").length).toBeLessThanOrEqual(12);
+    });
+
+    it("handles onSave rejection without crashing", async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn().mockRejectedValue(new Error("fail"));
+      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
+      await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+      await user.type(screen.getByPlaceholderText(/aluguel|descrição/i), "X");
+      await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+      expect(onSave).toHaveBeenCalled();
+    });
+
+    it("expense: selecting an account sets accountId on save", async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
+      await user.click(screen.getByText("Itaú"));
+      await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+      await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+      expect(onSave.mock.calls[0]![0].accountId).toBe("acc2");
+    });
+
+    it("transfer: selecting destination account sets toAccountId", async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
+      await user.click(screen.getByText("Transferência"));
+      const [originNubank] = screen.getAllByText("Nubank");
+      await user.click(originNubank!);
+      const itauBtns = screen.getAllByText("Itaú");
+      await user.click(itauBtns[1]!);
+      await user.type(screen.getByPlaceholderText(/0,00/), "5000");
+      await user.click(screen.getByText("Transferir"));
+      const saved = onSave.mock.calls[0]![0];
+      expect(saved.fromAccountId).toBe("acc1");
+      expect(saved.toAccountId).toBe("acc2");
+    });
+
+    it("card inline form: typing limit/closing/due and saving", async () => {
+      const user = userEvent.setup();
+      const onAddCrd = vi.fn();
+      render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={vi.fn()} onAddCard={onAddCrd} />);
+      await user.click(screen.getByText("Novo"));
+      await user.type(screen.getByPlaceholderText("Nome do cartão"), "Inter Card");
+      fireEvent.change(screen.getByPlaceholderText("Limite (R$)"), { target: { value: "100000" } });
+      fireEvent.change(screen.getByPlaceholderText("Fechamento"), { target: { value: "10" } });
+      fireEvent.change(screen.getByPlaceholderText("Vencimento"), { target: { value: "20" } });
+      await user.click(screen.getByRole("button", { name: "Salvar cartão" }));
+      expect(onAddCrd).toHaveBeenCalledWith(expect.objectContaining({ name: "Inter Card", creditLimitCents: 100000, closingDay: 10, dueDay: 20 }));
+    });
+
+    it("category inline form: Cancelar closes the form", async () => {
+      const user = userEvent.setup();
+      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
+      await user.click(screen.getAllByText("Nova")[0]!);
+      expect(screen.getByPlaceholderText("Nome da categoria")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Cancelar" }));
+      expect(screen.queryByPlaceholderText("Nome da categoria")).not.toBeInTheDocument();
+    });
   });
 });

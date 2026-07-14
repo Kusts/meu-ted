@@ -59,4 +59,13 @@ describe("subscriptions adapter — refresh", () => {
     expect(result!.data).toEqual([]);
     expect(result!.source).toBe("unavailable");
   });
+
+  it("swallows saveSnapshotDomain failure on fetch success", async () => {
+    vi.spyOn(endpoints, "fetchSubscriptions").mockResolvedValue(SUBS as never);
+    vi.spyOn(snapshotStore, "saveSnapshotDomain").mockRejectedValue(new Error("idb down"));
+    const adapter = createSubscriptionsAdapter({ token: TOKEN, online: true });
+    const result = await adapter.refresh();
+    expect(result!.source).toBe("live");
+    expect(result!.data).toEqual(SUBS);
+  });
 });

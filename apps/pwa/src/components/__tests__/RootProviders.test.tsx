@@ -40,3 +40,28 @@ describe("RootProviders — no API env", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("RootProviders — API env configured", () => {
+  it("wraps content in AuthGate when API configured", () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    render(
+      <RootProviders>
+        <div data-testid="cfg-app">Cfg App</div>
+      </RootProviders>,
+    );
+    // API configured → AuthGate path renders (register UI, children gated)
+    expect(screen.getByText("Registrar")).toBeInTheDocument();
+  });
+});
+
+describe("RootProviders — forced no env", () => {
+  it("returns providers directly when API not configured", () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "");
+    render(
+      <RootProviders>
+        <div data-testid="nocfg-app">NoCfg App</div>
+      </RootProviders>,
+    );
+    expect(screen.getByTestId("nocfg-app")).toBeInTheDocument();
+  });
+});

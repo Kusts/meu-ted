@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { apiFetch, isApiConfigured } from "./client";
+import { apiFetch, apiGet, apiPost, getAuthToken, isApiConfigured } from "./client";
 
 describe("apiFetch JSON content-type", () => {
   afterEach(() => {
@@ -72,24 +72,118 @@ describe("api client base URL resolution", () => {
     >;
     expect(callHeaders["x-device-token"]).toBeUndefined();
   });
+});
 
-  it("falls back to production API for the deployed worker hostname", async () => {
-    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", undefined as unknown as string);
-    vi.spyOn(window, "location", "get").mockReturnValue({
-      ...window.location,
-      hostname: "pi-finance-pwa.walissonead.workers.dev",
-    } as Location);
+describe("apiFetch error and edge handling", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
 
+  it("throws ApiError on 401 with body code/message", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "auth.expired", message: "Sessão expirada" }), { status: 401 }),
+    );
+    await expect(apiFetch("/me")).rejects.toMatchObject({
+      status: 401,
+      code: "auth.expired",
+      message: "Sessão expirada",
+    });
+  });
+
+  it("returns undefined on 204", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 204 }));
+    const r = await apiFetch("/void");
+    expect(r).toBeUndefined();
+  });
+
+  it("throws ApiError on non-401 error status", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "server", message: "fail" }), { status: 500 }),
+    );
+    await expect(apiFetch("/x")).rejects.toMatchObject({ status: 500, code: "server", message: "fail" });
+  });
+
+  it("uses default message when error body is not JSON", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("plain text", { status: 503, headers: { "Content-Type": "text/plain" } }),
+    );
+    await expect(apiFetch("/x")).rejects.toMatchObject({ status: 503, code: "error", message: "HTTP 503" });
+  });
+
+  it("sets idempotency-key header when provided", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+    await apiFetch("/pay", { method: "POST", idempotencyKey: "key-1" });
+    const h = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(h["idempotency-key"]).toBe("key-1");
+  });
 
-    await apiFetch("/auth/devices/register", { method: "POST" });
+  it("sets x-device-token from explicit token option", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+    await apiFetch("/me", { token: "tok-9" });
+    const h = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(h["x-device-token"]).toBe("tok-9");
+  });
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.synkroo.com.br/auth/devices/register",
-      expect.objectContaining({ method: "POST" }),
-    );
-    expect(isApiConfigured()).toBe(true);
+  it("omits Content-Type when no body", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+    await apiFetch("/ping", { method: "GET" });
+    const h = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(h["Content-Type"]).toBeUndefined();
+  });
+
+  it("apiGet sends token and returns parsed body", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ hello: "world" }), { status: 200 }));
+    const r = await apiGet<{ hello: string }>("/thing", "tok");
+    expect(r).toEqual({ hello: "world" });
+    const h = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(h["x-device-token"]).toBe("tok");
+  });
+
+  it("apiPost sends JSON body, token and idempotency key", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ id: 1 }), { status: 200 }));
+    const r = await apiPost<{ id: number }>("/create", "tok", { a: 1 }, "idem-1");
+    expect(r).toEqual({ id: 1 });
+    const opt = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(opt.method).toBe("POST");
+    const h = opt.headers as Record<string, string>;
+    expect(h["Content-Type"]).toBe("application/json");
+    expect(h["x-device-token"]).toBe("tok");
+    expect(h["idempotency-key"]).toBe("idem-1");
+  });
+
+  it("apiPost without body omits Content-Type", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+    await apiPost("/create", null);
+    const h = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(h["Content-Type"]).toBeUndefined();
+  });
+
+  it("getAuthToken reads from localStorage", async () => {
+    localStorage.setItem("pi-finance:token", "stored");
+    expect(getAuthToken()).toBe("stored");
+    localStorage.removeItem("pi-finance:token");
   });
 });

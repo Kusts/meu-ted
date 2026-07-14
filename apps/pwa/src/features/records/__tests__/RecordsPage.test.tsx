@@ -326,4 +326,53 @@ describe("RecordsPage", () => {
       expect(contaOption).toBeTruthy();
     });
   });
+
+  describe("extended handler coverage", () => {
+    it("opens edit sheet via Editar action", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByText("Supermercado Extra"));
+      fireEvent.click(screen.getByText("Editar"));
+      // Edit sheet should be open (header text from TransactionEditSheet)
+      expect(screen.getByText(/Editar transação|Editar lançamento/i)).toBeInTheDocument();
+    });
+
+    it("calls deleteTransaction when Excluir is clicked", () => {
+      const delSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({ deleteTransaction: delSpy }),
+      );
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByText("Supermercado Extra"));
+      fireEvent.click(screen.getByText("Excluir"));
+      expect(delSpy).toHaveBeenCalled();
+    });
+
+    it("updates custom date inputs when typed", () => {
+      const { container } = render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
+      fireEvent.click(screen.getByText("Personalizado"));
+      const dateInputs = container.querySelectorAll('input[type="date"]');
+      expect(dateInputs.length).toBe(2);
+      fireEvent.change(dateInputs[0]!, { target: { value: "2026-06-01" } });
+      expect((dateInputs[0] as HTMLInputElement).value).toBe("2026-06-01");
+      fireEvent.change(dateInputs[1]!, { target: { value: "2026-06-30" } });
+      expect((dateInputs[1] as HTMLInputElement).value).toBe("2026-06-30");
+    });
+
+    it("resets category filter via 'Todas as categorias'", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
+      fireEvent.click(screen.getByTestId("category-selector-trigger"));
+      fireEvent.click(screen.getByText("Todas as categorias"));
+      expect(screen.getByTestId("filter-trigger").textContent).toMatch(/Filtro/i);
+    });
+
+    it("returns to main filter page via 'Voltar'", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
+      fireEvent.click(screen.getByTestId("category-selector-trigger"));
+      fireEvent.click(screen.getByText("Voltar"));
+      expect(screen.getByTestId("category-selector-trigger")).toBeInTheDocument();
+    });
+  });
 });

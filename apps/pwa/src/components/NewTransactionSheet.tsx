@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { CategoryBadge } from "@/components/ui/CategoryBadge";
+import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import type { Account, Category } from "@/lib/state/types";
 
 export type SheetTab = "expense" | "income" | "transfer";
@@ -22,7 +23,7 @@ export interface SaveData {
 interface NewTransactionSheetProps {
   accounts: Account[];
   categories: Category[];
-  onSave: (data: SaveData) => void;
+  onSave: (data: SaveData) => void | Promise<void>;
   onAddCategory?: (input: { name: string; kind: "expense" | "income"; parentId?: string }) => void;
   onAddAccount?: (input: { name: string; kind: "bank" | "cash" | "credit_card"; initialBalanceCents: number }) => void;
   onAddCard?: (input: { name: string; creditLimitCents: number; closingDay: number; dueDay: number }) => void;
@@ -96,6 +97,7 @@ export default function NewTransactionSheet({
   onAddCard,
   initialTab = "expense",
 }: NewTransactionSheetProps) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [tab, setTab] = useState<SheetTab>(initialTab);
   const [amountDisplay, setAmountDisplay] = useState("");
   const [description, setDescription] = useState("");
@@ -224,20 +226,20 @@ export default function NewTransactionSheet({
     setAddingCard(false);
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (amountCents <= 0) return;
-
+    let data: SaveData;
     if (isTransfer) {
-      onSave({
+      data = {
         kind: "transfer",
         amountCents,
         description,
         date,
         fromAccountId,
         toAccountId,
-      });
+      };
     } else {
-      const data: SaveData = {
+      data = {
         kind: tab,
         amountCents,
         description,
@@ -248,7 +250,12 @@ export default function NewTransactionSheet({
       if (installmentsEnabled && installmentsCount > 1) {
         data.installmentsTotal = installmentsCount;
       }
-      onSave(data);
+    }
+    try {
+      await onSave(data);
+      markClean();
+    } catch {
+      // Save failed: keep dirty.
     }
   }
 
@@ -259,7 +266,7 @@ export default function NewTransactionSheet({
   ];
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-5" onChangeCapture={markDirty}>
       {/* Tabs */}
       <div className="flex gap-1 rounded-xl bg-fill-light p-1">
         {tabs.map((t) => (

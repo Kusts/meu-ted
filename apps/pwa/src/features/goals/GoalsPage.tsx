@@ -8,6 +8,7 @@ import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
+import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import type { Goal } from "@/lib/state/types";
 
 function formatBRL(cents: number): string {
@@ -205,8 +206,9 @@ function GoalDetailSheet({
   goal: Goal | null;
   open: boolean;
   onClose: () => void;
-  onEdit: (id: string, input: { name?: string; targetAmountCents?: number }) => void;
+  onEdit: (id: string, input: { name?: string; targetAmountCents?: number }) => void | Promise<void>;
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [editMode, setEditMode] = useState(false);
   const [name, setName] = useState("");
   const [targetDisplay, setTargetDisplay] = useState("");
@@ -217,26 +219,36 @@ function GoalDetailSheet({
       setName(goal.name);
       setTargetDisplay(formatInputBRL(String(goal.targetAmountCents)));
       setEditMode(false);
+      markClean();
     }
-  }, [goal, open]);
+  }, [goal, open, markClean]);
 
   if (!goal) return null;
 
   const pct = goal.targetAmountCents > 0 ? Math.min((goal.currentAmountCents / goal.targetAmountCents) * 100, 100) : 0;
 
-  function handleSave() {
-    if (!goal) return;
-    const targetAmountCents = parseBRLToCents(targetDisplay);
-    if (targetAmountCents > 0) {
-      onEdit(goal.id, { name: name.trim() || undefined, targetAmountCents });
-    }
+  function handleClose() {
+    markClean();
     onClose();
   }
 
+  async function handleSave() {
+    if (!goal) return;
+    const targetAmountCents = parseBRLToCents(targetDisplay);
+    if (targetAmountCents <= 0) return;
+    try {
+      await onEdit(goal.id, { name: name.trim() || undefined, targetAmountCents });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
+  }
+
   return (
-    <BottomSheet open={open} onClose={onClose} title={editMode ? "Editar meta" : "Detalhes da meta"}>
+    <BottomSheet open={open} onClose={handleClose} title={editMode ? "Editar meta" : "Detalhes da meta"}>
       {editMode ? (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
           <fieldset>
             <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nome</label>
             <input type="text" value={name} onChange={(e) => setName(e.target.value)}

@@ -337,3 +337,35 @@ describe("v2 snapshot — edge cases", () => {
     expect(result).toBeNull();
   });
 });
+
+describe("v2 snapshot — IDB error paths", () => {
+  beforeEach(async () => {
+    const dbs = await indexedDB.databases();
+    for (const db of dbs) {
+      if (db.name) indexedDB.deleteDatabase(db.name);
+    }
+    localStorage.clear();
+  });
+
+  it("openSnapshotDb rejects when the open request fires onerror", async () => {
+    vi.spyOn(indexedDB, "open").mockImplementation(() => {
+      const req: Record<string, unknown> = { error: new Error("open failed") };
+      queueMicrotask(() => {
+        if (typeof req.onerror === "function") (req.onerror as () => void)();
+      });
+      return req as unknown as IDBOpenDBRequest;
+    });
+    await expect(openSnapshotDb()).rejects.toBeDefined();
+  });
+
+  it("discards corrupt v1 even when removeItem throws", async () => {
+    corruptV1();
+    const removeSpy = vi.spyOn(Storage.prototype, "removeItem");
+    removeSpy.mockImplementation(() => {
+      throw new Error("storage blocked");
+    });
+    // Must not throw — inner catch swallows the removeItem failure.
+    await expect(migrateV1toV2(TEST_TOKEN)).resolves.toBeUndefined();
+    removeSpy.mockRestore();
+  });
+});

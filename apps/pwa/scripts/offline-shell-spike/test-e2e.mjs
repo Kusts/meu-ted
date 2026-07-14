@@ -50,7 +50,7 @@ async function run() {
   console.log("\n=== OFFLINE ROUTES ===");
   await page.goto(`${BASE}/registros`, { timeout: 5e3 });
   await page.evaluate(async () => {
-    const r = await navigator.serviceWorker.register("/sw.js");
+    await navigator.serviceWorker.register("/sw.js");
     for (let i = 0; i < 40; i++) { if (navigator.serviceWorker.controller?.state === "activated") return; await new Promise(r => setTimeout(r, 250)); }
   });
   // Visit all shell routes to populate caches

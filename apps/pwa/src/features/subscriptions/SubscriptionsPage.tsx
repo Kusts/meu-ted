@@ -9,6 +9,7 @@ import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
+import { useFormDirtySafe } from "@/lib/unsaved-changes";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -78,8 +79,9 @@ function NewSubscriptionSheet({
 }: {
   open: boolean;
   onClose: () => void;
-  onAdd: (input: { name: string; amountCents: number; cycle: "monthly" | "yearly" | "weekly"; day: number; paymentMethod: string }) => void;
+  onAdd: (input: { name: string; amountCents: number; cycle: "monthly" | "yearly" | "weekly"; day: number; paymentMethod: string }) => void | Promise<void>;
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [service, setService] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
@@ -87,22 +89,36 @@ function NewSubscriptionSheet({
   const [payment, setPayment] = useState("card");
   const [day, setDay] = useState("");
 
-  function handleSave() {
-    onAdd({
-      name: name.trim() || service || "Assinatura",
-      amountCents: parseBRLToCents(amount),
-      cycle: cycle as "monthly" | "yearly" | "weekly",
-      day: parseInt(day, 10) || 1,
-      paymentMethod: payment === "card" ? "credit_card" : payment === "boleto" ? "boleto" : payment === "pix" ? "pix" : "manual",
-    });
-    setName("");
-    setAmount("");
-    onClose();
+  useEffect(() => {
+    if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setService(null);
+      setName("");
+      setAmount("");
+      setDay("");
+      markClean();
+    }
+  }, [open, markClean]);
+
+  async function handleSave() {
+    try {
+      await onAdd({
+        name: name.trim() || service || "Assinatura",
+        amountCents: parseBRLToCents(amount),
+        cycle: cycle as "monthly" | "yearly" | "weekly",
+        day: parseInt(day, 10) || 1,
+        paymentMethod: payment === "card" ? "credit_card" : payment === "boleto" ? "boleto" : payment === "pix" ? "pix" : "manual",
+      });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
   }
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Nova assinatura">
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
             Serviço
@@ -113,6 +129,7 @@ function NewSubscriptionSheet({
                 key={p.name}
                 type="button"
                 onClick={() => {
+                  markDirty();
                   setService(p.name);
                   setName(p.name);
                 }}
@@ -173,7 +190,7 @@ function NewSubscriptionSheet({
               <button
                 key={c.value}
                 type="button"
-                onClick={() => setCycle(c.value)}
+                onClick={() => { markDirty(); setCycle(c.value); }}
                 className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-colors ${
                   cycle === c.value
                     ? "bg-surface text-text-primary shadow-sm"
@@ -195,7 +212,7 @@ function NewSubscriptionSheet({
               <button
                 key={p.value}
                 type="button"
-                onClick={() => setPayment(p.value)}
+                onClick={() => { markDirty(); setPayment(p.value); }}
                 className={`rounded-[100px] px-3 py-1.5 text-[11px] font-bold transition-colors ${
                   payment === p.value
                     ? "bg-primary text-white"
@@ -245,9 +262,10 @@ function SubscriptionDetailSheet({
   subscription: { id: string; name: string; amountCents: number; cycle: string; day: number; paymentMethod: string; status: string } | null;
   open: boolean;
   onClose: () => void;
-  onSave: (id: string, input: { name?: string; amountCents?: number; cycle?: "monthly" | "yearly" | "weekly"; day?: number; paymentMethod?: string }) => void;
+  onSave: (id: string, input: { name?: string; amountCents?: number; cycle?: "monthly" | "yearly" | "weekly"; day?: number; paymentMethod?: string }) => void | Promise<void>;
   onCancel: (id: string, name: string) => void;
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [editMode, setEditMode] = useState(false);
   const [name, setName] = useState("");
   const [amountDisplay, setAmountDisplay] = useState("");
@@ -265,33 +283,44 @@ function SubscriptionDetailSheet({
       const pm = subscription.paymentMethod;
       setPayment(pm === "credit_card" ? "card" : pm === "boleto" ? "boleto" : pm === "pix" ? "pix" : "manual");
       setEditMode(false);
+      markClean();
     }
-  }, [subscription, open]);
+  }, [subscription, open, markClean]);
 
   if (!subscription) return null;
 
   const isActive = subscription.status === "active";
 
-  function handleSaveEdit() {
+  function handleClose() {
+    markClean();
+    onClose();
+  }
+
+  async function handleSaveEdit() {
     if (!subscription) return;
     const pm =
       payment === "card" ? "credit_card" :
       payment === "boleto" ? "boleto" :
       payment === "pix" ? "pix" : "manual";
-    onSave(subscription.id, {
-      name: name.trim() || undefined,
-      amountCents: parseBRLToCents(amountDisplay) || undefined,
-      cycle: cycle as "monthly" | "yearly" | "weekly",
-      day: parseInt(day, 10) || undefined,
-      paymentMethod: pm,
-    });
-    onClose();
+    try {
+      await onSave(subscription.id, {
+        name: name.trim() || undefined,
+        amountCents: parseBRLToCents(amountDisplay) || undefined,
+        cycle: cycle as "monthly" | "yearly" | "weekly",
+        day: parseInt(day, 10) || undefined,
+        paymentMethod: pm,
+      });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
   }
 
   return (
-    <BottomSheet open={open} onClose={onClose} title={editMode ? "Editar assinatura" : "Detalhes da assinatura"}>
+    <BottomSheet open={open} onClose={handleClose} title={editMode ? "Editar assinatura" : "Detalhes da assinatura"}>
       {editMode ? (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
           <fieldset>
             <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nome</label>
             <input type="text" value={name} onChange={(e) => setName(e.target.value)}
@@ -312,7 +341,7 @@ function SubscriptionDetailSheet({
             <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Ciclo</label>
             <div className="flex gap-1 rounded-xl bg-fill-light p-1">
               {CYCLE_OPTIONS.map((c) => (
-                <button key={c.value} type="button" onClick={() => setCycle(c.value)}
+                <button key={c.value} type="button" onClick={() => { markDirty(); setCycle(c.value); }}
                   className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-colors ${cycle === c.value ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"}`}>
                   {c.label}
                 </button>
@@ -324,7 +353,7 @@ function SubscriptionDetailSheet({
             <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Cobrado via</label>
             <div className="flex flex-wrap gap-1.5">
               {PAYMENT_OPTIONS.map((p) => (
-                <button key={p.value} type="button" onClick={() => setPayment(p.value)}
+                <button key={p.value} type="button" onClick={() => { markDirty(); setPayment(p.value); }}
                   className={`rounded-[100px] px-3 py-1.5 text-[11px] font-bold transition-colors ${payment === p.value ? "bg-primary text-white" : "bg-fill-light text-text-secondary"}`}>
                   {p.label}
                 </button>

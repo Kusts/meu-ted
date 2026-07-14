@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { NextResponse } from "next/server";
 import { middleware } from "../middleware";
 import { SECURITY_HEADERS } from "../proxy-utils";
 
@@ -43,5 +44,18 @@ describe("middleware", () => {
   it("removes X-Powered-By header if present", () => {
     const response = middleware(mockRequest());
     expect(response.headers.get("X-Powered-By")).toBeNull();
+  });
+
+  it("deletes an existing X-Powered-By header (covered branch)", () => {
+    const spy = vi
+      .spyOn(NextResponse, "next")
+      .mockReturnValue(
+        new Response(null, { headers: { "X-Powered-By": "Next.js" } }) as unknown as ReturnType<
+          typeof NextResponse.next
+        >,
+      );
+    const response = middleware(mockRequest());
+    expect(response.headers.get("X-Powered-By")).toBeNull();
+    spy.mockRestore();
   });
 });

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { AuthGate } from "../AuthGate";
+import { useSession } from "@/lib/auth/session-context";
+import { ApiError } from "@/lib/api/client";
 
 // ─── localStorage mock ──────────────────────────────────────────────────────
 const store: Record<string, string> = {};
@@ -99,5 +101,74 @@ describe("AuthGate", () => {
     expect(
       screen.getByPlaceholderText(/Nome do dispositivo/),
     ).toBeInTheDocument();
+  });
+});
+
+function SessionProbe() {
+  const { expireSession } = useSession();
+  return (
+    <>
+      <div data-testid="app">App Content</div>
+      <button type="button" onClick={() => expireSession("Sessão expirada pelo teste.")}>
+        Expire
+      </button>
+    </>
+  );
+}
+
+describe("AuthGate register + session flows (coverage)", () => {
+  it("registers device and shows app on submit", async () => {
+    render(
+      <AuthGate>
+        <div data-testid="app">App Content</div>
+      </AuthGate>,
+    );
+    const input = await screen.findByPlaceholderText(/Nome do dispositivo/, {}, { timeout: 3000 });
+    fireEvent.change(input, { target: { value: "Meu Celular" } });
+    fireEvent.click(screen.getByText("Registrar"));
+    const app = await screen.findByTestId("app", {}, { timeout: 3000 });
+    expect(app).toBeInTheDocument();
+    expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it("shows default error when registration fails (network)", async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new Error("network down"));
+    render(
+      <AuthGate>
+        <div data-testid="app">App Content</div>
+      </AuthGate>,
+    );
+    const input = await screen.findByPlaceholderText(/Nome do dispositivo/, {}, { timeout: 3000 });
+    fireEvent.change(input, { target: { value: "Meu Celular" } });
+    fireEvent.click(screen.getByText("Registrar"));
+    const err = await screen.findByText(/Falha ao registrar dispositivo/i, {}, { timeout: 3000 });
+    expect(err).toBeInTheDocument();
+  });
+
+  it("shows ApiError message when registration fails with ApiError", async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new ApiError(500, "auth.boom", "boom message"));
+    render(
+      <AuthGate>
+        <div data-testid="app">App Content</div>
+      </AuthGate>,
+    );
+    const input = await screen.findByPlaceholderText(/Nome do dispositivo/, {}, { timeout: 3000 });
+    fireEvent.change(input, { target: { value: "Meu Celular" } });
+    fireEvent.click(screen.getByText("Registrar"));
+    const err = await screen.findByText("boom message", {}, { timeout: 3000 });
+    expect(err).toBeInTheDocument();
+  });
+
+  it("expires session via context and returns to register screen", async () => {
+    store["pi-finance:token"] = "valid-token";
+    render(
+      <AuthGate>
+        <SessionProbe />
+      </AuthGate>,
+    );
+    expect(await screen.findByTestId("app", {}, { timeout: 3000 })).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Expire"));
+    expect(await screen.findByText(/Sessão expirada pelo teste/i, {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText(/Nome do dispositivo/, {}, { timeout: 3000 })).toBeInTheDocument();
   });
 });

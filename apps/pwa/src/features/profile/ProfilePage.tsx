@@ -10,6 +10,7 @@ import Icon from "@/components/ui/Icon";
 import Badge from "@/components/ui/Badge";
 import NotificationsSheet from "./NotificationsSheet";
 import { useAppState } from "@/lib/state/app-state-context";
+import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import { useEffectiveProfile } from "./hooks";
 
 type ProfileSheet = "edit" | "chat" | "notifications" | null;
@@ -174,6 +175,7 @@ function EditProfileSheet({
     greetingStyle: "auto" | "minimal" | "verbose";
   }) => Promise<void>;
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [name, setName] = useState(profile.name);
   const [email, setEmail] = useState(profile.email);
   const [phone, setPhone] = useState(profile.phone);
@@ -193,14 +195,15 @@ function EditProfileSheet({
     setAvatarColor(profile.avatarColor);
     setGreetingStyle(profile.greetingStyle);
     setError(null);
-  }, [open, profile.name, profile.email, profile.phone, profile.avatarColor, profile.greetingStyle]);
+    markClean();
+  }, [open, profile.name, profile.email, profile.phone, profile.avatarColor, profile.greetingStyle, markClean]);
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Editar perfil">
       <div className="flex items-center gap-3 pb-5">
         <BackButton onClick={onClose} />
       </div>
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
             Nome
@@ -250,7 +253,7 @@ function EditProfileSheet({
                 key={c}
                 type="button"
                 aria-label={`Cor ${c}`}
-                onClick={() => setAvatarColor(c)}
+                onClick={() => { markDirty(); setAvatarColor(c); }}
                 className={`h-9 w-9 rounded-full transition-transform ${
                   avatarColor === c
                     ? "ring-2 ring-text-primary ring-offset-2 ring-offset-surface"
@@ -271,7 +274,7 @@ function EditProfileSheet({
               <button
                 key={s}
                 type="button"
-                onClick={() => setGreetingStyle(s)}
+                onClick={() => { markDirty(); setGreetingStyle(s); }}
                 className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-colors ${
                   greetingStyle === s
                     ? "bg-surface text-text-primary shadow-sm"
@@ -304,6 +307,7 @@ function EditProfileSheet({
                 avatarColor,
                 greetingStyle,
               });
+              markClean();
             } catch (e) {
               setError((e as Error).message || "Falha ao salvar");
             } finally {

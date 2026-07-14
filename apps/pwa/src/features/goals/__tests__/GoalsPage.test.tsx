@@ -1,4 +1,4 @@
-import { render, screen } from "@/lib/test-utils";
+import { render, screen, within } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import GoalsPage from "../GoalsPage";
 import * as appStateModule from "@/lib/state/app-state-context";
@@ -12,7 +12,7 @@ function defaultState(): AppState {
     budgets: [...mockBudgets], goals: [...mockGoals],
     debts: [...mockDebts],
     subscriptions: [], loading: false, error: null,
-    addTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(), cancelPayable: vi.fn(), createPayable: vi.fn(), createBudget: vi.fn(), updateBudget: vi.fn(), createGoal: vi.fn(), contributeToGoal: vi.fn(), cancelGoal: vi.fn(),
+    addTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(), cancelPayable: vi.fn(), createPayable: vi.fn(), createBudget: vi.fn(), updateBudget: vi.fn(), createGoal: vi.fn(), updateGoal: vi.fn(), contributeToGoal: vi.fn(), cancelGoal: vi.fn(),
     cardStatements: [], writeError: null, clearWriteError: vi.fn(),
     sync: {
       accounts: { source: "mock", syncedAt: null },
@@ -254,6 +254,97 @@ describe("GoalsPage", () => {
       render(<GoalsPage />);
       await user.click(screen.getByText("Dívidas"));
       expect(screen.queryAllByText("Em breve").length).toBe(0);
+    });
+  });
+
+  describe("save/contribute/cancel handlers", () => {
+    it("contributes to a goal", async () => {
+      const contribSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ contributeToGoal: contribSpy }));
+      const user = userEvent.setup();
+      render(<GoalsPage />);
+      const addBtns = screen.getAllByRole("button", { name: /^Adicionar$/ });
+      await user.click(addBtns[0]);
+      const amountInput = screen.getByPlaceholderText("0,00");
+      await user.type(amountInput, "12345");
+      const dialog = screen.getByRole("dialog");
+      await user.click(within(dialog).getByRole("button", { name: "Adicionar" }));
+      expect(contribSpy).toHaveBeenCalled();
+    });
+
+    it("edits a goal and saves", async () => {
+      const updateSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateGoal: updateSpy }));
+      const user = userEvent.setup();
+      render(<GoalsPage />);
+      await user.click(screen.getAllByText("Reserva de emergência")[0]);
+      await user.click(screen.getByText("Editar"));
+      const nameInput = screen.getByDisplayValue("Reserva de emergência");
+      await user.clear(nameInput);
+      await user.type(nameInput, "Reserva Editada");
+      await user.click(screen.getByText("Salvar alterações"));
+      expect(updateSpy).toHaveBeenCalled();
+    });
+
+    it("cancels a goal via the confirm dialog", async () => {
+      const cancelSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ cancelGoal: cancelSpy }));
+      const user = userEvent.setup();
+      render(<GoalsPage />);
+      const cancelBtns = screen.getAllByRole("button", { name: /^Cancelar$/ });
+      await user.click(cancelBtns[0]);
+      await user.click(screen.getByRole("button", { name: "Cancelar meta" }));
+      expect(cancelSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe("guard branches (coverage)", () => {
+    it("new goal: does not save when name is empty", async () => {
+      const createSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ createGoal: createSpy }));
+      const user = userEvent.setup();
+      render(<GoalsPage />);
+      await user.click(screen.getByText("Nova"));
+      await user.click(screen.getByText("Meta financeira"));
+      await user.type(screen.getByPlaceholderText("0,00"), "100000");
+      await user.click(screen.getByText("Salvar meta"));
+      expect(createSpy).not.toHaveBeenCalled();
+    });
+
+    it("new goal: does not save when target is zero", async () => {
+      const createSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ createGoal: createSpy }));
+      const user = userEvent.setup();
+      render(<GoalsPage />);
+      await user.click(screen.getByText("Nova"));
+      await user.click(screen.getByText("Meta financeira"));
+      await user.type(screen.getByPlaceholderText(/Viagem/i), "Sem alvo");
+      await user.click(screen.getByText("Salvar meta"));
+      expect(createSpy).not.toHaveBeenCalled();
+    });
+
+    it("contribute: does not contribute when amount is empty", async () => {
+      const contribSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ contributeToGoal: contribSpy }));
+      const user = userEvent.setup();
+      render(<GoalsPage />);
+      const addBtns = screen.getAllByRole("button", { name: /^Adicionar$/ });
+      await user.click(addBtns[0]);
+      await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Adicionar" }));
+      expect(contribSpy).not.toHaveBeenCalled();
+    });
+
+    it("detail edit: saving with empty name sends undefined name", async () => {
+      const updateSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateGoal: updateSpy }));
+      const user = userEvent.setup();
+      render(<GoalsPage />);
+      await user.click(screen.getAllByText("Reserva de emergência")[0]);
+      await user.click(screen.getByText("Editar"));
+      const nameInput = screen.getByDisplayValue("Reserva de emergência") as HTMLInputElement;
+      await user.clear(nameInput);
+      await user.click(screen.getByText("Salvar alterações"));
+      expect(updateSpy).toHaveBeenCalled();
     });
   });
 });

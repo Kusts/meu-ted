@@ -1,5 +1,28 @@
 <!DOCTYPE html>
 <html lang="pt">
-<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>Pi Financeiro — Offline</title><script src="/offline-shell.js"></script>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:system-ui,-apple-system,sans-serif;background:#f5f5f5;color:#1a1a1a;padding-bottom:24px}.banner{background:#fef3cd;color:#856404;padding:10px 16px;font-size:13px;font-weight:600;text-align:center;border-bottom:1px solid #ffeeba}.header{padding:16px;background:#fff;border-bottom:1px solid #e0e0e0}.header h1{font-size:18px;font-weight:700}.header .route{font-size:13px;color:#666;margin-top:4px}.meta{font-size:11px;color:#999;padding:12px 16px;border-bottom:1px solid #eee}.list{padding:8px 16px}.item{background:#fff;border-radius:12px;padding:12px 16px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,.08)}.item .label{font-size:14px;font-weight:600}.item .sub{font-size:12px;color:#666;margin-top:2px}.item .amount{font-size:15px;font-weight:700;color:#0E8C5A;margin-top:4px}.loading,.empty{text-align:center;padding:40px;color:#999;font-size:14px}</style></head>
-<body><div class="banner">⚠ Modo offline — dados de quando estava online</div><div class="header"><h1 id="page-title">Pi Financeiro</h1><div class="route" id="page-route"></div></div><div class="meta" id="synced-at"></div><div class="list" id="content"><div class="loading">Carregando…</div></div></body></html>
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><title>Pi Financeiro — Offline</title><script defer src="/offline-shell.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f5f5f5;color:#222;padding-bottom:24px}
+.skip-link{position:absolute;top:-40px;left:0;background:#0E8C5A;color:#fff;padding:8px 16px;z-index:100;transition:top .15s}
+.skip-link:focus{top:0}
+.banner{background:#fff3cd;color:#664d03;padding:10px 16px;font-size:13px;font-weight:600;text-align:center;border-bottom:1px solid #ffc107}
+.header{padding:16px;background:#fff;border-bottom:1px solid #ddd}
+.header h1{font-size:18px;font-weight:700;color:#111}
+.header .route{font-size:13px;color:#555;margin-top:2px}
+.meta{font-size:11px;color:#666;padding:12px 16px;border-bottom:1px solid #eee}
+.list{max-width:640px;margin:0 auto;padding:8px 16px}
+.item{background:#fff;border-radius:12px;padding:12px 16px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,.1);outline:none}
+.item:focus-within{box-shadow:0 0 0 2px #0E8C5A}
+.item .label{font-size:14px;font-weight:600;color:#222}
+.item .sub{font-size:12px;color:#555;margin-top:2px}
+.item .amount{font-size:15px;font-weight:700;color:#0d6b42;margin-top:4px}
+.loading,.empty{text-align:center;padding:40px;color:#666;font-size:14px}
+</style></head>
+<body>
+<a href="#content" class="skip-link">Ir para o conteúdo</a>
+<div role="alert" class="banner">⚠ Modo offline — dados de quando estava online</div>
+<header class="header"><h1 id="page-title">Pi Financeiro</h1><p class="route" id="page-route" aria-live="polite"></p></header>
+<section aria-label="Informações da página"><div class="meta" id="synced-at"></div></section>
+<main id="content" tabindex="-1"><div class="loading" role="status">Carregando…</div></main>
+</body></html>

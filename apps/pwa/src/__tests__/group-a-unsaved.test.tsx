@@ -4,7 +4,7 @@
 import "fake-indexeddb/auto";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { createCommands, type Commands } from "../lib/state/commands";
+import { createCommands } from "../lib/state/commands";
 import { UnsavedChangesProvider, useUnsavedChanges } from "../lib/unsaved-changes";
 import * as endpoints from "@/lib/api/endpoints";
 

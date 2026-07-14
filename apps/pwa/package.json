@@ -24,6 +24,7 @@
     "serwist": "9.5.11"
   },
   "devDependencies": {
+    "@lhci/cli": "^0.15.1",
     "@opennextjs/cloudflare": "^1.19.11",
     "@playwright/test": "^1.61.1",
     "@stryker-mutator/core": "^9.6.1",
@@ -37,13 +38,14 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.0.3",
+    "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "fake-indexeddb": "^6.0.0",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^4.1.9",
+    "vitest": "^4.1.10",
     "wrangler": "^4.104.0"
   }
 }

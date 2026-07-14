@@ -37,7 +37,7 @@ async function run() {
   await page.goto(`${BASE}/registros`, { timeout: 5e3 });
   console.log("Page loaded");
   await page.evaluate(async () => {
-    const r = await navigator.serviceWorker.register("/sw.js");
+    await navigator.serviceWorker.register("/sw.js");
     for (let i = 0; i < 60; i++) { if (navigator.serviceWorker.controller?.state === "activated") return; await new Promise(r => setTimeout(r, 250)); }
   });
   console.log("SW activated");

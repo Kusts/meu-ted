@@ -63,7 +63,7 @@ function AccountFormSheet({
   const [balance, setBalance] = useState("");
 
   function handleSave() {
-    const displayName = name.trim() || bankColor === "#820AD1" ? "Nubank" : bankColor;
+    const displayName = name.trim() || (bankColor === "#820AD1" ? "Nubank" : bankColor);
     onAdd({
       name: displayName,
       kind: kind === "checking" ? "bank" : kind === "savings" ? "bank" : kind === "investment" ? "bank" : "bank",

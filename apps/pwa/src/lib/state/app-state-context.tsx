@@ -40,7 +40,7 @@ import { ApiError } from "@/lib/api/client";
 import * as endpoints from "@/lib/api/endpoints";
 import { runBootstrap, type SnapshotPreload } from "./sync-engine";
 import type { AppStateAction } from "./state-reducer";
-import { migrateV1toV2, loadSnapshotDomain, saveSnapshotDomain } from "./snapshot-store";
+import { migrateV1toV2, loadSnapshotDomain } from "./snapshot-store";
 import { createCommands, type Commands } from "./commands";
 import { useUnsavedChangesSafe } from "@/lib/unsaved-changes";
 import { createProfileAdapter } from "./profile-adapter";

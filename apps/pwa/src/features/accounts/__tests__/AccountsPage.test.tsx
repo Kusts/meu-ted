@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@/lib/test-utils";
+import { render, screen, fireEvent, within } from "@/lib/test-utils";
 import AccountsPage from "../AccountsPage";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
@@ -156,6 +156,139 @@ describe("AccountsPage", () => {
       render(<AccountsPage />);
       expect(screen.queryByText("Detalhes da conta")).not.toBeInTheDocument();
       expect(screen.getByText("Nubank")).toBeInTheDocument();
+    });
+  });
+
+  describe("create / edit / deactivate flows (coverage)", () => {
+    it("opens Nova conta sheet, fills name/kind/balance and saves", () => {
+      const addSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addAccount: addSpy }));
+      render(<AccountsPage />);
+      fireEvent.click(screen.getByText("Nova"));
+      const dialog = screen.getByRole("dialog");
+      fireEvent.change(within(dialog).getByPlaceholderText(/Nubank, Itaú/i), { target: { value: "Banco X" } });
+      fireEvent.click(within(dialog).getByText("Poupança"));
+      fireEvent.change(within(dialog).getByPlaceholderText("0,00"), { target: { value: "100000" } });
+      fireEvent.click(within(dialog).getByText("Salvar conta"));
+      expect(addSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "Banco X", kind: "bank", initialBalanceCents: 100000 }));
+    });
+
+    it("saves with empty name + non-default bank color using bankColor as name", () => {
+      const addSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addAccount: addSpy }));
+      render(<AccountsPage />);
+      fireEvent.click(screen.getByText("Nova"));
+      const dialog = screen.getByRole("dialog");
+      fireEvent.click(within(dialog).getByText("Caixa"));
+      fireEvent.click(within(dialog).getByText("Salvar conta"));
+      expect(addSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "#005CA9" }));
+    });
+
+    it("renders kind buttons and saves with investment kind", () => {
+      const addSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addAccount: addSpy }));
+      render(<AccountsPage />);
+      fireEvent.click(screen.getByText("Nova"));
+      const dialog = screen.getByRole("dialog");
+      fireEvent.click(within(dialog).getByText("Investimento"));
+      fireEvent.click(within(dialog).getByText("Salvar conta"));
+      expect(addSpy).toHaveBeenCalledWith(expect.objectContaining({ kind: "bank" }));
+    });
+
+    it("edits an account name and saves", () => {
+      const updateSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateAccount: updateSpy }));
+      render(<AccountsPage />);
+      fireEvent.click(screen.getAllByTestId("account-card")[0]);
+      fireEvent.click(screen.getByText("Editar conta"));
+      const input = screen.getByDisplayValue("Nubank") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Nubank Editado" } });
+      fireEvent.click(screen.getByText("Salvar"));
+      expect(updateSpy).toHaveBeenCalledWith("acc1", { name: "Nubank Editado" });
+    });
+
+    it("edits account but empty name does not save", () => {
+      const updateSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateAccount: updateSpy }));
+      render(<AccountsPage />);
+      fireEvent.click(screen.getAllByTestId("account-card")[0]);
+      fireEvent.click(screen.getByText("Editar conta"));
+      const input = screen.getByDisplayValue("Nubank") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "" } });
+      fireEvent.click(screen.getByText("Salvar"));
+      expect(updateSpy).not.toHaveBeenCalled();
+    });
+
+    it("deactivates an account via confirm dialog", async () => {
+      const deactSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ deactivateAccount: deactSpy }));
+      render(<AccountsPage />);
+      fireEvent.click(screen.getAllByTestId("account-card")[0]);
+      fireEvent.click(screen.getByText("Desativar conta"));
+      await fireEvent.click(await screen.findByRole("button", { name: "Desativar" }));
+      expect(deactSpy).toHaveBeenCalledWith("acc1");
+    });
+  });
+
+  describe("kind labels (coverage)", () => {
+    it("labels credit_card / investment / cash kinds", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({
+        accounts: [
+          { ...mockAccounts[0], id: "a-inv", kind: "investment" as any, name: "Invest X" }, // eslint-disable-line @typescript-eslint/no-explicit-any
+          { ...mockAccounts[0], id: "a-cash", kind: "cash" as any, name: "Cash X" }, // eslint-disable-line @typescript-eslint/no-explicit-any
+        ],
+        transactions: [],
+      }));
+      render(<AccountsPage />);
+      expect(screen.getByText("Investimento")).toBeInTheDocument();
+      expect(screen.getByText("Dinheiro")).toBeInTheDocument();
+    });
+  });
+
+  describe("edge cases (coverage)", () => {
+    it("ignores balance input longer than 12 digits in new account form", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({}));
+      render(<AccountsPage />);
+      fireEvent.click(screen.getByText("Nova"));
+      const dialog = screen.getByRole("dialog");
+      const balanceInput = within(dialog).getByPlaceholderText("0,00") as HTMLInputElement;
+      fireEvent.change(balanceInput, { target: { value: "1234567890123" } });
+      expect(balanceInput.value).toBe("");
+    });
+
+    it("detail sheet shows Outro for unknown kind", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({
+        accounts: [{ ...mockAccounts[0], id: "a-unk", kind: "zzz" as any, name: "Estranho" }], // eslint-disable-line @typescript-eslint/no-explicit-any
+        transactions: [],
+      }));
+      render(<AccountsPage />);
+      fireEvent.click(screen.getAllByTestId("account-card")[0]);
+      expect(within(screen.getByRole("dialog")).getByText("Outro")).toBeInTheDocument();
+    });
+
+    it("uses default color when account.color is undefined (list + detail)", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({
+        accounts: [{ ...mockAccounts[0], id: "a-nocolor", color: undefined as any, name: "Sem Cor", kind: "checking" as any }], // eslint-disable-line @typescript-eslint/no-explicit-any
+        transactions: [],
+      }));
+      render(<AccountsPage />);
+      fireEvent.click(screen.getAllByTestId("account-card")[0]);
+      expect(screen.getByText("Detalhes da conta")).toBeInTheDocument();
+    });
+
+    it("evaluates income branch in mini-history filter", () => {
+      const base = ALL_MOCK_TRANSACTIONS[0];
+      const incomeTx = { ...base, id: "tx-inc", accountId: "acc1", kind: "income" as const, description: "Salário" };
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ transactions: [...ALL_MOCK_TRANSACTIONS, incomeTx] }));
+      render(<AccountsPage />);
+      fireEvent.click(screen.getAllByTestId("account-card")[0]);
+      expect(screen.getByText("Supermercado Extra")).toBeInTheDocument();
+    });
+
+    it("shows empty state when there are no bank accounts", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ accounts: [], transactions: [] }));
+      render(<AccountsPage />);
+      expect(screen.getByText(/Nenhuma conta cadastrada/)).toBeInTheDocument();
     });
   });
 });

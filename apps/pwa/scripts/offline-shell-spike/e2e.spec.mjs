@@ -28,7 +28,7 @@ function sf(res, f, m) { const fp = path.join(P, f); if (fs.existsSync(fp)) { re
 async function ensureSW(page) {
   await page.goto(`${BASE}/registros`, { timeout: 5e3 });
   await page.evaluate(async () => {
-    const r = await navigator.serviceWorker.register("/sw.js");
+    await navigator.serviceWorker.register("/sw.js");
     for (let i = 0; i < 40; i++) { if (navigator.serviceWorker.controller?.state === "activated") return; await new Promise(r => setTimeout(r, 250)); }
   });
 }

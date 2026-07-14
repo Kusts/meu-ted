@@ -2,12 +2,15 @@ import { installSerwist } from "@serwist/sw";
 import { NetworkFirst, CacheFirst } from "serwist";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const self: any;
 declare class FetchEvent extends Event { request: Request; respondWith(p: Promise<Response>): void; }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare class MessageEvent extends Event { data: any; }
-const __SW_MANIFEST = self.__SW_MANIFEST;
+
+// Reference the Serwist-injected manifest so Serwist can replace it at build
+// time. The value is intentionally unused.
+const __SW_MANIFEST: Array<{ url: string; revision: string | null }> | undefined = self.__SW_MANIFEST;
+void __SW_MANIFEST;
 
 const CACHE_PREFIX = "pi-finance";
 const shellRoutes = ["/","/registros","/contas","/categorias","/a-pagar","/orcamentos","/metas","/cartoes","/assinaturas","/patrimonio","/relatorios","/perfil"];

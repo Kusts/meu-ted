@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
@@ -106,30 +107,44 @@ function NewCardSheet({
     creditLimitCents: number;
     closingDay: number;
     dueDay: number;
-  }) => void;
+  }) => void | Promise<void>;
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [brand, setBrand] = useState("Nubank");
   const [name, setName] = useState("");
   const [limit, setLimit] = useState("");
   const [closingDay, setClosingDay] = useState("1");
   const [dueDay, setDueDay] = useState("10");
 
-  function handleSave() {
+  useEffect(() => {
+    if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setBrand("Nubank");
+      setName("");
+      setLimit("");
+      markClean();
+    }
+  }, [open, markClean]);
+
+  async function handleSave() {
     const displayName = name.trim() || brand;
-    onAddCard({
-      name: displayName,
-      creditLimitCents: parseBRLToCents(limit),
-      closingDay: parseInt(closingDay, 10) || 15,
-      dueDay: parseInt(dueDay, 10) || 25,
-    });
-    setName("");
-    setLimit("");
-    onClose();
+    try {
+      await onAddCard({
+        name: displayName,
+        creditLimitCents: parseBRLToCents(limit),
+        closingDay: parseInt(closingDay, 10) || 15,
+        dueDay: parseInt(dueDay, 10) || 25,
+      });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
   }
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Novo cartão">
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
             Bandeira / banco
@@ -139,7 +154,7 @@ function NewCardSheet({
               <button
                 key={b.name}
                 type="button"
-                onClick={() => setBrand(b.name)}
+                onClick={() => { markDirty(); setBrand(b.name); }}
                 className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-colors ${
                   brand === b.name ? "bg-primary text-white" : "bg-fill-light text-text-secondary"
                 }`}
@@ -216,11 +231,22 @@ function PayStatementSheet({
   onClose: () => void;
   card: CardData | null;
   accounts: { id: string; name: string; kind: string }[];
-  onPay: (input: { amountCents: number; fromAccountId: string }) => void;
+  onPay: (input: { amountCents: number; fromAccountId: string }) => void | Promise<void>;
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [mode, setMode] = useState<"full" | "partial">("full");
   const [partialDisplay, setPartialDisplay] = useState("");
   const [accountId, setAccountId] = useState("");
+
+  useEffect(() => {
+    if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMode("full");
+      setPartialDisplay("");
+      setAccountId("");
+      markClean();
+    }
+  }, [open, markClean]);
 
   if (!card) return null;
 
@@ -230,15 +256,20 @@ function PayStatementSheet({
   const remainingAfterPay = Math.max(0, fullAmountCents - amountCents);
   const checkingAccounts = accounts.filter((a) => a.kind !== "credit_card");
 
-  function handlePay() {
+  async function handlePay() {
     if (amountCents <= 0 || !accountId) return;
-    onPay({ amountCents, fromAccountId: accountId });
-    onClose();
+    try {
+      await onPay({ amountCents, fromAccountId: accountId });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
   }
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Pagar fatura">
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-5" onChangeCapture={markDirty}>
         <div className="flex items-center gap-3 rounded-[14px] bg-fill-light px-3.5 py-3">
           <div className="flex h-[44px] w-[70px] flex-none items-center justify-center rounded-[10px] font-mono text-[10px] font-bold text-white"
             style={{ background: gradientFor(card.color) }}>
@@ -257,11 +288,11 @@ function PayStatementSheet({
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo de pagamento</label>
           <div className="flex gap-1 rounded-xl bg-fill-light p-1">
-            <button type="button" onClick={() => setMode("full")}
+            <button type="button" onClick={() => { markDirty(); setMode("full"); }}
               className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-colors ${mode === "full" ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"}`}>
               Total
             </button>
-            <button type="button" onClick={() => setMode("partial")}
+            <button type="button" onClick={() => { markDirty(); setMode("partial"); }}
               className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-colors ${mode === "partial" ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"}`}>
               Parcial
             </button>
@@ -299,7 +330,7 @@ function PayStatementSheet({
           ) : (
             <div className="flex flex-wrap gap-2">
               {checkingAccounts.map((acc) => (
-                <button key={acc.id} type="button" onClick={() => setAccountId(acc.id === accountId ? "" : acc.id)}
+                <button key={acc.id} type="button" onClick={() => { markDirty(); setAccountId(acc.id === accountId ? "" : acc.id); }}
                   className={`rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${accountId === acc.id ? "bg-primary text-white" : "bg-fill-light text-text-secondary"}`}>
                   {acc.name}
                 </button>
@@ -332,28 +363,45 @@ function EditSheet({
   open: boolean;
   onClose: () => void;
   card: CardData | null;
-  onUpdate: (id: string, input: { name?: string; creditLimitCents?: number; closingDay?: number; dueDay?: number }) => void;
+  onUpdate: (id: string, input: { name?: string; creditLimitCents?: number; closingDay?: number; dueDay?: number }) => void | Promise<void>;
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [name, setName] = useState(card?.name ?? "");
   const [limit, setLimit] = useState("");
   const [closingDay, setClosingDay] = useState(String(card?.closingDay ?? "15"));
   const [dueDay, setDueDay] = useState(String(card?.dueDay ?? "25"));
 
+  useEffect(() => {
+    if (card && open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setName(card.name);
+      setLimit("");
+      setClosingDay(String(card.closingDay));
+      setDueDay(String(card.dueDay));
+      markClean();
+    }
+  }, [card, open, markClean]);
+
   if (!card) return null;
 
-  function handleSave() {
-    onUpdate(card!.id, {
-      name: name.trim() || card!.name,
-      creditLimitCents: parseBRLToCents(limit) || card!.creditLimitCents,
-      closingDay: parseInt(closingDay, 10) || card!.closingDay,
-      dueDay: parseInt(dueDay, 10) || card!.dueDay,
-    });
-    onClose();
+  async function handleSave() {
+    try {
+      await onUpdate(card!.id, {
+        name: name.trim() || card!.name,
+        creditLimitCents: parseBRLToCents(limit) || card!.creditLimitCents,
+        closingDay: parseInt(closingDay, 10) || card!.closingDay,
+        dueDay: parseInt(dueDay, 10) || card!.dueDay,
+      });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
   }
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Editar cartão">
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <fieldset>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Apelido</label>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)}
@@ -410,38 +458,50 @@ function PurchaseEditSheet({
   categories: { id: string; name: string }[];
   open: boolean;
   onClose: () => void;
-  onSave: (input: { description: string; amountCents: number; date: string; categoryId?: string }) => void;
+  onSave: (input: { description: string; amountCents: number; date: string; categoryId?: string }) => void | Promise<void>;
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [description, setDescription] = useState("");
   const [amountDisplay, setAmountDisplay] = useState("");
   const [date, setDate] = useState("");
   const [categoryId, setCategoryId] = useState("");
 
   useEffect(() => {
-    if (purchase) {
+    if (purchase && open) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setDescription(purchase.description);
       setAmountDisplay(formatInputBRL(String(purchase.amountCents)));
       setDate(purchase.date);
       setCategoryId(purchase.categoryId ?? "");
+      markClean();
     }
-  }, [purchase]);
+  }, [purchase, open, markClean]);
 
   if (!purchase) return null;
 
-  function handleSave() {
-    onSave({
-      description: description.trim(),
-      amountCents: parseBRLToCents(amountDisplay),
-      date,
-      categoryId: categoryId || undefined,
-    });
+  function handleClose() {
+    markClean();
     onClose();
   }
 
+  async function handleSave() {
+    try {
+      await onSave({
+        description: description.trim(),
+        amountCents: parseBRLToCents(amountDisplay),
+        date,
+        categoryId: categoryId || undefined,
+      });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
+  }
+
   return (
-    <BottomSheet open={open} onClose={onClose} title="Editar compra">
-      <div className="flex flex-col gap-4">
+    <BottomSheet open={open} onClose={handleClose} title="Editar compra">
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <fieldset>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Descrição</label>
           <input type="text" value={description} onChange={(e) => setDescription(e.target.value)}

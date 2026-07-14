@@ -1,7 +1,13 @@
+// Tests for clearSensitiveSession and useSession.
+// Restores the original behavioral coverage (committed at 1e233a2) and retains
+// the granular flag-level / failure-isolation tests added later — no behavioral
+// test lost.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { renderHook } from "@testing-library/react";
 import "fake-indexeddb/auto";
 import { getToken, setToken } from "@/lib/auth/token-store";
 import { clearSensitiveSession } from "./session";
+import { useSession } from "@/lib/auth/session-context";
 import { writeV2Snapshot, readV2Snapshot } from "@/lib/state/snapshot-db";
 
 const SNAPSHOT_KEY = "pi-finance:snapshot:v1";
@@ -195,5 +201,76 @@ describe("clearSensitiveSession", () => {
     ).resolves.toBeUndefined();
     expect(getToken()).toBeNull();
     expect(localStorage.getItem(SNAPSHOT_KEY)).toBeNull();
+  });
+
+  it("does nothing when no flags are set", async () => {
+    await clearSensitiveSession({});
+    expect(getToken()).toBeNull();
+    expect(localStorage.getItem(SNAPSHOT_KEY)).toBeNull();
+    expect(localStorage.getItem(PROFILE_KEY)).toBeNull();
+  });
+
+  it("clears the token when clearToken is set", async () => {
+    const ts = await import("@/lib/auth/token-store");
+    const spy = vi.spyOn(ts, "clearToken");
+    await clearSensitiveSession({ clearToken: true });
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
+  it("clears the v1 snapshot (and v2) when clearV1Snapshot is set", async () => {
+    localStorage.setItem(SNAPSHOT_KEY, "v1-data");
+    await clearSensitiveSession({ clearV1Snapshot: true });
+    // v1 localStorage removed; v2 IndexedDB delete is awaited (caught on failure)
+    expect(localStorage.getItem(SNAPSHOT_KEY)).toBeNull();
+  });
+
+  it("clears the profile when clearProfile is set", async () => {
+    localStorage.setItem(PROFILE_KEY, "profile-data");
+    await clearSensitiveSession({ clearProfile: true });
+    expect(localStorage.getItem(PROFILE_KEY)).toBeNull();
+  });
+
+  it("invokes the clearMemory callback when provided", async () => {
+    const cb = vi.fn();
+    await clearSensitiveSession({ clearMemory: cb });
+    expect(cb).toHaveBeenCalledOnce();
+  });
+
+  it("isolates store failures: a token error does not abort profile clear", async () => {
+    const ts = await import("@/lib/auth/token-store");
+    vi.spyOn(ts, "clearToken").mockImplementation(() => {
+      throw new Error("token store boom");
+    });
+    localStorage.setItem(PROFILE_KEY, "profile-data");
+    await expect(
+      clearSensitiveSession({ clearToken: true, clearProfile: true }),
+    ).resolves.toBeUndefined();
+    // profile clear still happened despite the token failure
+    expect(localStorage.getItem(PROFILE_KEY)).toBeNull();
+  });
+
+  it("is idempotent across repeated calls", async () => {
+    localStorage.setItem(SNAPSHOT_KEY, "v1-data");
+    localStorage.setItem(PROFILE_KEY, "profile-data");
+    const ts = await import("@/lib/auth/token-store");
+    const spy = vi.spyOn(ts, "clearToken");
+    await clearSensitiveSession({
+      clearToken: true,
+      clearV1Snapshot: true,
+      clearProfile: true,
+    });
+    await clearSensitiveSession({
+      clearToken: true,
+      clearV1Snapshot: true,
+      clearProfile: true,
+    });
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem(SNAPSHOT_KEY)).toBeNull();
+    expect(localStorage.getItem(PROFILE_KEY)).toBeNull();
+  });
+
+  it("useSession fallback returns no-op expireSession when outside provider", () => {
+    const { result } = renderHook(() => useSession());
+    expect(() => result.current.expireSession("test")).not.toThrow();
   });
 });
