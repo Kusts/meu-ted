@@ -1,6 +1,9 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "mutate": [
+    "src/lib/state/commands.ts",
+    "src/lib/state/profile-adapter.ts",
+    "src/lib/state/subscriptions-adapter.ts",
     "src/lib/state/snapshot-db.ts"
   ],
   "testRunner": "vitest",

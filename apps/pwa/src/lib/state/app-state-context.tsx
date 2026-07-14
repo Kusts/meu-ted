@@ -43,6 +43,8 @@ import type { AppStateAction } from "./state-reducer";
 import { migrateV1toV2, loadSnapshotDomain, saveSnapshotDomain } from "./snapshot-store";
 import { createCommands, type Commands } from "./commands";
 import { useUnsavedChangesSafe } from "@/lib/unsaved-changes";
+import { createProfileAdapter } from "./profile-adapter";
+import { createSubscriptionsAdapter } from "./subscriptions-adapter";
 
 export interface AppState {
   // Data
@@ -600,7 +602,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.updateAccount(id, input);
+        await commandsRef.current!.updateAccount(id, input);
       } catch (e) {
         setAccounts((curr) =>
           curr.map((a) => (a.id === id ? prev : a)),
@@ -622,7 +624,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.deactivateAccount(id);
+      await commandsRef.current!.deactivateAccount(id);
     } catch (e) {
       setAccounts((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
@@ -644,7 +646,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.updateCategory(id, input);
+        await commandsRef.current!.updateCategory(id, input);
       } catch (e) {
         setCategories((curr) =>
           curr.map((c) => (c.id === id ? prev : c)),
@@ -665,7 +667,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.deactivateCategory(id);
+      await commandsRef.current!.deactivateCategory(id);
     } catch (e) {
       setCategories((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
@@ -692,7 +694,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.addAccount(input);
+        const created = await commandsRef.current!.addAccount(input);
         setAccounts((prev) =>
           prev.map((a) =>
             a.id === optimisticId
@@ -728,7 +730,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.addCategory(input);
+        const created = await commandsRef.current!.addCategory(input);
         setCategories((prev) =>
           prev.map((c) =>
             c.id === optimisticId ? { ...created, icon: c.icon } : c,
@@ -856,7 +858,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.addSubscription(input);
+        const created = await commandsRef.current!.addSubscription(input);
         setSubscriptions((prev) =>
           prev.map((s) => (s.id === optimisticId ? created : s)),
         );
@@ -880,7 +882,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      await endpoints.cancelSubscription(id);
+      await commandsRef.current!.cancelSubscription(id);
     } catch (e) {
       setSubscriptions((curr) =>
         curr.map((s) => (s.id === id ? prev : s)),
@@ -910,7 +912,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.updateSubscription(id, input);
+      await commandsRef.current!.updateSubscription(id, input);
     } catch (e) {
       // Rollback
       setSubscriptions((curr) =>
@@ -923,43 +925,23 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // ── Lazy load subscriptions (not fetched during bootstrap) ────
 
   const refreshSubscriptions = useCallback(async () => {
-    if (!apiUsable()) return; // keep existing data (mock or empty)
-
     const token = getAuthToken();
     if (!token) return;
 
-    try {
-      const data = await endpoints.fetchSubscriptions();
-      setSubscriptions(data);
-      // Persist live subscriptions to the canonical v2 snapshot (IndexedDB).
-      // Best-effort: a snapshot write failure must not break the UI.
-      await saveSnapshotDomain(token, "subscriptions", data).catch(() => {});
-      setSyncFor("subscriptions", {
-        source: "live",
-        syncedAt: new Date().toISOString(),
-      });
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
-        expireSession();
-        return;
-      }
-      // Offline fallback: read the canonical v2 snapshot — never the v1 localStorage.
-      const snap = await loadSnapshotDomain(token, "subscriptions");
-      if (snap) {
-        setSubscriptions(snap.data as Subscription[]);
-        setSyncFor("subscriptions", {
-          source: "snapshot",
-          syncedAt: snap.syncedAt,
-        });
-      } else {
-        setSubscriptions([]);
-        setSyncFor("subscriptions", {
-          source: "unavailable",
-          syncedAt: null,
-        });
-      }
+    const adapter = createSubscriptionsAdapter({ token, online: apiUsable() });
+    const result = await adapter.refresh();
+
+    if (result === null) {
+      // Offline — keep existing data (mock or empty)
+      return;
     }
-  }, [setSyncFor, expireSession]);
+
+    setSubscriptions(result.data);
+    setSyncFor("subscriptions", {
+      source: result.source,
+      syncedAt: result.syncedAt,
+    });
+  }, [setSyncFor]);
 
   const createTransfer = useCallback(
     async (input: {
@@ -1168,7 +1150,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.createBudget(input);
+        const created = await commandsRef.current!.createBudget(input);
         setBudgets((curr) =>
           curr.map((b) => (b.id === optimistic.id ? created : b)),
         );
@@ -1205,7 +1187,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.updateBudget(id, input);
+        await commandsRef.current!.updateBudget(id, input);
       } catch (e) {
         setBudgets((curr) =>
           curr.map((b) => (b.id === id ? prev : b)),
@@ -1238,7 +1220,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.createGoal(input);
+        const created = await commandsRef.current!.createGoal(input);
         setGoals((curr) =>
           curr.map((g) => (g.id === optimistic.id ? created : g)),
         );
@@ -1271,7 +1253,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.contributeToGoal(id, input);
+        await commandsRef.current!.contributeToGoal(id, input);
       } catch (e) {
         setGoals((curr) =>
           curr.map((g) => (g.id === id ? { ...prev } : g)),
@@ -1292,7 +1274,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.cancelGoal(id);
+      await commandsRef.current!.cancelGoal(id);
     } catch (e) {
       setGoals((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
@@ -1318,7 +1300,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.updateGoal(id, input);
+      await commandsRef.current!.updateGoal(id, input);
     } catch (e) {
       setGoals((curr) => curr.map((g) => (g.id === id ? prev : g)));
       handleWriteErrorRef.current(e);
@@ -1367,7 +1349,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const updated = await endpoints.payStatement(statementId, input);
+        const updated = await commandsRef.current!.payStatement(statementId, input);
         setCardStatements((curr) =>
           curr.map((s) =>
             s.id === statementId
@@ -1410,7 +1392,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        await endpoints.createInstallments(input);
+        await commandsRef.current!.createInstallments(input);
         const stmts = await endpoints.fetchStatements(input.accountId);
         setCardStatements(stmts);
       } catch (e) {
@@ -1420,12 +1402,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  // ── Profile save/load (Slice B) ───────────────────────────
-  // saveProfile updates the household profile. When API is configured
-  // and a token exists it PATCHes /profile and reflects the result;
-  // otherwise it falls back to a local-only update so the PWA is usable
-  // in mock mode (and that local value survives refreshes via
-  // localStorage because the initial state hydrates from it).
+  // ── Profile adapter ────────────────────────────────────────
+  // Injected persistence/API projection adapter. The adapter handles both
+  // API mode (endpoints.patchProfile/fetchProfile) and local fallback mode
+  // (localStorage). The provider facade (saveProfile, refreshProfile) is
+  // unchanged.
+  const profileAdapter = useMemo(
+    () => createProfileAdapter({ apiUsable: apiUsable() }),
+    [],
+  );
+
+  // ── Profile save/load ─────────────────────────────────────
+  // Delegates to the injected adapter. When API is configured, the adapter
+  // calls endpoints.patchProfile and returns the server projection; otherwise
+  // it applies a local merge with defaults. In both cases setProfile is
+  // called with the result.
   const saveProfile = useCallback(
     async (input: {
       name?: string;
@@ -1434,67 +1425,41 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       avatarColor?: string;
       greetingStyle?: Profile["greetingStyle"];
     }) => {
-      if (apiUsable()) {
-        try {
-          const updated = await endpoints.patchProfile(input);
-          setProfile(updated);
-        } catch (e) {
-          handleWriteErrorRef.current(e);
-        }
-        return;
+      try {
+        const result = await profileAdapter.save(input, profile);
+        setProfile(result);
+      } catch (e) {
+        handleWriteErrorRef.current(e);
       }
-      // Local-only fallback. Use a stable synthetic household id so
-      // the persisted shape matches the API contract.
-      const householdId = profile?.householdId ?? "local-household";
-      const next: Profile = {
-        householdId,
-        name: input.name ?? profile?.name ?? "Usuário",
-        email: input.email ?? profile?.email ?? "",
-        phone: input.phone ?? profile?.phone ?? "",
-        avatarColor: input.avatarColor ?? profile?.avatarColor ?? "#0E8C5A",
-        greetingStyle: input.greetingStyle ?? profile?.greetingStyle ?? "auto",
-        updatedAt: new Date().toISOString(),
-      };
-      setProfile(next);
     },
-    [profile],
+    [profile, profileAdapter],
   );
 
   const refreshProfile = useCallback(async () => {
-    if (!apiUsable()) return;
     try {
-      const fresh = await endpoints.fetchProfile();
-      setProfile(fresh);
+      const fresh = await profileAdapter.refresh();
+      if (fresh) setProfile(fresh);
     } catch {
       // ignore — keep previous profile state
     }
-  }, []);
+  }, [profileAdapter]);
 
-  // ── Local-mode persistence for profile (mock/local-storage) ─────────
+  // ── Local-mode persistence for profile (mock/local-storage) ─
   // When the API is configured, saveProfile already persists server-side;
   // in mock mode we hydrate from localStorage on mount and write back
-  // after every saveProfile call. This is what makes the spec test
-  // "edits survive a refresh" pass without a real backend.
+  // after every saveProfile call.
   useEffect(() => {
     if (apiUsable()) return;
-    try {
-      const raw = localStorage.getItem("pi-finance:profile");
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (raw) setProfile(JSON.parse(raw) as Profile);
-    } catch {
-      // ignore corrupt localStorage
-    }
-  }, []);
+    const local = profileAdapter.hydrate();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (local) setProfile(local);
+  }, [profileAdapter]);
 
   useEffect(() => {
     if (apiUsable()) return;
     if (!profile) return;
-    try {
-      localStorage.setItem("pi-finance:profile", JSON.stringify(profile));
-    } catch {
-      // localStorage may be unavailable (private mode) — silently noop
-    }
-  }, [profile]);
+    profileAdapter.persist(profile);
+  }, [profile, profileAdapter]);
 
 
   return (

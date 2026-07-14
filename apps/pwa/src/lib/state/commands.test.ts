@@ -11,7 +11,7 @@
  */
 import "fake-indexeddb/auto";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createCommands, OfflineWriteError } from "./commands";
+import { createCommands, OfflineWriteError, type Commands } from "./commands";
 import * as endpoints from "@/lib/api/endpoints";
 import type { AppStateAction } from "./state-reducer";
 
@@ -165,6 +165,50 @@ describe("commands — offline invariant (representative create/update/delete/pa
         toAccountId: "a2",
       }),
     ).rejects.toBeInstanceOf(OfflineWriteError);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  // ── Bulk: all remaining command methods online ✓, offline ✗, rejection propagation ─
+  it.each([
+    ["addAccount", (c: Commands) => c.addAccount({name:"Test",kind:"bank",initialBalanceCents:0})],
+    ["updateAccount", (c: Commands) => c.updateAccount("a1",{name:"X"})],
+    ["deactivateAccount", (c: Commands) => c.deactivateAccount("a1")],
+    ["addCategory", (c: Commands) => c.addCategory({name:"Food",kind:"expense"})],
+    ["updateCategory", (c: Commands) => c.updateCategory("c1",{name:"X"})],
+    ["deactivateCategory", (c: Commands) => c.deactivateCategory("c1")],
+    ["createBudget", (c: Commands) => c.createBudget({categoryId:"c1",name:"B",amountCents:1000,period:"monthly",startDate:"2026-07-01"})],
+    ["updateBudget", (c: Commands) => c.updateBudget("b1",{amountCents:2000})],
+    ["createGoal", (c: Commands) => c.createGoal({name:"G",goalType:"savings",targetAmountCents:5000,startDate:"2026-07-01"})],
+    ["contributeToGoal", (c: Commands) => c.contributeToGoal("g1",{amountCents:1000})],
+    ["cancelGoal", (c: Commands) => c.cancelGoal("g1")],
+    ["updateGoal", (c: Commands) => c.updateGoal("g1",{name:"G2"})],
+    ["cancelSubscription", (c: Commands) => c.cancelSubscription("s1")],
+    ["updateSubscription", (c: Commands) => c.updateSubscription("s1",{name:"S2"})],
+    ["payStatement", (c: Commands) => c.payStatement("st1",{amountCents:10000,fromAccountId:"a1"})],
+    ["createInstallments", (c: Commands) => c.createInstallments({accountId:"a1",description:"X",totalAmountCents:10000,purchaseDate:"2026-07-01",installmentsTotal:3})],
+    ["patchProfile", (c: Commands) => c.patchProfile({name:"U"})],
+  ])("%s: online resolves, failure propagates, offline rejects", async (name, call) => {
+    // Online success: mock resolves, method resolves, CLEAR_WRITE_ERROR dispatched
+    vi.spyOn(endpoints, name as keyof typeof endpoints).mockResolvedValue({} as never);
+    const dispatch = vi.fn();
+    const onlineCmds = createCommands(ctx(true, dispatch));
+    await expect(call(onlineCmds)).resolves.toBeDefined();
+    expect(dispatch).toHaveBeenCalledWith({ type: "CLEAR_WRITE_ERROR" } satisfies AppStateAction);
+    vi.restoreAllMocks();
+    // Online failure: mock rejects, method propagates error (catch does NOT swallow)
+    vi.spyOn(endpoints, name as keyof typeof endpoints).mockRejectedValue(new Error("api-down"));
+    const failDispatch = vi.fn();
+    const failCmds = createCommands(ctx(true, failDispatch));
+    await expect(call(failCmds)).rejects.toThrow("api-down");
+    expect(failDispatch).not.toHaveBeenCalledWith({ type: "CLEAR_WRITE_ERROR" } satisfies AppStateAction);
+    vi.restoreAllMocks();
+    // Offline: rejects with OfflineWriteError containing method name, no API call
+    const spy = vi.spyOn(endpoints, name as keyof typeof endpoints);
+    const offlineCmds = createCommands(ctx(false));
+    await expect(call(offlineCmds)).rejects.toBeInstanceOf(OfflineWriteError);
+    await expect(call(offlineCmds)).rejects.toMatchObject({
+      message: expect.stringContaining(name),
+    });
     expect(spy).not.toHaveBeenCalled();
   });
 });

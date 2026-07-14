@@ -15,6 +15,8 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     include: [
       "src/lib/state/commands.test.ts",
+      "src/lib/state/profile-adapter.test.ts",
+      "src/lib/state/subscriptions-adapter.test.ts",
       "src/lib/state/snapshot-db.test.ts",
       "src/lib/state/sync-engine.test.ts",
       "src/lib/state/__tests__/snapshot-store.test.ts",

@@ -15,7 +15,7 @@
  */
 import type { AppStateAction } from "./state-reducer";
 import type {
-  Account, Budget, Category, Goal, Payable, Subscription, Transaction,
+  Account, Budget, Category, Goal, Payable, Subscription, Transaction, CardStatement,
 } from "./types";
 import * as endpoints from "@/lib/api/endpoints";
 
@@ -223,7 +223,7 @@ export interface Commands {
   updateSubscription(id: string, input: SubscriptionUpdateInput): Promise<Subscription>;
 
   // ── Statements / Installments ──────────────────────────────────
-  payStatement(statementId: string, input: PayStatementInput): Promise<unknown>;
+  payStatement(statementId: string, input: PayStatementInput): Promise<CardStatement>;
   createInstallments(input: InstallmentsInput): Promise<unknown>;
 
   // ── Profile patch ──────────────────────────────────────────────
