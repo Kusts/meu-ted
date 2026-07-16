@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto";
 import { renderHook, act, waitFor } from "@/lib/test-utils";
 import { AppStateProvider, useAppState } from "../app-state-context";
 import * as endpoints from "@/lib/api/endpoints";
@@ -7,9 +8,15 @@ import type { Account, Transaction, Payable } from "@/lib/state/types";
 
 // ─── Spy setup ──────────────────────────────────────────────────────────────
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.restoreAllMocks();
   localStorage.clear();
+  // v2 snapshot lives in IndexedDB — clear it between tests so a prior test's
+  // persisted snapshot can't leak in as a "snapshot" source.
+  const dbs = await indexedDB.databases();
+  for (const db of dbs) {
+    if (db.name) indexedDB.deleteDatabase(db.name);
+  }
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -37,6 +44,8 @@ function mockApiReads(
   vi.spyOn(endpoints, "fetchSubscriptions").mockResolvedValue([]);
   vi.spyOn(endpoints, "fetchCards").mockResolvedValue([]);
   vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+  vi.spyOn(endpoints, "fetchProfile").mockResolvedValue(null);
+  vi.spyOn(endpoints, "fetchQuickInsights").mockResolvedValue([]);
 }
 
 function mockAccount(id: string, name: string): Account {
@@ -50,6 +59,30 @@ function mockAccount(id: string, name: string): Account {
     updatedAt: "2026-01-01",
     balanceCents: 500_00,
   };
+}
+
+// Seeds a valid v1 (localStorage) snapshot. The production bootstrap migrates
+// this to v2 (IndexedDB) before rendering — this exercises the real migration
+// path (no direct v2 writes here, and no removed v1 helper calls).
+function seedV1Snapshot<T>(domain: string, data: T[], token = "test-token-abc"): void {
+  const V1_KEY = "pi-finance:snapshot:v1";
+  let base: { version: 1; token: string; syncedAt: Record<string, string>; data: Record<string, unknown> } = {
+    version: 1, token, syncedAt: {}, data: {},
+  };
+  try {
+    const raw = localStorage.getItem(V1_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.version === 1 && parsed.token === token) {
+        base = parsed;
+      }
+    }
+  } catch { /* ignore */ }
+  localStorage.setItem(V1_KEY, JSON.stringify({
+    ...base,
+    data: { ...base.data, [domain]: data },
+    syncedAt: { ...base.syncedAt, [domain]: new Date().toISOString() },
+  }));
 }
 
 const mockP1: Payable = {
@@ -261,10 +294,7 @@ describe("AppStateProvider — API read path", () => {
   });
 
   it("on fetch failure WITH a prior snapshot: hydrates snapshot in read-only", async () => {
-    const { saveDomain } = await import("@/lib/state/snapshot-store");
-    saveDomain("test-token-abc", "accounts", [
-      mockAccount("snap-1", "Snapshot Nubank"),
-    ]);
+    seedV1Snapshot("accounts", [mockAccount("snap-1", "Snapshot Nubank")]);
     vi.mocked(endpoints.fetchAccounts).mockRejectedValue(
       new Error("Network error"),
     );
@@ -308,6 +338,331 @@ describe("AppStateProvider — API read path", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.sync.accounts.source).toBe("live");
     expect(result.current.readOnly).toBe(false);
+  });
+
+  it("bootstrap does NOT call fetchSubscriptions (lazy-load only)", async () => {
+    const spy = vi.spyOn(endpoints, "fetchSubscriptions");
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // fetchSubscriptions should never be called during bootstrap
+    expect(spy).not.toHaveBeenCalled();
+    // Subscriptions initial state is empty (not mock) when API is configured
+    expect(result.current.subscriptions).toHaveLength(0);
+  });
+
+  it("merges credit cards from fetchCards into accounts", async () => {
+    const checking = mockAccount("a1", "Nubank");
+    const card1: Account = {
+      id: "card-1",
+      name: "Nubank Card",
+      kind: "credit_card",
+      balanceCents: 0,
+      creditLimitCents: 5000_00,
+      closingDay: 15,
+      dueDay: 25,
+    };
+    vi.spyOn(endpoints, "fetchAccounts").mockResolvedValue([checking]);
+    vi.spyOn(endpoints, "fetchCategories").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchTransactions").mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    vi.spyOn(endpoints, "fetchPayables").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchBudgets").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchGoals").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+    // fetchCards returns credit cards ("/cards/accounts")
+    const fetchCardsSpy = vi
+      .spyOn(endpoints, "fetchCards")
+      .mockResolvedValue([card1]);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // fetchCards was called during bootstrap
+    expect(fetchCardsSpy).toHaveBeenCalled();
+    // Accounts includes both checking and credit card
+    expect(result.current.accounts).toHaveLength(2);
+    const cc = result.current.accounts.find((a) => a.kind === "credit_card");
+    expect(cc).toBeDefined();
+    expect(cc?.name).toBe("Nubank Card");
+  });
+
+  it("cards from /cards/accounts overwrite same-id accounts from /accounts (kind normalization)", async () => {
+    // Simulate the live bug: /accounts returns a card entry as "bank"
+    const cardAsBank: Account = {
+      id: "card-1",
+      name: "Nubank Card",
+      kind: "bank",
+      balanceCents: 0,
+      initialBalanceCents: 0,
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+      status: "active",
+    };
+    const checking = mockAccount("a1", "Nubank");
+    vi.spyOn(endpoints, "fetchAccounts").mockResolvedValue([
+      checking,
+      cardAsBank,
+    ]);
+    vi.spyOn(endpoints, "fetchCategories").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchTransactions").mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    vi.spyOn(endpoints, "fetchPayables").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchBudgets").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchGoals").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+    // /cards/accounts returns the SAME id with correct credit_card kind + card fields
+    vi.spyOn(endpoints, "fetchCards").mockResolvedValue([
+      {
+        id: "card-1",
+        name: "Nubank Card",
+        kind: "credit_card",
+        balanceCents: 0,
+        creditLimitCents: 5000_00,
+        closingDay: 15,
+        dueDay: 25,
+      },
+    ]);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // Cards should have overwritten accounts for same id
+    expect(result.current.accounts).toHaveLength(2);
+    const cc = result.current.accounts.find((a) => a.id === "card-1");
+    expect(cc).toBeDefined();
+    // Kind must be credit_card (from cards endpoint), not bank (from accounts)
+    expect(cc!.kind).toBe("credit_card");
+    // Card-specific fields preserved
+    expect(cc!.creditLimitCents).toBe(5000_00);
+    expect(cc!.closingDay).toBe(15);
+    // Checking account unaffected
+    const chk = result.current.accounts.find((a) => a.id === "a1");
+    expect(chk?.kind).toBe("checking");
+  });
+
+  it("fetchCards failure does not break accounts loading", async () => {
+    const checking = mockAccount("a1", "Nubank");
+    vi.spyOn(endpoints, "fetchAccounts").mockResolvedValue([checking]);
+    vi.spyOn(endpoints, "fetchCategories").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchTransactions").mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    vi.spyOn(endpoints, "fetchPayables").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchBudgets").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchGoals").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+    // fetchCards fails
+    vi.spyOn(endpoints, "fetchCards").mockRejectedValue(
+      new Error("Cards API down"),
+    );
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // Accounts still loaded from /accounts
+    expect(result.current.accounts).toHaveLength(1);
+    expect(result.current.accounts[0].name).toBe("Nubank");
+    // No global error (accounts succeeded)
+    expect(result.current.error).toBeNull();
+  });
+
+  it("fetchCards succeeds even when fetchAccounts fails (graceful degraded accounts)", async () => {
+    const card1: Account = {
+      id: "card-1",
+      name: "Nubank Card",
+      kind: "credit_card",
+      balanceCents: 0,
+      creditLimitCents: 5000_00,
+      closingDay: 15,
+      dueDay: 25,
+    };
+    vi.spyOn(endpoints, "fetchAccounts").mockRejectedValue(
+      new Error("Accounts down"),
+    );
+    vi.spyOn(endpoints, "fetchCategories").mockRejectedValue(
+      new Error("Cats down"),
+    );
+    vi.spyOn(endpoints, "fetchTransactions").mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    vi.spyOn(endpoints, "fetchPayables").mockRejectedValue(
+      new Error("Payables down"),
+    );
+    vi.spyOn(endpoints, "fetchBudgets").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchGoals").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchCards").mockResolvedValue([card1]);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // Credit card from fetchCards is available even though fetchAccounts failed
+    const cc = result.current.accounts.find((a) => a.kind === "credit_card");
+    expect(cc).toBeDefined();
+    expect(cc?.name).toBe("Nubank Card");
+    // Global error is still set because some essential domains failed
+    expect(result.current.error).not.toBeNull();
+    // readOnly is true because one essential domain (accounts) failed
+    expect(result.current.readOnly).toBe(true);
+  });
+});
+
+describe("AppStateProvider — refreshSubscriptions (lazy load)", () => {
+  beforeEach(() => {
+    apiReady();
+    // Only essential domains — subscriptions NOT in bootstrap
+    vi.spyOn(endpoints, "fetchAccounts").mockResolvedValue([
+      mockAccount("a1", "Nubank"),
+    ]);
+    vi.spyOn(endpoints, "fetchCategories").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchTransactions").mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    vi.spyOn(endpoints, "fetchPayables").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchBudgets").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchGoals").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchCards").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchProfile").mockResolvedValue(null);
+    vi.spyOn(endpoints, "fetchQuickInsights").mockResolvedValue([]);
+  });
+
+  it("exposes refreshSubscriptions as a function", async () => {
+    vi.spyOn(endpoints, "fetchSubscriptions").mockResolvedValue([]);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(typeof result.current.refreshSubscriptions).toBe("function");
+  });
+
+  it("fetches subscriptions on demand (live data)", async () => {
+    const mockData = [
+      {
+        id: "s1",
+        name: "Netflix",
+        amountCents: 39_90,
+        cycle: "monthly",
+        day: 15,
+        paymentMethod: "credit_card",
+        status: "active",
+      },
+    ];
+    const spy = vi
+      .spyOn(endpoints, "fetchSubscriptions")
+      .mockResolvedValue(mockData);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // Bootstrap should NOT have called it
+    expect(spy).not.toHaveBeenCalled();
+
+    // Manually trigger lazy load
+    await act(() => result.current.refreshSubscriptions());
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(result.current.subscriptions).toHaveLength(1);
+    expect(result.current.subscriptions[0].name).toBe("Netflix");
+    expect(result.current.sync.subscriptions.source).toBe("live");
+  });
+
+  it("falls back to unavailable on fetch failure (no snapshot)", async () => {
+    vi.spyOn(endpoints, "fetchSubscriptions").mockRejectedValue(
+      new Error("Subscriptions down"),
+    );
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.subscriptions).toHaveLength(0);
+
+    await act(() => result.current.refreshSubscriptions());
+
+    // Falls back to unavailable when no snapshot exists
+    expect(result.current.sync.subscriptions.source).toBe("unavailable");
+    expect(result.current.subscriptions).toHaveLength(0);
+  });
+
+  it("loads snapshot on fetch failure when snapshot exists", async () => {
+    // First, seed a v1 snapshot for subscriptions (migrated to v2 at bootstrap)
+    seedV1Snapshot("subscriptions", [
+      {
+        id: "snap-s1",
+        name: "Snap Netflix",
+        amountCents: 39_90,
+        cycle: "monthly",
+        day: 15,
+        paymentMethod: "credit_card",
+        status: "active",
+      },
+    ]);
+
+    vi.spyOn(endpoints, "fetchSubscriptions").mockRejectedValue(
+      new Error("Subscriptions down"),
+    );
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(() => result.current.refreshSubscriptions());
+
+    // Loaded from snapshot
+    expect(result.current.subscriptions).toHaveLength(1);
+    expect(result.current.subscriptions[0].name).toBe("Snap Netflix");
+    expect(result.current.sync.subscriptions.source).toBe("snapshot");
+  });
+
+  it("does not call fetch when API is not configured", async () => {
+    apiNotConfigured();
+    const spy = vi
+      .spyOn(endpoints, "fetchSubscriptions")
+      .mockResolvedValue([]);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await act(() => result.current.refreshSubscriptions());
+
+    expect(spy).not.toHaveBeenCalled();
+    // Mock data should still be present
+    expect(result.current.subscriptions.length).toBeGreaterThan(0);
   });
 });
 
@@ -1102,6 +1457,8 @@ describe("AppStateProvider — runtime 401", () => {
     await waitFor(() => expect(expireSession).toHaveBeenCalled());
     // never falls back to mock on 401
     expect(result.current.accounts).toHaveLength(0);
+    // loading state settled after bootstrap completes (even on 401)
+    expect(result.current.loading).toBe(false);
   });
 
   it("calls expireSession (not writeError) when a write returns 401", async () => {
@@ -1132,6 +1489,107 @@ describe("AppStateProvider — runtime 401", () => {
   });
 });
 
+describe("AppStateProvider — non-essential domain error isolation", () => {
+  beforeEach(() => {
+    apiReady();
+    // All essentials succeed
+    vi.spyOn(endpoints, "fetchAccounts").mockResolvedValue([
+      mockAccount("a1", "Nubank"),
+    ]);
+    vi.spyOn(endpoints, "fetchCategories").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchTransactions").mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    vi.spyOn(endpoints, "fetchPayables").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchBudgets").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchGoals").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchCards").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchProfile").mockResolvedValue(null);
+    vi.spyOn(endpoints, "fetchQuickInsights").mockResolvedValue([]);
+  });
+
+  it("does NOT set global error when only subscriptions fails (non-essential)", async () => {
+    const spy = vi.spyOn(endpoints, "fetchSubscriptions").mockRejectedValue(
+      new Error("Subscriptions API 404"),
+    );
+    vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // Global error should NOT be set — only non-essential domain failed
+    expect(result.current.error).toBeNull();
+    // fetchSubscriptions is lazy-loaded — not called during bootstrap
+    expect(spy).not.toHaveBeenCalled();
+    // Essential domains are live
+    expect(result.current.sync.accounts.source).toBe("live");
+    expect(result.current.readOnly).toBe(false);
+    // Subscriptions sync stays at initial "live" until page triggers refresh
+    // (subscriptions are lazy-loaded, not fetched during bootstrap)
+    expect(result.current.subscriptions).toHaveLength(0);
+  });
+
+  it("does NOT set global error when only cardStatements fails (non-essential)", async () => {
+    vi.spyOn(endpoints, "fetchSubscriptions").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchStatements").mockRejectedValue(
+      new Error("Statements API down"),
+    );
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.readOnly).toBe(false);
+    expect(result.current.sync.cardStatements.source).toBe("unavailable");
+  });
+
+  it("STILL sets global error when an essential domain fails (regression)", async () => {
+    vi.spyOn(endpoints, "fetchSubscriptions").mockResolvedValue([]);
+    vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+    // Make an essential domain fail
+    vi.mocked(endpoints.fetchAccounts).mockRejectedValue(
+      new Error("Accounts API down"),
+    );
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // Global error SHOULD be set
+    expect(result.current.error).not.toBeNull();
+    expect(result.current.readOnly).toBe(true);
+  });
+
+  it("STILL sets global error when BOTH essential and non-essential fail", async () => {
+    vi.spyOn(endpoints, "fetchSubscriptions").mockRejectedValue(
+      new Error("Subscriptions API 404"),
+    );
+    vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+    vi.mocked(endpoints.fetchAccounts).mockRejectedValue(
+      new Error("Accounts API down"),
+    );
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.error).not.toBeNull();
+    expect(result.current.readOnly).toBe(true);
+  });
+});
+
 describe("AppStateProvider — read-only guard", () => {
   beforeEach(() => {
     apiReady();
@@ -1139,10 +1597,7 @@ describe("AppStateProvider — read-only guard", () => {
   });
 
   it("refuses writes (no optimistic change) when in snapshot read-only mode", async () => {
-    const { saveDomain } = await import("@/lib/state/snapshot-store");
-    saveDomain("test-token-abc", "accounts", [
-      mockAccount("snap-1", "Snap"),
-    ]);
+    seedV1Snapshot("accounts", [mockAccount("snap-1", "Snap")]);
     vi.mocked(endpoints.fetchAccounts).mockRejectedValue(
       new Error("down"),
     );
@@ -1206,5 +1661,212 @@ describe("AppStateProvider — read-only guard", () => {
     expect(result.current.transactions).toHaveLength(txCountBefore);
     expect(createSpy).not.toHaveBeenCalled();
     expect(result.current.writeError).toMatch(/somente leitura|indisponível/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bounded coverage-core lane: exercise every exposed write action through the
+// AppState facade so each handler's optimistic path, command call, rollback,
+// read-only guard and offline (!apiUsable) branch are covered.
+// ─────────────────────────────────────────────────────────────────────────────
+import * as commandsModule from "../commands";
+import type { Commands } from "../commands";
+
+const CMD_METHODS = [
+  "createExpenseTransaction", "createIncomeTransaction", "updateTransaction",
+  "deleteTransaction", "createTransfer", "addAccount", "updateAccount",
+  "deactivateAccount", "addCategory", "updateCategory", "deactivateCategory",
+  "createCard", "updateCard", "createPayable", "markPayablePaid",
+  "undoPayablePayment", "cancelPayable", "updatePayable", "createBudget",
+  "updateBudget", "createGoal", "contributeToGoal", "cancelGoal",
+  "updateGoal", "addSubscription", "cancelSubscription", "updateSubscription",
+  "payStatement", "createInstallments", "patchProfile",
+] as const;
+
+type CmdMock = Record<(typeof CMD_METHODS)[number], ReturnType<typeof vi.fn>> & {
+  [k: string]: ReturnType<typeof vi.fn>;
+};
+
+function buildCommandsMock(reject: boolean): CmdMock {
+  const m = {} as CmdMock;
+  for (const name of CMD_METHODS) {
+    m[name] = vi.fn();
+    if (reject) m[name].mockRejectedValue(new Error("cmd-fail"));
+    else m[name].mockResolvedValue({ id: `srv-${name}` });
+  }
+  m.payStatement.mockResolvedValue({ id: "st1", paidCents: 100, totalCents: 200, status: "partial" });
+  m.addSubscription.mockResolvedValue({ id: "srv-sub", name: "Sub", amountCents: 1000, cycle: "monthly", day: 5, paymentMethod: "card", status: "active", createdAt: "" });
+  return m;
+}
+
+function seedApiData() {
+  mockApiReads({
+    accounts: [mockAccount("a1", "API Nubank"), mockAccount("a2", "API Itau")],
+    payables: [mockP1],
+  });
+  vi.spyOn(endpoints, "fetchCategories").mockResolvedValue([
+    { id: "c1", name: "Alimentação", kind: "expense", icon: "Tag", createdAt: "2026-01-01", updatedAt: "2026-01-01" } as never,
+  ]);
+  vi.spyOn(endpoints, "fetchGoals").mockResolvedValue([
+    { id: "g1", name: "Reserva", goalType: "savings", targetAmountCents: 1000, currentAmountCents: 0, startDate: "2026-01-01", status: "active" } as never,
+  ]);
+  vi.spyOn(endpoints, "fetchBudgets").mockResolvedValue([
+    { id: "b1", categoryId: "c1", name: "B", amountCents: 100, spentCents: 0, period: "monthly" } as never,
+  ]);
+  vi.spyOn(endpoints, "fetchSubscriptions").mockResolvedValue([
+    { id: "s1", name: "Netflix", amountCents: 3000, cycle: "monthly", day: 5, paymentMethod: "card", status: "active", createdAt: "2026-01-01" } as never,
+  ]);
+  vi.spyOn(endpoints, "fetchCards").mockResolvedValue([
+    { id: "card1", name: "Nubank", kind: "credit_card", balanceCents: 0, creditLimitCents: 100000, closingDay: 5, dueDay: 10, status: "active" } as never,
+  ]);
+  vi.spyOn(endpoints, "fetchTransactions").mockResolvedValue({
+    items: [{ id: "t1", description: "x", amountCents: 100, date: "2026-01-01", kind: "expense", categoryId: "c1", accountId: "a1" } as never],
+    total: 1,
+  });
+  vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([
+    { id: "st1", accountId: "card1", totalCents: 200, paidCents: 0, status: "open", closeDate: "2026-06-01", dueDate: "2026-06-10", purchases: [] } as never,
+  ]);
+  vi.spyOn(endpoints, "patchProfile").mockResolvedValue({} as never);
+}
+
+async function exerciseAll(result: { current: ReturnType<typeof useAppState> }) {
+  const s = result.current;
+  await s.addTransaction({ id: "tx1", description: "d", amountCents: 100, date: "2026-01-01", kind: "expense", categoryId: "c1", accountId: "a1" } as never);
+  await s.addTransaction({ id: "tx2", description: "i", amountCents: 200, date: "2026-01-01", kind: "income", categoryId: "c1", accountId: "a1" } as never);
+  await s.addTransaction({ id: "tx3", description: "t", amountCents: 300, date: "2026-01-01", kind: "transfer", categoryId: "", accountId: "a1" } as never);
+  await s.updateTransaction("t1", { description: "upd" });
+  await s.markPayablePaid("p1");
+  await s.updatePayable("p1", { description: "x" });
+  await s.createPayable({ accountId: "a1", description: "p", amountCents: 100, dueDate: "2026-06-30" });
+  await s.createBudget({ categoryId: "c1", name: "B", amountCents: 100, period: "monthly", startDate: "2026-01-01" });
+  await s.updateBudget("b1", { amountCents: 200 });
+  await s.createGoal({ name: "G", goalType: "savings", targetAmountCents: 1000, startDate: "2026-01-01" });
+  await s.contributeToGoal("g1", { amountCents: 100 });
+  await s.updateGoal("g1", { name: "G2" });
+  await s.addAccount({ name: "New", kind: "bank", initialBalanceCents: 0 });
+  await s.updateAccount("a1", { name: "Renamed" });
+  await s.addCategory({ name: "Cat", kind: "expense" });
+  await s.updateCategory("c1", { name: "Upd" });
+  await s.addCard({ name: "Card", creditLimitCents: 1000, closingDay: 5, dueDay: 10 });
+  await s.updateCard("card1", { name: "Card2" });
+  await s.createTransfer({ description: "t", amountCents: 100, date: "2026-01-01", fromAccountId: "a1", toAccountId: "a2" });
+  await s.payStatement("st1", { amountCents: 50, fromAccountId: "a1" });
+  await s.createInstallments({ accountId: "card1", description: "inst", totalAmountCents: 1000, purchaseDate: "2026-01-01", installmentsTotal: 3 });
+  await s.saveProfile({ name: "Marina" });
+  await s.refreshProfile();
+  // Destructive actions last so their update counterparts already ran.
+  await s.deactivateAccount("a2");
+  await s.deactivateCategory("c1");
+  await s.cancelGoal("g1");
+  await s.cancelPayable("p1");
+  await s.deleteTransaction("t1");
+  await s.undoPayablePayment("p1");
+}
+
+describe("AppStateProvider — every write action (coverage-core)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it("invokes the command layer for every action when API is usable", async () => {
+    apiReady();
+    seedApiData();
+    const cmds = buildCommandsMock(false);
+    vi.spyOn(commandsModule, "createCommands").mockReturnValue(cmds as unknown as Commands);
+    const { result } = renderHook(() => useAppState(), { wrapper: AppStateProvider });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => { await exerciseAll(result); });
+    await act(async () => { await result.current.addSubscription({ name: "Sub", amountCents: 1000, cycle: "monthly", day: 5, paymentMethod: "card" }); });
+    const subId = "srv-sub";
+    await act(async () => { await result.current.updateSubscription(subId, { name: "Sub2" }); });
+    await act(async () => { await result.current.cancelSubscription(subId); });
+    expect(cmds.addSubscription).toHaveBeenCalled();
+    expect(cmds.updateSubscription).toHaveBeenCalled();
+    expect(cmds.cancelSubscription).toHaveBeenCalled();
+    expect(cmds.createExpenseTransaction).toHaveBeenCalled();
+    expect(cmds.createIncomeTransaction).toHaveBeenCalled();
+    expect(cmds.updateTransaction).toHaveBeenCalledWith("t1", expect.anything());
+    expect(cmds.deleteTransaction).toHaveBeenCalledWith("t1");
+    expect(cmds.markPayablePaid).toHaveBeenCalled();
+    expect(cmds.cancelPayable).toHaveBeenCalled();
+    expect(cmds.updatePayable).toHaveBeenCalled();
+    expect(cmds.undoPayablePayment).toHaveBeenCalled();
+    expect(cmds.createPayable).toHaveBeenCalled();
+    expect(cmds.createBudget).toHaveBeenCalled();
+    expect(cmds.updateBudget).toHaveBeenCalled();
+    expect(cmds.createGoal).toHaveBeenCalled();
+    expect(cmds.contributeToGoal).toHaveBeenCalled();
+    expect(cmds.cancelGoal).toHaveBeenCalled();
+    expect(cmds.updateGoal).toHaveBeenCalled();
+    expect(cmds.addAccount).toHaveBeenCalled();
+    expect(cmds.updateAccount).toHaveBeenCalled();
+    expect(cmds.deactivateAccount).toHaveBeenCalled();
+    expect(cmds.addCategory).toHaveBeenCalled();
+    expect(cmds.updateCategory).toHaveBeenCalled();
+    expect(cmds.deactivateCategory).toHaveBeenCalled();
+    expect(cmds.createCard).toHaveBeenCalled();
+    expect(cmds.updateCard).toHaveBeenCalled();
+    expect(cmds.createTransfer).toHaveBeenCalled();
+    expect(cmds.payStatement).toHaveBeenCalled();
+    expect(cmds.createInstallments).toHaveBeenCalled();
+    expect(result.current.profile).not.toBeNull();
+  });
+
+  it("rolls back and records writeError when commands reject", async () => {
+    apiReady();
+    seedApiData();
+    const cmds = buildCommandsMock(true);
+    vi.spyOn(commandsModule, "createCommands").mockReturnValue(cmds as unknown as Commands);
+    const { result } = renderHook(() => useAppState(), { wrapper: AppStateProvider });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const accountsBefore = result.current.accounts.length;
+    await act(async () => { await exerciseAll(result); });
+    expect(cmds.addAccount).toHaveBeenCalled();
+    expect(result.current.writeError).toBeTruthy();
+    // optimistic insert was rolled back on failure
+    expect(result.current.accounts.length).toBe(accountsBefore);
+    // clearWriteError resets the flag
+    act(() => result.current.clearWriteError());
+    expect(result.current.writeError).toBeNull();
+  });
+
+  it("blocks every write (read-only guard) when an essential domain fails", async () => {
+    apiReady();
+    mockApiReads();
+    vi.spyOn(endpoints, "fetchAccounts").mockRejectedValue(new Error("down"));
+    const cmds = buildCommandsMock(false);
+    vi.spyOn(commandsModule, "createCommands").mockReturnValue(cmds as unknown as Commands);
+    const { result } = renderHook(() => useAppState(), { wrapper: AppStateProvider });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.readOnly).toBe(true);
+    await act(async () => { await exerciseAll(result); });
+    expect(cmds.addAccount).not.toHaveBeenCalled();
+    expect(result.current.writeError).toMatch(/somente leitura|indisponível/i);
+  });
+
+  it("refreshSubscriptions loads subscription data via the adapter", async () => {
+    apiReady();
+    seedApiData();
+    const cmds = buildCommandsMock(false);
+    vi.spyOn(commandsModule, "createCommands").mockReturnValue(cmds as unknown as Commands);
+    const { result } = renderHook(() => useAppState(), { wrapper: AppStateProvider });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => { await result.current.refreshSubscriptions(); });
+    expect(Array.isArray(result.current.subscriptions)).toBe(true);
+    expect(result.current.sync.subscriptions).toBeDefined();
+  });
+
+  it("does optimistic-only writes when API is not configured (offline)", async () => {
+    apiNotConfigured();
+    const cmds = buildCommandsMock(false);
+    vi.spyOn(commandsModule, "createCommands").mockReturnValue(cmds as unknown as Commands);
+    const { result } = renderHook(() => useAppState(), { wrapper: AppStateProvider });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const accountsBefore = result.current.accounts.length;
+    await act(async () => { await exerciseAll(result); });
+    expect(cmds.addAccount).not.toHaveBeenCalled();
+    // optimistic insert still happened locally
+    expect(result.current.accounts.length).toBeGreaterThan(accountsBefore);
   });
 });

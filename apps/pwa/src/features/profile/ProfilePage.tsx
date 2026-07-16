@@ -1,13 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { resetLocalSession } from "@/lib/reset-session";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import Icon from "@/components/ui/Icon";
 import Badge from "@/components/ui/Badge";
 import NotificationsSheet from "./NotificationsSheet";
+import { useAppState } from "@/lib/state/app-state-context";
+import { useFormDirtySafe } from "@/lib/unsaved-changes";
+import { useEffectiveProfile } from "./hooks";
 
 type ProfileSheet = "edit" | "chat" | "notifications" | null;
 
@@ -29,21 +33,32 @@ const PROFILE_ITEMS = [
   },
 ];
 
+const AVATAR_COLORS = [
+  "#0E8C5A",
+  "#820AD1",
+  "#EC7000",
+  "#3E6FB0",
+  "#C8483B",
+  "#1F2937",
+];
+
 export default function ProfilePage() {
   const router = useRouter();
   const [open, setOpen] = useState<ProfileSheet>(null);
+  const [editKey, setEditKey] = useState(0);
+  const profile = useEffectiveProfile();
+  const { saveProfile } = useAppState();
 
   function handleItem(key: string) {
-    if (key === "edit") setOpen("edit");
-    else if (key === "chat") setOpen("chat");
+    if (key === "edit") {
+      setOpen("edit");
+      setEditKey((k) => k + 1);
+    } else if (key === "chat") setOpen("chat");
     else if (key === "notifications") setOpen("notifications");
   }
 
-  function handleLogout() {
-    try {
-      localStorage.removeItem("pi-finance:token");
-      localStorage.removeItem("pi-finance:pin");
-    } catch { /* noop */ }
+  async function handleLogout() {
+    await resetLocalSession();
     router.push("/");
     router.refresh();
   }
@@ -54,20 +69,18 @@ export default function ProfilePage() {
       <PageHeader title="Perfil" />
 
       <main className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-        {/* Avatar + nome */}
         <div className="flex items-center gap-3">
-          <Badge label="Marina Silva" size="lg" color="#0E8C5A" />
+          <Badge label={profile.name} size="lg" color={profile.avatarColor} />
           <div>
             <div className="text-[18px] font-extrabold text-text-primary">
-              Marina Silva
+              {profile.name}
             </div>
             <div className="text-[13px] text-text-muted">
-              marina@email.com
+              {profile.email || profile.phone || "Atualize seus dados de contato"}
             </div>
           </div>
         </div>
 
-        {/* Lista de itens ativos */}
         <div className="rounded-[16px] bg-fill-light px-4 py-1">
           {PROFILE_ITEMS.map((item, idx) => (
             <button
@@ -75,9 +88,7 @@ export default function ProfilePage() {
               type="button"
               onClick={() => handleItem(item.key)}
               className={`flex w-full items-center gap-3 py-3 ${
-                idx < PROFILE_ITEMS.length - 1
-                  ? "border-b border-border"
-                  : ""
+                idx < PROFILE_ITEMS.length - 1 ? "border-b border-border" : ""
               }`}
             >
               {item.icon}
@@ -89,7 +100,6 @@ export default function ProfilePage() {
           ))}
         </div>
 
-        {/* Itens desabilitados */}
         <div className="rounded-[16px] bg-fill-light px-4 py-1 opacity-50">
           <div className="flex w-full items-center gap-3 py-3">
             <Icon name="shield" size={17} />
@@ -100,7 +110,6 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* Botão Sair */}
         <button
           type="button"
           onClick={handleLogout}
@@ -111,8 +120,14 @@ export default function ProfilePage() {
       </main>
 
       <EditProfileSheet
+        key={editKey}
         open={open === "edit"}
+        profile={profile}
         onClose={() => setOpen(null)}
+        onSave={async (input) => {
+          await saveProfile(input);
+          setOpen(null);
+        }}
       />
       <NotificationsSheet
         open={open === "notifications"}
@@ -139,21 +154,56 @@ function BackButton({ onClick }: { onClick: () => void }) {
 
 function EditProfileSheet({
   open,
+  profile,
   onClose,
+  onSave,
 }: {
   open: boolean;
+  profile: {
+    name: string;
+    email: string;
+    phone: string;
+    avatarColor: string;
+    greetingStyle: "auto" | "minimal" | "verbose";
+  };
   onClose: () => void;
+  onSave: (input: {
+    name: string;
+    email: string;
+    phone: string;
+    avatarColor: string;
+    greetingStyle: "auto" | "minimal" | "verbose";
+  }) => Promise<void>;
 }) {
-  const [name, setName] = useState("Marina Silva");
-  const [email, setEmail] = useState("marina@email.com");
-  const [phone, setPhone] = useState("(11) 99999-9999");
+  const { markDirty, markClean } = useFormDirtySafe();
+  const [name, setName] = useState(profile.name);
+  const [email, setEmail] = useState(profile.email);
+  const [phone, setPhone] = useState(profile.phone);
+  const [avatarColor, setAvatarColor] = useState(profile.avatarColor);
+  const [greetingStyle, setGreetingStyle] = useState(profile.greetingStyle);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset form fields whenever the sheet opens or the underlying profile
+  // changes (e.g. a previous save landed while the sheet was closed).
+  useEffect(() => {
+    if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setName(profile.name);
+    setEmail(profile.email);
+    setPhone(profile.phone);
+    setAvatarColor(profile.avatarColor);
+    setGreetingStyle(profile.greetingStyle);
+    setError(null);
+    markClean();
+  }, [open, profile.name, profile.email, profile.phone, profile.avatarColor, profile.greetingStyle, markClean]);
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Editar perfil">
       <div className="flex items-center gap-3 pb-5">
         <BackButton onClick={onClose} />
       </div>
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
             Nome
@@ -162,9 +212,11 @@ function EditProfileSheet({
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            maxLength={80}
             className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none transition-colors focus:border-primary"
           />
         </div>
+
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
             E-mail
@@ -173,9 +225,11 @@ function EditProfileSheet({
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            maxLength={120}
             className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none transition-colors focus:border-primary"
           />
         </div>
+
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
             Telefone
@@ -184,28 +238,92 @@ function EditProfileSheet({
             type="tel"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
+            maxLength={40}
             className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none transition-colors focus:border-primary"
           />
         </div>
+
+        <div>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Cor do avatar
+          </label>
+          <div className="flex flex-wrap gap-2.5">
+            {AVATAR_COLORS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                aria-label={`Cor ${c}`}
+                onClick={() => { markDirty(); setAvatarColor(c); }}
+                className={`h-9 w-9 rounded-full transition-transform ${
+                  avatarColor === c
+                    ? "ring-2 ring-text-primary ring-offset-2 ring-offset-surface"
+                    : ""
+                }`}
+                style={{ background: c }}
+              />
+            ))}
+          </div>
+        </div>
+
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Estilo da saudação
+          </label>
+          <div className="flex gap-1 rounded-xl bg-fill-light p-1">
+            {(["auto", "minimal", "verbose"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => { markDirty(); setGreetingStyle(s); }}
+                className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-colors ${
+                  greetingStyle === s
+                    ? "bg-surface text-text-primary shadow-sm"
+                    : "text-text-muted"
+                }`}
+              >
+                {s === "auto" ? "Automática" : s === "minimal" ? "Curta" : "Detalhada"}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        {error && (
+          <div className="rounded-[10px] bg-danger-tint px-3 py-2 text-[12px] font-semibold text-danger">
+            ⚠ {error}
+          </div>
+        )}
+
         <button
           type="button"
-          onClick={onClose}
-          className="mt-4 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90"
+          disabled={submitting || name.trim().length === 0}
+          onClick={async () => {
+            setError(null);
+            setSubmitting(true);
+            try {
+              await onSave({
+                name: name.trim(),
+                email: email.trim(),
+                phone: phone.trim(),
+                avatarColor,
+                greetingStyle,
+              });
+              markClean();
+            } catch (e) {
+              setError((e as Error).message || "Falha ao salvar");
+            } finally {
+              setSubmitting(false);
+            }
+          }}
+          className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
         >
-          Salvar alterações
+          {submitting ? "Salvando…" : "Salvar alterações"}
         </button>
       </div>
     </BottomSheet>
   );
 }
 
-function ChatSheet({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
+function ChatSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <BottomSheet open={open} onClose={onClose} title="Pi — seu agente financeiro">
       <div className="flex items-center gap-3 pb-5">
@@ -227,8 +345,7 @@ function ChatSheet({
       </div>
 
       <div className="mb-4 rounded-[16px] bg-fill-light px-4 py-3.5 text-[13px] text-text-secondary">
-        Número vinculado:{" "}
-        <b className="text-text-primary">(11) 99999-9999</b>
+        Número vinculado: <b className="text-text-primary">(11) 99999-9999</b>
       </div>
 
       <a

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { AuthGate } from "../AuthGate";
+import { useSession } from "@/lib/auth/session-context";
+import { ApiError } from "@/lib/api/client";
 
 // ─── localStorage mock ──────────────────────────────────────────────────────
 const store: Record<string, string> = {};
@@ -64,10 +65,8 @@ describe("AuthGate", () => {
     expect(input).toBeInTheDocument();
   });
 
-  it("shows unlock screen when token exists and pin is set", async () => {
-    store["pi-finance:token"] = "existing-token";
-    store["pi-finance:pin-hash"] = "deadbeef";
-    store["pi-finance:pin-salt"] = "0102030405060708090a0b0c0d0e0f10";
+  it("shows app content when token exists and is valid", async () => {
+    store["pi-finance:token"] = "valid-token";
 
     render(
       <AuthGate>
@@ -75,9 +74,8 @@ describe("AuthGate", () => {
       </AuthGate>,
     );
 
-    // Should show PIN input after token validation passes
-    const pinBtn = await screen.findByText("0", {}, { timeout: 3000 });
-    expect(pinBtn).toBeInTheDocument();
+    const app = await screen.findByTestId("app", {}, { timeout: 3000 });
+    expect(app).toBeInTheDocument();
   });
 
   it("shows register with expired msg when token returns 401", async () => {
@@ -104,64 +102,73 @@ describe("AuthGate", () => {
       screen.getByPlaceholderText(/Nome do dispositivo/),
     ).toBeInTheDocument();
   });
+});
 
-  it("clears snapshot when 'Trocar dispositivo' is used", async () => {
-    const { clearSnapshot } = await import("@/lib/state/snapshot-store");
-    const spy = vi.spyOn(
-      await import("@/lib/state/snapshot-store"),
-      "clearSnapshot",
-    );
-    // token present + pin set -> lands on unlock screen with the reset button
-    store["pi-finance:token"] = "tok";
-    store["pi-finance:pin-hash"] = "deadbeef";
-    store["pi-finance:pin-salt"] = "0102030405060708090a0b0c0d0e0f10";
-    render(
-      <AuthGate>
-        <div data-testid="app">App</div>
-      </AuthGate>,
-    );
-    const resetBtn = await screen.findByText(/Trocar dispositivo/);
-    await userEvent.click(resetBtn);
-    expect(spy).toHaveBeenCalled();
-    // silence unused import lint
-    void clearSnapshot;
-  });
+function SessionProbe() {
+  const { expireSession } = useSession();
+  return (
+    <>
+      <div data-testid="app">App Content</div>
+      <button type="button" onClick={() => expireSession("Sessão expirada pelo teste.")}>
+        Expire
+      </button>
+    </>
+  );
+}
 
-  it("goes through setup-pin and unlocks", async () => {
-    store["pi-finance:token"] = "token";
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({ deviceId: "d1", householdId: "h1" }),
-    } as Response);
-
+describe("AuthGate register + session flows (coverage)", () => {
+  it("registers device and shows app on submit", async () => {
     render(
       <AuthGate>
         <div data-testid="app">App Content</div>
       </AuthGate>,
     );
-
-    // Token exists but no PIN → shows setup-pin ("Crie seu PIN")
-    await screen.findByText("Crie seu PIN", {}, { timeout: 3000 });
-
-    // Enter PIN "1234" → click Próximo
-    const user = userEvent.setup();
-    await user.click(screen.getByText("1"));
-    await user.click(screen.getByText("2"));
-    await user.click(screen.getByText("3"));
-    await user.click(screen.getByText("4"));
-    await user.click(screen.getByText("Próximo"));
-
-    // Confirm in — "Confirme o PIN"
-    await screen.findByText("Confirme o PIN", {}, { timeout: 1000 });
-    await user.click(screen.getByText("1"));
-    await user.click(screen.getByText("2"));
-    await user.click(screen.getByText("3"));
-    await user.click(screen.getByText("4"));
-    await user.click(screen.getByText("Salvar PIN"));
-
-    // Should now show app content (unlocked)
+    const input = await screen.findByPlaceholderText(/Nome do dispositivo/, {}, { timeout: 3000 });
+    fireEvent.change(input, { target: { value: "Meu Celular" } });
+    fireEvent.click(screen.getByText("Registrar"));
     const app = await screen.findByTestId("app", {}, { timeout: 3000 });
     expect(app).toBeInTheDocument();
+    expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it("shows default error when registration fails (network)", async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new Error("network down"));
+    render(
+      <AuthGate>
+        <div data-testid="app">App Content</div>
+      </AuthGate>,
+    );
+    const input = await screen.findByPlaceholderText(/Nome do dispositivo/, {}, { timeout: 3000 });
+    fireEvent.change(input, { target: { value: "Meu Celular" } });
+    fireEvent.click(screen.getByText("Registrar"));
+    const err = await screen.findByText(/Falha ao registrar dispositivo/i, {}, { timeout: 3000 });
+    expect(err).toBeInTheDocument();
+  });
+
+  it("shows ApiError message when registration fails with ApiError", async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new ApiError(500, "auth.boom", "boom message"));
+    render(
+      <AuthGate>
+        <div data-testid="app">App Content</div>
+      </AuthGate>,
+    );
+    const input = await screen.findByPlaceholderText(/Nome do dispositivo/, {}, { timeout: 3000 });
+    fireEvent.change(input, { target: { value: "Meu Celular" } });
+    fireEvent.click(screen.getByText("Registrar"));
+    const err = await screen.findByText("boom message", {}, { timeout: 3000 });
+    expect(err).toBeInTheDocument();
+  });
+
+  it("expires session via context and returns to register screen", async () => {
+    store["pi-finance:token"] = "valid-token";
+    render(
+      <AuthGate>
+        <SessionProbe />
+      </AuthGate>,
+    );
+    expect(await screen.findByTestId("app", {}, { timeout: 3000 })).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Expire"));
+    expect(await screen.findByText(/Sessão expirada pelo teste/i, {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText(/Nome do dispositivo/, {}, { timeout: 3000 })).toBeInTheDocument();
   });
 });

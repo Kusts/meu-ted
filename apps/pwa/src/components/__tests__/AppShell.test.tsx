@@ -70,6 +70,25 @@ describe("AppShell", () => {
     });
   });
 
+  describe("responsive shell", () => {
+    it("wraps content in a responsive container with --shell-max-w variable", () => {
+      const { container } = render(
+        <AppShell><div data-testid="content">Hello</div></AppShell>,
+      );
+      const shell = container.querySelector('[data-shell="root"]') as HTMLElement;
+      expect(shell).toBeInTheDocument();
+      expect(shell.className).toMatch(/max-w-\[var\(--shell-max-w\)\]/);
+    });
+
+    it("uses mx-auto to center the shell on wide viewports", () => {
+      const { container } = render(
+        <AppShell><div>Content</div></AppShell>,
+      );
+      const shell = container.querySelector('[data-shell="root"]') as HTMLElement;
+      expect(shell.className).toMatch(/mx-auto/);
+    });
+  });
+
   describe("active nav state", () => {
     it("highlights Resumo for /", () => {
       mockPath = "/";
@@ -119,6 +138,55 @@ describe("AppShell", () => {
       await user.click(buttons[4]);
       expect(screen.getByText("Cartões")).toBeInTheDocument();
       expect(screen.getByText("Contas")).toBeInTheDocument();
+    });
+  });
+
+  describe("sheet close behaviors", () => {
+    it("closes sheet when navigating between tabs", async () => {
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open sheet via FAB
+      await user.click(screen.getByLabelText("Nova transação"));
+      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+
+      // Click bottom nav "Registros"
+      await user.click(screen.getByText("Registros"));
+
+      // Sheet should close (no dialog present)
+      expect(screen.queryByText("Novo lançamento")).not.toBeInTheDocument();
+    });
+
+    it("closes sheet via Escape key", async () => {
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open sheet via FAB
+      await user.click(screen.getByLabelText("Nova transação"));
+      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+
+      // Press Escape
+      await user.keyboard("{Escape}");
+
+      // Sheet should close
+      expect(screen.queryByText("Novo lançamento")).not.toBeInTheDocument();
+    });
+
+    it("closes sheet and leaves no residual overlay", async () => {
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open sheet
+      await user.click(screen.getByLabelText("Nova transação"));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+      // Close via backdrop
+      const dialog = screen.getByRole("dialog");
+      const overlay = dialog.firstElementChild;
+      await user.click(overlay!);
+
+      // After close, no dialog should remain
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
   });
 

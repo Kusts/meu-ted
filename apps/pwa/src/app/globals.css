@@ -67,6 +67,25 @@
   --chip-radius: 100px;
   --easing-standard: cubic-bezier(.2,.8,.2,1);
   --duration-standard: 0.28s;
+
+  /* Responsive shell width (mobile-first: 430px → tablet 640px → desktop 860px).
+     Used by both AppShell and BottomNav so the nav stays glued to the shell
+     column on wide viewports instead of stretching full-width. */
+  --shell-max-w: 430px;
+}
+
+@media (min-width: 640px) {
+  :root {
+    --shell-max-w: 640px;
+    --page-padding: 28px;
+  }
+}
+
+@media (min-width: 860px) {
+  :root {
+    --shell-max-w: 860px;
+    --page-padding: 40px;
+  }
 }
 
 /* ── Body defaults ── */

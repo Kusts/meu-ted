@@ -107,7 +107,11 @@ export default function BottomNav({
   onNavClick,
 }: BottomNavProps) {
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-10 flex items-stretch justify-around border-t border-border bg-surface pb-[env(safe-area-inset-bottom)]" style={{ height: "var(--tab-bar-height)" }}>
+    <nav
+      data-nav="bottom"
+      className="fixed bottom-0 inset-x-0 z-10 mx-auto flex max-w-[var(--shell-max-w)] items-stretch justify-around border-t border-border bg-surface pb-[env(safe-area-inset-bottom)]"
+      style={{ height: "var(--tab-bar-height)" }}
+    >
       {/* Items: left side (Resumo, Registros) */}
       {ITEMS.slice(0, 2).map((item) => {
         const isActive = active === item.key;

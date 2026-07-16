@@ -51,7 +51,7 @@ export default function ReportsPage() {
 
   const periodMsgs: Record<Period, string> = {
     month: "Mês",
-    last: "Anterior",
+    last: "Mês passado",
     quarter: "Trim.",
     year: "Ano",
   };
@@ -71,11 +71,33 @@ export default function ReportsPage() {
     if (period === "quarter") {
       const q = Math.floor(now.getMonth() / 3);
       const start = new Date(now.getFullYear(), q * 3, 1);
-      return { from: start, to: now };
+      // Cover the FULL current quarter (mirrors "Mês passado" semantics, which
+      // returns the full previous month rather than "up to today"). Truncating
+      // to `now` would silently shrink the window on the first days of a
+      // quarter — e.g. on Jul 2, the buggy code shows only 2 days, masking
+      // the user's actual quarterly activity.
+      const end = new Date(now.getFullYear(), q * 3 + 3, 0);
+      return { from: start, to: end };
     }
     const start = new Date(now.getFullYear(), 0, 1);
     return { from: start, to: now };
   }, [period]);
+
+  // ── Period subtitle (human-readable range) ──
+  const periodSubtitle = useMemo(() => {
+    if (period === "month") {
+      return periodMs.from.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+    }
+    if (period === "last") {
+      return periodMs.from.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+    }
+    if (period === "quarter") {
+      const q = Math.floor(new Date().getMonth() / 3);
+      const ordinals = ["1º", "2º", "3º", "4º"];
+      return `${ordinals[q]} trimestre de ${new Date().getFullYear()}`;
+    }
+    return String(new Date().getFullYear());
+  }, [period, periodMs]);
 
   const filtered = useMemo(() => {
     return transactions.filter((t) => {
@@ -159,6 +181,29 @@ export default function ReportsPage() {
     return [...donutCategories].slice(0, 5);
   }, [donutCategories]);
 
+  // ── Budget real spending (period-filtered) ──
+  // Builds a map: categoryId → total spent from filtered transactions.
+  // Includes subcategories: if a transaction's category has a parentId
+  // that matches the budget's categoryId, it contributes to that budget.
+  const budgetRealSpent = useMemo(() => {
+    const map = new Map<string, number>();
+    // Build parent→children index
+    const childrenOf = new Map<string, string[]>();
+    for (const cat of categories) {
+      if (cat.parentId) {
+        const kids = childrenOf.get(cat.parentId) ?? [];
+        kids.push(cat.id);
+        childrenOf.set(cat.parentId, kids);
+      }
+    }
+    for (const t of filtered) {
+      if (t.kind !== "expense") continue;
+      // Add to the transaction's own category
+      map.set(t.categoryId, (map.get(t.categoryId) ?? 0) + t.amountCents);
+    }
+    return { map, childrenOf };
+  }, [filtered, categories]);
+
   // ── Patrimônio ──
   const checkingAccounts = accounts.filter((a) => a.kind !== "credit_card");
   const creditCards = accounts.filter((a) => a.kind === "credit_card");
@@ -238,6 +283,13 @@ export default function ReportsPage() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Period subtitle */}
+        <div className="px-5 pb-2">
+          <span className="text-[13px] font-semibold text-text-secondary capitalize">
+            {periodSubtitle}
+          </span>
         </div>
 
         <div className="flex flex-col gap-3.5 px-5 pt-3">
@@ -530,9 +582,18 @@ export default function ReportsPage() {
               </div>
               <div className="flex flex-col gap-3.5">
                 {budgets.slice(0, 5).map((b) => {
+                  // Compute real spent from period-filtered transactions,
+                  // including subcategories of the budget's category.
+                  const relevantIds = [b.categoryId];
+                  const subs = budgetRealSpent.childrenOf.get(b.categoryId);
+                  if (subs) relevantIds.push(...subs);
+                  const realSpent = relevantIds.reduce(
+                    (s, id) => s + (budgetRealSpent.map.get(id) ?? 0),
+                    0,
+                  );
                   const pct =
                     b.amountCents > 0
-                      ? Math.min((b.spentCents / b.amountCents) * 100, 100)
+                      ? Math.min((realSpent / b.amountCents) * 100, 100)
                       : 0;
                   const barColor =
                     pct >= 100
@@ -548,7 +609,7 @@ export default function ReportsPage() {
                         </span>
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-[11px] text-text-muted">
-                            {formatBRL(b.spentCents)} / {formatBRL(b.amountCents)}
+                            {formatBRL(realSpent)} / {formatBRL(b.amountCents)}
                           </span>
                           <span
                             className="font-mono text-[11px] font-bold"

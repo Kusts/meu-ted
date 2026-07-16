@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@/lib/test-utils";
+import { render, screen, fireEvent, within } from "@/lib/test-utils";
 import CategoriesPage from "../CategoriesPage";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
@@ -41,7 +41,14 @@ describe("CategoriesPage", () => {
     it("renders Receitas section", () => { render(<CategoriesPage />); expect(screen.getByText("Receitas")).toBeInTheDocument(); });
     it("renders expense category names", () => { render(<CategoriesPage />); expect(screen.getByText("Alimentação")).toBeInTheDocument(); expect(screen.getByText("Transporte")).toBeInTheDocument(); expect(screen.getByText("Moradia")).toBeInTheDocument(); });
     it("renders income category names", () => { render(<CategoriesPage />); expect(screen.getByText("Salário")).toBeInTheDocument(); expect(screen.getByText("Freelas")).toBeInTheDocument(); });
-    it("renders subcategory chips", () => { render(<CategoriesPage />); expect(screen.getByText("Mercado")).toBeInTheDocument(); expect(screen.getByText("Restaurante")).toBeInTheDocument(); expect(screen.getByText("Ifood")).toBeInTheDocument(); });
+    it("renders subcategory chips without fake remove button", () => {
+      render(<CategoriesPage />);
+      expect(screen.getByText("Mercado")).toBeInTheDocument();
+      expect(screen.getByText("Restaurante")).toBeInTheDocument();
+      expect(screen.getByText("Ifood")).toBeInTheDocument();
+      // Remove button (×) must NOT exist — no real backend support for subcategory deletion
+      expect(screen.queryByLabelText(/Remover/)).not.toBeInTheDocument();
+    });
     it("renders + Sub buttons", () => { render(<CategoriesPage />); expect(screen.getAllByText("+ Sub").length).toBeGreaterThan(0); });
   });
 
@@ -74,6 +81,28 @@ describe("CategoriesPage", () => {
     });
   });
 
+  describe("category icon consistency", () => {
+    it("renders initial-letter badge instead of CategoryIconView for category rows", () => {
+      const { container } = render(<CategoriesPage />);
+      // Category row icons are now aria-hidden spans with initial letters
+      const badges = Array.from(container.querySelectorAll("span")).filter(
+        (s) => s.getAttribute("aria-hidden") === "true",
+      );
+      expect(badges.length).toBeGreaterThanOrEqual(3);
+      badges.forEach((s) => {
+        expect(s.textContent).toMatch(/^[A-ZÀ-Ú]$/);
+      });
+    });
+
+    it("new category sheet no longer shows fake icon/color picker controls", () => {
+      render(<CategoriesPage />);
+      fireEvent.click(screen.getByText("Nova"));
+      // Ícone and Cor pickers should be gone (they were never persisted)
+      expect(screen.queryByText("Ícone")).not.toBeInTheDocument();
+      expect(screen.queryByText("Cor")).not.toBeInTheDocument();
+    });
+  });
+
   describe("visual", () => {
     it("renders category icons without emoji characters", () => {
       const { container } = render(<CategoriesPage />);
@@ -90,6 +119,115 @@ describe("CategoriesPage", () => {
           expect(code).not.toBeGreaterThan(0x1f300); // below emoji range
         }
       }
+    });
+  });
+
+  describe("create / edit / deactivate / subcategory flows (coverage)", () => {
+    it("opens Nova categoria sheet, fills name + income kind, and saves", () => {
+      const addSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addCategory: addSpy }));
+      render(<CategoriesPage />);
+      fireEvent.click(screen.getByText("Nova"));
+      const dialog = screen.getByRole("dialog");
+      fireEvent.change(within(dialog).getByPlaceholderText(/Alimentação, Salário/i), { target: { value: "Viagem" } });
+      fireEvent.click(within(dialog).getByText("Receita"));
+      fireEvent.click(within(dialog).getByText("Salvar categoria"));
+      expect(addSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "Viagem", kind: "income" }));
+    });
+
+    it("does not save category with empty name", () => {
+      const addSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addCategory: addSpy }));
+      render(<CategoriesPage />);
+      fireEvent.click(screen.getByText("Nova"));
+      fireEvent.click(within(screen.getByRole("dialog")).getByText("Salvar categoria"));
+      expect(addSpy).not.toHaveBeenCalled();
+    });
+
+    it("adds a subcategory via + Sub and OK button", () => {
+      const addSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addCategory: addSpy }));
+      render(<CategoriesPage />);
+      const subBtns = screen.getAllByText("+ Sub");
+      fireEvent.click(subBtns[0]);
+      const input = screen.getByPlaceholderText(/Nome da subcategoria/i);
+      fireEvent.change(input, { target: { value: "Padaria" } });
+      fireEvent.click(screen.getByText("OK"));
+      expect(addSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "Padaria", parentId: "cat1" }));
+    });
+
+    it("adds a subcategory via Enter key", () => {
+      const addSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addCategory: addSpy }));
+      render(<CategoriesPage />);
+      const subBtns = screen.getAllByText("+ Sub");
+      fireEvent.click(subBtns[0]);
+      const input = screen.getByPlaceholderText(/Nome da subcategoria/i) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Padaria" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(addSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "Padaria", parentId: "cat1" }));
+    });
+
+    it("cancels subcategory input via Escape", () => {
+      render(<CategoriesPage />);
+      const subBtns = screen.getAllByText("+ Sub");
+      fireEvent.click(subBtns[0]);
+      const input = screen.getByPlaceholderText(/Nome da subcategoria/i) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Padaria" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      expect(screen.queryByPlaceholderText(/Nome da subcategoria/i)).not.toBeInTheDocument();
+    });
+
+    it("edits a category and saves", () => {
+      const updateSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateCategory: updateSpy }));
+      render(<CategoriesPage />);
+      fireEvent.click(screen.getAllByText("Editar")[0]);
+      const input = screen.getByDisplayValue("Alimentação") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Comida" } });
+      fireEvent.click(screen.getByText("Salvar"));
+      expect(updateSpy).toHaveBeenCalledWith("cat1", { name: "Comida" });
+    });
+
+    it("does not save category edit with empty name", () => {
+      const updateSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateCategory: updateSpy }));
+      render(<CategoriesPage />);
+      fireEvent.click(screen.getAllByText("Editar")[0]);
+      const input = screen.getByDisplayValue("Alimentação") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "" } });
+      fireEvent.click(screen.getByText("Salvar"));
+      expect(updateSpy).not.toHaveBeenCalled();
+    });
+
+    it("deactivates a category via confirm dialog", async () => {
+      const deactSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ deactivateCategory: deactSpy }));
+      render(<CategoriesPage />);
+      fireEvent.click(screen.getAllByText("Desativar")[0]);
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Desativar" }));
+      expect(deactSpy).toHaveBeenCalledWith("cat1");
+    });
+  });
+
+  describe("empty states & labels (coverage)", () => {
+    it("shows empty state when no expense/income categories", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ categories: [] }));
+      render(<CategoriesPage />);
+      expect(screen.getByText("Nenhuma categoria de despesa.")).toBeInTheDocument();
+      expect(screen.getByText("Nenhuma categoria de receita.")).toBeInTheDocument();
+    });
+
+    it("renders singular label with exactly one category of each kind", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({
+        categories: [
+          { id: "c1", name: "Alimentação", kind: "expense" as any, subcategories: [] }, // eslint-disable-line @typescript-eslint/no-explicit-any
+          { id: "c2", name: "Salário", kind: "income" as any }, // eslint-disable-line @typescript-eslint/no-explicit-any
+        ],
+      }));
+      render(<CategoriesPage />);
+      expect(screen.getAllByText("1 categoria").length).toBe(2);
     });
   });
 });

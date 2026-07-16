@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import { StaleBanner } from "@/components/StaleBanner";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
+import { fetchStatementDetail, updateCardPurchase } from "@/lib/api/endpoints";
+import type { StatementDetail, StatementPurchase } from "@/lib/state/types";
 import { useAppState } from "@/lib/state/app-state-context";
 
 function formatBRL(cents: number): string {
@@ -33,6 +36,14 @@ function formatPct(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
+interface CardPurchase {
+  id: string;
+  description: string;
+  amountCents: number;
+  date: string;
+  categoryName: string;
+}
+
 interface CardData {
   id: string;
   name: string;
@@ -42,13 +53,8 @@ interface CardData {
   dueDay: number;
   spentCents: number;
   pct: number;
-  purchases: {
-    id: string;
-    description: string;
-    amountCents: number;
-    date: string;
-    categoryName: string;
-  }[];
+  purchases: CardPurchase[];
+  currentStmtId?: string;
 }
 
 const BANK_GRADIENTS: Record<string, string> = {
@@ -101,30 +107,44 @@ function NewCardSheet({
     creditLimitCents: number;
     closingDay: number;
     dueDay: number;
-  }) => void;
+  }) => void | Promise<void>;
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [brand, setBrand] = useState("Nubank");
   const [name, setName] = useState("");
   const [limit, setLimit] = useState("");
   const [closingDay, setClosingDay] = useState("1");
   const [dueDay, setDueDay] = useState("10");
 
-  function handleSave() {
+  useEffect(() => {
+    if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setBrand("Nubank");
+      setName("");
+      setLimit("");
+      markClean();
+    }
+  }, [open, markClean]);
+
+  async function handleSave() {
     const displayName = name.trim() || brand;
-    onAddCard({
-      name: displayName,
-      creditLimitCents: parseBRLToCents(limit),
-      closingDay: parseInt(closingDay, 10) || 15,
-      dueDay: parseInt(dueDay, 10) || 25,
-    });
-    setName("");
-    setLimit("");
-    onClose();
+    try {
+      await onAddCard({
+        name: displayName,
+        creditLimitCents: parseBRLToCents(limit),
+        closingDay: parseInt(closingDay, 10) || 15,
+        dueDay: parseInt(dueDay, 10) || 25,
+      });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
   }
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Novo cartão">
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
             Bandeira / banco
@@ -134,7 +154,7 @@ function NewCardSheet({
               <button
                 key={b.name}
                 type="button"
-                onClick={() => setBrand(b.name)}
+                onClick={() => { markDirty(); setBrand(b.name); }}
                 className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-colors ${
                   brand === b.name ? "bg-primary text-white" : "bg-fill-light text-text-secondary"
                 }`}
@@ -211,11 +231,22 @@ function PayStatementSheet({
   onClose: () => void;
   card: CardData | null;
   accounts: { id: string; name: string; kind: string }[];
-  onPay: (input: { amountCents: number; fromAccountId: string }) => void;
+  onPay: (input: { amountCents: number; fromAccountId: string }) => void | Promise<void>;
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [mode, setMode] = useState<"full" | "partial">("full");
   const [partialDisplay, setPartialDisplay] = useState("");
   const [accountId, setAccountId] = useState("");
+
+  useEffect(() => {
+    if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMode("full");
+      setPartialDisplay("");
+      setAccountId("");
+      markClean();
+    }
+  }, [open, markClean]);
 
   if (!card) return null;
 
@@ -225,15 +256,20 @@ function PayStatementSheet({
   const remainingAfterPay = Math.max(0, fullAmountCents - amountCents);
   const checkingAccounts = accounts.filter((a) => a.kind !== "credit_card");
 
-  function handlePay() {
+  async function handlePay() {
     if (amountCents <= 0 || !accountId) return;
-    onPay({ amountCents, fromAccountId: accountId });
-    onClose();
+    try {
+      await onPay({ amountCents, fromAccountId: accountId });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
   }
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Pagar fatura">
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-5" onChangeCapture={markDirty}>
         <div className="flex items-center gap-3 rounded-[14px] bg-fill-light px-3.5 py-3">
           <div className="flex h-[44px] w-[70px] flex-none items-center justify-center rounded-[10px] font-mono text-[10px] font-bold text-white"
             style={{ background: gradientFor(card.color) }}>
@@ -252,11 +288,11 @@ function PayStatementSheet({
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo de pagamento</label>
           <div className="flex gap-1 rounded-xl bg-fill-light p-1">
-            <button type="button" onClick={() => setMode("full")}
+            <button type="button" onClick={() => { markDirty(); setMode("full"); }}
               className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-colors ${mode === "full" ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"}`}>
               Total
             </button>
-            <button type="button" onClick={() => setMode("partial")}
+            <button type="button" onClick={() => { markDirty(); setMode("partial"); }}
               className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-colors ${mode === "partial" ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"}`}>
               Parcial
             </button>
@@ -294,7 +330,7 @@ function PayStatementSheet({
           ) : (
             <div className="flex flex-wrap gap-2">
               {checkingAccounts.map((acc) => (
-                <button key={acc.id} type="button" onClick={() => setAccountId(acc.id === accountId ? "" : acc.id)}
+                <button key={acc.id} type="button" onClick={() => { markDirty(); setAccountId(acc.id === accountId ? "" : acc.id); }}
                   className={`rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${accountId === acc.id ? "bg-primary text-white" : "bg-fill-light text-text-secondary"}`}>
                   {acc.name}
                 </button>
@@ -327,28 +363,45 @@ function EditSheet({
   open: boolean;
   onClose: () => void;
   card: CardData | null;
-  onUpdate: (id: string, input: { name?: string; creditLimitCents?: number; closingDay?: number; dueDay?: number }) => void;
+  onUpdate: (id: string, input: { name?: string; creditLimitCents?: number; closingDay?: number; dueDay?: number }) => void | Promise<void>;
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [name, setName] = useState(card?.name ?? "");
   const [limit, setLimit] = useState("");
   const [closingDay, setClosingDay] = useState(String(card?.closingDay ?? "15"));
   const [dueDay, setDueDay] = useState(String(card?.dueDay ?? "25"));
 
+  useEffect(() => {
+    if (card && open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setName(card.name);
+      setLimit("");
+      setClosingDay(String(card.closingDay));
+      setDueDay(String(card.dueDay));
+      markClean();
+    }
+  }, [card, open, markClean]);
+
   if (!card) return null;
 
-  function handleSave() {
-    onUpdate(card!.id, {
-      name: name.trim() || card!.name,
-      creditLimitCents: parseBRLToCents(limit) || card!.creditLimitCents,
-      closingDay: parseInt(closingDay, 10) || card!.closingDay,
-      dueDay: parseInt(dueDay, 10) || card!.dueDay,
-    });
-    onClose();
+  async function handleSave() {
+    try {
+      await onUpdate(card!.id, {
+        name: name.trim() || card!.name,
+        creditLimitCents: parseBRLToCents(limit) || card!.creditLimitCents,
+        closingDay: parseInt(closingDay, 10) || card!.closingDay,
+        dueDay: parseInt(dueDay, 10) || card!.dueDay,
+      });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
   }
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Editar cartão">
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <fieldset>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Apelido</label>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)}
@@ -392,6 +445,106 @@ function EditSheet({
   );
 }
 
+// ── PurchaseEditSheet ────────────────────────────────────────────────────────
+
+function PurchaseEditSheet({
+  purchase,
+  categories,
+  open,
+  onClose,
+  onSave,
+}: {
+  purchase: StatementPurchase | null;
+  categories: { id: string; name: string }[];
+  open: boolean;
+  onClose: () => void;
+  onSave: (input: { description: string; amountCents: number; date: string; categoryId?: string }) => void | Promise<void>;
+}) {
+  const { markDirty, markClean } = useFormDirtySafe();
+  const [description, setDescription] = useState("");
+  const [amountDisplay, setAmountDisplay] = useState("");
+  const [date, setDate] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+
+  useEffect(() => {
+    if (purchase && open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDescription(purchase.description);
+      setAmountDisplay(formatInputBRL(String(purchase.amountCents)));
+      setDate(purchase.date);
+      setCategoryId(purchase.categoryId ?? "");
+      markClean();
+    }
+  }, [purchase, open, markClean]);
+
+  if (!purchase) return null;
+
+  function handleClose() {
+    markClean();
+    onClose();
+  }
+
+  async function handleSave() {
+    try {
+      await onSave({
+        description: description.trim(),
+        amountCents: parseBRLToCents(amountDisplay),
+        date,
+        categoryId: categoryId || undefined,
+      });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
+  }
+
+  return (
+    <BottomSheet open={open} onClose={handleClose} title="Editar compra">
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Descrição</label>
+          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)}
+            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+        </fieldset>
+
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Valor</label>
+          <div className="relative">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-semibold text-text-secondary">R$</span>
+            <input type="text" inputMode="numeric" value={amountDisplay}
+              onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setAmountDisplay(formatInputBRL(raw)); }}
+              className="w-full rounded-[13px] border border-border bg-transparent py-3 pl-11 pr-3.5 font-mono text-[16px] font-semibold text-text-primary outline-none focus:border-primary" />
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Data</label>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+        </fieldset>
+
+        <fieldset>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Categoria</label>
+          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary">
+            <option value="">Sem categoria</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </fieldset>
+
+        <button type="button" onClick={handleSave}
+          disabled={!description.trim() || !date}
+          className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50">
+          Salvar alterações
+        </button>
+      </div>
+    </BottomSheet>
+  );
+}
+
 // ── CardsPage ──────────────────────────────────────────────────────────────
 
 export default function CardsPage() {
@@ -401,6 +554,67 @@ export default function CardsPage() {
   const [editCard, setEditCard] = useState<CardData | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [selectedStatementId, setSelectedStatementId] = useState<string | null>(null);
+  const [stmtDetail, setStmtDetail] = useState<StatementDetail | null>(null);
+  const [editPurchase, setEditPurchase] = useState<StatementPurchase | null>(null);
+  const [stmtRefreshKey, setStmtRefreshKey] = useState(0);
+
+  // Read ?cardId=<id> from the URL on mount. Used by the Home page to
+  // deep-link the user onto a specific card detail.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("cardId");
+    if (id) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedCardId(id);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedCardId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedStatementId(null);
+      return;
+    }
+
+    const latestStmt = cardStatements
+      .filter((s) => s.accountId === selectedCardId)
+      .sort((a, b) => b.cycleYearMonth.localeCompare(a.cycleYearMonth))[0];
+
+    setSelectedStatementId((current) => {
+      if (current && cardStatements.some((s) => s.id === current && s.accountId === selectedCardId)) {
+        return current;
+      }
+      return latestStmt?.id ?? null;
+    });
+  }, [selectedCardId, cardStatements]);
+
+  useEffect(() => {
+    if (!selectedStatementId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setStmtDetail(null);
+      return;
+    }
+
+    let cancelled = false;
+    fetchStatementDetail(selectedStatementId)
+      .then((detail) => { if (!cancelled) setStmtDetail(detail); })
+      .catch(() => { if (!cancelled) setStmtDetail(null); });
+    return () => { cancelled = true; };
+  }, [selectedStatementId, stmtRefreshKey]);
+
+  const handlePurchaseSave = useCallback(async (input: {
+    description: string; amountCents: number; date: string; categoryId?: string;
+  }) => {
+    if (!editPurchase) return;
+    try {
+      await updateCardPurchase(editPurchase.id, input);
+      setStmtRefreshKey((k) => k + 1);
+    } catch {
+      // error handled by parent
+    }
+  }, [editPurchase]);
 
   if (loading) {
     return (
@@ -418,8 +632,9 @@ export default function CardsPage() {
 
   const creditCards = accounts.filter((a) => a.kind === "credit_card");
 
+  // Derive card-level data from statements when available, fallback to transactions
   const cardsData: CardData[] = creditCards.map((card) => {
-    const purchases = transactions
+    const txPurchases = transactions
       .filter((t) => t.accountId === card.id && t.kind === "expense")
       .sort((a, b) => b.date.localeCompare(a.date))
       .map((p) => ({
@@ -430,12 +645,21 @@ export default function CardsPage() {
         categoryName: categories.find((c) => c.id === p.categoryId)?.name ?? "",
       }));
 
-    const spentCents = purchases.reduce((s, p) => s + p.amountCents, 0);
+    // Prefer statement total over transaction-based spentCents
+    const stmts = cardStatements
+      .filter((s) => s.accountId === card.id)
+      .sort((a, b) => b.cycleYearMonth.localeCompare(a.cycleYearMonth));
+    const currentStmt = stmts[0];
+
+    const spentCents = currentStmt?.totalCents ?? txPurchases.reduce((s, p) => s + p.amountCents, 0);
     const limit = card.creditLimitCents ?? 1;
     const pct = Math.min((spentCents / limit) * 100, 100);
-    return { id: card.id, name: card.name, color: card.color ?? "#4A5568",
+    return {
+      id: card.id, name: card.name, color: card.color ?? "#4A5568",
       creditLimitCents: limit, closingDay: card.closingDay ?? 1, dueDay: card.dueDay ?? 1,
-      spentCents, pct, purchases };
+      spentCents, pct, purchases: txPurchases,
+      currentStmtId: currentStmt?.id,
+    };
   });
 
   return (
@@ -502,17 +726,28 @@ export default function CardsPage() {
           (() => {
             const card = cardsData.find((c) => c.id === selectedCardId);
             if (!card) return null;
-            const bgGrad = gradientFor(card.color);
-            const availCents = card.creditLimitCents - card.spentCents;
 
-            // Statements for this card from context
             const cardStmts = cardStatements.filter((s) => s.accountId === card.id)
               .sort((a, b) => b.cycleYearMonth.localeCompare(a.cycleYearMonth));
+            const selectedStmtSummary = cardStmts.find((s) => s.id === selectedStatementId) ?? cardStmts[0];
+            const detailSpent = stmtDetail?.id === selectedStatementId
+              ? stmtDetail.totalCents
+              : selectedStmtSummary?.totalCents ?? card.spentCents;
+            const detailPurchases = stmtDetail?.id === selectedStatementId
+              ? stmtDetail.purchases
+              : selectedStmtSummary?.id === card.currentStmtId
+                ? card.purchases
+                : [];
+            const detailDueDay = selectedStmtSummary
+              ? new Date(`${selectedStmtSummary.dueDate}T12:00:00`).getDate()
+              : card.dueDay;
+            const bgGrad = gradientFor(card.color);
+            const availCents = card.creditLimitCents - detailSpent;
 
             return (
               <div className="flex flex-col gap-4 px-5">
                 <div className="flex items-center justify-between">
-                  <button onClick={() => setSelectedCardId(null)} className="flex items-center gap-1.5 text-[14px] font-semibold text-primary">
+                  <button onClick={() => { setSelectedCardId(null); setSelectedStatementId(null); }} className="flex items-center gap-1.5 text-[14px] font-semibold text-primary">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="m15 18-6-6 6-6" />
                     </svg>
@@ -535,11 +770,11 @@ export default function CardsPage() {
                   <div className="flex justify-between">
                     <div>
                       <div className="text-[11px] text-white/70">Fatura</div>
-                      <div className="font-mono text-[18px] font-semibold">{formatBRL(card.spentCents)}</div>
+                      <div className="font-mono text-[18px] font-semibold">{formatBRL(detailSpent)}</div>
                     </div>
                     <div>
                       <div className="text-[11px] text-white/70">Vence dia</div>
-                      <div className="font-mono text-[18px] font-semibold">{card.dueDay}</div>
+                      <div className="font-mono text-[18px] font-semibold">{detailDueDay}</div>
                     </div>
                     <div>
                       <div className="text-[11px] text-white/70">Limite livre</div>
@@ -551,8 +786,8 @@ export default function CardsPage() {
                 {/* Pagar fatura */}
                 <button
                   type="button"
-                  onClick={() => setPayCard(card)}
-                  disabled={card.spentCents === 0}
+                  onClick={() => setPayCard({ ...card, spentCents: detailSpent })}
+                  disabled={detailSpent === 0 || selectedStmtSummary?.status === "paid"}
                   className="w-full rounded-[13px] bg-primary py-[13px] text-[14px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 >
                   Pagar fatura
@@ -562,11 +797,11 @@ export default function CardsPage() {
                 <div>
                   <div className="mb-2 text-[13px] font-bold text-text-primary">Compras da fatura</div>
                   <div className="overflow-hidden rounded-[16px] border border-border bg-surface">
-                    {card.purchases.length === 0 ? (
+                    {detailPurchases.length === 0 ? (
                       <div className="px-4 py-6 text-center text-[12px] text-text-muted">Nenhuma compra nesta fatura.</div>
                     ) : (
-                      card.purchases.map((p) => (
-                        <div key={p.id} className="flex items-center justify-between border-b border-fill-medium px-4 py-3 last:border-none">
+                      detailPurchases.map((p) => (
+                        <div key={p.id} onClick={() => setEditPurchase(p)} className="flex cursor-pointer items-center justify-between border-b border-fill-medium px-4 py-3 last:border-none active:bg-fill-light">
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">
                               <span className="text-[13px] font-semibold text-text-primary">{p.description}</span>
@@ -595,14 +830,22 @@ export default function CardsPage() {
                         const statusLabel = isPaid ? "Paga" : isOverdue ? "Atrasada" : s.status === "open" ? "Aberta" : s.status === "partial" ? "Parcial" : "Fechada";
                         const statusColor = isPaid ? "#0E8C5A" : isOverdue ? "#C8483B" : "#5C665E";
                         const statusTint = isPaid ? "#E7F3EC" : isOverdue ? "#F7E9E7" : "#F4F5F2";
+                        const isSelected = s.id === selectedStatementId;
                         return (
-                          <div key={s.id} className="flex items-center justify-between border-b border-fill-medium px-4 py-3.5 last:border-none">
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => setSelectedStatementId(s.id)}
+                            className={`flex w-full items-center justify-between border-b border-fill-medium px-4 py-3.5 text-left last:border-none ${isSelected ? "bg-primary-tint/40" : ""}`}
+                            aria-pressed={isSelected}
+                            aria-label={`${monthLabel} ${statusLabel}`}
+                          >
                             <div>
                               <div className="text-[13px] font-semibold capitalize text-text-primary">{monthLabel}</div>
                               <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: statusTint, color: statusColor }}>{statusLabel}</span>
                             </div>
                             <span className="font-mono text-[14px] font-semibold text-danger">{formatBRL(s.totalCents)}</span>
-                          </div>
+                          </button>
                         );
                       })
                     ) : (
@@ -626,12 +869,19 @@ export default function CardsPage() {
         card={payCard}
         accounts={accounts}
         onPay={(input) => {
-          const stmtId = cardStatements.find((s) => s.accountId === payCard?.id)?.id ?? "";
-          if (stmtId) payStatement(stmtId, input);
+          if (selectedStatementId) payStatement(selectedStatementId, input);
         }}
       />
 
       <EditSheet open={editCard !== null} onClose={() => setEditCard(null)} card={editCard} onUpdate={updateCard} />
+
+      <PurchaseEditSheet
+        purchase={editPurchase}
+        categories={categories}
+        open={editPurchase !== null}
+        onClose={() => setEditPurchase(null)}
+        onSave={handlePurchaseSave}
+      />
     </div>
   );
 }

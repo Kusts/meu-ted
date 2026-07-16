@@ -2,48 +2,9 @@
 
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { CategoryBadge } from "@/components/ui/CategoryBadge";
+import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import type { Account, Category } from "@/lib/state/types";
-
-/* ── Category icon helpers ── */
-
-const CATEGORY_ICONS: Record<string, string> = {
-  UtensilsCrossed: "🍽", Car: "🚗", Home: "🏠", Heart: "❤️",
-  DollarSign: "💵", Laptop: "💻", ShoppingBag: "🛍", Gift: "🎁",
-  Briefcase: "💼", Zap: "⚡", Film: "🎬", Book: "📚",
-  Plane: "✈️", Gamepad2: "🎮",
-};
-
-const CATEGORY_TINTS: Record<string, string> = {
-  UtensilsCrossed: "#E7F3EC", Car: "#FBF1E3", Home: "#E8EFF7", Heart: "#F7E9E7",
-  DollarSign: "#E7F3EC", Laptop: "#E8EFF7", ShoppingBag: "#E7F3EC", Gift: "#FBF1E3",
-  Briefcase: "#E8EFF7", Zap: "#FBF1E3", Film: "#E8EFF7", Book: "#E7F3EC",
-  Plane: "#E8EFF7", Gamepad2: "#F7E9E7",
-};
-
-const CATEGORY_STROKES: Record<string, string> = {
-  UtensilsCrossed: "#0E8C5A", Car: "#B8791F", Home: "#3E6FB0", Heart: "#C8483B",
-  DollarSign: "#0E8C5A", Laptop: "#3E6FB0", ShoppingBag: "#0E8C5A", Gift: "#B8791F",
-  Briefcase: "#3E6FB0", Zap: "#B8791F", Film: "#3E6FB0", Book: "#0E8C5A",
-  Plane: "#3E6FB0", Gamepad2: "#C8483B",
-};
-
-function CategoryIcon({ icon }: { icon: string }) {
-  const emoji = CATEGORY_ICONS[icon];
-  if (emoji) return <span className="text-[14px]">{emoji}</span>;
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10" />
-    </svg>
-  );
-}
-
-function getCategoryTint(icon: string): string {
-  return CATEGORY_TINTS[icon] ?? "#F4F5F2";
-}
-
-function getCategoryStroke(icon: string): string {
-  return CATEGORY_STROKES[icon] ?? "#98A29A";
-}
 
 export type SheetTab = "expense" | "income" | "transfer";
 
@@ -62,7 +23,7 @@ export interface SaveData {
 interface NewTransactionSheetProps {
   accounts: Account[];
   categories: Category[];
-  onSave: (data: SaveData) => void;
+  onSave: (data: SaveData) => void | Promise<void>;
   onAddCategory?: (input: { name: string; kind: "expense" | "income"; parentId?: string }) => void;
   onAddAccount?: (input: { name: string; kind: "bank" | "cash" | "credit_card"; initialBalanceCents: number }) => void;
   onAddCard?: (input: { name: string; creditLimitCents: number; closingDay: number; dueDay: number }) => void;
@@ -136,6 +97,7 @@ export default function NewTransactionSheet({
   onAddCard,
   initialTab = "expense",
 }: NewTransactionSheetProps) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [tab, setTab] = useState<SheetTab>(initialTab);
   const [amountDisplay, setAmountDisplay] = useState("");
   const [description, setDescription] = useState("");
@@ -264,20 +226,20 @@ export default function NewTransactionSheet({
     setAddingCard(false);
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (amountCents <= 0) return;
-
+    let data: SaveData;
     if (isTransfer) {
-      onSave({
+      data = {
         kind: "transfer",
         amountCents,
         description,
         date,
         fromAccountId,
         toAccountId,
-      });
+      };
     } else {
-      const data: SaveData = {
+      data = {
         kind: tab,
         amountCents,
         description,
@@ -288,7 +250,12 @@ export default function NewTransactionSheet({
       if (installmentsEnabled && installmentsCount > 1) {
         data.installmentsTotal = installmentsCount;
       }
-      onSave(data);
+    }
+    try {
+      await onSave(data);
+      markClean();
+    } catch {
+      // Save failed: keep dirty.
     }
   }
 
@@ -299,13 +266,17 @@ export default function NewTransactionSheet({
   ];
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-5" onChangeCapture={markDirty}>
       {/* Tabs */}
       <div className="flex gap-1 rounded-xl bg-fill-light p-1">
         {tabs.map((t) => (
           <button
             key={t.key}
             onClick={() => {
+              // Reset ALL draft fields when switching tabs. Without this,
+              // amount/description leak across tabs (e.g. typing a Despesa
+              // draft, switching to Transferência by mistake, and the wrong
+              // amount/description silently carrying over).
               setTab(t.key);
               setCategoryId("");
               setAccountId("");
@@ -313,6 +284,8 @@ export default function NewTransactionSheet({
               setFromAccountId("");
               setToAccountId("");
               setInstallmentsEnabled(false);
+              setAmountDisplay("");
+              setDescription("");
             }}
             className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-colors ${
               tab === t.key
@@ -434,8 +407,6 @@ export default function NewTransactionSheet({
 
           <div className="grid grid-cols-4 gap-2">
             {filteredCategories.map((cat) => {
-              const tint = getCategoryTint(cat.icon);
-              const stroke = getCategoryStroke(cat.icon);
               const selected = categoryId === cat.id;
               return (
                 <button
@@ -446,8 +417,8 @@ export default function NewTransactionSheet({
                     selected ? "bg-primary/10 ring-1 ring-primary" : "hover:bg-fill-light"
                   }`}
                 >
-                  <span className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px]" style={{ background: tint, color: stroke }}>
-                    <CategoryIcon icon={cat.icon} />
+                  <span className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] bg-fill-light">
+                    <CategoryBadge name={cat.name} size={16} />
                   </span>
                   <span className={`text-center text-[9.5px] font-semibold leading-tight ${selected ? "text-primary" : "text-text-secondary"}`}>
                     {cat.name}
@@ -503,22 +474,16 @@ export default function NewTransactionSheet({
 
           {subcategories.length > 0 && (
             <div className="flex gap-1.5 overflow-x-auto">
-              {subcategories.map((sub) => {
-                const tint = getCategoryTint(sub.icon);
-                const stroke = getCategoryStroke(sub.icon);
-                return (
-                  <button
-                    key={sub.id}
-                    type="button"
-                    className="flex items-center gap-1 flex-none rounded-[100px] border border-border-strong bg-fill-light px-3 py-1.5 text-[11px] font-semibold text-text-secondary"
-                  >
-                    <span className="flex h-[14px] w-[14px] items-center justify-center rounded-[4px]" style={{ background: tint, color: stroke }}>
-                      <CategoryIcon icon={sub.icon} />
-                    </span>
-                    {sub.name}
-                  </button>
-                );
-              })}
+              {subcategories.map((sub) => (
+                <button
+                  key={sub.id}
+                  type="button"
+                  className="flex items-center gap-1 flex-none rounded-[100px] border border-border-strong bg-fill-light px-3 py-1.5 text-[11px] font-semibold text-text-secondary"
+                >
+                  <CategoryBadge name={sub.name} size={12} />
+                  {sub.name}
+                </button>
+              ))}
             </div>
           )}
         </div>

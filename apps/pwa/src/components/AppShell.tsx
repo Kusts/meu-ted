@@ -78,6 +78,7 @@ export default function AppShell({ children }: AppShellProps) {
   }
 
   function handleNavClick(item: NavItem) {
+    closeSheetLocal();
     if (item === "home") router.push("/");
     else if (item === "records") router.push("/registros");
     else if (item === "payables") router.push("/a-pagar");
@@ -116,7 +117,10 @@ export default function AppShell({ children }: AppShellProps) {
   }
 
   return (
-    <div className="relative mx-auto flex min-h-dvh max-w-[430px] flex-col bg-bg">
+    <div
+      data-shell="root"
+      className="relative mx-auto flex min-h-dvh w-full max-w-[var(--shell-max-w)] flex-col bg-bg"
+    >
       {children}
 
       <BottomNav

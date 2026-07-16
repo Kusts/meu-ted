@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import BottomSheet from "@/components/BottomSheet";
 import { useAppState } from "@/lib/state/app-state-context";
+import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import type { Transaction } from "@/lib/state/types";
 
 function formatInputBRL(value: string): string {
@@ -32,6 +33,7 @@ export function TransactionEditSheet({
   onClose,
 }: TransactionEditSheetProps) {
   const { updateTransaction, categories, accounts } = useAppState();
+  const { markDirty, markClean } = useFormDirtySafe();
   const isTransfer = transaction?.kind === "transfer";
 
   const [description, setDescription] = useState("");
@@ -41,20 +43,27 @@ export function TransactionEditSheet({
   const [accountId, setAccountId] = useState("");
 
   useEffect(() => {
-    if (transaction) {
+    if (transaction && open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDescription(transaction.description);
       setDate(transaction.date);
       setAmountStr(formatInputBRL(String(transaction.amountCents)));
       setCategoryId(transaction.categoryId ?? "");
       setAccountId(transaction.accountId);
+      markClean();
     }
-  }, [transaction]);
+  }, [transaction, open, markClean]);
 
   if (!transaction) return null;
 
   const filteredCategories = categories.filter(
     (c) => c.kind === (transaction.kind === "income" ? "income" : "expense"),
   );
+
+  function handleClose() {
+    markClean();
+    onClose();
+  }
 
   const handleSave = async () => {
     if (!description.trim() || !date) return;
@@ -77,13 +86,18 @@ export function TransactionEditSheet({
       if (categoryId) input.categoryId = categoryId;
     }
 
-    await updateTransaction(transaction.id, input);
-    onClose();
+    try {
+      await updateTransaction(transaction.id, input);
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
   };
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Editar lançamento">
-      <div className="flex flex-col gap-4">
+    <BottomSheet open={open} onClose={handleClose} title="Editar lançamento">
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         {/* Description */}
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
@@ -161,7 +175,7 @@ export function TransactionEditSheet({
             >
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.name}
+                  {a.kind === "credit_card" ? `Cartão • ${a.name}` : `Conta • ${a.name}`}
                 </option>
               ))}
             </select>

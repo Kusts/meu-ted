@@ -20,6 +20,8 @@ import type {
   Debt,
   Subscription,
   CardStatement,
+  Profile,
+  QuickInsight,
 } from "./types";
 import {
   ALL_MOCK_TRANSACTIONS,
@@ -32,10 +34,17 @@ import {
   mockSubscriptions,
 } from "./mock-data";
 import { isApiConfigured, getAuthToken } from "@/lib/api/client";
-import { type DomainKey, saveDomain, loadDomain } from "./snapshot-store";
+import { type DomainKey } from "./snapshot-store";
 import { useSession } from "@/lib/auth/session-context";
 import { ApiError } from "@/lib/api/client";
 import * as endpoints from "@/lib/api/endpoints";
+import { runBootstrap, type SnapshotPreload } from "./sync-engine";
+import type { AppStateAction } from "./state-reducer";
+import { migrateV1toV2, loadSnapshotDomain } from "./snapshot-store";
+import { createCommands, type Commands } from "./commands";
+import { useUnsavedChangesSafe } from "@/lib/unsaved-changes";
+import { createProfileAdapter } from "./profile-adapter";
+import { createSubscriptionsAdapter } from "./subscriptions-adapter";
 
 export interface AppState {
   // Data
@@ -48,6 +57,16 @@ export interface AppState {
   debts: Debt[];
   subscriptions: Subscription[];
   cardStatements: CardStatement[];
+  profile: Profile | null;
+  quickInsights?: QuickInsight[];
+  saveProfile: (input: {
+    name?: string;
+    email?: string;
+    phone?: string;
+    avatarColor?: string;
+    greetingStyle?: Profile["greetingStyle"];
+  }) => Promise<void>;
+  refreshProfile: () => Promise<void>;
   // Sync / mode
   sync: Record<DomainKey, DomainSync>;
   readOnly: boolean;
@@ -71,6 +90,14 @@ export interface AppState {
   deleteTransaction: (id: string) => Promise<void>;
   markPayablePaid: (id: string) => Promise<void>;
   cancelPayable: (id: string) => Promise<void>;
+  updatePayable: (id: string, input: {
+    description?: string;
+    amountCents?: number;
+    dueDate?: string;
+    accountId?: string;
+    categoryId?: string;
+  }) => Promise<void>;
+  undoPayablePayment: (id: string) => Promise<void>;
   createPayable: (input: {
     accountId: string;
     description: string;
@@ -100,6 +127,11 @@ export interface AppState {
     input: { amountCents: number },
   ) => Promise<void>;
   cancelGoal: (id: string) => Promise<void>;
+  updateGoal: (id: string, input: {
+    name?: string;
+    targetAmountCents?: number;
+    targetDate?: string;
+  }) => Promise<void>;
   addAccount: (input: {
     name: string;
     kind: "bank" | "cash" | "credit_card";
@@ -137,6 +169,15 @@ export interface AppState {
     paymentMethod: string;
   }) => Promise<void>;
   cancelSubscription: (id: string) => Promise<void>;
+  updateSubscription: (id: string, input: {
+    name?: string;
+    amountCents?: number;
+    cycle?: "monthly" | "yearly" | "weekly";
+    day?: number;
+    paymentMethod?: string;
+  }) => Promise<void>;
+  /** Lazy-load subscriptions on demand — not fetched during bootstrap */
+  refreshSubscriptions: () => Promise<void>;
   createTransfer: (input: {
     description: string;
     amountCents: number;
@@ -200,6 +241,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [subscriptions, setSubscriptions] =
     useState<Subscription[]>(configured ? [] : mockSubscriptions);
   const [cardStatements, setCardStatements] = useState<CardStatement[]>([]);
+  const [quickInsights, setQuickInsights] = useState<QuickInsight[]>([]);
+  // Profile starts as null; defaults are derived via `effectiveProfile`.
+  // We don't bake a "Marina" mock into the state because the spec wants
+  // the home/avatar to reflect the persisted profile (real data, not
+  // baked fixture).
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [sync, setSync] = useState<Record<DomainKey, DomainSync>>(() =>
     initialSync(configured ? "live" : "mock"),
   );
@@ -265,36 +312,99 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     stmtsRef.current = cardStatements;
   });
 
-  // Applies one settled list-domain result: live on success (+persist), snapshot if cached,
-  // else "unavailable" (empty + backend-down). NEVER mock.
-  const applyListDomain = useCallback(
-    function <K extends Exclude<DomainKey, "transactions">>(
-      domain: K,
-      result: PromiseSettledResult<unknown>,
-      token: string,
-      setData: (d: unknown) => void,
-    ): void {
-      if (result.status === "fulfilled") {
-        const value = result.value as never;
-        setData(value);
-        saveDomain(token, domain, value);
-        setSyncFor(domain, {
+  // ── Bootstrap dispatch: maps reducer actions to provider state ───────
+  // This replaces the former applyListDomain + inline fetch.
+  const bootstrapDispatch = useCallback((action: AppStateAction) => {
+    switch (action.type) {
+      case "BOOTSTRAP_START":
+        setLoading(true);
+        setError(null);
+        break;
+      case "BOOTSTRAP_COMPLETE":
+        setLoading(false);
+        break;
+      case "BOOTSTRAP_401":
+        setLoading(false);
+        break;
+      case "DOMAIN_LIVE": {
+        setSyncFor(action.domain, {
           source: "live",
-          syncedAt: new Date().toISOString(),
+          syncedAt: action.syncedAt,
         });
-        return;
+        switch (action.domain) {
+          case "accounts": setAccounts(action.data as Account[]); break;
+          case "categories": setCategories(action.data as Category[]); break;
+          case "transactions": setTransactions(action.data as Transaction[]); break;
+          case "payables": setPayables(action.data as Payable[]); break;
+          case "budgets": setBudgets(action.data as Budget[]); break;
+          case "goals": setGoals(action.data as Goal[]); break;
+          case "cardStatements": setCardStatements(action.data as CardStatement[]); break;
+        }
+        break;
       }
-      const snap = loadDomain(token, domain);
-      if (snap) {
-        setData(snap.data);
-        setSyncFor(domain, { source: "snapshot", syncedAt: snap.syncedAt });
-      } else {
-        setData([]);
-        setSyncFor(domain, { source: "unavailable", syncedAt: null });
-      }
-    },
-    [setSyncFor],
-  );
+      case "DOMAIN_SNAPSHOT":
+        setSyncFor(action.domain, {
+          source: "snapshot",
+          syncedAt: action.syncedAt,
+        });
+        switch (action.domain) {
+          case "accounts": setAccounts(action.data as Account[]); break;
+          case "categories": setCategories(action.data as Category[]); break;
+          case "transactions": setTransactions(action.data as Transaction[]); break;
+          case "payables": setPayables(action.data as Payable[]); break;
+          case "budgets": setBudgets(action.data as Budget[]); break;
+          case "goals": setGoals(action.data as Goal[]); break;
+          case "cardStatements": setCardStatements(action.data as CardStatement[]); break;
+        }
+        break;
+      case "DOMAIN_UNAVAILABLE":
+        setSyncFor(action.domain, { source: "unavailable", syncedAt: null });
+        switch (action.domain) {
+          case "accounts": setAccounts([]); break;
+          case "categories": setCategories([]); break;
+          case "transactions": setTransactions([]); break;
+          case "payables": setPayables([]); break;
+          case "budgets": setBudgets([]); break;
+          case "goals": setGoals([]); break;
+          case "cardStatements": setCardStatements([]); break;
+        }
+        break;
+      case "SET_ERROR":
+        setError(action.error);
+        break;
+    }
+  }, [setSyncFor]);
+
+  // Preload v2 snapshot data for all domains before bootstrap.
+  const preloadSnapshot = useCallback(async (token: string): Promise<SnapshotPreload> => {
+    const domains: DomainKey[] = ["accounts","categories","transactions","payables","budgets","goals","cardStatements"];
+    const entries = await Promise.all(
+      domains.map((d) => loadSnapshotDomain(token, d).then((v) => [d, v] as const)),
+    );
+    const preload: SnapshotPreload = {};
+    for (const [domain, value] of entries) {
+      if (value) preload[domain] = { data: value.data, syncedAt: value.syncedAt };
+    }
+    return preload;
+  }, []);
+
+  // ── Write boundary: commands factory (offline-safe) ───────────────
+  // Every UI write goes through `commands.x(...)`; when `online` is false
+  // the command throws `OfflineWriteError` with zero network/optimistic
+  // side-effects. Stored in a ref so write callbacks (which keep `[]`
+  // deps to stay referentially stable) always read the latest commands
+  // at call time.
+  const { trackWrite } = useUnsavedChangesSafe();
+  const commandsRef = useRef<Commands | null>(null);
+  useEffect(() => {
+    commandsRef.current = createCommands({
+      online: apiUsable(),
+      token: getAuthToken() ?? undefined,
+      dispatch: bootstrapDispatch,
+      api: endpoints,
+      trackWrite,
+    });
+  }, [bootstrapDispatch, trackWrite]);
 
   // ── Fetch from API when configured + token exists ─────────────────
   useEffect(() => {
@@ -306,85 +416,33 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     const load = async () => {
       const token = getAuthToken();
       if (!token) return;
-      setLoading(true);
-      setError(null);
 
-      const results = await Promise.allSettled([
-        endpoints.fetchAccounts(),
-        endpoints.fetchCategories(),
-        endpoints.fetchTransactions({ limit: 200 }),
-        endpoints.fetchPayables(),
-        endpoints.fetchBudgets(),
-        endpoints.fetchGoals(),
-        endpoints.fetchSubscriptions(),
-        endpoints.fetchStatements(),
-      ]);
+      // 1. Migrate v1 → v2 (reads v1 localStorage, writes v2 IndexedDB, deletes v1)
+      await migrateV1toV2(token);
+
+      // 2. Preload existing v2 snapshot for offline fallback
+      const snapshotPreload = await preloadSnapshot(token);
+
+      // 3. Run bootstrap with preloaded snapshot data
+      await runBootstrap(token, bootstrapDispatch, expireSession, snapshotPreload);
+
       if (cancelled) return;
 
-      // Runtime 401 short-circuit across ALL domains (Task 5 wires the side-effect).
-      const unauthorized = results.some(
-        (r) =>
-          r.status === "rejected" &&
-          r.reason instanceof ApiError &&
-          r.reason.status === 401,
-      );
-      if (unauthorized) {
-        expireSession();
-        setLoading(false);
-        return;
+      // Profile and insights are fetched inside runBootstrap but
+      // handled separately by the provider (not in reducer).
+      // Refresh them after bootstrap completes.
+      try {
+        const profileResult = await endpoints.fetchProfile();
+        setProfile(profileResult);
+      } catch {
+        // profile failure is non-fatal
       }
-
-      applyListDomain("accounts", results[0], token, (d) =>
-        setAccounts(d as Account[]),
-      );
-      applyListDomain("categories", results[1], token, (d) =>
-        setCategories(d as Category[]),
-      );
-      // transactions has shape { items, total }: unwrap before applying
-      if (results[2].status === "fulfilled") {
-        const items = (results[2].value as { items: Transaction[] }).items;
-        setTransactions(items);
-        saveDomain(token, "transactions", items);
-        setSyncFor("transactions", {
-          source: "live",
-          syncedAt: new Date().toISOString(),
-        });
-      } else {
-        const snap = loadDomain(token, "transactions");
-        if (snap) {
-          setTransactions(snap.data);
-          setSyncFor("transactions", {
-            source: "snapshot",
-            syncedAt: snap.syncedAt,
-          });
-        } else {
-          setTransactions([]);
-          setSyncFor("transactions", {
-            source: "unavailable",
-            syncedAt: null,
-          });
-        }
+      try {
+        const insights = await endpoints.fetchQuickInsights();
+        setQuickInsights(insights);
+      } catch {
+        setQuickInsights([]);
       }
-      applyListDomain("payables", results[3], token, (d) =>
-        setPayables(d as Payable[]),
-      );
-      applyListDomain("budgets", results[4], token, (d) =>
-        setBudgets(d as Budget[]),
-      );
-      applyListDomain("goals", results[5], token, (d) =>
-        setGoals(d as Goal[]),
-      );
-      applyListDomain("subscriptions", results[6], token, (d) =>
-        setSubscriptions(d as Subscription[]),
-      );
-      applyListDomain("cardStatements", results[7], token, (d) =>
-        setCardStatements(d as CardStatement[]),
-      );
-
-      const anyFailed = results.some((r) => r.status === "rejected");
-      if (anyFailed)
-        setError("Alguns dados não puderam ser atualizados.");
-      setLoading(false);
     };
 
     load();
@@ -392,7 +450,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [bootstrapDispatch, expireSession]);
 
   // ── Write actions ─────────────────────────────────────────────────
 
@@ -404,7 +462,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     try {
       if (tx.kind === "expense") {
-        const created = await endpoints.createExpenseTransaction({
+        const created = await commandsRef.current!.createExpenseTransaction({
           description: tx.description,
           amountCents: tx.amountCents,
           date: tx.date,
@@ -419,7 +477,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           "Use createTransfer mutator for transfers, not addTransaction",
         );
       } else {
-        const created = await endpoints.createIncomeTransaction({
+        const created = await commandsRef.current!.createIncomeTransaction({
           description: tx.description,
           amountCents: tx.amountCents,
           date: tx.date,
@@ -478,7 +536,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.updateTransaction(id, input);
+        await commandsRef.current!.updateTransaction(id, input);
       } catch (e) {
         // Rollback to previous state
         setTransactions((curr) =>
@@ -498,7 +556,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      await endpoints.deleteTransaction(id);
+      await commandsRef.current!.deleteTransaction(id);
     } catch (e) {
       if (prev) setTransactions((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
@@ -519,7 +577,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      await endpoints.markPayablePaid(id, today);
+      await commandsRef.current!.markPayablePaid(id, today);
     } catch (e) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? prev : p)),
@@ -544,7 +602,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.updateAccount(id, input);
+        await commandsRef.current!.updateAccount(id, input);
       } catch (e) {
         setAccounts((curr) =>
           curr.map((a) => (a.id === id ? prev : a)),
@@ -566,7 +624,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.deactivateAccount(id);
+      await commandsRef.current!.deactivateAccount(id);
     } catch (e) {
       setAccounts((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
@@ -588,7 +646,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.updateCategory(id, input);
+        await commandsRef.current!.updateCategory(id, input);
       } catch (e) {
         setCategories((curr) =>
           curr.map((c) => (c.id === id ? prev : c)),
@@ -609,7 +667,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.deactivateCategory(id);
+      await commandsRef.current!.deactivateCategory(id);
     } catch (e) {
       setCategories((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
@@ -636,7 +694,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.addAccount(input);
+        const created = await commandsRef.current!.addAccount(input);
         setAccounts((prev) =>
           prev.map((a) =>
             a.id === optimisticId
@@ -672,7 +730,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.addCategory(input);
+        const created = await commandsRef.current!.addCategory(input);
         setCategories((prev) =>
           prev.map((c) =>
             c.id === optimisticId ? { ...created, icon: c.icon } : c,
@@ -710,7 +768,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.createCard(input);
+        const created = await commandsRef.current!.createCard(input);
         setAccounts((prev) =>
           prev.map((a) =>
             a.id === optimisticId
@@ -761,7 +819,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable() || !prev) return;
 
       try {
-        const updated = await endpoints.updateCard(id, input);
+        const updated = await commandsRef.current!.updateCard(id, input);
         setAccounts((curr) =>
           curr.map((a) => (a.id === id ? { ...a, ...updated, color: a.color } : a)),
         );
@@ -800,7 +858,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.addSubscription(input);
+        const created = await commandsRef.current!.addSubscription(input);
         setSubscriptions((prev) =>
           prev.map((s) => (s.id === optimisticId ? created : s)),
         );
@@ -824,7 +882,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      await endpoints.cancelSubscription(id);
+      await commandsRef.current!.cancelSubscription(id);
     } catch (e) {
       setSubscriptions((curr) =>
         curr.map((s) => (s.id === id ? prev : s)),
@@ -832,6 +890,58 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       handleWriteErrorRef.current(e);
     }
   }, []);
+
+  const updateSubscription = useCallback(async (
+    id: string,
+    input: {
+      name?: string;
+      amountCents?: number;
+      cycle?: "monthly" | "yearly" | "weekly";
+      day?: number;
+      paymentMethod?: string;
+    },
+  ) => {
+    if (guardReadOnlyRef.current()) return;
+    const prev = subsRef.current.find((s) => s.id === id);
+    if (!prev) return;
+    // Optimistic update
+    setSubscriptions((curr) =>
+      curr.map((s) => s.id === id ? { ...s, ...input } : s),
+    );
+
+    if (!apiUsable()) return;
+
+    try {
+      await commandsRef.current!.updateSubscription(id, input);
+    } catch (e) {
+      // Rollback
+      setSubscriptions((curr) =>
+        curr.map((s) => (s.id === id ? prev : s)),
+      );
+      handleWriteErrorRef.current(e);
+    }
+  }, []);
+
+  // ── Lazy load subscriptions (not fetched during bootstrap) ────
+
+  const refreshSubscriptions = useCallback(async () => {
+    const token = getAuthToken();
+    if (!token) return;
+
+    const adapter = createSubscriptionsAdapter({ token, online: apiUsable() });
+    const result = await adapter.refresh();
+
+    if (result === null) {
+      // Offline — keep existing data (mock or empty)
+      return;
+    }
+
+    setSubscriptions(result.data);
+    setSyncFor("subscriptions", {
+      source: result.source,
+      syncedAt: result.syncedAt,
+    });
+  }, [setSyncFor]);
 
   const createTransfer = useCallback(
     async (input: {
@@ -879,7 +989,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.createTransfer(input);
+        await commandsRef.current!.createTransfer(input);
       } catch (e) {
         setTransactions((prev) => prev.filter((t) => t.id !== optimisticId));
         if (prevFrom) {
@@ -913,7 +1023,66 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      await endpoints.cancelPayable(id);
+      await commandsRef.current!.cancelPayable(id);
+    } catch (e) {
+      setPayables((curr) =>
+        curr.map((p) => (p.id === id ? { ...prev } : p)),
+      );
+      handleWriteErrorRef.current(e);
+    }
+  }, []);
+
+  const updatePayable = useCallback(
+    async (id: string, input: {
+      description?: string;
+      amountCents?: number;
+      dueDate?: string;
+      accountId?: string;
+      categoryId?: string;
+    }) => {
+      if (guardReadOnlyRef.current()) return;
+      const prev = payablesRef.current.find((p) => p.id === id);
+      if (!prev) return;
+
+      // Optimistic update
+      setPayables((curr) =>
+        curr.map((p) =>
+          p.id === id ? { ...p, ...input } : p,
+        ),
+      );
+
+      if (!apiUsable()) return;
+
+      try {
+        await commandsRef.current!.updatePayable(id, input);
+      } catch (e) {
+        setPayables((curr) =>
+          curr.map((p) => (p.id === id ? { ...prev } : p)),
+        );
+        handleWriteErrorRef.current(e);
+      }
+    },
+    [],
+  );
+
+  const undoPayablePayment = useCallback(async (id: string) => {
+    if (guardReadOnlyRef.current()) return;
+    const prev = payablesRef.current.find((p) => p.id === id);
+    if (!prev) return;
+
+    // Optimistic update: change status back to pending/overdue
+    const newStatus: Payable['status'] =
+      new Date().toISOString().slice(0, 10) <= prev.dueDate ? 'pending' : 'overdue';
+    setPayables((curr) =>
+      curr.map((p) =>
+        p.id === id ? { ...p, status: newStatus, paidDate: undefined as unknown as string | undefined } : p,
+      ),
+    );
+
+    if (!apiUsable()) return;
+
+    try {
+      await commandsRef.current!.undoPayablePayment(id);
     } catch (e) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? { ...prev } : p)),
@@ -945,7 +1114,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.createPayable(input);
+        const created = await commandsRef.current!.createPayable(input);
         setPayables((curr) =>
           curr.map((p) => (p.id === optimisticId ? created : p)),
         );
@@ -981,7 +1150,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.createBudget(input);
+        const created = await commandsRef.current!.createBudget(input);
         setBudgets((curr) =>
           curr.map((b) => (b.id === optimistic.id ? created : b)),
         );
@@ -1018,7 +1187,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.updateBudget(id, input);
+        await commandsRef.current!.updateBudget(id, input);
       } catch (e) {
         setBudgets((curr) =>
           curr.map((b) => (b.id === id ? prev : b)),
@@ -1051,7 +1220,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.createGoal(input);
+        const created = await commandsRef.current!.createGoal(input);
         setGoals((curr) =>
           curr.map((g) => (g.id === optimistic.id ? created : g)),
         );
@@ -1084,7 +1253,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.contributeToGoal(id, input);
+        await commandsRef.current!.contributeToGoal(id, input);
       } catch (e) {
         setGoals((curr) =>
           curr.map((g) => (g.id === id ? { ...prev } : g)),
@@ -1105,9 +1274,35 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.cancelGoal(id);
+      await commandsRef.current!.cancelGoal(id);
     } catch (e) {
       setGoals((curr) => [prev, ...curr]);
+      handleWriteErrorRef.current(e);
+    }
+  }, []);
+
+  const updateGoal = useCallback(async (
+    id: string,
+    input: {
+      name?: string;
+      targetAmountCents?: number;
+      targetDate?: string;
+    },
+  ) => {
+    if (guardReadOnlyRef.current()) return;
+    const prev = goalsRef.current.find((g) => g.id === id);
+    if (!prev) return;
+
+    setGoals((curr) =>
+      curr.map((g) => g.id === id ? { ...g, ...input } : g),
+    );
+
+    if (!apiUsable()) return;
+
+    try {
+      await commandsRef.current!.updateGoal(id, input);
+    } catch (e) {
+      setGoals((curr) => curr.map((g) => (g.id === id ? prev : g)));
       handleWriteErrorRef.current(e);
     }
   }, []);
@@ -1154,7 +1349,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const updated = await endpoints.payStatement(statementId, input);
+        const updated = await commandsRef.current!.payStatement(statementId, input);
         setCardStatements((curr) =>
           curr.map((s) =>
             s.id === statementId
@@ -1197,7 +1392,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        await endpoints.createInstallments(input);
+        await commandsRef.current!.createInstallments(input);
         const stmts = await endpoints.fetchStatements(input.accountId);
         setCardStatements(stmts);
       } catch (e) {
@@ -1206,6 +1401,66 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
+
+  // ── Profile adapter ────────────────────────────────────────
+  // Injected persistence/API projection adapter. The adapter handles both
+  // API mode (endpoints.patchProfile/fetchProfile) and local fallback mode
+  // (localStorage). The provider facade (saveProfile, refreshProfile) is
+  // unchanged.
+  const profileAdapter = useMemo(
+    () => createProfileAdapter({ apiUsable: apiUsable() }),
+    [],
+  );
+
+  // ── Profile save/load ─────────────────────────────────────
+  // Delegates to the injected adapter. When API is configured, the adapter
+  // calls endpoints.patchProfile and returns the server projection; otherwise
+  // it applies a local merge with defaults. In both cases setProfile is
+  // called with the result.
+  const saveProfile = useCallback(
+    async (input: {
+      name?: string;
+      email?: string;
+      phone?: string;
+      avatarColor?: string;
+      greetingStyle?: Profile["greetingStyle"];
+    }) => {
+      try {
+        const result = await profileAdapter.save(input, profile);
+        setProfile(result);
+      } catch (e) {
+        handleWriteErrorRef.current(e);
+      }
+    },
+    [profile, profileAdapter],
+  );
+
+  const refreshProfile = useCallback(async () => {
+    try {
+      const fresh = await profileAdapter.refresh();
+      if (fresh) setProfile(fresh);
+    } catch {
+      // ignore — keep previous profile state
+    }
+  }, [profileAdapter]);
+
+  // ── Local-mode persistence for profile (mock/local-storage) ─
+  // When the API is configured, saveProfile already persists server-side;
+  // in mock mode we hydrate from localStorage on mount and write back
+  // after every saveProfile call.
+  useEffect(() => {
+    if (apiUsable()) return;
+    const local = profileAdapter.hydrate();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (local) setProfile(local);
+  }, [profileAdapter]);
+
+  useEffect(() => {
+    if (apiUsable()) return;
+    if (!profile) return;
+    profileAdapter.persist(profile);
+  }, [profile, profileAdapter]);
+
 
   return (
     <AppStateContext.Provider
@@ -1219,6 +1474,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         debts,
         subscriptions,
         cardStatements,
+        profile,
+        quickInsights,
+        saveProfile,
+        refreshProfile,
         sync,
         readOnly,
         loading,
@@ -1230,12 +1489,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         deleteTransaction,
         markPayablePaid,
         cancelPayable,
+        updatePayable,
+        undoPayablePayment,
         createPayable,
         createBudget,
         updateBudget,
         createGoal,
         contributeToGoal,
         cancelGoal,
+        updateGoal,
         addAccount,
         updateAccount,
         deactivateAccount,
@@ -1246,6 +1508,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         updateCard,
         addSubscription,
         cancelSubscription,
+        updateSubscription,
+        refreshSubscriptions,
         createTransfer,
         payStatement,
         createInstallments,

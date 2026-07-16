@@ -6,8 +6,10 @@ import { StaleBanner } from "@/components/StaleBanner";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import Badge from "@/components/ui/Badge";
+import Skeleton from "@/components/ui/Skeleton";
 import { useAppState } from "@/lib/state/app-state-context";
 import NotificationsSheet from "@/features/profile/NotificationsSheet";
+import { useEffectiveProfile } from "@/features/profile/hooks";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -30,11 +32,54 @@ function LoadingScreen() {
   return (
     <div className="flex min-h-dvh flex-col bg-bg">
       <StatusBar />
-      <div className="flex flex-1 items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-fill-medium border-t-primary" />
-          <span className="text-[13px] font-semibold text-text-muted">Carregando...</span>
+      <div
+        className="px-5 pt-1 pb-6 sm:px-8 lg:px-12"
+        style={{
+          background: "linear-gradient(165deg, #0F6B45, #0A3A28)",
+        }}
+      >
+        {/* Hero skeleton */}
+        <div className="mb-5 mt-2 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <Skeleton variant="circle" width={38} height={38} style={{ background: "rgba(255,255,255,0.2)" }} />
+            <div className="flex flex-col gap-1.5">
+              <Skeleton variant="text" width={80} height={10} style={{ background: "rgba(255,255,255,0.2)" }} />
+              <Skeleton variant="text" width={60} height={14} style={{ background: "rgba(255,255,255,0.3)" }} />
+            </div>
+          </div>
+          <Skeleton variant="circle" width={38} height={38} style={{ background: "rgba(255,255,255,0.15)" }} />
         </div>
+        <Skeleton variant="text" width={140} height={10} style={{ background: "rgba(255,255,255,0.15)" }} className="mb-3" />
+        <Skeleton variant="text" width={80} height={10} style={{ background: "rgba(255,255,255,0.15)" }} className="mb-2" />
+        <Skeleton width="60%" height={40} style={{ background: "rgba(255,255,255,0.25)" }} className="mb-5" />
+        <div className="flex gap-2">
+          <Skeleton height={48} className="flex-1" style={{ background: "rgba(255,255,255,0.15)" }} />
+          <Skeleton height={48} className="flex-1" style={{ background: "rgba(255,255,255,0.15)" }} />
+          <Skeleton height={48} className="flex-1" style={{ background: "rgba(255,255,255,0.15)" }} />
+        </div>
+      </div>
+      <div className="px-5 pt-4 pb-6 sm:px-8 lg:px-12">
+        {/* KPI delta row skeleton */}
+        <div className="mb-[14px] grid grid-cols-2 gap-2.5">
+          <Skeleton variant="card" height={72} />
+          <Skeleton variant="card" height={72} />
+        </div>
+        {/* Account list skeleton */}
+        <div className="mb-[14px] flex flex-col gap-3 rounded-[16px] border border-border bg-surface p-4">
+          <Skeleton variant="text" width={120} height={14} />
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="flex items-center gap-3">
+              <Skeleton variant="circle" width={28} height={28} />
+              <div className="flex flex-1 flex-col gap-1.5">
+                <Skeleton variant="text" width="50%" />
+                <Skeleton variant="text" width="30%" height={9} />
+              </div>
+              <Skeleton variant="text" width={70} />
+            </div>
+          ))}
+        </div>
+        {/* Donut skeleton */}
+        <Skeleton variant="card" height={140} />
       </div>
     </div>
   );
@@ -55,8 +100,9 @@ interface HomePageProps {
 }
 
 export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
-  const { accounts, transactions, categories, payables, budgets, loading, error } =
+  const { accounts, transactions, categories, payables, budgets, cardStatements, quickInsights, loading, error } =
     useAppState();
+  const profile = useEffectiveProfile();
   const router = useRouter();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
@@ -71,74 +117,101 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   };
 
   const incomeDeltaPct = useMemo(() => {
-    const now = new Date();
-    const currMonth = now.getMonth();
-    const currYear = now.getFullYear();
-    const prevMonth = currMonth === 0 ? 11 : currMonth - 1;
-    const prevYear = currMonth === 0 ? currYear - 1 : currYear;
-    let prev = 0;
-    let curr = 0;
+    // Pick the most recent month that has at least one income transaction
+    // as the "current" reference, then compare against the calendar month
+    // immediately before it. Avoids the -100% trap when the wall clock is
+    // in a month with no data (e.g. July 2 with all transactions in June).
+    const months = new Map<string, number>();
     for (const t of transactions) {
       if (t.kind !== "income") continue;
       const d = new Date(t.date + "T12:00:00");
-      const m = d.getMonth();
-      const y = d.getFullYear();
-      if (m === currMonth && y === currYear) curr += t.amountCents;
-      else if (m === prevMonth && y === prevYear) prev += t.amountCents;
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      months.set(key, (months.get(key) ?? 0) + t.amountCents);
     }
+    const sorted = Array.from(months.keys()).sort();
+    if (sorted.length === 0) return null;
+    const recentKey = sorted[sorted.length - 1]!;
+    const [yStr, mStr] = recentKey.split("-");
+    const recentYear = Number(yStr);
+    const recentMonth = Number(mStr);
+    const prevMonth = recentMonth === 0 ? 11 : recentMonth - 1;
+    const prevYear = recentMonth === 0 ? recentYear - 1 : recentYear;
+    const prevKey = `${prevYear}-${prevMonth}`;
+    const curr = months.get(recentKey) ?? 0;
+    const prev = months.get(prevKey) ?? 0;
     if (prev === 0) return null;
     return ((curr - prev) / prev) * 100;
   }, [transactions]);
 
   const expenseDeltaPct = useMemo(() => {
-    const now = new Date();
-    const currMonth = now.getMonth();
-    const currYear = now.getFullYear();
-    const prevMonth = currMonth === 0 ? 11 : currMonth - 1;
-    const prevYear = currMonth === 0 ? currYear - 1 : currYear;
-    let prev = 0;
-    let curr = 0;
+    // Same logic as above, but for expense transactions.
+    const months = new Map<string, number>();
     for (const t of transactions) {
       if (t.kind !== "expense") continue;
       const d = new Date(t.date + "T12:00:00");
-      const m = d.getMonth();
-      const y = d.getFullYear();
-      if (m === currMonth && y === currYear) curr += t.amountCents;
-      else if (m === prevMonth && y === prevYear) prev += t.amountCents;
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      months.set(key, (months.get(key) ?? 0) + t.amountCents);
     }
+    const sorted = Array.from(months.keys()).sort();
+    if (sorted.length === 0) return null;
+    const recentKey = sorted[sorted.length - 1]!;
+    const [yStr, mStr] = recentKey.split("-");
+    const recentYear = Number(yStr);
+    const recentMonth = Number(mStr);
+    const prevMonth = recentMonth === 0 ? 11 : recentMonth - 1;
+    const prevYear = recentMonth === 0 ? recentYear - 1 : recentYear;
+    const prevKey = `${prevYear}-${prevMonth}`;
+    const curr = months.get(recentKey) ?? 0;
+    const prev = months.get(prevKey) ?? 0;
     if (prev === 0) return null;
     return ((curr - prev) / prev) * 100;
   }, [transactions]);
 
-  // ── Donut: gastos por categoria (top 4) ──
+  // ── Donut: gastos por MACRO categoria (agregando subcategorias) ──
+  // Each transaction's categoryId is resolved to its macro name:
+  // - Categories with parentId → resolved to parent category name
+  // - Category name containing " > " → prefix before " > " is the macro
+  // - Standalone category → its own name is the macro
+  // This prevents the donut from showing "Moradia > Aluguel" alongside "Moradia".
   const totalExpensesForDonut = transactions
     .filter((t) => t.kind === "expense")
     .reduce((s, t) => s + t.amountCents, 0);
 
   const donutData = useMemo(() => {
-    const map = new Map<string, number>();
+    // Build parent lookup for parentId resolution
+    const parentById = new Map<string, string>();
+    for (const c of categories) {
+      parentById.set(c.id, c.name);
+    }
+
+    // Resolve categoryId → macro name
+    const idToMacro = new Map<string, string>();
+    for (const c of categories) {
+      if (c.parentId) {
+        const parentName = parentById.get(c.parentId) ?? c.parentId;
+        idToMacro.set(c.id, parentName);
+      } else if (c.name.includes(" > ")) {
+        const macro = c.name.split(" > ")[0]!.trim();
+        idToMacro.set(c.id, macro);
+      }
+      // Standalone categories are already their own macro — no entry needed
+    }
+
+    // Aggregate: macro name → total cents
+    const macroTotals = new Map<string, number>();
     for (const t of transactions) {
       if (t.kind !== "expense") continue;
-      map.set(t.categoryId, (map.get(t.categoryId) ?? 0) + t.amountCents);
+      const macro = idToMacro.get(t.categoryId)
+        ?? parentById.get(t.categoryId)
+        ?? "Outros";
+      macroTotals.set(macro, (macroTotals.get(macro) ?? 0) + t.amountCents);
     }
+
     const total = totalExpensesForDonut || 1;
-    const rows = Array.from(map.entries())
-      .map(([id, amt]) => {
-        const cat = categories.find((c) => c.id === id);
-        return {
-          id,
-          name: cat?.name ?? "Outros",
-          amountCents: amt,
-          pct: (amt / total) * 100,
-        };
-      })
+    return Array.from(macroTotals.entries())
+      .map(([name, amt]) => ({ name, amountCents: amt, pct: (amt / total) * 100 }))
       .sort((a, b) => b.amountCents - a.amountCents)
-      .slice(0, 4)
-      .map((r, i) => ({
-        ...r,
-        color: CATEGORY_PALETTE[i % CATEGORY_PALETTE.length].color,
-      }));
-    return rows;
+      .map((r, i) => ({ ...r, color: CATEGORY_PALETTE[i % CATEGORY_PALETTE.length].color }));
   }, [transactions, categories, totalExpensesForDonut]);
 
   const donutBg = useMemo(() => {
@@ -182,7 +255,12 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
 
   // ── Card spending from credit card accounts ──
   const cardSpending = creditCards.map((card) => {
-    const spent = transactions
+    // Prefer statement total over transaction-based (correct for live data;
+    // transactions filter is a fallback for mock/test without statements).
+    const stmts = cardStatements
+      .filter((s) => s.accountId === card.id)
+      .sort((a, b) => b.cycleYearMonth.localeCompare(a.cycleYearMonth));
+    const spent = stmts[0]?.totalCents ?? transactions
       .filter((t) => t.accountId === card.id && t.kind === "expense")
       .reduce((s, t) => s + t.amountCents, 0);
     const limit = card.creditLimitCents ?? 1;
@@ -205,14 +283,14 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   const totalPendingPayables = pendingPayables.reduce((s, p) => s + p.amountCents, 0);
 
   // ── Insights ──
-  const insights: InsightItem[] = [];
+  const fallbackInsights: InsightItem[] = [];
 
   // 1. Savings rate
   if (totalIncome > 0) {
     const savingsRate = ((totalIncome - totalExpenses) / totalIncome) * 100;
     const isGood = savingsRate >= 20;
     const isWarn = savingsRate >= 5;
-    insights.push({
+    fallbackInsights.push({
       color: isGood
         ? "var(--color-primary)"
         : isWarn
@@ -225,57 +303,78 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
     });
   }
 
-  // 2. Top expense category (excluding card accounts)
-  const expenseByCategory: Record<string, number> = {};
-  transactions
-    .filter((t) => t.kind === "expense")
-    .forEach((t) => {
-      expenseByCategory[t.categoryId] =
-        (expenseByCategory[t.categoryId] || 0) + t.amountCents;
-    });
-  const topCatId = Object.keys(expenseByCategory).sort(
-    (a, b) => (expenseByCategory[b] ?? 0) - (expenseByCategory[a] ?? 0),
-  )[0];
-  if (topCatId) {
-    const topCat = categories.find((c) => c.id === topCatId);
-    const topAmount = expenseByCategory[topCatId] ?? 0;
-    insights.push({
-      color: "var(--color-info)",
-      title: "Maior categoria de gasto",
-      body: `${topCat?.name ?? "Outros"} — ${formatBRL(topAmount)} no período.`,
-    });
+  // 2. Top expense category — aggregated by MACRO (same logic as donut)
+  // so the insight says "Moradia" not "Moradia > Aluguel".
+  {
+    const parentById = new Map<string, string>();
+    for (const c of categories) parentById.set(c.id, c.name);
+    const idToMacro = new Map<string, string>();
+    for (const c of categories) {
+      if (c.parentId) {
+        idToMacro.set(c.id, parentById.get(c.parentId) ?? c.parentId);
+      } else if (c.name.includes(" > ")) {
+        idToMacro.set(c.id, c.name.split(" > ")[0]!.trim());
+      }
+    }
+    const macroTotals = new Map<string, number>();
+    for (const t of transactions) {
+      if (t.kind !== "expense") continue;
+      const macro = idToMacro.get(t.categoryId)
+        ?? parentById.get(t.categoryId)
+        ?? "Outros";
+      macroTotals.set(macro, (macroTotals.get(macro) ?? 0) + t.amountCents);
+    }
+    const sorted = Array.from(macroTotals.entries()).sort(
+      (a, b) => b[1] - a[1],
+    );
+    if (sorted.length > 0) {
+      const [topMacro, topAmount] = sorted[0]!;
+      fallbackInsights.push({
+        color: "var(--color-info)",
+        title: "Maior categoria de gasto",
+        body: `${topMacro} — ${formatBRL(topAmount)} no período.`,
+      });
+    }
   }
 
-  // 3. Budgets near limit
-  const nearLimit = budgets.filter(
-    (b) => b.amountCents > 0 && (b.spentCents / b.amountCents) >= 0.9,
-  );
-  if (nearLimit.length > 0) {
-    insights.push({
-      color: "var(--color-warning)",
-      title: "Orçamentos no limite",
-      body: `${nearLimit.map((b) => b.name).join(", ")} ${
-        nearLimit.length === 1 ? "está" : "estão"
-      } perto do limite (${formatPct(90)}+).`,
+  // 3. Budgets: check real spent from transactions when budget.spentCents
+  // is 0 (stale data). Skip the insight entirely when maxUsage === 0.
+  {
+    const effectiveUsage = budgets.map((b) => {
+      if (b.amountCents <= 0) return { name: b.name, pct: 0 };
+      const realSpent =
+        b.spentCents > 0
+          ? b.spentCents
+          : transactions
+              .filter((t) => t.categoryId === b.categoryId && t.kind === "expense")
+              .reduce((s, t) => s + t.amountCents, 0);
+      return { name: b.name, pct: (realSpent / b.amountCents) * 100 };
     });
-  } else if (budgets.length > 0) {
-    const maxUsage = Math.max(
-      ...budgets.map((b) =>
-        b.amountCents > 0 ? (b.spentCents / b.amountCents) * 100 : 0,
-      ),
-    );
-    const highestBudget = budgets.find(
-      (b) =>
-        b.amountCents > 0 &&
-        (b.spentCents / b.amountCents) * 100 === maxUsage,
-    );
-    insights.push({
-      color: "var(--color-primary)",
-      title: "Orçamentos sob controle",
-      body: highestBudget
-        ? `O mais utilizado é ${highestBudget.name} (${formatPct(maxUsage)}).`
-        : "Todos dentro do planejado.",
-    });
+    const nearLimit = effectiveUsage.filter((u) => u.pct >= 90);
+    if (nearLimit.length > 0) {
+      const topName = nearLimit.sort((a, b) => b.pct - a.pct)[0]!.name;
+      const body =
+        nearLimit.length === 1
+          ? `${topName} está perto do limite (${formatPct(90)}+).`
+          : `${nearLimit.length} orçamentos perto do limite. Mais pressionado: ${topName}.`;
+      fallbackInsights.push({
+        color: "var(--color-warning)",
+        title: "Orçamentos no limite",
+        body,
+      });
+    } else if (effectiveUsage.length > 0) {
+      const maxEntry = effectiveUsage.reduce((max, u) =>
+        u.pct > max.pct ? u : max,
+      );
+      if (maxEntry.pct > 0) {
+        fallbackInsights.push({
+          color: "var(--color-primary)",
+          title: "Orçamentos sob controle",
+          body: `O mais utilizado é ${maxEntry.name} (${formatPct(maxEntry.pct)}).`,
+        });
+      }
+      // If maxEntry.pct === 0, skip the insight (no representative data).
+    }
   }
 
   // 4. Next payable due
@@ -289,7 +388,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
     const daysUntil = Math.ceil(
       (dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
     );
-    insights.push({
+    fallbackInsights.push({
       color:
         daysUntil <= 1
           ? "var(--color-danger)"
@@ -307,11 +406,37 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
     });
   }
 
+  // ── Insights: prefer specific over generic ──
+  // If quickInsights from the API are available, keep only those that
+  // mention a concrete financial amount (body contains "R$"). Generic
+  // items like "Mês equilibrado" (body has no R$) are dropped so they
+  // don't replace the more specific fallback insights (top category,
+  // next payable, budget pressure, etc.).
+  const specificQuick = (quickInsights ?? []).filter(
+    (item) => item.body && item.body.includes("R$"),
+  );
+  const insights: InsightItem[] = [
+    ...fallbackInsights,
+    ...specificQuick.map((item) => ({
+      title: item.title,
+      body: item.body,
+      color:
+        item.severity === "good"
+          ? "var(--color-primary)"
+          : item.severity === "warn"
+            ? "var(--color-warning)"
+            : "var(--color-info)",
+    })),
+  ];
+
   return (
     <div className="flex min-h-dvh flex-col bg-bg">
       <StatusBar />
 
-      <StaleBanner domains={["accounts", "transactions", "payables", "budgets"]} />
+      <StaleBanner
+        domains={["accounts", "transactions", "payables", "budgets"]}
+        onRetry={() => router.refresh()}
+      />
 
       {error && (
         <div className="mx-5 mt-2 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger">
@@ -324,7 +449,8 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
       >
         {/* ── Hero area (green gradient) ── */}
         <div
-          className="px-5 pt-1"
+          data-testid="hero-area"
+          className="px-5 pt-1 sm:px-8 lg:px-12"
           style={{
             background: "linear-gradient(165deg, #0F6B45, #0A3A28)",
             paddingBottom: 24,
@@ -336,10 +462,11 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
               <button
                 type="button"
                 onClick={() => router.push("/perfil")}
+                aria-label="Abrir perfil"
                 className="flex h-[38px] w-[38px] cursor-pointer items-center justify-center rounded-full font-mono text-[15px] font-semibold text-white"
-                style={{ background: "rgba(255,255,255,.18)" }}
+                style={{ background: profile.avatarColor }}
               >
-                M
+                {(profile.name ?? "?").charAt(0).toUpperCase()}
               </button>
               <div>
                 <div className="text-xs text-white/70">
@@ -351,7 +478,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                     return "Boa noite";
                   })()}
                 </div>
-                <div className="text-[15px] font-bold text-white">Marina</div>
+                <div className="text-[15px] font-bold text-white">{profile.name}</div>
               </div>
             </div>
             <button
@@ -370,6 +497,11 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
               />
             </button>
           </div>
+
+          {/* Page heading */}
+          <h1 className="mb-[3px] text-[10px] font-semibold uppercase tracking-wider text-white/50">
+            Resumo financeiro
+          </h1>
 
           {/* Saldo */}
           <div className="mb-[5px] text-xs text-white/70">Saldo total · contas</div>
@@ -412,7 +544,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
         </div>
 
         {/* Quick actions */}
-        <div className="px-5 pb-1 pt-2">
+        <div className="px-5 pb-1 pt-2 sm:px-8 lg:px-12">
           <div className="grid grid-cols-3 gap-2.5">
             <button
               type="button"
@@ -483,14 +615,24 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
         </div>
 
         {/* ── Content area ── */}
-        <div className="px-5 pb-6 pt-4">
+        <div className="px-5 pb-6 pt-4 sm:px-8 lg:px-12">
           {/* KPI delta row */}
-          <div className="mb-[14px] grid grid-cols-2 gap-2.5">
+          <div
+            data-testid="kpi-delta-row"
+            className="mb-[14px] grid grid-cols-2 gap-2.5 sm:gap-4 lg:gap-6"
+          >
             <div className="rounded-[14px] border border-border bg-surface p-3 shadow-card">
-              <div className="mb-[6px] text-[11px] text-text-muted">
-                Receitas vs mês ant.
+              <div className="mb-[2px] text-[11px] font-semibold text-text-primary">
+                Receitas
               </div>
-              <div className="flex items-center gap-1.5 text-primary">
+              <div className="mb-[6px] text-[10px] text-text-muted">
+                vs mês anterior
+              </div>
+              <div
+                className="flex items-center gap-1.5 text-primary"
+                title="Variação de receitas do mês atual comparado ao mês anterior"
+                aria-label="Variação de receitas do mês atual comparado ao mês anterior"
+              >
                 <svg
                   width="13"
                   height="13"
@@ -510,11 +652,16 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
               </div>
             </div>
             <div className="rounded-[14px] border border-border bg-surface p-3 shadow-card">
-              <div className="mb-[6px] text-[11px] text-text-muted">
-                Despesas vs mês ant.
+              <div className="mb-[2px] text-[11px] font-semibold text-text-primary">
+                Despesas
+              </div>
+              <div className="mb-[6px] text-[10px] text-text-muted">
+                vs mês anterior
               </div>
               <div
                 className="flex items-center gap-1.5"
+                title="Variação de despesas do mês atual comparado ao mês anterior"
+                aria-label="Variação de despesas do mês atual comparado ao mês anterior"
                 style={{
                   color:
                     expenseDeltaPct === null
@@ -564,31 +711,41 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
               </Link>
             </div>
             {checkingAccounts.map((acc) => (
-              <div
+              <button
                 key={acc.id}
-                className="flex items-center gap-3 border-b border-fill-medium py-[10px] last:border-none"
+                type="button"
+                data-testid="account-row"
+                onClick={() => router.push(`/contas?accountId=${encodeURIComponent(acc.id)}`)}
+                className="flex w-full items-center gap-3 border-b border-fill-medium py-[10px] text-left last:border-none"
+                aria-label={`Abrir ${acc.name} em Contas`}
               >
                 <Badge label={acc.name} color={acc.color ?? "#4A5568"} size="sm" />
                 <div className="flex-1">
                   <div className="text-[13px] font-semibold text-text-primary">{acc.name}</div>
                   <div className="text-[11px] text-text-muted">
-                    {acc.kind === "checking"
-                      ? "Conta corrente"
-                      : acc.kind === "savings"
-                        ? "Poupança"
-                        : acc.kind === "investment"
-                          ? "Investimento"
-                          : "Cartão"}
+                    {acc.kind === "credit_card"
+                      ? "Cartão"
+                      : acc.kind === "checking"
+                        ? "Conta corrente"
+                        : acc.kind === "savings"
+                          ? "Poupança"
+                          : acc.kind === "investment"
+                            ? "Investimento"
+                            : acc.kind === "cash"
+                              ? "Dinheiro"
+                              : acc.kind === "bank"
+                                ? "Conta"
+                                : "Outro"}
                   </div>
                 </div>
                 <div className="font-mono text-[13px] font-semibold" style={{ color: acc.balanceCents >= 0 ? "var(--color-text-primary)" : "var(--color-danger)" }}>
                   {formatBRL(acc.balanceCents)}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
 
-          {/* Cartões card */}
+          {/* Cartões card — rico: agregado + per-card com limite e fechamento/vencimento */}
           {creditCards.length > 0 && (
             <div className="mb-[14px] rounded-[16px] border border-border bg-surface px-4 py-4 shadow-card">
               <div className="mb-[14px] flex items-center justify-between">
@@ -601,38 +758,71 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                 </Link>
               </div>
 
-              {/* Fatura total + Available */}
-              <div className="mb-[4px] flex items-end gap-[14px]">
-                <div>
-                  <div className="mb-[3px] text-[11px] text-text-muted">Fatura total</div>
-                  <div className="font-mono text-[22px] font-bold text-danger">
+              {/* Aggregate: fatura / limite livre / limite total */}
+              <div className="mb-3 flex items-end justify-between rounded-[12px] bg-fill-light px-3 py-3">
+                <div className="text-center">
+                  <div className="mb-[2px] text-[10px] font-semibold uppercase tracking-wide text-text-muted">Fatura atual</div>
+                  <div className="font-mono text-[22px] font-bold leading-none text-danger">
                     {formatBRL(totalCardSpent)}
                   </div>
                 </div>
-                <div className="ml-auto text-right">
-                  <div className="mb-[3px] text-[11px] text-text-muted">Limite livre</div>
+                <div className="text-center">
+                  <div className="mb-[2px] text-[10px] font-semibold uppercase tracking-wide text-text-muted">Limite total</div>
+                  <div className="font-mono text-[14px] font-semibold text-text-primary">
+                    {formatBRL(totalCardLimit)}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="mb-[2px] text-[10px] font-semibold uppercase tracking-wide text-text-muted">Limite livre</div>
                   <div className="font-mono text-[14px] font-semibold text-primary">
                     {formatBRL(totalCardAvail)}
                   </div>
                 </div>
               </div>
 
-              {/* Per-card bars */}
-              <div className="mt-3 flex flex-col gap-[11px]">
+              {/* Per-card tiles — cada cartão com info completa */}
+              <div className="flex flex-col gap-2">
                 {cardSpending.map((c) => (
-                  <div key={c.card.id}>
-                    <div className="mb-[5px] flex items-center gap-2">
-                      <span className="h-[9px] w-[9px] flex-none rounded-[3px]" style={{ background: c.card.color ?? "#4A5568" }} />
-                      <span className="flex-1 text-[12px] font-semibold text-text-primary">{c.card.name}</span>
-                      <span className="font-mono text-[11px] font-semibold text-text-muted">{formatBRL(c.spent)}</span>
+                  <button
+                    key={c.card.id}
+                    type="button"
+                    data-testid="card-row"
+                    onClick={() => router.push(`/cartoes?cardId=${encodeURIComponent(c.card.id)}`)}
+                    aria-label={`Abrir ${c.card.name} em Cartões`}
+                    className="flex w-full items-center gap-3 rounded-[12px] bg-fill-light px-3 py-2.5 text-left transition-colors hover:bg-fill-medium"
+                  >
+                    <span
+                      className="flex h-9 w-9 flex-none items-center justify-center rounded-[8px] font-mono text-[11px] font-bold text-white"
+                      style={{ background: c.card.color ?? "#4A5568" }}
+                    >
+                      {(c.card.name ?? "?").charAt(0).toUpperCase()}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-1 flex items-center gap-2">
+                        <span className="truncate text-[13px] font-semibold text-text-primary">{c.card.name}</span>
+                        <span className="rounded-full bg-surface px-2 py-0.5 font-mono text-[10px] font-bold text-text-secondary">
+                          {c.pct.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="h-[5px] rounded-[4px] bg-surface">
+                        <div
+                          className="h-full rounded-[4px] transition-all"
+                          style={{ width: `${c.pct}%`, background: c.barColor }}
+                        />
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-text-muted">
+                        {c.card.closingDay && (
+                          <span>Fecha dia {c.card.closingDay}</span>
+                        )}
+                        {c.card.dueDay && (
+                          <span>Vence dia {c.card.dueDay}</span>
+                        )}
+                        <span>Limite {formatBRL(c.limit)}</span>
+                        <span>{formatBRL(c.limit - c.spent)} livre</span>
+                      </div>
                     </div>
-                    <div className="h-[6px] rounded-[4px] bg-fill-medium">
-                      <div
-                        className="h-full rounded-[4px] transition-all"
-                        style={{ width: `${c.pct}%`, background: c.barColor }}
-                      />
-                    </div>
-                  </div>
+                    <span className="font-mono text-[12px] font-semibold text-danger flex-none">{formatBRL(c.spent)}</span>
+                  </button>
                 ))}
               </div>
             </div>
@@ -661,7 +851,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                     <path d="M12 8v4M12 16h.01" />
                   </svg>
                   <span className="text-[12px] font-bold text-danger">
-                    Contas a pagar · 7 dias
+                    {`Contas a pagar · ${upcomingPayables.length} pendente${upcomingPayables.length !== 1 ? 's' : ''}`}
                   </span>
                 </div>
                 <span className="font-mono text-[13px] font-bold text-text-primary">
@@ -707,18 +897,15 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
             </div>
           )}
 
-          {/* Gastos por categoria (donut) */}
+          {/* Gastos por categoria (donut + lista) */}
           <div className="mb-[14px] rounded-[16px] border border-border bg-surface px-4 py-4 shadow-card">
             <div className="mb-3.5 flex items-center justify-between">
               <span className="text-[13px] font-bold text-text-primary">
                 Gastos por categoria
               </span>
-              <Link
-                href="/relatorios"
-                className="text-[11px] font-semibold text-primary"
-              >
-                Relatórios
-              </Link>
+              <span className="font-mono text-[12px] font-semibold text-text-primary">
+                Total: {formatBRL(totalExpenses)}
+              </span>
             </div>
             {donutData.length === 0 ? (
               <div className="py-6 text-center text-[12px] text-text-muted">
@@ -726,7 +913,9 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
               </div>
             ) : (
               <div className="flex items-center gap-4">
+                {/* Donut chart */}
                 <div
+                  data-testid="category-donut"
                   className="relative h-[104px] w-[104px] flex-none rounded-full"
                   style={{ background: donutBg }}
                 >
@@ -737,11 +926,13 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                     </span>
                   </div>
                 </div>
+                {/* Legend list */}
                 <div className="flex flex-1 flex-col gap-2">
-                  {donutData.map((c) => (
+                  {donutData.map((c, i) => (
                     <div
-                      key={c.id}
-                      className="flex items-center gap-2"
+                      key={`macro-${i}`}
+                      data-testid="category-row"
+                      className="flex w-full items-center gap-2 rounded-md py-1 pl-1 pr-1"
                     >
                       <span
                         className="h-[9px] w-[9px] flex-none rounded-[3px]"
@@ -749,6 +940,9 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                       />
                       <span className="flex-1 text-[12px] text-text-secondary">
                         {c.name}
+                      </span>
+                      <span className="font-mono text-[11px] font-semibold text-text-muted">
+                        {c.pct.toFixed(0)}%
                       </span>
                       <span className="font-mono text-[12px] font-semibold text-text-primary">
                         {formatBRL(c.amountCents)}

@@ -34,7 +34,7 @@ function cardBarColor(pct: number): string {
 }
 
 export default function WalletPage() {
-  const { accounts, transactions, goals, debts, loading, error } = useAppState();
+  const { accounts, goals, debts, cardStatements, loading, error } = useAppState();
 
   if (loading) {
     return (
@@ -60,10 +60,10 @@ export default function WalletPage() {
   const totalGoalsCurrent = goals.reduce((s, g) => s + g.currentAmountCents, 0);
 
   const cardSpending = creditCards.map((card) => {
-    const spent = transactions
-      .filter((t) => t.accountId === card.id && t.kind === "expense")
-      .reduce((s, t) => s + t.amountCents, 0);
-    return { ...card, spent };
+    const openStmt = cardStatements.find(
+      (s) => s.accountId === card.id && s.status === "open",
+    );
+    return { ...card, spent: openStmt?.totalCents ?? 0 };
   });
   const totalCardSpent = cardSpending.reduce((s, c) => s + c.spent, 0);
 
@@ -165,8 +165,9 @@ export default function WalletPage() {
 
           <div className="mb-[22px] flex flex-col gap-[9px]">
             {checkingAccounts.map((acc) => (
-              <div
+              <Link
                 key={acc.id}
+                href={`/contas?accountId=${acc.id}`}
                 className="flex cursor-pointer items-center gap-3 rounded-[15px] border border-border bg-surface px-[13px] py-[13px] shadow-card"
               >
                 <Badge label={acc.name} color={acc.color ?? "#4A5568"} size="md" />
@@ -181,7 +182,7 @@ export default function WalletPage() {
                 <div className="font-mono text-[14px] font-semibold text-text-primary">
                   {formatBRL(acc.balanceCents)}
                 </div>
-              </div>
+              </Link>
             ))}
 
             <Link
@@ -228,8 +229,9 @@ export default function WalletPage() {
                   : 0;
 
               return (
-                <div
+                <Link
                   key={card.id}
+                  href={`/cartoes?cardId=${card.id}`}
                   className="cursor-pointer rounded-[15px] border border-border bg-surface px-[13px] py-[13px] shadow-card"
                 >
                   <div className="mb-[11px] flex items-center gap-3">
@@ -261,7 +263,7 @@ export default function WalletPage() {
                       style={{ width: `${pct}%`, background: cardBarColor(pct) }}
                     />
                   </div>
-                </div>
+                </Link>
               );
             })}
 
@@ -284,6 +286,170 @@ export default function WalletPage() {
               Adicionar cartão
             </Link>
           </div>
+
+          {/* ── Reservas / Metas ───────────────────────────── */}
+          {goals.length > 0 && (
+            <>
+              <div className="mb-[10px] mt-6 flex items-center justify-between">
+                <span className="text-[13px] font-bold text-text-primary">
+                  Reservas / Metas
+                </span>
+                <Link
+                  href="/metas"
+                  className="text-[11px] font-semibold text-primary"
+                >
+                  Ver metas
+                </Link>
+              </div>
+              <div className="mb-6 flex flex-col gap-[9px]">
+                {goals.map((g) => {
+                  const pct =
+                    g.targetAmountCents > 0
+                      ? Math.min(
+                          (g.currentAmountCents / g.targetAmountCents) * 100,
+                          100,
+                        )
+                      : 0;
+                  return (
+                    <Link
+                      key={g.id}
+                      href="/metas"
+                      className="flex items-center gap-3 rounded-[15px] border border-border bg-surface px-[13px] py-[13px] shadow-card"
+                    >
+                      <div className="flex-1">
+                        <div className="mb-1 text-[14px] font-semibold text-text-primary">
+                          {g.name}
+                        </div>
+                        <div className="h-[6px] rounded-[4px] bg-fill-medium">
+                          <div
+                            className="h-full rounded-[4px] bg-primary transition-all"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-mono text-[13px] font-semibold text-text-primary">
+                          {formatBRL(g.currentAmountCents)}
+                        </div>
+                        <div className="text-[10px] text-text-muted">
+                          de {formatBRL(g.targetAmountCents)}
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {/* ── Faturas abertas ───────────────────────────── */}
+          {(() => {
+            // Same source-of-truth as hero: one open statement per card
+            const openStatements: (typeof cardStatements)[0][] = creditCards
+              .map((card) =>
+                cardStatements.find(
+                  (s) =>
+                    s.accountId === card.id &&
+                    s.status === "open" &&
+                    s.totalCents > 0,
+                ),
+              )
+              .filter((s): s is (typeof cardStatements)[0] => s != null);
+            if (openStatements.length === 0) return null;
+            return (
+              <>
+                <div className="mb-[10px] mt-6 flex items-center justify-between">
+                  <span className="text-[13px] font-bold text-text-primary">
+                    Faturas abertas
+                  </span>
+                </div>
+                <div className="mb-6 flex flex-col gap-[9px]">
+                  {openStatements.map((s) => {
+                    const card = creditCards.find(
+                      (c) => c.id === s.accountId,
+                    );
+                    return (
+                      <Link
+                        key={s.id}
+                        href={`/cartoes?cardId=${s.accountId}`}
+                        className="flex items-center gap-3 rounded-[15px] border border-border bg-surface px-[13px] py-[13px] shadow-card"
+                      >
+                        <Badge
+                          label={card?.name ?? "Cartão"}
+                          color={card?.color ?? "#4A5568"}
+                          size="md"
+                        />
+                        <div className="flex-1">
+                          <div className="text-[14px] font-semibold text-text-primary">
+                            {card?.name ?? "Cartão"}
+                          </div>
+                          <div className="text-[11px] text-text-muted">
+                            Vence {s.dueDate.slice(-2)}/{s.dueDate.slice(5, 7)}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-mono text-[14px] font-semibold text-danger">
+                            {formatBRL(s.totalCents)}
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </>
+            );
+          })()}
+
+          {/* ── Dívidas ──────────────────────────────────────── */}
+          <div className="mb-[10px] mt-6 flex items-center justify-between">
+            <span className="text-[13px] font-bold text-text-primary">
+              Dívidas
+            </span>
+          </div>
+          {debts.length === 0 ? (
+            <div className="mb-6 rounded-[15px] border border-border bg-surface px-[13px] py-[16px] text-center text-[13px] text-text-muted">
+              Nenhuma dívida registrada.
+            </div>
+          ) : (
+            <div className="mb-6 flex flex-col gap-[9px]">
+              {debts.map((d) => {
+                const remaining = d.totalAmountCents - d.paidAmountCents;
+                const pct =
+                  d.totalAmountCents > 0
+                    ? (d.paidAmountCents / d.totalAmountCents) * 100
+                    : 0;
+                return (
+                  <div
+                    key={d.id}
+                    className="flex items-center gap-3 rounded-[15px] border border-border bg-surface px-[13px] py-[13px] shadow-card"
+                  >
+                    <div className="flex-1">
+                      <div className="text-[14px] font-semibold text-text-primary">
+                        {d.name}
+                      </div>
+                      <div className="mt-[6px] h-[6px] rounded-[4px] bg-fill-medium">
+                        <div
+                          className="h-full rounded-[4px] transition-all"
+                          style={{
+                            width: `${pct}%`,
+                            background: "var(--color-primary)",
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-mono text-[14px] font-semibold text-danger">
+                        {formatBRL(remaining)}
+                      </div>
+                      <div className="text-[10px] text-text-muted">
+                        restante
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </main>
     </div>

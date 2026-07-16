@@ -15,7 +15,7 @@ Este diretório é o frontend canônico atual do produto.
 | Styling | Tailwind CSS v4 |
 | State | React Context (`AppStateProvider`) |
 | Testing | Vitest + Testing Library |
-| Auth | Device token + PIN (PBKDF2) |
+| Auth | Device token (localStorage), PIN intentionally removed |
 | API Client | Sibling `../pi-finance-api` |
 | Deployment | Cloudflare Workers via `@opennextjs/cloudflare` |
 
@@ -42,9 +42,24 @@ pnpm lint       # ESLint
 | Variable | Description |
 |----------|-------------|
 | `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL` | Base URL of sibling `pi-finance-api` (e.g. `https://api.example.com`) |
-| `NEXT_PUBLIC_PI_FINANCE_API_DEVICE_TOKEN` | Optional pre-set device token (bypassed by auth flow) |
 
-Without these, the PWA runs on local mock data.
+Without this variable, the PWA runs entirely on local mock data **without** any
+network requests. The `AuthGate` is bypassed, so no `/auth/devices/register`
+call is made. All data comes from in-memory mocks.
+
+## Environment Behavior
+
+| `BASE_URL` set | `BASE_URL` unset |
+|---|---|
+| AuthGate renders → device registration required | Mock mode: AuthGate bypassed, all features functional |
+| Reads from `localStorage.getItem("pi-finance:token")` | No token needed, data is mocked |
+| Fetches live data from the API | Zero network requests |
+
+> **Security note:** The device token is stored in `localStorage` under the key
+> `pi-finance:token`. This is intentionally JavaScript-accessible — the PWA
+> acts as a first-party client to its own backend and does not support
+> third-party embed scenarios. No `NEXT_PUBLIC_*` env-based token mechanism
+> is used.
 
 ## Cloudflare Deployment
 
@@ -96,6 +111,31 @@ pnpm build:next:cloudflare              # Next.js webpack build for Cloudflare
 pnpm opennextjs-cloudflare build --skipBuild   # OpenNext adapt (skip next build)
 pnpm wrangler dev                       # Start local Wrangler preview
 pnpm opennextjs-cloudflare deploy       # Deploy without rebuild
+
+## Security Middleware (Next.js 16 / OpenNext)
+
+The app applies security headers + CSP nonce on every request via
+`src/middleware.ts` with `export const runtime = "experimental-edge"`.
+
+**Why not `src/proxy.ts`?** Next.js 16 recommends `proxy.ts` over the deprecated
+`middleware.ts`, but a Next 16 `proxy.ts` cannot set a runtime and always runs on
+Node.js (build error: *"Route segment config is not allowed in Proxy file. Proxy
+always runs on Node.js runtime."*). OpenNext Cloudflare rejects Node.js middleware:
+
+> ERROR Node.js middleware is not currently supported. Consider switching to Edge Middleware.
+
+So `middleware.ts` (Edge) is **required** for the OpenNext/Cloudflare deploy to
+build. The Next 16 `middleware.ts` deprecation **warning** is non-fatal (build
+still succeeds); the OpenNext Node.js rejection is fatal (breaks `opennext build`).
+
+**Migration trigger — switch to `src/proxy.ts` only when BOTH hold:**
+1. OpenNext Cloudflare no longer errors `Node.js middleware is not currently supported`
+   (after upgrading `@opennextjs/cloudflare`), **and**
+2. Next.js 16+ allows an Edge runtime in `proxy.ts` (a `runtime` export is
+   currently rejected).
+
+Until then, keep `src/middleware.ts` (Edge). Do not "fix" the deprecation warning
+by renaming to `proxy.ts` — it breaks the deploy.
 ```
 
 ## Architecture
@@ -112,5 +152,6 @@ apps/pwa/
 └── package.json
 ```
 
-Auth flow: `AuthGate` → device registration → PIN setup → unlock → app content.
+Auth flow (API configured): `RootProviders` → `AuthGate` → device registration (no PIN) → app content.
+Mock flow (no API): `RootProviders` bypasses `AuthGate`, renders `AppStateProvider` directly with mock data.
 Read more at `docs/superpowers/plans/2026-06-23-pwa-cloudflare-cutover.md`.

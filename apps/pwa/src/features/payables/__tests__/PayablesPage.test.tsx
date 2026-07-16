@@ -1,4 +1,4 @@
-import { render, screen } from "@/lib/test-utils";
+import { render, screen, within } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import PayablesPage from "../PayablesPage";
 import * as appStateModule from "@/lib/state/app-state-context";
@@ -21,6 +21,8 @@ function defaultState(): AppState {
     deleteTransaction: vi.fn(),
     markPayablePaid: vi.fn(),
     cancelPayable: vi.fn(),
+    updatePayable: vi.fn(),
+    undoPayablePayment: vi.fn(),
     createPayable: vi.fn(),
     createBudget: vi.fn(),
     updateBudget: vi.fn(),
@@ -60,6 +62,12 @@ function mockState(overrides: Partial<AppState>): AppState {
 describe("PayablesPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-06-25T12:00:00"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe("with data", () => {
@@ -91,40 +99,118 @@ describe("PayablesPage", () => {
 
     it("shows grouped sections", () => {
       render(<PayablesPage />);
-      const vencidas = screen.getAllByText(/Vencidas/);
-      expect(vencidas.length).toBeGreaterThanOrEqual(1);
-      const proximas = screen.getAllByText(/Próximas/);
-      expect(proximas.length).toBeGreaterThanOrEqual(1);
-      const pagas = screen.getAllByText(/Pagas/);
-      expect(pagas.length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText(/Vencidas/).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText(/Próximas/).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText(/Pagas/).length).toBeGreaterThanOrEqual(1);
     });
 
-    it("shows Pago button for non-paid items only", () => {
+    it("no inline Pago/Cancelar buttons exist on cards", () => {
       render(<PayablesPage />);
-      const pagoBtns = screen.getAllByText(/✓ Pago/);
-      expect(pagoBtns.length).toBe(3);
+      expect(screen.queryByText(/✓ Pago/)).not.toBeInTheDocument();
+      expect(screen.queryAllByRole("button", { name: /^Cancelar$/ })).toHaveLength(0);
     });
 
-    it("marks item as paid when Pago is clicked", async () => {
+    it("clicking a payable card opens a detail sheet", async () => {
+      const user = userEvent.setup();
+      render(<PayablesPage />);
+      await user.click(screen.getByText("Luz"));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByText("Marcar como paga")).toBeInTheDocument();
+      expect(screen.getByText("Cancelar conta")).toBeInTheDocument();
+    });
+
+    it("detail sheet for a paid payable shows editable fields but no mark-paid action", async () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({
+        payables: [{ id: "p-paid", description: "Conta Paga", amountCents: 50000, dueDate: "2026-06-01", status: "paid" }],
+      }));
+      const user = userEvent.setup();
+      render(<PayablesPage />);
+      await user.click(screen.getByText("Conta Paga"));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      // Editable: shows Salvar alterações
+      expect(screen.getByText("Salvar alterações")).toBeInTheDocument();
+      // But NOT mark-as-paid or cancel (already paid)
+      expect(screen.queryByText("Marcar como paga")).not.toBeInTheDocument();
+      expect(screen.queryByText("Cancelar conta")).not.toBeInTheDocument();
+    });
+
+    it("calls markPayablePaid from detail sheet", async () => {
+      const markPaidSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ markPayablePaid: markPaidSpy }));
+      const user = userEvent.setup();
+      render(<PayablesPage />);
+      await user.click(screen.getByText("Luz"));
+      await user.click(screen.getByText("Marcar como paga"));
+      expect(markPaidSpy).toHaveBeenCalledWith("p2");
+    });
+
+    it("cancel dialog has distinct labels", async () => {
+      const user = userEvent.setup();
+      render(<PayablesPage />);
+      // Click a card to open detail sheet
+      await user.click(screen.getByText("Luz"));
+      await user.click(screen.getByText("Cancelar conta"));
+
+      const dialog = screen.getByRole("dialog");
+      expect(within(dialog).getByRole("button", { name: /sim.*cancelar conta/i })).toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: /^voltar$/i })).toBeInTheDocument();
+    });
+
+    it("cancel dialog confirm button calls cancelPayable", async () => {
+      const cancelPayableSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ cancelPayable: cancelPayableSpy, payables: [{ id: "p1", description: "Aluguel", amountCents: 180000, dueDate: "2026-07-01", status: "pending" }] }));
       const user = userEvent.setup();
       render(<PayablesPage />);
 
-      const pagoBtns = screen.getAllByText(/✓ Pago/);
-      await user.click(pagoBtns[0]);
+      // Only 1 payable. Click the card, then Cancelar conta.
+      await user.click(screen.getByText("Aluguel"));
+      await user.click(screen.getByText("Cancelar conta"));
+      await user.click(screen.getByRole("button", { name: /sim.*cancelar conta/i }));
 
-      const remainingPago = screen.getAllByText(/✓ Pago/);
-      expect(remainingPago.length).toBe(2);
+      expect(cancelPayableSpy).toHaveBeenCalledTimes(1);
+      expect(cancelPayableSpy).toHaveBeenCalledWith("p1");
+    });
+
+    it("calls updatePayable from detail sheet when save is clicked", async () => {
+      const updatePayableSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updatePayable: updatePayableSpy }));
+      const user = userEvent.setup();
+      render(<PayablesPage />);
+      await user.click(screen.getByText("Luz"));
+
+      // Change value in text field
+      const descInput = screen.getByDisplayValue("Luz");
+      await user.clear(descInput);
+      await user.type(descInput, "Luz Atualizada");
+      await user.click(screen.getByText("Salvar alterações"));
+
+      expect(updatePayableSpy).toHaveBeenCalledWith("p2", expect.objectContaining({ description: "Luz Atualizada" }));
     });
 
     it("filters: only overdue items show when Vencidas selected", async () => {
       const user = userEvent.setup();
       render(<PayablesPage />);
-
       await user.click(screen.getByText("Vencidas"));
-
       expect(screen.getByText("Luz")).toBeInTheDocument();
       expect(screen.getByText("Internet")).toBeInTheDocument();
       expect(screen.queryByText("Aluguel")).not.toBeInTheDocument();
+    });
+
+    it("paid item shows Desfazer pagamento button in detail sheet", async () => {
+      const undoSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({
+        undoPayablePayment: undoSpy,
+        payables: [{ id: "p-paid", description: "Conta Paga", amountCents: 50000, dueDate: "2026-06-01", status: "paid" }],
+      }));
+      const user = userEvent.setup();
+      render(<PayablesPage />);
+      await user.click(screen.getByText("Conta Paga"));
+      expect(screen.getByText("Desfazer pagamento")).toBeInTheDocument();
+      await user.click(screen.getByText("Desfazer pagamento"));
+      // Confirm dialog opens
+      expect(screen.getByText("Sim, desfazer pagamento")).toBeInTheDocument();
+      await user.click(screen.getByText("Sim, desfazer pagamento"));
+      expect(undoSpy).toHaveBeenCalledWith("p-paid");
     });
   });
 
@@ -153,6 +239,29 @@ describe("PayablesPage", () => {
       await user.click(screen.getByText("Nova"));
       expect(screen.getByText("Nova conta a pagar")).toBeInTheDocument();
       expect(screen.getByText("Salvar conta")).toBeInTheDocument();
+    });
+
+    it("creates a payable via the new form", async () => {
+      const createSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ createPayable: createSpy }));
+      const user = userEvent.setup();
+      const { container } = render(<PayablesPage />);
+      await user.click(screen.getByText("Nova"));
+      await user.type(screen.getByPlaceholderText(/Aluguel, Netflix/i), "Conta Nova");
+      await user.type(screen.getByPlaceholderText("0,00"), "123450");
+      const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+      await user.type(dateInput, "2026-07-10");
+      const [accountSelect, catSelect] = screen.getAllByRole("combobox");
+      await user.selectOptions(accountSelect, "acc2");
+      await user.selectOptions(catSelect, "cat1");
+      await user.click(screen.getByText("Salvar conta"));
+      expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({
+        description: "Conta Nova",
+        amountCents: 123450,
+        dueDate: "2026-07-10",
+        accountId: "acc2",
+        categoryId: "cat1",
+      }));
     });
   });
 });
