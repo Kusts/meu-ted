@@ -62,9 +62,14 @@ describe("buildCspValue", () => {
     expect(csp).toContain(PRODUCTION_API_ORIGIN);
   });
 
-  it("allows 'unsafe-inline' for style-src (temporary for Tailwind)", () => {
+  it("allows same-origin stylesheet assets and Tailwind inline styles", () => {
     const csp = buildCspValue(nonce);
-    expect(csp).toContain("style-src 'unsafe-inline'");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+  });
+
+  it("allows the same-origin service worker", () => {
+    const csp = buildCspValue(nonce);
+    expect(csp).toContain("worker-src 'self'");
   });
 
   it("sets frame-ancestors 'none' (equivalent to X-Frame-Options DENY)", () => {
