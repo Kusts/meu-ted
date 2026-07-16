@@ -60,7 +60,7 @@ export function isAppLevel(relPath) {
 }
 
 // entries: Array<{ path: string; kb: number }>  (kb already gzip KB)
-export function summarize(entries) {
+export function summarize(entries, frameworkBases = null) {
   let initialKB = 0;
   let totalKB = 0;
   let frameworkKB = 0;
@@ -70,7 +70,7 @@ export function summarize(entries) {
     const base = path.basename(e.path);
     const cls = classifyChunk(base);
     if (cls === "initial") initialKB += e.kb;
-    else if (cls === "framework") frameworkKB += e.kb;
+    else if (frameworkBases ? frameworkBases.has(base) : cls === "framework") frameworkKB += e.kb;
     if (isAppLevel(e.path)) appKB += e.kb;
   }
   const equivalentKB = totalKB - frameworkKB;
@@ -127,10 +127,20 @@ function walk(p) {
   return out;
 }
 
+function frameworkBasesFromManifest(manifest) {
+  if (!manifest) return null;
+  const rootBases = (manifest.json.rootMainFiles || []).map((f) => path.basename(f));
+  const bases = rootBases.filter(
+    (b) => !INITIAL_PREFIXES.some((p) => b.startsWith(p)) && !b.startsWith("main-app-"),
+  );
+  return new Set(bases);
+}
+
 function main() {
   // Cross-check the framework exclusion against Next.js's own manifest evidence.
   const manifest = loadBuildManifest();
   const v = verifyFrameworkPrefixesAgainstManifest(FRAMEWORK_PREFIXES, manifest);
+  const frameworkBases = frameworkBasesFromManifest(manifest);
   if (!manifest) {
     console.error(
       `WARN: no build-manifest.json found (looked in ${MANIFEST_CANDIDATES.join(
@@ -167,7 +177,7 @@ function main() {
     path: fp,
     kb: gzipSize(fs.readFileSync(fp)) / 1024,
   }));
-  const report = summarize(entries);
+  const report = summarize(entries, frameworkBases);
 
   console.log(`chunks:                ${report.chunks}`);
   console.log(`initial gzip KB:       ${report.initialGzipKB}`);
