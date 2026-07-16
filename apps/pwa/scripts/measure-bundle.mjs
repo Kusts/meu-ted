@@ -38,11 +38,11 @@ const INITIAL_PREFIXES = ["framework-", "main-", "polyfills-"];
 const FRAMEWORK_PREFIXES = ["624-", "3896037c-"];
 
 // Build-manifest candidates (relative to the app root / cwd). The .next manifest is
-// the authoritative evidence source in this repo; .open-next is checked first for
-// Cloudflare-output builds that also emit it.
+// the authoritative evidence source in this repo, so prefer it; .open-next is only a
+// fallback for environments that also emit a mirrored manifest there.
 const MANIFEST_CANDIDATES = [
-  ".open-next/assets/_next/build-manifest.json",
   ".next/build-manifest.json",
+  ".open-next/assets/_next/build-manifest.json",
 ];
 
 export function gzipSize(buf) {
