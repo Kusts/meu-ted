@@ -88,4 +88,4 @@ jobs:
       - name: E2E (Playwright offline shell)
         run: |
           pnpm --dir apps/pwa build:next:cloudflare
-          npx playwright test --config=apps/pwa/scripts/offline-shell-spike/playwright.config.ts
+          pnpm --dir apps/pwa exec playwright test --config=scripts/offline-shell-spike/playwright.config.ts
