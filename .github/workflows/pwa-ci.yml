@@ -51,11 +51,11 @@ jobs:
       - name: Lint PWA
         run: pnpm --dir apps/pwa lint
 
-      - name: Test PWA
-        run: pnpm --dir apps/pwa exec vitest run
-
       - name: Build PWA (Cloudflare)
         run: pnpm --dir apps/pwa build:cloudflare
+
+      - name: Test PWA
+        run: pnpm --dir apps/pwa exec vitest run
 
       - name: Validate _headers propagation
         run: pnpm --dir apps/pwa exec vitest run src/headers.test.ts
