@@ -62,6 +62,7 @@ jobs:
 
       - name: Check initial JS gzip <=200KB
         run: |
+          cd apps/pwa
           node -e "
           const z=require('zlib'),fs=require('fs');
           const d='.open-next/assets/_next/static/chunks';
