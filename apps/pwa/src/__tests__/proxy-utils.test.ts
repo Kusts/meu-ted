@@ -17,7 +17,7 @@ describe("middleware", () => {
     const csp = response.headers.get("Content-Security-Policy");
     expect(csp).toBeTruthy();
     expect(csp).toContain("script-src 'nonce-");
-    expect(csp).toContain("style-src 'unsafe-inline'");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
     expect(csp).toContain("frame-ancestors 'none'");
   });
 
