@@ -1,40 +1,52 @@
 # PWA Comprehensive E2E Design
 
 ## Goal
-Create a deterministic, production-like Playwright suite that proves all PWA routes and visible actions work without production data or unexpected browser/runtime failures.
+Build deterministic Playwright coverage for all 12 application routes and every visible user action, without production data or mutations.
 
-## Boundaries
-- Test PWA UI + HTTP contract only; never mutate production or the Hostinger API.
-- “Complete” means each visible user action has one assigned happy-path test plus validation/error coverage when it writes or can fail. It does not mean combinatorial permutations.
-- Mobile executes the full functional matrix. Desktop executes navigation/layout plus representative CRUD flows. PWA runtime is isolated.
+## Scope contract
+- Application pages: `/`, `/registros`, `/a-pagar`, `/assinaturas`, `/cartoes`, `/categorias`, `/contas`, `/metas`, `/orcamentos`, `/patrimonio`, `/perfil`, `/relatorios`.
+- Separate non-page contracts: `manifest.webmanifest`, `/pwa-control`, `/api/observability/rum`, not-found, headers and static assets.
+- Complete means every atomic matrix action has one owning happy-path test; writes additionally own validation and declared API-error coverage. It is not combinatorial coverage.
 
-## Architecture
-`apps/pwa/e2e/fixture-api/` is a local resettable HTTP server. It owns deterministic seeds, mutable in-memory stores, request recording, configured errors/delays, and a reset endpoint used before every test. The app starts with `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL` pointing to this server.
+## Local fixture protocol
+`apps/pwa/e2e/fixture-api/server.ts` listens on `127.0.0.1:4010`. The PWA process receives `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL=http://127.0.0.1:4010` before build/start.
 
-`apps/pwa/e2e/fixtures/` owns Playwright fixtures: unauthenticated, authenticated seeded, empty, degraded/error, and offline. `apps/pwa/e2e/support/` owns route helpers, API assertions and a global browser-failure guard. The guard fails on unexpected console/page errors, CSP violations, `ChunkLoadError`, failed requests, and HTTP >=400; expected fixture failures must be declared by a test.
+| Endpoint | Method | Contract |
+|---|---|---|
+| `/__e2e/reset` | POST | body `{testId,seed}`; replaces only that testId store and journal |
+| `/__e2e/scenario` | POST | body `{testId,delayMs?,status?,offline?,once?}`; next matching request follows scenario |
+| `/__e2e/journal` | GET | query `testId`; returns ordered `{method,path,body,status}` |
+| `/__e2e/seed` | GET | query `testId`; returns the current deterministic fixture state |
+
+All fixture data requests require `X-E2E-Test-ID`; missing IDs return 400. Playwright injects this header through `context.setExtraHTTPHeaders`, so stores and journals are parallel-safe. CORS allows only `http://127.0.0.1:3000` and exposes no production credentials. Seeds use fixed clock `2026-07-17T12:00:00.000Z`, `America/Sao_Paulo`, `pt-BR`, stable IDs and money in cents. Before each test: reset fixture state, cookies, local/session storage, IndexedDB, CacheStorage and service-worker registrations.
+
+## API fixture coverage
+The fixture implements every export in `lib/api/endpoints.ts`: accounts, categories, transactions, payables, budgets, goals, cards/accounts, statements, purchases, subscriptions, profile and quick insights; plus `/auth/devices/register` and `/auth/devices/me`. Lists return production wrappers `{items,total}`, transactions `{items,total}`, profile `{profile}`. Mutations validate bodies, mutate only the scoped store and journal every request. Scenarios provide deterministic delay, 401, 422, 500 and network-abort responses.
+
+## Playwright architecture
+- `e2e/fixtures/`: unauthenticated, seeded, empty, degraded/error and offline contexts.
+- `e2e/support/`: reset, API-journal assertions, fixed clock, route navigation and browser-failure guard.
+- `e2e/specs/`: feature-oriented specs named in the matrix.
+- Use role/name/label locators. Add `aria-label`; add `data-testid` only for repeated unnamed cards.
+
+The failure guard is enabled for every test and rejects console/page errors, CSP violations, `ChunkLoadError`, request failures and HTTP >=400. A negative test calls `allowFailure({status|url|message,reason})` before the expected failure; undeclared failures always fail.
 
 ## Projects
-- `functional-mobile`: 390x844, SW blocked; every matrix row.
-- `functional-desktop`: desktop viewport; shell/navigation and representative create/edit/error flows.
-- `pwa-runtime`: SW allowed; install, controller reload, offline fallback, dirty-update behavior and old-cache migration.
-- `production-smoke`: explicit opt-in/read-only, no auth registration or mutation.
+- `functional-mobile`: 390x844, SW blocked, complete matrix, `workers: 1` initially.
+- `functional-desktop`: 1440x900, navigation/layout plus representative writes.
+- `pwa-runtime`: SW allowed, serial, own isolated origin/storage.
+- `production-smoke`: disabled unless `E2E_PRODUCTION_SMOKE=1`; read-only/no registration/no writes.
 
-## Fixture API
-The fixture server implements every endpoint called by `lib/api/endpoints.ts`, returns the production response shapes (`{items,total}` list wrappers, profile wrapper, transaction wrapper), validates write payloads, records calls, and mutates its test-local store. A scenario header/query configures delay, 401, 422, 500 and offline/network-abort behavior. Each test resets seeds and browser storage.
+## Navigation and PWA acceptance
+Each route has direct-load ownership and client-navigation ownership: BottomNav covers `/`, `/registros`, `/a-pagar`; More covers `/patrimonio`, `/contas`, `/cartoes`, `/assinaturas`, `/orcamentos`, `/metas`, `/categorias`, `/relatorios`; Home/profile controls cover `/perfil`.
 
-## Locators and observability
-Use role/name/label locators. Add `aria-label` first; use stable `data-testid` only where repeated visual cards have no accessible name. Tests assert response method/path/body and visible state, not implementation state.
+`pwa-runtime` asserts: legacy `pi-finance-shell` is deleted; route HTML and `_rsc` responses never enter CacheStorage; only `offline-shell.html/js` are precached; offline navigation falls back only after network failure; old chunk URLs are never requested after activation; clean forms activate a waiting worker once; dirty forms retain it. The coordinator is mounted within `UnsavedChangesProvider` and handles absent `registration.waiting` safely.
 
-## PWA contract
-Navigation documents/RSC responses must never be retained in a fixed runtime cache. Offline only serves the precached `offline-shell.html`. Legacy `pi-finance-shell` is deleted during activation. The SW coordinator is mounted inside the unsaved-changes provider, treats `registration.waiting` as nullable, sends `CLEAN_UPDATE` only for clean state, and reloads once after controller change. Dirty forms retain the waiting worker.
+## CI topology
+New `pwa-e2e` job (Ubuntu, Node 20, pnpm 9, 25-minute timeout) runs after install: `playwright install --with-deps chromium`; fixture API `4010`; PWA `3000`; mobile then desktop then runtime with `--workers=1 --retries=1`; `production-smoke` only on manual dispatch with explicit URL. Upload `apps/pwa/test-results`, `playwright-report`, traces, screenshots and videos on failure. Existing `quality` remains focused and does not absorb the full suite.
 
-## CI
-A dedicated E2E workflow/job installs Chromium, starts fixture API + PWA, runs projects separately, and uploads trace/video/screenshot/test-result artifacts on failure. It is separate from the existing 15-minute quality job.
-
-## Acceptance
-1. Every matrix row has a named owning spec.
-2. All 13 routes load directly and via client navigation where reachable.
-3. Every action validates the expected UI and fixture API mutation.
-4. Full suite passes twice consecutively.
-5. Lint, Vitest, coverage, Cloudflare build, Wrangler local test and E2E all pass.
-6. No production mutation occurs during tests.
+## Final gates
+1. Matrix has no unowned action ID.
+2. Full suite passes twice consecutively.
+3. Lint, Vitest/coverage, Cloudflare build and Wrangler local checks pass.
+4. No test contacts or mutates production.
