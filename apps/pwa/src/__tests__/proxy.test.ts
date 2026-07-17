@@ -50,9 +50,9 @@ describe("SECURITY_HEADERS", () => {
 describe("buildCspValue", () => {
   const nonce = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4";
 
-  it("includes script-src with nonce", () => {
+  it("allows same-origin Next route chunks with the request nonce", () => {
     const csp = buildCspValue(nonce);
-    expect(csp).toContain(`script-src 'nonce-${nonce}'`);
+    expect(csp).toContain(`script-src 'self' 'nonce-${nonce}'`);
   });
 
   it("includes connect-src with self and production API", () => {

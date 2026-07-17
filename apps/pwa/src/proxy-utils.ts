@@ -33,7 +33,7 @@ export function generateNonce(): string {
 /**
  * Build the Content-Security-Policy value for a given nonce.
  *
- * - script-src: nonce-based (no unsafe-inline)
+ * - script-src: same-origin Next chunks + nonce-based inline scripts (no unsafe-inline)
  * - style-src: same-origin stylesheets + unsafe-inline for Tailwind-generated styles
  * - worker-src: same-origin service worker
  * - connect-src: self + production API (canonical)
@@ -42,7 +42,7 @@ export function generateNonce(): string {
  */
 export function buildCspValue(nonce: string): string {
   return [
-    `script-src 'nonce-${nonce}'`,
+    `script-src 'self' 'nonce-${nonce}'`,
     "style-src 'self' 'unsafe-inline'",
     "worker-src 'self'",
     `connect-src 'self' ${PRODUCTION_API_ORIGIN}`,
