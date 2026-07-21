@@ -1,7 +1,18 @@
+import path from "node:path";
 import { defineConfig } from "@playwright/test";
 
 const FIXTURE_PORT = 4010;
 const PWA_PORT = 3000;
+// Config lives in apps/pwa/e2e — PWA root is parent
+const PWA_ROOT = path.resolve(__dirname, "..");
+const STANDALONE_SERVER = path.join(
+  PWA_ROOT,
+  ".next",
+  "standalone",
+  "apps",
+  "pwa",
+  "server.js",
+);
 
 export default defineConfig({
   testDir: ".",
@@ -61,17 +72,23 @@ export default defineConfig({
     {
       command: `pnpm exec tsx e2e/fixture-api/server.ts --port ${FIXTURE_PORT}`,
       port: FIXTURE_PORT,
-      cwd: process.cwd(),
-      reuseExistingServer: true,
-      timeout: 10000,
+      cwd: PWA_ROOT,
+      reuseExistingServer: !process.env.CI,
+      timeout: 15000,
     },
     {
-      command: `pnpm exec next start --port ${PWA_PORT}`,
+      // Absolute path avoids wrong monorepo root resolution on Windows.
+      // Ensure .next/static is copied into standalone before first run:
+      //   cp -r .next/static .next/standalone/apps/pwa/.next/static
+      command: `node "${STANDALONE_SERVER}"`,
       port: PWA_PORT,
-      cwd: process.cwd(),
-      reuseExistingServer: true,
+      cwd: path.join(PWA_ROOT, ".next", "standalone", "apps", "pwa"),
+      reuseExistingServer: !process.env.CI,
       timeout: 30000,
       env: {
+        ...process.env,
+        PORT: String(PWA_PORT),
+        HOSTNAME: "127.0.0.1",
         NEXT_PUBLIC_PI_FINANCE_API_BASE_URL: `http://127.0.0.1:${FIXTURE_PORT}`,
       },
     },
