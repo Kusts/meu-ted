@@ -44,6 +44,7 @@
     "fake-indexeddb": "^6.0.0",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4",
+    "tsx": "^4.22.3",
     "typescript": "^5",
     "vitest": "^4.1.10",
     "wrangler": "^4.104.0"
