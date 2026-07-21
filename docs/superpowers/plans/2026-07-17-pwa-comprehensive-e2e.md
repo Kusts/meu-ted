@@ -116,7 +116,7 @@ test('fails undeclared CSP violations', async ({ page }) => {
 
 **Files:** Create `apps/pwa/e2e/specs/auth.spec.ts`, `apps/pwa/e2e/specs/navigation.spec.ts`.
 
-- [ ] **Step 1: RED** implement tests for `AUTH-01`, `AUTH-02`, `DIRECT-01..DIRECT-12` (direct load all 12 routes), `NAV-01..NAV-13` (client navigation), and exact BottomNav/More button clicks.
+- [ ] **Step 1: RED** implement tests for `AUTH-01`, `AUTH-02`, `DIRECT-01..12` (direct load all 12 routes), `NAV-01..13` (client navigation), and exact BottomNav/More button clicks.
 - [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts e2e/specs/auth.spec.ts e2e/specs/navigation.spec.ts`.
 - [ ] **Step 3: Implement only required accessibility labels/test IDs** where semantic button names are absent; no behavior refactor.
 - [ ] **Step 4: GREEN** assert URLs, fixture journal, styled shell, and zero guard failures.
@@ -126,7 +126,7 @@ test('fails undeclared CSP violations', async ({ page }) => {
 
 **Files:** Create `transaction-sheet.spec.ts`, `home.spec.ts`, `records.spec.ts` under `apps/pwa/e2e/specs/`.
 
-- [ ] **Step 1: RED** encode `TX-01..TX-09`, `HOME-01..HOME-10`, `REC-01..REC-06` as role-driven flows; assert exact journal calls such as `POST /transactions/expense`, `POST /transfers`, `PATCH /transactions/:id`, `DELETE /transactions/:id`.
+- [ ] **Step 1: RED** encode `TX-01..09`, `HOME-01..10`, `REC-01..06` as role-driven flows; assert exact journal calls such as `POST /transactions/expense`, `POST /transfers`, `PATCH /transactions/:id`, `DELETE /transactions/:id`.
 - [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=functional-mobile e2e/specs/transaction-sheet.spec.ts e2e/specs/home.spec.ts e2e/specs/records.spec.ts`.
 - [ ] **Step 3: Implement fixture seed/handlers and minimal labels only.**
 - [ ] **Step 4: GREEN** — same command exits 0; cover cancel, validation, 422 and 500 state preservation/retry.
@@ -190,7 +190,7 @@ test('dirty form retains waiting worker without activation', async ({ page }) =>
 
 **Files:** Create `apps/pwa/e2e/specs/production-smoke.spec.ts`, `apps/pwa/e2e/support/matrix.ts`, `apps/pwa/e2e/support/matrix.test.ts`.
 
-- [ ] **Step 1: RED** assert every matrix ID has an owning spec via `[ID]` title annotations (no manual mapping). Production smoke validates unauthenticated registration shell only, refuses registration/write unless `E2E_PRODUCTION_SMOKE=1`.
+- [ ] **Step 1: RED** assert every matrix ID (`AUTH`, `DIRECT`, `NAV`, `TX`, `HOME`, `REC`, `ACC`, `CAT`... and `SMOKE-01..04`) has an owning spec via `[ID]` title annotations (no manual mapping). Production smoke validates unauthenticated registration shell only, refuses registration/write unless `E2E_PRODUCTION_SMOKE=1`.
 - [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec vitest run e2e/support/matrix.test.ts` and `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=functional-desktop e2e/specs/production-smoke.spec.ts`.
 - [ ] **Step 3: Implement** matrix enforcement extracts IDs from test title `[ID]` annotations; desktop representative flows; explicit production read-only guard.
 - [ ] **Step 4: GREEN** — both commands exit 0; all IDs resolve and smoke is skipped by default.
