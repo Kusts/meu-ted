@@ -1,28 +1,16 @@
 /**
- * Playwright test fixtures for E2E tests.
- * Provides guard integration, unique test IDs, fixture API URL,
- * and CSP header modification (allows fixture API connections).
- *
- * Each test gets:
- *   - unique testId (X-E2E-Test-ID header)
- *   - fresh guard instance
- *   - fixture API URL constant
- *   - CSP-allowing page setup (intercepts CSP headers to add fixture origin)
- *
- * Usage:
- *   import { test, expect } from "../fixtures/app";
- *
- *   test("description", async ({ page, guard }) => {
- *     attachGuard(page, guard);
- *     // ... test actions ...
- *     assertNoUndeclaredFailures(guard);
- *   });
+ * Playwright test fixtures and shared E2E helpers.
+ * Provides: test/extended fixtures, CSP modification, device registration,
+ * fixture API URL constant, and journal query helpers.
  */
 
 import { test as base } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { FIXTURE_URL } from "../support/reset";
 import { createGuard, type GuardState } from "../support/failure-guard";
+
+export { FIXTURE_URL };
+export { createGuard, type GuardState };
 
 let testCounter = 0;
 function generateTestId(): string {
@@ -31,16 +19,14 @@ function generateTestId(): string {
 }
 
 /**
- * Modify CSP headers on document responses to allow fixture API connections.
- * The production CSP only allows 'self' and api.synkroo.com.br for connect-src,
- * but E2E tests connect to 127.0.0.1:4010 (fixture API).
+ * Modify CSP headers to allow fixture API connections.
+ * Must be called BEFORE page.goto().
  */
 export async function allowFixtureCsp(page: Page): Promise<void> {
   await page.route("**", async (route) => {
     const response = await route.fetch();
     const csp = response.headers()["content-security-policy"];
     if (csp) {
-      // Add fixture origin to connect-src and allow http connections
       const modified = csp
         .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
         .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
@@ -52,6 +38,42 @@ export async function allowFixtureCsp(page: Page): Promise<void> {
       await route.fulfill({ response });
     }
   });
+}
+
+/**
+ * Register device by clicking the "Registrar" button.
+ * Must be called after page.goto() when on registration screen.
+ */
+export async function registerDevice(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Registrar" }).click({ timeout: 10000 });
+  await page.waitForTimeout(1000);
+  await page.waitForLoadState("networkidle");
+}
+
+/**
+ * Query the fixture journal for entries matching method+path.
+ */
+export async function getJournalEntries(testId: string): Promise<Array<{ method: string; path: string; status: number }>> {
+  const res = await fetch(`${FIXTURE_URL}/__e2e/journal?testId=${testId}`, {
+    headers: { "x-e2e-test-id": testId },
+  });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+/**
+ * Standard setup: CSP modification, fixture reset, fixed clock, and test header.
+ */
+export async function e2eSetup(page: Page, testId: string): Promise<void> {
+  await allowFixtureCsp(page);
+  const res = await fetch(`${FIXTURE_URL}/__e2e/reset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-e2e-test-id": testId },
+    body: JSON.stringify({ testId, seed: "populated" }),
+  });
+  if (!res.ok) throw new Error(`Fixture reset failed: ${res.status}`);
+  await page.clock.setFixedTime("2026-07-17T12:00:00.000Z");
+  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": testId });
 }
 
 /* eslint-disable react-hooks/rules-of-hooks */
