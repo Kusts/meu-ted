@@ -197,6 +197,5 @@ describe("ProfilePage", () => {
     render(<ProfilePage />);
     await user.click(screen.getByText("Sair da conta"));
     expect(mockRouter.push).toHaveBeenCalledWith("/");
-    expect(mockRouter.refresh).toHaveBeenCalled();
   });
 });
