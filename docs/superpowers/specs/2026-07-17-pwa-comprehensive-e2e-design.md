@@ -31,7 +31,7 @@ The fixture implements every export in `lib/api/endpoints.ts`: accounts, categor
 
 The failure guard is enabled for every test and rejects console/page errors, CSP violations, `ChunkLoadError`, request failures and HTTP >=400. A negative test calls `allowFailure({status|url|message,reason})` before the expected failure; undeclared failures always fail.
 
-The intentionally-failing guard child spec (`e2e/specs/guard.spec.ts`) is **excluded from the main Playwright config** via dedicated `e2e/guard-fixture.config.ts` which uses `testMatch: ['**/guard.spec.ts']` to select only this spec. A Vitest parent test (`e2e/support/guard-runner.test.ts`) spawns `playwright test --config=e2e/guard-fixture.config.ts` via `spawnSync` and asserts exit code `!== 0` and stderr/stdout contains the guard message. This prevents the deliberately-failing spec from breaking the full `playwright test` suite while still verifying guard coverage in the parent-child architecture.
+The intentionally-failing guard child spec (`e2e/guard-fixture/guard.spec.ts`) is isolated from the main Playwright config via dedicated `e2e/guard-fixture.config.ts` which uses `testMatch: ['**/guard-fixture/**']`. The main config uses `testMatch: ['**/e2e/specs/**']`, so the guard spec is never discovered by the full suite. A Vitest parent test (`e2e/support/guard-runner.test.ts`) spawns `playwright test --config=e2e/guard-fixture.config.ts` via `spawnSync` and asserts exit code `!== 0` and stderr/stdout contains the exact guard message `Undeclared console error`. This prevents the deliberately-failing spec from breaking the full `playwright test` suite while still verifying guard coverage in the parent-child architecture.
 
 ## Projects
 - `functional-mobile`: 390x844, SW blocked, complete matrix, `workers: 1` initially.
@@ -56,14 +56,14 @@ The coordinator null-checks `registration.waiting` before access. Registration i
 
 A harness for two-version SW testing must:
 - **Seed legacy cache entries** (e.g. old `pi-finance-shell` items) in CacheStorage via `page.evaluate` before the updated worker activates; the legacy worker itself is **never seeded in CacheStorage** — a service worker cannot be loaded from CacheStorage
-- **Serve the legacy SW** from a separate build artifact served via HTTP URL from a distinct versioned path
-- **Install an updated SW version** (post-build) by triggering the update flow through the coordinator
+- **Serve the legacy SW and the updated SW sequentially through the same registered URL `/sw.js`** (first deploy old build, then replace with updated build); this triggers the real `updatefound` event on the same `registration`
+- **Control the deployment sequence** so Playwright can observe both `statechange` cycles: legacy activate → updated install → updated activate
 - Assert that old cached chunks are never requested after activation completes
 - Assert that route HTML and `_rsc` responses are not re-cached by the new worker
 - Verify clean forms (no unsaved changes) activate the waiting worker and reload once
 - Verify dirty forms (unsaved changes present) retain the waiting worker without forcing activation
 
-The legacy SW is served from a separate build artifact; the updated SW is the production build served to the Playwright context. Both use a controlled registration sequence so the test can observe the `statechange` cycle.
+Both versions are served through the same `/sw.js` path; the test harness deploys the legacy build first, then atomically replaces it with the updated build to trigger the update flow on the existing `registration`.
 
 ## CI topology
 New `pwa-e2e` job (Ubuntu, Node 20, pnpm 9, 25-minute timeout) runs after install: `playwright install --with-deps chromium`. Before tests:

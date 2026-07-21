@@ -50,7 +50,7 @@ it('/profile returns {profile} wrapper', async () => {
 
 ### Task 3: Playwright foundation and guard
 
-**Files:** Create `apps/pwa/e2e/playwright.config.ts`, `apps/pwa/e2e/guard-fixture.config.ts`, `apps/pwa/e2e/fixtures/app.ts`, `apps/pwa/e2e/support/failure-guard.ts`, `apps/pwa/e2e/support/failure-guard.test.ts`, `apps/pwa/e2e/support/guard-runner.test.ts`, `apps/pwa/e2e/support/reset.ts`, `apps/pwa/e2e/specs/guard.spec.ts`; modify `apps/pwa/package.json`.
+**Files:** Create `apps/pwa/e2e/playwright.config.ts`, `apps/pwa/e2e/guard-fixture.config.ts`, `apps/pwa/e2e/guard-fixture/guard.spec.ts`, `apps/pwa/e2e/fixtures/app.ts`, `apps/pwa/e2e/support/failure-guard.ts`, `apps/pwa/e2e/support/failure-guard.test.ts`, `apps/pwa/e2e/support/guard-runner.test.ts`, `apps/pwa/e2e/support/reset.ts`; modify `apps/pwa/package.json`.
 
 - [ ] **Step 1: RED** — write three tests:
 ```ts
@@ -77,20 +77,20 @@ it('guard spec exits non-zero and logs guard message on undeclared CSP', () => {
     '--config=e2e/guard-fixture.config.ts'
   ], { cwd: 'apps/pwa', encoding: 'utf-8' });
   expect(status).not.toBe(0);
-  expect(stderr + stdout).toMatch(/guard|CSP|failure|undeclared/i);
-  // Portável — qualquer exit não-zero prova que guard disparou
+  expect(stderr + stdout).toContain('Undeclared console error');
+  // Portável — exit não-zero + mensagem estável do guard
 });
 ```
 ```ts
-// guard.spec.ts (playwright child runner — intentionally triggers CSP error)
+// e2e/guard-fixture/guard.spec.ts (playwright child runner — intentionally triggers CSP error)
 test('fails undeclared CSP violations', async ({ page }) => {
   await page.evaluate(() => console.error('Content Security Policy violation'));
 });
 ```
 - [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec vitest run e2e/support/failure-guard.test.ts` (unit fails — guard not impl) and `pnpm --dir apps/pwa exec vitest run e2e/support/guard-runner.test.ts` (parent fails — dedicated config missing or guard not impl).
-- [ ] **Step 3: Implement** projects `functional-mobile` (390x844, SW block), `functional-desktop` (1440x900), `pwa-runtime` (allow, serial), optional production smoke; main Playwright config targeting `http://127.0.0.1:3000`; dedicated `e2e/guard-fixture.config.ts` with `testMatch: ['**/guard.spec.ts']` to run only the intentionally-failing child spec; fixture reset/header/storage/IndexedDB/cache/SW cleanup; `allowFailure({status?,url?,message?,reason})`.
-- [ ] **Step 4: GREEN** — `pnpm --dir apps/pwa exec vitest run e2e/support/failure-guard.test.ts` (unit passes); `pnpm --dir apps/pwa exec vitest run e2e/support/guard-runner.test.ts` (parent passes because child exits 1 and stderr/stdout contains guard message); expected declared 422 passes; undeclared console/page/CSP/chunk/request/HTTP failure fails.
-- [ ] **Step 5: Commit** `git add apps/pwa/e2e/playwright.config.ts apps/pwa/e2e/guard-fixture.config.ts apps/pwa/e2e/fixtures/app.ts apps/pwa/e2e/support/failure-guard.ts apps/pwa/e2e/support/failure-guard.test.ts apps/pwa/e2e/support/guard-runner.test.ts apps/pwa/e2e/support/reset.ts apps/pwa/e2e/specs/guard.spec.ts apps/pwa/package.json && git commit -m "test: add deterministic pwa playwright foundation"`.
+- [ ] **Step 3: Implement** projects `functional-mobile` (390x844, SW block), `functional-desktop` (1440x900), `pwa-runtime` (allow, serial), optional production smoke; main Playwright config with `testMatch: ['**/e2e/specs/**']`; dedicated `e2e/guard-fixture.config.ts` with `testMatch: ['**/guard-fixture/**']`; fixture reset/header/storage/IndexedDB/cache/SW cleanup; `allowFailure({status?,url?,message?,reason})`.
+- [ ] **Step 4: GREEN** — `pnpm --dir apps/pwa exec vitest run e2e/support/failure-guard.test.ts` (unit passes); `pnpm --dir apps/pwa exec vitest run e2e/support/guard-runner.test.ts` (parent passes because child exit non-zero and stderr/stdout contains exact `Undeclared console error`); expected declared 422 passes; undeclared console/page/CSP/chunk/request/HTTP failure fails.
+- [ ] **Step 5: Commit** `git add apps/pwa/e2e/playwright.config.ts apps/pwa/e2e/guard-fixture.config.ts apps/pwa/e2e/guard-fixture/guard.spec.ts apps/pwa/e2e/fixtures/app.ts apps/pwa/e2e/support/failure-guard.ts apps/pwa/e2e/support/failure-guard.test.ts apps/pwa/e2e/support/guard-runner.test.ts apps/pwa/e2e/support/reset.ts apps/pwa/package.json && git commit -m "test: add deterministic pwa playwright foundation"`.
 
 ### Task 4: Auth, direct-load and navigation IDs
 
@@ -160,9 +160,8 @@ test('dirty form retains waiting worker without activation', async ({ page }) =>
 ```
 - [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=pwa-runtime e2e/specs/pwa-runtime.spec.ts`.
 - [ ] **Step 3: Implement** network-only navigation plus precached offline-shell fallback; delete legacy `pi-finance-shell` on activate; never cache HTML/RSC. The coordinator is a React component mounted inside `UnsavedChangesProvider`; on boot it calls `navigator.serviceWorker.register('/sw.js')` and observes the `updatefound` event. When `registration.waiting` is detected (waiting worker exists), the coordinator checks `UnsavedChangesProvider` for dirty state: if clean, it dispatches a `CLEAN_UPDATE` message to the waiting worker, calls `registration.waiting.postMessage({type:'CLEAN_UPDATE'})`, then reloads the page once. If dirty (unsaved changes present), it retains the waiting worker without activation — no message sent, no reload. The coordinator null-checks `registration.waiting` before accessing it. The two-version harness must:
-  - Serve the legacy SW from a separate build artifact (never from CacheStorage; a service worker cannot be loaded from cache)
-  - Serve the updated SW via the production build
-  - Control registration sequence for observable `statechange` cycle
+  - Serve the legacy SW and the updated SW **sequentially through the same registered URL `/sw.js`** (first deploy old build, then replace with updated build); this triggers the real `updatefound` event on the same `registration`
+  - Control the deployment sequence so Playwright can observe both `statechange` cycles
 - [ ] **Step 4: GREEN** runtime test proves no old chunk request/404, no HTML/RSC cache, offline fallback only after abort, clean/dirty update behavior with controlled two-version harness.
 - [ ] **Step 5: Commit** `git add apps/pwa/src/sw.ts apps/pwa/src/components/RootProviders.tsx apps/pwa/src/lib/sw-coordinator.tsx apps/pwa/e2e/specs/pwa-runtime.spec.ts apps/pwa/src/sw-runtime.test.ts apps/pwa/src/lib/sw-coordinator.test.tsx && git commit -m "fix: harden pwa cache migration and updates"`.
 
