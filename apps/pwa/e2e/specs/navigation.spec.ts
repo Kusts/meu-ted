@@ -200,8 +200,7 @@ test("[NAV-01] BottomNav Resumo click navigates to /", async ({ page }) => {
   await page.goto("/registros"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Resumo" }).click({ timeout: 5000 });
-  await page.waitForTimeout(500);
-  expect(page.url()).toContain("/");
+  await expect(page).toHaveURL(/\/$/);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -211,8 +210,7 @@ test("[NAV-02] BottomNav Registros click navigates to /registros", async ({ page
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Registros" }).click({ timeout: 5000 });
-  await page.waitForTimeout(500);
-  expect(page.url()).toContain("/registros");
+  await expect(page).toHaveURL(/\/registros$/);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -222,8 +220,7 @@ test("[NAV-03] BottomNav A pagar click navigates to /a-pagar", async ({ page }) 
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "A pagar" }).click({ timeout: 5000 });
-  await page.waitForTimeout(500);
-  expect(page.url()).toContain("/a-pagar");
+  await expect(page).toHaveURL(/\/a-pagar$/);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -248,39 +245,89 @@ test("[NAV-04] tap Mais opens bottom sheet overlay (mobile)", async ({ page }) =
 // NAV-05..12: More menu items
 // ═══════════════════════════════════════════════════════════════════════════
 
-const MORE_ITEMS: Array<{ id: string; name: string; expected: string }> = [
-  { id: "NAV-05", name: "Patrimônio", expected: "/patrimonio" },
-  { id: "NAV-06", name: "Contas", expected: "/contas" },
-  { id: "NAV-07", name: "Cartões", expected: "/cartoes" },
-  { id: "NAV-08", name: "Assinaturas", expected: "/assinaturas" },
-  { id: "NAV-09", name: "Orçamentos", expected: "/orcamentos" },
-  { id: "NAV-10", name: "Metas", expected: "/metas" },
-  { id: "NAV-11", name: "Categorias", expected: "/categorias" },
-  { id: "NAV-12", name: "Relatórios", expected: "/relatorios" },
-];
-
-// Note: These use a for loop over a static array; the matrix.ts extraction may not
-// find [ID] in dynamically-generated test titles. Each test body is identical in
-// structure. If matrix enforcement fails, these can be unrolled to explicit calls.
-for (const item of MORE_ITEMS) {
-  test(`[${item.id}] More ${item.name} navigates to ${item.expected}`, async ({ page }) => {
-    const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
-    await setup(page, id); allowFailure(guard, SW);
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/"); await registerDevice(page);
-
-    // Open More sheet
-    await page.getByRole("button", { name: "Mais" }).click({ timeout: 5000 });
-    await page.waitForTimeout(300);
-
-    // Click target item inside the sheet dialog
-    await page.locator("[role='dialog']").getByRole("button", { name: item.name }).click({ timeout: 5000 });
-    await page.waitForTimeout(500);
-
-    expect(page.url()).toContain(item.expected);
-    assertNoUndeclaredFailures(guard);
-  });
+async function navigateFromMoreMenu(
+  page: import("@playwright/test").Page,
+  label: string,
+  expectedPath: RegExp,
+): Promise<void> {
+  await page.getByRole("button", { name: "Mais" }).click({ timeout: 5000 });
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: label }).click({ timeout: 5000 });
+  await expect(page).toHaveURL(expectedPath);
 }
+
+test("[NAV-05] More Patrimônio navigates to /patrimonio", async ({ page }) => {
+  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
+  await setup(page, id); allowFailure(guard, SW);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/"); await registerDevice(page);
+  await navigateFromMoreMenu(page, "Patrimônio", /\/patrimonio$/);
+  assertNoUndeclaredFailures(guard);
+});
+
+test("[NAV-06] More Contas navigates to /contas", async ({ page }) => {
+  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
+  await setup(page, id); allowFailure(guard, SW);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/"); await registerDevice(page);
+  await navigateFromMoreMenu(page, "Contas", /\/contas$/);
+  assertNoUndeclaredFailures(guard);
+});
+
+test("[NAV-07] More Cartões navigates to /cartoes", async ({ page }) => {
+  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
+  await setup(page, id); allowFailure(guard, SW);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/"); await registerDevice(page);
+  await navigateFromMoreMenu(page, "Cartões", /\/cartoes$/);
+  assertNoUndeclaredFailures(guard);
+});
+
+test("[NAV-08] More Assinaturas navigates to /assinaturas", async ({ page }) => {
+  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
+  await setup(page, id); allowFailure(guard, SW);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/"); await registerDevice(page);
+  await navigateFromMoreMenu(page, "Assinaturas", /\/assinaturas$/);
+  assertNoUndeclaredFailures(guard);
+});
+
+test("[NAV-09] More Orçamentos navigates to /orcamentos", async ({ page }) => {
+  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
+  await setup(page, id); allowFailure(guard, SW);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/"); await registerDevice(page);
+  await navigateFromMoreMenu(page, "Orçamentos", /\/orcamentos$/);
+  assertNoUndeclaredFailures(guard);
+});
+
+test("[NAV-10] More Metas navigates to /metas", async ({ page }) => {
+  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
+  await setup(page, id); allowFailure(guard, SW);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/"); await registerDevice(page);
+  await navigateFromMoreMenu(page, "Metas", /\/metas$/);
+  assertNoUndeclaredFailures(guard);
+});
+
+test("[NAV-11] More Categorias navigates to /categorias", async ({ page }) => {
+  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
+  await setup(page, id); allowFailure(guard, SW);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/"); await registerDevice(page);
+  await navigateFromMoreMenu(page, "Categorias", /\/categorias$/);
+  assertNoUndeclaredFailures(guard);
+});
+
+test("[NAV-12] More Relatórios navigates to /relatorios", async ({ page }) => {
+  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
+  await setup(page, id); allowFailure(guard, SW);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/"); await registerDevice(page);
+  await navigateFromMoreMenu(page, "Relatórios", /\/relatorios$/);
+  assertNoUndeclaredFailures(guard);
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NAV-13: Backdrop closes sheet
@@ -299,11 +346,8 @@ test("[NAV-13] tap overlay/backdrop closes Mais sheet, route preserved", async (
   // Click the backdrop/overlay (transparent inset div) to dismiss
   const backdrop = page.locator("[class*='animate-fade-in']").first();
   await backdrop.click({ timeout: 3000, position: { x: 200, y: 10 } });
-  await page.waitForTimeout(500);
 
-  // Sheet should be closed
-  await expect(page.locator("[role='dialog']")).not.toBeVisible({ timeout: 5000 });
-  // Route should still be /
-  expect(page.url()).toContain("/");
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page).toHaveURL(/\/$/);
   assertNoUndeclaredFailures(guard);
 });
