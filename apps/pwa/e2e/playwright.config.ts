@@ -2,8 +2,8 @@ import path from "node:path";
 import { defineConfig } from "@playwright/test";
 
 const FIXTURE_PORT = 4010;
-const PWA_PORT = 3000;
-// Config lives in apps/pwa/e2e — PWA root is parent
+const HARNESS_PORT = 3000;
+const NEXT_PORT = 3001;
 const PWA_ROOT = path.resolve(__dirname, "..");
 const STANDALONE_SERVER = path.join(
   PWA_ROOT,
@@ -17,14 +17,14 @@ const STANDALONE_SERVER = path.join(
 export default defineConfig({
   testDir: ".",
   testMatch: "specs/**/*.spec.ts",
-  timeout: 30000,
+  timeout: 45000,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,
   workers: 1,
 
   use: {
-    baseURL: `http://127.0.0.1:${PWA_PORT}`,
+    baseURL: `http://127.0.0.1:${HARNESS_PORT}`,
     headless: true,
     serviceWorkers: "block",
     extraHTTPHeaders: {
@@ -40,6 +40,7 @@ export default defineConfig({
         serviceWorkers: "block",
       },
       testMatch: "specs/**/*.spec.ts",
+      testIgnore: "**/pwa-runtime.spec.ts",
     },
     {
       name: "functional-desktop",
@@ -48,20 +49,25 @@ export default defineConfig({
         serviceWorkers: "block",
       },
       testMatch: "specs/**/*.spec.ts",
+      testIgnore: "**/pwa-runtime.spec.ts",
     },
     {
       name: "pwa-runtime",
       use: {
         viewport: { width: 390, height: 844 },
         serviceWorkers: "allow",
+        baseURL: `http://127.0.0.1:${HARNESS_PORT}`,
       },
       testMatch: "**/pwa-runtime.spec.ts",
       fullyParallel: false,
+      timeout: 60000,
     },
     {
       name: "production-smoke",
       use: {
-        baseURL: process.env.E2E_PRODUCTION_URL || "https://pi-finance-pwa.walissonead.workers.dev",
+        baseURL:
+          process.env.E2E_PRODUCTION_URL ||
+          "https://pi-finance-pwa.walissonead.workers.dev",
       },
       testMatch: "**/production-smoke.spec.ts",
       grepInvert: process.env.E2E_PRODUCTION_SMOKE ? undefined : /.*/,
@@ -77,20 +83,26 @@ export default defineConfig({
       timeout: 15000,
     },
     {
-      // Absolute path avoids wrong monorepo root resolution on Windows.
-      // Ensure .next/static is copied into standalone before first run:
-      //   cp -r .next/static .next/standalone/apps/pwa/.next/static
+      // Next standalone on 3001 (harness proxies 3000 → 3001)
       command: `node "${STANDALONE_SERVER}"`,
-      port: PWA_PORT,
+      port: NEXT_PORT,
       cwd: path.join(PWA_ROOT, ".next", "standalone", "apps", "pwa"),
       reuseExistingServer: !process.env.CI,
       timeout: 30000,
       env: {
         ...process.env,
-        PORT: String(PWA_PORT),
+        PORT: String(NEXT_PORT),
         HOSTNAME: "127.0.0.1",
         NEXT_PUBLIC_PI_FINANCE_API_BASE_URL: `http://127.0.0.1:${FIXTURE_PORT}`,
       },
+    },
+    {
+      // SW harness owns /sw.js + /__e2e/sw/deploy; proxies the rest to Next
+      command: `pnpm exec tsx e2e/sw-harness/server.ts --target=${NEXT_PORT} --port=${HARNESS_PORT}`,
+      port: HARNESS_PORT,
+      cwd: PWA_ROOT,
+      reuseExistingServer: !process.env.CI,
+      timeout: 15000,
     },
   ],
 });
