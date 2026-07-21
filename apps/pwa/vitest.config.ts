@@ -74,7 +74,7 @@ export default defineConfig({
     // file-parallelism on this environment); keeps `pnpm test` runnable.
     pool: "threads",
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: ["src/**/*.test.{ts,tsx}", "e2e/**/*.test.{ts,tsx}"],
     coverage: {
       provider: "v8",
       reporter: ["text", "text-summary"],
