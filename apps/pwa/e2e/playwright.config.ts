@@ -1,6 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
 const FIXTURE_PORT = 4010;
+const PWA_PORT = 3000;
 
 export default defineConfig({
   testDir: ".",
@@ -12,9 +13,8 @@ export default defineConfig({
   workers: 1,
 
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: `http://127.0.0.1:${PWA_PORT}`,
     headless: true,
-    // Disable service workers for functional tests (enabled in pwa-runtime project)
     serviceWorkers: "block",
     extraHTTPHeaders: {
       "x-e2e-test-id": "default-test",
@@ -45,17 +45,14 @@ export default defineConfig({
         serviceWorkers: "allow",
       },
       testMatch: "**/pwa-runtime.spec.ts",
-      // Serial execution for PWA runtime tests
       fullyParallel: false,
     },
     {
       name: "production-smoke",
       use: {
-        // No fixture URL, real production URL
         baseURL: process.env.E2E_PRODUCTION_URL || "https://pi-finance-pwa.walissonead.workers.dev",
       },
       testMatch: "**/production-smoke.spec.ts",
-      // Disabled unless E2E_PRODUCTION_SMOKE=1
       grepInvert: process.env.E2E_PRODUCTION_SMOKE ? undefined : /.*/,
     },
   ],
@@ -67,6 +64,16 @@ export default defineConfig({
       cwd: process.cwd(),
       reuseExistingServer: true,
       timeout: 10000,
+    },
+    {
+      command: `pnpm exec next start --port ${PWA_PORT}`,
+      port: PWA_PORT,
+      cwd: process.cwd(),
+      reuseExistingServer: true,
+      timeout: 30000,
+      env: {
+        NEXT_PUBLIC_PI_FINANCE_API_BASE_URL: `http://127.0.0.1:${FIXTURE_PORT}`,
+      },
     },
   ],
 });
