@@ -37,22 +37,26 @@ function tid(): string {
 }
 
 async function allowFixtureCsp(page: import("@playwright/test").Page): Promise<void> {
-  await page.route("**", async (route) => {
-    const response = await route.fetch();
-    const csp = response.headers()["content-security-policy"];
-    if (csp) {
-      const modified = csp
-        .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
-        .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
-      await route.fulfill({
-        response,
-        headers: { ...response.headers(), "content-security-policy": modified },
-      });
-    } else {
-      await route.fulfill({ response });
+  await page.route("**/*", async (route) => {
+    try {
+      const response = await route.fetch();
+      const headers = { ...response.headers() };
+      const csp = headers["content-security-policy"];
+      if (csp) {
+        headers["content-security-policy"] = csp
+          .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
+          .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
+      }
+      await route.fulfill({ response, headers });
+    } catch {
+      // Avoid "route.fetch: Test ended" when teardown aborts in-flight handlers.
     }
   });
 }
+
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
 
 async function resetFixture(testId: string, seed = "populated"): Promise<void> {
   const res = await fetch(`${FIXTURE_URL}/__e2e/reset`, {
