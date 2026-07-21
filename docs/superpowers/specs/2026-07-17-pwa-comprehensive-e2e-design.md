@@ -13,21 +13,76 @@ Build deterministic Playwright coverage for all 12 application routes and every 
 
 | Endpoint | Method | Contract |
 |---|---|---|
+| `/__e2e/health` | GET | no auth, no testId, no journal; returns `{ok:true}` for readiness probe |
 | `/__e2e/reset` | POST | body `{testId,seed}`; replaces only that testId store and journal |
-| `/__e2e/scenario` | POST | body `{testId,method,path,delayMs?,status?,offline?,once?}`; next matching method+path request follows scenario |
+| `/__e2e/scenario` | POST | body `{testId,method,pathname,search?,delayMs?,status?,offline?,once?}`; matches normalized pathname+search; `offline:true` aborts via `socket.destroy()` |
 | `/__e2e/journal` | GET | query `testId`; returns ordered `{method,path,body,status}` |
 | `/__e2e/seed` | GET | query `testId`; returns the current deterministic fixture state |
 
-All fixture data requests require `X-E2E-Test-ID`; missing IDs return 400. Playwright injects this header through `context.setExtraHTTPHeaders`, so stores and journals are parallel-safe. CORS allows only origin `http://127.0.0.1:3000`, allows methods `GET,POST,PATCH,DELETE,OPTIONS`, allows headers `content-type,authorization,x-e2e-test-id,x-device-token`, and handles `OPTIONS` preflight with appropriate response headers. No production credentials are exposed. Seeds use fixed clock `2026-07-17T12:00:00.000Z`, `America/Sao_Paulo`, `pt-BR`, stable IDs and money in cents. Before each test: reset fixture state, cookies, local/session storage, IndexedDB, CacheStorage and service-worker registrations.
+All fixture data requests require `X-E2E-Test-ID` (except `/__e2e/health`); missing IDs return 400. Playwright injects this header through `context.setExtraHTTPHeaders`, so stores and journals are parallel-safe. CORS allows only origin `http://127.0.0.1:3000`, allows methods `GET,POST,PATCH,DELETE,OPTIONS`, allows headers `content-type,authorization,x-e2e-test-id,x-device-token`, and handles `OPTIONS` preflight with appropriate response headers. No production credentials are exposed. Seeds use fixed clock `2026-07-17T12:00:00.000Z`, `America/Sao_Paulo`, `pt-BR`, stable IDs and money in cents. Before each test: set `page.clock.setFixedTime('2026-07-17T12:00:00.000Z')` before first navigation, then reset fixture state, cookies, local/session storage, IndexedDB, CacheStorage and service-worker registrations.
 
-## API fixture coverage
-The fixture implements every export in `lib/api/endpoints.ts`: accounts, categories, transactions, payables, budgets, goals, cards/accounts, statements, purchases, subscriptions, profile and quick insights; plus `/auth/devices/register` and `/auth/devices/me`. Lists return production wrappers `{items,total}`, transactions `{items,total}`, profile `{profile}`. Mutations validate bodies, mutate only the scoped store and journal every request. Scenarios provide deterministic delay, 401, 422, 500 and network-abort responses.
+## API fixture coverage per endpoint
+Contracts derived from actual backend responses (inspected `apiFetch` calls in `src/lib/api/`).
+
+| Endpoint pattern | Method | Response shape | Notes |
+|---|---|---|---|
+| `/auth/devices/register` | POST | `{token:string, deviceId:string, householdId:string}` | Body `{deviceName}` |
+| `/auth/devices/me` | GET | `{device:{id:string, name:string}}` | Requires `x-device-token` |
+| `/accounts` | GET | `{items:Account[], total:number}` | |
+| `/accounts` | POST | `Account` | |
+| `/accounts/:id` | PATCH | `Account` | |
+| `/accounts/:id/deactivate` | POST | **204 No Content** | Void |
+| `/categories` | GET | `{items:Category[], total:number}` | |
+| `/categories` | POST | `Category` | Subcategory via `parentId` |
+| `/categories/:id` | PATCH | `Category` | |
+| `/categories/:id/deactivate` | POST | **204 No Content** | Void |
+| `/transactions` | GET | `{items:Transaction[], total:number}` | Query params `kind`,`limit`,`offset` |
+| `/transactions/expense` | POST | `Transaction` | |
+| `/transactions/income` | POST | `Transaction` | |
+| `/transactions/:id` | PATCH | `Transaction` | |
+| `/transactions/:id` | DELETE | **204 No Content** | Void |
+| `/transfers` | POST | `Transaction` | |
+| `/cards` | POST | `Account` | |
+| `/cards/:id` | PATCH | `Account` | |
+| `/cards/accounts` | GET | `{items:Account[], total:number}` | |
+| `/cards/statements` | GET | `{items:CardStatement[], total:number}` | Query `accountId` |
+| `/cards/statements/:id` | GET | `StatementDetail` | Direct, no wrapper |
+| `/cards/statements/:id/pay` | POST | `CardStatement` | Body `{amountCents,fromAccountId}` |
+| `/cards/purchases/:id` | PATCH | `StatementDetail` | |
+| `/cards/installments` | POST | `{items:Transaction[]}` | Wrapped in items |
+| `/payables` | GET | `{items:Payable[], total:number}` | Query `status` |
+| `/payables` | POST | `Payable` | |
+| `/payables/:id` | PATCH | `Payable` | |
+| `/payables/:id/pay` | POST | `Payable` | Body `{paidDate?}` |
+| `/payables/:id/unpay` | POST | `Payable` | |
+| `/payables/:id/cancel` | POST | `Payable` | |
+| `/budgets` | GET | `{items:Budget[], total:number}` | |
+| `/budgets` | POST | `Budget` | |
+| `/budgets/:id` | PATCH | `Budget` | |
+| `/goals` | GET | `{items:Goal[], total:number}` | |
+| `/goals` | POST | `Goal` | |
+| `/goals/:id` | PATCH | `Goal` | |
+| `/goals/:id/contribute` | POST | `Goal` | |
+| `/goals/:id/cancel` | POST | `Goal` | |
+| `/subscriptions` | GET | `{items:Subscription[], total:number}` | |
+| `/subscriptions` | POST | `Subscription` | |
+| `/subscriptions/:id` | PATCH | `Subscription` | |
+| `/subscriptions/:id/cancel` | POST | `Subscription` | |
+| `/profile` | GET | `{profile:Profile|null}` | |
+| `/profile` | PATCH | `{profile:Profile}` | |
+| `/insights/quick` | GET | `{items:QuickInsight[]}` | No `total` |
+
+Mutations validate bodies, write to scoped store and journal every request. Scenarios match on normalized `pathname` + `search`; mode `offline:true` aborts via `socket.destroy()` without writing to journal.
 
 ## Playwright architecture
 - `e2e/fixtures/`: unauthenticated, seeded, empty, degraded/error and offline contexts.
 - `e2e/support/`: reset, API-journal assertions, fixed clock, route navigation and browser-failure guard.
 - `e2e/specs/`: feature-oriented specs named in the matrix.
 - Use role/name/label locators. Add `aria-label`; add `data-testid` only for repeated unnamed cards.
+- Clock fixed via `page.clock.setFixedTime('2026-07-17T12:00:00.000Z')` in `beforeEach` before first navigation.
+
+## Ownership and annotation
+Every test must include its matrix ID in the test title as `[ID]` (e.g. `[AUTH-01] registers device`). The matrix enforcement spec (`e2e/support/matrix.test.ts`) extracts IDs from spec titles rather than maintaining a separate mapping file. No manual mapping file is required — the matrix manifest is derived from title annotations.
 
 The failure guard is enabled for every test and rejects console/page errors, CSP violations, `ChunkLoadError`, request failures and HTTP >=400. A negative test calls `allowFailure({status|url|message,reason})` before the expected failure; undeclared failures always fail.
 
@@ -46,33 +101,82 @@ Each route has direct-load ownership and client-navigation ownership: BottomNav 
 
 ### SW coordinator component and registration
 
-The coordinator is a React component mounted inside `UnsavedChangesProvider`. On boot it calls `navigator.serviceWorker.register('/sw.js')` and observes the `updatefound` event. When a waiting worker is detected (`registration.waiting`), the coordinator checks `UnsavedChangesProvider` for dirty state:
-- **Clean** (no unsaved changes): dispatches `CLEAN_UPDATE` message via `registration.waiting.postMessage({type:'CLEAN_UPDATE'})` and reloads the page once
+The `SWCoordinator` is a React component mounted **inside** `UnsavedChangesProvider` (which wraps all consumers needing dirty state). On mount, the coordinator calls `navigator.serviceWorker.register('/sw.js')` to ensure the SW is registered at the application level (not just build-time), then gets the `registration` via `navigator.serviceWorker.getRegistration()`. It listens for `updatefound` on the registration — when a waiting worker is detected (`registration.waiting`), it checks `UnsavedChangesProvider` for dirty state:
+- **Clean** (no unsaved changes): dispatches `CLEAN_UPDATE` message via `registration.waiting.postMessage({type:'CLEAN_UPDATE'})` → SW calls `self.skipWaiting()` → page reloads once
 - **Dirty** (unsaved changes present): retains the waiting worker without activation — no message sent, no reload
 
-The coordinator null-checks `registration.waiting` before access. Registration is not implicit — the component explicitly calls `register('/sw.js')` at mount time.
+The coordinator exposes `{registerForUpdate, isDirty}` — tests call `registerForUpdate()` to trigger the update flow programmatically. The coordinator is mounted in `RootProviders` under `UnsavedChangesProvider`.
 
-### SW registration and coordinator harness
+### SW registration and coordinator harness (`e2e/sw-harness/`)
 
-A harness for two-version SW testing must:
-- **Seed legacy cache entries** (e.g. old `pi-finance-shell` items) in CacheStorage via `page.evaluate` before the updated worker activates; the legacy worker itself is **never seeded in CacheStorage** — a service worker cannot be loaded from CacheStorage
-- **Serve the legacy SW and the updated SW sequentially through the same registered URL `/sw.js`** (first deploy old build, then replace with updated build); this triggers the real `updatefound` event on the same `registration`
-- **Control the deployment sequence** so Playwright can observe both `statechange` cycles: legacy activate → updated install → updated activate
-- Assert that old cached chunks are never requested after activation completes
-- Assert that route HTML and `_rsc` responses are not re-cached by the new worker
-- Verify clean forms (no unsaved changes) activate the waiting worker and reload once
-- Verify dirty forms (unsaved changes present) retain the waiting worker without forcing activation
+SW registration is **origin-bound** — the page and `/sw.js` must share the same origin. Architecture:
+- `e2e/sw-harness/server.ts` — Node HTTP server on `127.0.0.1:3000` that **proxies** all requests to the real Next.js server on `127.0.0.1:3001`, **except** `/sw.js` and `/__e2e/sw/deploy` which it handles directly
+- Playwright `baseURL` is `http://127.0.0.1:3000`; the browser sees a single origin
+- The harness serves a switchable `/sw.js`: a control endpoint `POST /__e2e/sw/deploy {"version":"legacy"|"current"}` atomically swaps which build artifact is served at that path
+- Test sequence:
+  1. `POST /__e2e/sw/deploy {"version":"legacy"}` → server will serve old `/sw.js`
+  2. Navigate to `http://127.0.0.1:3000/` → browser registers SW from same origin → legacy activates
+  3. Seed legacy cache entries via `page.evaluate`
+  4. `POST /__e2e/sw/deploy {"version":"current"}` → `/sw.js` now serves new build
+  5. `navigator.serviceWorker.getRegistration()` fires `updatefound` → `registration.waiting` populated
+  6. Coordinator's `registerForUpdate()`: if clean → `CLEAN_UPDATE` → SW activates → reload
 
-Both versions are served through the same `/sw.js` path; the test harness deploys the legacy build first, then atomically replaces it with the updated build to trigger the update flow on the existing `registration`.
+The harness must:
+- Seed legacy cache entries before updated worker activates
+- Control deployment sequence for observable `statechange` cycles
+- Assert old chunks never requested after activation
+- Assert route HTML and `_rsc` never enter CacheStorage
+- Verify clean forms allow activation; dirty forms retain waiting worker
 
 ## CI topology
-New `pwa-e2e` job (Ubuntu, Node 20, pnpm 9, 25-minute timeout) runs after install: `playwright install --with-deps chromium`. Before tests:
-- Build PWA with `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL=http://127.0.0.1:4010`
-- Start fixture API on `127.0.0.1:4010` and PWA on `127.0.0.1:3000`
-- Wait for both `http://127.0.0.1:4010/__e2e/health` and `http://127.0.0.1:3000` readiness before test execution
-- Each project uses isolated browser contexts and storage partitions; `pwa-runtime` uses a separate browser context with `serviceWorkers: 'allow'` to isolate cache/registration without changing the origin (all projects share `http://127.0.0.1:3000`)
 
-Execution: mobile, desktop, runtime with `--workers=1 --retries=0`; two consecutive full runs form the gate. `production-smoke` only on manual dispatch with explicit URL and no fixture. After tests: teardown fixture API, PWA process, and clean test artifacts. Upload `apps/pwa/test-results`, `playwright-report`, traces, screenshots and videos on failure. Existing `quality` remains focused and does not absorb the full suite.
+**Script:** `apps/pwa/e2e/run-ci.sh` — single entry point, starts all services in the same shell with trap cleanup set BEFORE background processes.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+BUILD_DIR=apps/pwa
+FIXTURE_PORT=4010
+SW_HARNESS_PORT=3000
+NEXT_PORT=3001
+
+# Build with fixture URL
+NEXT_PUBLIC_PI_FINANCE_API_BASE_URL=http://127.0.0.1:${FIXTURE_PORT} pnpm --dir ${BUILD_DIR} build
+
+# Start Next.js on 3001 (internal — SW harness proxies 3000 → 3001)
+pnpm --dir ${BUILD_DIR} exec next start --port ${NEXT_PORT} &
+NEXT_PID=$!
+
+# Start SW harness on 3000 (public origin: proxies to Next except /sw.js and /__e2e/sw/deploy)
+pnpm --dir ${BUILD_DIR} exec tsx e2e/sw-harness/server.ts --target http://127.0.0.1:${NEXT_PORT} &
+SW_PID=$!
+
+# Start fixture API on 4010
+pnpm --dir ${BUILD_DIR} exec tsx e2e/fixture-api/server.ts --port ${FIXTURE_PORT} &
+FIXTURE_PID=$!
+
+# Trap BEFORE readiness: kill services, DO NOT remove artifacts (they are preserved for upload)
+trap 'kill $FIXTURE_PID $SW_PID $NEXT_PID 2>/dev/null; echo "Stopped services"' EXIT
+
+# Readiness with timeout (fail hard on timeout)
+for i in $(seq 1 30); do
+  curl -sf http://127.0.0.1:${FIXTURE_PORT}/__e2e/health && break
+  [ "$i" = "30" ] && { echo "Fixture readiness timeout"; exit 1; }
+  sleep 1
+done
+for i in $(seq 1 30); do
+  curl -sf http://127.0.0.1:${SW_HARNESS_PORT} && break
+  [ "$i" = "30" ] && { echo "SW harness readiness timeout"; exit 1; }
+  sleep 1
+done
+
+# Gate: two consecutive full runs (all projects included; smoke excluded by env/project)
+pnpm --dir ${BUILD_DIR} exec playwright test --config=e2e/playwright.config.ts --workers=1 --retries=0
+pnpm --dir ${BUILD_DIR} exec playwright test --config=e2e/playwright.config.ts --workers=1 --retries=0
+```
+
+`production-smoke` only on manual dispatch using `--project=production-smoke` with explicit production URL (no fixture, no CI script). All main projects (functional-mobile, functional-desktop, pwa-runtime) are included in the full run; smoke is excluded by default because `E2E_PRODUCTION_SMOKE` env is not set in CI. Each project uses isolated browser contexts and storage partitions. Upload `apps/pwa/test-results`, `playwright-report`, traces, screenshots and videos on failure.
 
 ## Final gates
 1. Matrix has no unowned action ID.

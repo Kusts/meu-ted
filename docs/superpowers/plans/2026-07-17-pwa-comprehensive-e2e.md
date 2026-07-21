@@ -14,7 +14,7 @@
 
 ### Task 1: Fixture API protocol and deterministic stores
 
-**Files:** Create `apps/pwa/e2e/fixture-api/server.ts`, `apps/pwa/e2e/fixture-api/store.ts`, `apps/pwa/e2e/fixture-api/seeds.ts`, `apps/pwa/e2e/fixture-api/server.test.ts`.
+**Files:** Create `apps/pwa/e2e/fixture-api/server.ts`, `apps/pwa/e2e/fixture-api/store.ts`, `apps/pwa/e2e/fixture-api/seeds.ts`, `apps/pwa/e2e/fixture-api/server.test.ts`; modify `apps/pwa/package.json` (add `tsx` devDep).
 
 - [ ] **Step 1: Write failing protocol tests**
 ```ts
@@ -26,25 +26,45 @@ it('resets only the requested test store', async () => {
 });
 ```
 - [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec vitest run e2e/fixture-api/server.test.ts`; expect missing module/failing protocol.
-- [ ] **Step 3: Implement** scoped `Map<string, TestStore>`, fixed clock `2026-07-17T12:00:00.000Z`, endpoints `/__e2e/reset`, `/__e2e/scenario` (method+path matching), `/__e2e/journal`, `/__e2e/seed`, required `X-E2E-Test-ID`, CORS restricted to origin `http://127.0.0.1:3000`, methods `GET,POST,PATCH,DELETE,OPTIONS`, headers `content-type,authorization,x-e2e-test-id,x-device-token`, OPTIONS preflight handler returning appropriate CORS headers, and journal `{method,path,body,status}`.
+- [ ] **Step 3: Implement** scoped `Map<string, TestStore>`, fixed clock `2026-07-17T12:00:00.000Z`. Add `tsx` as devDependency in `apps/pwa/package.json`. Endpoints:
+  - `GET /__e2e/health` — no testId, no journal, returns `{ok:true}`
+  - `POST /__e2e/reset` — body `{testId,seed}`
+  - `POST /__e2e/scenario` — body `{testId,method,pathname,search?,delayMs?,status?,offline?,once?}`; matches normalized pathname+search; offline aborts via `socket.destroy()`
+  - `GET /__e2e/journal` — query `testId`
+  - `GET /__e2e/seed` — query `testId`
+  Required `X-E2E-Test-ID` on all except `/__e2e/health`. CORS restricted to origin `http://127.0.0.1:3000`, methods `GET,POST,PATCH,DELETE,OPTIONS`, headers `content-type,authorization,x-e2e-test-id,x-device-token`, OPTIONS preflight handler. Journal `{method,path,body,status}`.
 - [ ] **Step 4: GREEN** — same command passes; add tests for missing test ID 400, delay/401/422/500/abort scenario.
-- [ ] **Step 5: Commit** `git add apps/pwa/e2e/fixture-api/server.ts apps/pwa/e2e/fixture-api/store.ts apps/pwa/e2e/fixture-api/seeds.ts apps/pwa/e2e/fixture-api/server.test.ts && git commit -m "test: add scoped pwa e2e fixture api"`.
+- [ ] **Step 5: Commit** `git add apps/pwa/e2e/fixture-api/server.ts apps/pwa/e2e/fixture-api/store.ts apps/pwa/e2e/fixture-api/seeds.ts apps/pwa/e2e/fixture-api/server.test.ts apps/pwa/package.json && git commit -m "test: add scoped pwa e2e fixture api"`.
 
 ### Task 2: Endpoint compatibility
 
 **Files:** Modify `apps/pwa/e2e/fixture-api/server.ts`; test `apps/pwa/e2e/fixture-api/contracts.test.ts`.
 
-- [ ] **Step 1: RED** assert every endpoint exported by `src/lib/api/endpoints.ts` returns its contract:
+- [ ] **Step 1: RED** assert every endpoint returns its specific contract:
 ```ts
-it.each(['/accounts','/categories','/transactions','/payables','/budgets','/goals','/cards/accounts','/cards/statements','/subscriptions','/insights/quick'])('%s has production shape', async path => {
-  expect(await get(path)).toMatchObject({ items: expect.any(Array) });
+// Lists (GET return {items,total})
+it.each(['/accounts','/categories','/payables','/budgets','/goals','/cards/accounts','/cards/statements','/subscriptions'])('%s returns {items,total}', async path => {
+  expect(await get(path)).toMatchObject({ items: expect.any(Array), total: expect.any(Number) });
 });
+it('/transactions returns {items,total} with params', async () => {
+  expect(await get('/transactions?limit=10')).toMatchObject({ items: expect.any(Array), total: expect.any(Number) });
+});
+// Statement detail (direct response, no wrapper)
+it('/cards/statements/:id returns detail directly', async () => {
+  expect(await get('/cards/statements/1')).not.toHaveProperty('items');
+});
+// Profile wrapper
 it('/profile returns {profile} wrapper', async () => {
   expect(await get('/profile')).toMatchObject({ profile: expect.any(Object) });
 });
+// Quick insights (items but no total)
+it('/insights/quick returns {items}', async () => {
+  expect(await get('/insights/quick')).toMatchObject({ items: expect.any(Array) });
+  expect(await get('/insights/quick')).not.toHaveProperty('total');
+});
 ```
 - [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec vitest run e2e/fixture-api/contracts.test.ts`.
-- [ ] **Step 3: Implement** list `{items,total}`, transactions `{items,total}`, profile `{profile}`, auth register/me, and all create/update/delete/pay/cancel routes named in the matrix; mutate only the test-scoped store.
+- [ ] **Step 3: Implement** per-endpoint contracts (from design doc table — 50 rows). Key specifics: auth register `{token,deviceId,householdId}`; `/cards/installments` returns `{items:Transaction[]}` (wrapped); all deactivations and `DELETE` return 204; pay/cancel/contribute return the mutated entity. All mutate only the test-scoped store.
 - [ ] **Step 4: GREEN** — command passes and journal asserts method/body for each mutation.
 - [ ] **Step 5: Commit** `git add apps/pwa/e2e/fixture-api/server.ts apps/pwa/e2e/fixture-api/contracts.test.ts && git commit -m "test: cover pwa fixture endpoint contracts"`.
 
@@ -107,9 +127,9 @@ test('fails undeclared CSP violations', async ({ page }) => {
 **Files:** Create `transaction-sheet.spec.ts`, `home.spec.ts`, `records.spec.ts` under `apps/pwa/e2e/specs/`.
 
 - [ ] **Step 1: RED** encode `TX-01..TX-09`, `HOME-01..HOME-10`, `REC-01..REC-06` as role-driven flows; assert exact journal calls such as `POST /transactions/expense`, `POST /transfers`, `PATCH /transactions/:id`, `DELETE /transactions/:id`.
-- [ ] **Step 2: Run RED** — focused Playwright command for the three specs.
+- [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=functional-mobile e2e/specs/transaction-sheet.spec.ts e2e/specs/home.spec.ts e2e/specs/records.spec.ts`.
 - [ ] **Step 3: Implement fixture seed/handlers and minimal labels only.**
-- [ ] **Step 4: GREEN** cover cancel, validation, 422 and 500 state preservation/retry.
+- [ ] **Step 4: GREEN** — same command exits 0; cover cancel, validation, 422 and 500 state preservation/retry.
 - [ ] **Step 5: Commit** `git add apps/pwa/e2e/specs/transaction-sheet.spec.ts apps/pwa/e2e/specs/home.spec.ts apps/pwa/e2e/specs/records.spec.ts && git commit -m "test: cover transaction home and records e2e"`.
 
 ### Task 6: Accounts through cards
@@ -117,51 +137,52 @@ test('fails undeclared CSP violations', async ({ page }) => {
 **Files:** Create `accounts.spec.ts`, `categories.spec.ts`, `payables.spec.ts`, `budgets.spec.ts`, `goals.spec.ts`, `cards.spec.ts`.
 
 - [ ] **Step 1: RED** implement atomic IDs `ACC-01..06`, `CAT-01..05`, `PAY-01..06`, `BUD-01..04`, `GOAL-01..06`, `CARD-01..08`.
-- [ ] **Step 2: Run RED** — focused six-spec command.
+- [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=functional-mobile e2e/specs/accounts.spec.ts e2e/specs/categories.spec.ts e2e/specs/payables.spec.ts e2e/specs/budgets.spec.ts e2e/specs/goals.spec.ts e2e/specs/cards.spec.ts`.
 - [ ] **Step 3: Implement fixture mutations** for accounts/cards/categories/payables/budgets/goals/statements/purchases; verify journal payloads and rendered totals/statuses.
-- [ ] **Step 4: GREEN** each write has validation, cancel, and declared API-error assertion.
+- [ ] **Step 4: GREEN** — same command exits 0; each write has validation, cancel, and declared API-error assertion.
 - [ ] **Step 5: Commit** `git add apps/pwa/e2e/specs/accounts.spec.ts apps/pwa/e2e/specs/categories.spec.ts apps/pwa/e2e/specs/payables.spec.ts apps/pwa/e2e/specs/budgets.spec.ts apps/pwa/e2e/specs/goals.spec.ts apps/pwa/e2e/specs/cards.spec.ts && git commit -m "test: cover pwa financial feature e2e"`.
 
 ### Task 7: Remaining features and shared UI
 
 **Files:** Create `subscriptions.spec.ts`, `wallet.spec.ts`, `reports.spec.ts`, `profile.spec.ts`, `shared-ui.spec.ts`.
 
-- [ ] **Step 1: RED** implement `SUB-01..05`, `WAL-01`, `REP-01`, `PROF-01..06`, `UI-01..08`.
-- [ ] **Step 2: Run RED** — focused five-spec command.
+- [ ] **Step 1: RED** implement `SUB-01..05`, `WAL-01`, `REP-01..03`, `PROF-01..06`, `UI-01..08`.
+- [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=functional-mobile e2e/specs/subscriptions.spec.ts e2e/specs/wallet.spec.ts e2e/specs/reports.spec.ts e2e/specs/profile.spec.ts e2e/specs/shared-ui.spec.ts`.
 - [ ] **Step 3: Implement fixture support and minimal labels** for notification dismiss/navigation, profile variants, stale/write-error banners and confirm dialog actions.
-- [ ] **Step 4: GREEN** assert empty/degraded, cancel and retry branches.
+- [ ] **Step 4: GREEN** — same command exits 0; assert empty/degraded, cancel and retry branches.
 - [ ] **Step 5: Commit** `git add apps/pwa/e2e/specs/subscriptions.spec.ts apps/pwa/e2e/specs/wallet.spec.ts apps/pwa/e2e/specs/reports.spec.ts apps/pwa/e2e/specs/profile.spec.ts apps/pwa/e2e/specs/shared-ui.spec.ts && git commit -m "test: cover remaining pwa e2e surfaces"`.
 
 ### Task 8: PWA stale-cache regression and coordinator
 
 **Files:** Modify `apps/pwa/src/sw.ts`, `apps/pwa/src/components/RootProviders.tsx`, `apps/pwa/src/lib/sw-coordinator.tsx`; create/modify `apps/pwa/e2e/specs/pwa-runtime.spec.ts`, `apps/pwa/src/sw-runtime.test.ts`, `apps/pwa/src/lib/sw-coordinator.test.tsx`.
 
-- [ ] **Step 1: RED** write PWA tests for `PWA-01..05`. Use a two-version harness: seed legacy cache entries (`pi-finance-shell`) via `page.evaluate` and serve the legacy SW from a separate build artifact, then trigger an update flow:
+- [ ] **Step 1: RED** write PWA tests for `PWA-01..06`. Use the SW harness (`e2e/sw-harness/server.ts` on `127.0.0.1:3000`, proxying to Next on `127.0.0.1:3001`). Playwright `baseURL` is `http://127.0.0.1:3000`:
 ```ts
 test('never caches route HTML and removes legacy shell cache', async ({ page }) => {
-  await seedLegacyShell(page, '/registros');
-  await activateUpdatedWorker(page);
+  await page.goto('/');
+  await page.evaluate(() => fetch('/__e2e/sw/deploy', { method:'POST', body: JSON.stringify({version:'current'}) }));
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
   expect(await cacheEntries(page, 'pi-finance-shell')).toEqual([]);
   await expect(page.getByRole('button', { name: 'Registros' })).toBeEnabled();
 });
 test('clean form activates waiting worker once', async ({ page }) => {
-  await loadCoordinator(page);
-  await installLegacyWorker(page);
-  await triggerUpdateAndActivate(page, { hasUnsavedChanges: false });
+  await page.goto('/');
+  await page.evaluate(() => window.__coordinator.registerForUpdate());
   await expect(page.getByText('CLEAN_UPDATE')).toBeVisible();
 });
 test('dirty form retains waiting worker without activation', async ({ page }) => {
-  await loadCoordinator(page);
-  await installLegacyWorker(page);
-  await triggerUpdate(page, { hasUnsavedChanges: true });
-  await expect(page.getByText('UPDATE_AVAILABLE')).toBeVisible();
-  expect(await isWorkerActivated(page)).toBe(false);
+  await page.goto('/');
+  await page.evaluate(() => window.__coordinator.setDirty(true));
+  await page.evaluate(() => window.__coordinator.registerForUpdate());
+  expect(await page.evaluate(() => navigator.serviceWorker.controller?.state)).not.toBe('activated');
 });
 ```
 - [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=pwa-runtime e2e/specs/pwa-runtime.spec.ts`.
-- [ ] **Step 3: Implement** network-only navigation plus precached offline-shell fallback; delete legacy `pi-finance-shell` on activate; never cache HTML/RSC. The coordinator is a React component mounted inside `UnsavedChangesProvider`; on boot it calls `navigator.serviceWorker.register('/sw.js')` and observes the `updatefound` event. When `registration.waiting` is detected (waiting worker exists), the coordinator checks `UnsavedChangesProvider` for dirty state: if clean, it dispatches a `CLEAN_UPDATE` message to the waiting worker, calls `registration.waiting.postMessage({type:'CLEAN_UPDATE'})`, then reloads the page once. If dirty (unsaved changes present), it retains the waiting worker without activation — no message sent, no reload. The coordinator null-checks `registration.waiting` before accessing it. The two-version harness must:
-  - Serve the legacy SW and the updated SW **sequentially through the same registered URL `/sw.js`** (first deploy old build, then replace with updated build); this triggers the real `updatefound` event on the same `registration`
-  - Control the deployment sequence so Playwright can observe both `statechange` cycles
+- [ ] **Step 3: Implement** network-only navigation plus precached offline-shell fallback; delete legacy `pi-finance-shell` on activate; never cache HTML/RSC. The `SWCoordinator` React component mounted inside `UnsavedChangesProvider` calls `navigator.serviceWorker.register('/sw.js')` on mount, gets the `registration`, listens for `updatefound`, and exposes `{registerForUpdate, isDirty}`. On `registerForUpdate()`: if clean → `registration.waiting.postMessage({type:'CLEAN_UPDATE'})` → `self.skipWaiting()` → page reload. If dirty → no message. The harness (`e2e/sw-harness/server.ts`) runs on `127.0.0.1:3000` and proxies all requests to Next.js on `127.0.0.1:3001` except `/sw.js` and `/__e2e/sw/deploy` which it handles directly. Playwright `baseURL` = `http://127.0.0.1:3000`. Deployment:
+  - `POST /__e2e/sw/deploy {"version":"legacy"}` → `/sw.js` serves old build
+  - Navigate to `/` → browser registers SW from same origin → legacy activates
+  - `POST /__e2e/sw/deploy {"version":"current"}` → `/sw.js` serves new build, `updatefound` fires
+  - Test calls `registerForUpdate()` → coordinator applies `CLEAN_UPDATE` or retains based on dirty state
 - [ ] **Step 4: GREEN** runtime test proves no old chunk request/404, no HTML/RSC cache, offline fallback only after abort, clean/dirty update behavior with controlled two-version harness.
 - [ ] **Step 5: Commit** `git add apps/pwa/src/sw.ts apps/pwa/src/components/RootProviders.tsx apps/pwa/src/lib/sw-coordinator.tsx apps/pwa/e2e/specs/pwa-runtime.spec.ts apps/pwa/src/sw-runtime.test.ts apps/pwa/src/lib/sw-coordinator.test.tsx && git commit -m "fix: harden pwa cache migration and updates"`.
 
@@ -169,20 +190,20 @@ test('dirty form retains waiting worker without activation', async ({ page }) =>
 
 **Files:** Create `apps/pwa/e2e/specs/production-smoke.spec.ts`, `apps/pwa/e2e/support/matrix.ts`, `apps/pwa/e2e/support/matrix.test.ts`.
 
-- [ ] **Step 1: RED** assert every matrix ID has an owning spec and production smoke refuses writes/registration (validates unauthenticated shell, no registration/write) unless `E2E_PRODUCTION_SMOKE=1`.
-- [ ] **Step 2: Run RED** — Vitest matrix test and desktop/smoke Playwright commands.
-- [ ] **Step 3: Implement** matrix manifest mapping IDs to spec files, desktop representative flows, explicit production read-only guard.
-- [ ] **Step 4: GREEN** all IDs resolve and smoke is skipped by default.
+- [ ] **Step 1: RED** assert every matrix ID has an owning spec via `[ID]` title annotations (no manual mapping). Production smoke validates unauthenticated registration shell only, refuses registration/write unless `E2E_PRODUCTION_SMOKE=1`.
+- [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec vitest run e2e/support/matrix.test.ts` and `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=functional-desktop e2e/specs/production-smoke.spec.ts`.
+- [ ] **Step 3: Implement** matrix enforcement extracts IDs from test title `[ID]` annotations; desktop representative flows; explicit production read-only guard.
+- [ ] **Step 4: GREEN** — both commands exit 0; all IDs resolve and smoke is skipped by default.
 - [ ] **Step 5: Commit** `git add apps/pwa/e2e/specs/production-smoke.spec.ts apps/pwa/e2e/support/matrix.ts apps/pwa/e2e/support/matrix.test.ts && git commit -m "test: enforce pwa e2e coverage matrix"`.
 
 ### Task 10: Separate CI E2E job
 
-**Files:** Modify `.github/workflows/pwa-ci.yml`; create `apps/pwa/e2e/README.md`.
+**Files:** Create `apps/pwa/e2e/run-ci.sh` (chmod +x), `apps/pwa/e2e/sw-harness/server.ts`; modify `.github/workflows/pwa-ci.yml`; create `apps/pwa/e2e/README.md`.
 
-- [ ] **Step 1: RED** add CI-local reproduction script that expects `pwa-e2e` job/artifact configuration; run workflow YAML validation if available.
-- [ ] **Step 2: Implement** job `pwa-e2e`, 25-minute timeout, build PWA with `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL=http://127.0.0.1:4010`, start fixture API on 4010 and PWA on 3000, readiness checks for both, followed by mobile/desktop/runtime commands with `--workers=1 --retries=0`, failure artifact upload, opt-in production smoke with `workflow_dispatch` input and explicit URL. Teardown: stop fixture API, stop PWA process, clean test artifacts.
-- [ ] **Step 3: GREEN** run the exact local command sequence (build + start + readiness + test + teardown) and inspect generated `test-results`.
-- [ ] **Step 4: Commit** `git add .github/workflows/pwa-ci.yml apps/pwa/e2e/README.md && git commit -m "ci: run comprehensive pwa e2e separately"`.
+- [ ] **Step 1: RED** — create `apps/pwa/e2e/run-ci.sh` stub that calls a nonexistent binary; verify it exits non-zero before CI infra exists.
+- [ ] **Step 2: Implement** — write `apps/pwa/e2e/run-ci.sh` (exact script from design doc: 3 services, trap before readiness, readiness timeout → exit 1, two consecutive full runs, no artifact removal). CI workflow runs `bash apps/pwa/e2e/run-ci.sh` after install+playwright install. Artifact upload on failure. Opt-in `production-smoke` via `workflow_dispatch` with `--project=production-smoke` and explicit production URL (no fixture).
+- [ ] **Step 3: GREEN** — `bash apps/pwa/e2e/run-ci.sh` exits 0; inspect `test-results` and logs.
+- [ ] **Step 4: Commit** `git add .github/workflows/pwa-ci.yml apps/pwa/e2e/README.md apps/pwa/e2e/run-ci.sh apps/pwa/e2e/sw-harness/server.ts && git commit -m "ci: run comprehensive pwa e2e separately"`.
 
 ### Task 11: Final verification
 
@@ -192,7 +213,7 @@ test('dirty form retains waiting worker without activation', async ({ page }) =>
 - [ ] **Step 2:** `pnpm --dir apps/pwa exec vitest run --coverage` → thresholds pass.
 - [ ] **Step 3:** `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --workers=1 --retries=0` twice consecutively → both exit 0.
 - [ ] **Step 4:** `pnpm --dir apps/pwa build:cloudflare` and Wrangler local E2E runtime check → exit 0.
-- [ ] **Step 5:** validate all action IDs map to a test; `git diff --check`; `! git grep -nE 'git commit -a(m| )' docs/` (no output = pass); request read-only review.
+- [ ] **Step 5:** validate all action IDs via `[ID]` title annotations; verify fixed clock before first navigation; `git diff --check`; `! git grep -nE 'git commit -a(m| )' docs/` (no output = pass); request read-only review.
 - [ ] **Step 6: Commit** `git add docs/testing/pwa-e2e-coverage-matrix.md && git commit -m "test: finalize pwa comprehensive e2e coverage"` if verification changes tracked files.
 
 ## Plan self-review
