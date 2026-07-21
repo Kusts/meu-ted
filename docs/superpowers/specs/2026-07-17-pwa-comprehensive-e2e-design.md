@@ -31,7 +31,7 @@ The fixture implements every export in `lib/api/endpoints.ts`: accounts, categor
 
 The failure guard is enabled for every test and rejects console/page errors, CSP violations, `ChunkLoadError`, request failures and HTTP >=400. A negative test calls `allowFailure({status|url|message,reason})` before the expected failure; undeclared failures always fail.
 
-The intentionally-failing guard child spec (`e2e/specs/guard.spec.ts`) is **excluded from the default Playwright `testMatch`** via `testIgnore` in `playwright.config.ts`. A Vitest parent test (`e2e/support/guard-runner.test.ts`) explicitly spawns it via `spawnSync` and asserts exit code `=== 1`. This prevents the deliberately-failing spec from breaking the full `playwright test` suite while still verifying guard coverage in the parent-child architecture.
+The intentionally-failing guard child spec (`e2e/specs/guard.spec.ts`) is **excluded from the main Playwright config** via dedicated `e2e/guard-fixture.config.ts` which uses `testMatch: ['**/guard.spec.ts']` to select only this spec. A Vitest parent test (`e2e/support/guard-runner.test.ts`) spawns `playwright test --config=e2e/guard-fixture.config.ts` via `spawnSync` and asserts exit code `!== 0` and stderr/stdout contains the guard message. This prevents the deliberately-failing spec from breaking the full `playwright test` suite while still verifying guard coverage in the parent-child architecture.
 
 ## Projects
 - `functional-mobile`: 390x844, SW blocked, complete matrix, `workers: 1` initially.
@@ -56,7 +56,7 @@ The coordinator null-checks `registration.waiting` before access. Registration i
 
 A harness for two-version SW testing must:
 - **Seed legacy cache entries** (e.g. old `pi-finance-shell` items) in CacheStorage via `page.evaluate` before the updated worker activates; the legacy worker itself is **never seeded in CacheStorage** — a service worker cannot be loaded from CacheStorage
-- **Serve the legacy SW** from a separate build artifact or injected `<script>` tag distinct from the production build
+- **Serve the legacy SW** from a separate build artifact served via HTTP URL from a distinct versioned path
 - **Install an updated SW version** (post-build) by triggering the update flow through the coordinator
 - Assert that old cached chunks are never requested after activation completes
 - Assert that route HTML and `_rsc` responses are not re-cached by the new worker

@@ -50,7 +50,7 @@ it('/profile returns {profile} wrapper', async () => {
 
 ### Task 3: Playwright foundation and guard
 
-**Files:** Create `apps/pwa/e2e/playwright.config.ts`, `apps/pwa/e2e/fixtures/app.ts`, `apps/pwa/e2e/support/failure-guard.ts`, `apps/pwa/e2e/support/failure-guard.test.ts`, `apps/pwa/e2e/support/guard-runner.test.ts`, `apps/pwa/e2e/support/reset.ts`, `apps/pwa/e2e/specs/guard.spec.ts`; modify `apps/pwa/package.json`.
+**Files:** Create `apps/pwa/e2e/playwright.config.ts`, `apps/pwa/e2e/guard-fixture.config.ts`, `apps/pwa/e2e/fixtures/app.ts`, `apps/pwa/e2e/support/failure-guard.ts`, `apps/pwa/e2e/support/failure-guard.test.ts`, `apps/pwa/e2e/support/guard-runner.test.ts`, `apps/pwa/e2e/support/reset.ts`, `apps/pwa/e2e/specs/guard.spec.ts`; modify `apps/pwa/package.json`.
 
 - [ ] **Step 1: RED** — write three tests:
 ```ts
@@ -69,15 +69,16 @@ it('allows declared failure', () => {
 });
 ```
 ```ts
-// guard-runner.test.ts (vitest parent — spawns child Playwright spec)
+// guard-runner.test.ts (vitest parent — spawns child via dedicated guard config)
 import { spawnSync } from 'child_process';
-it('child playwright spec exits non-zero on undeclared CSP', () => {
-  const { status } = spawnSync('pnpm', [
+it('guard spec exits non-zero and logs guard message on undeclared CSP', () => {
+  const { status, stderr, stdout } = spawnSync('pnpm', [
     'exec', 'playwright', 'test',
-    '--config=e2e/playwright.config.ts',
-    'e2e/specs/guard.spec.ts'
-  ], { cwd: 'apps/pwa' });
-  expect(status).toBe(1); // child fails → guard catches undeclared error
+    '--config=e2e/guard-fixture.config.ts'
+  ], { cwd: 'apps/pwa', encoding: 'utf-8' });
+  expect(status).not.toBe(0);
+  expect(stderr + stdout).toMatch(/guard|CSP|failure|undeclared/i);
+  // Portável — qualquer exit não-zero prova que guard disparou
 });
 ```
 ```ts
@@ -86,10 +87,10 @@ test('fails undeclared CSP violations', async ({ page }) => {
   await page.evaluate(() => console.error('Content Security Policy violation'));
 });
 ```
-- [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec vitest run e2e/support/failure-guard.test.ts` (unit fails — guard not impl) and `pnpm --dir apps/pwa exec vitest run e2e/support/guard-runner.test.ts` (parent fails — child spec missing or guard not impl).
-- [ ] **Step 3: Implement** projects `functional-mobile` (390x844, SW block), `functional-desktop` (1440x900), `pwa-runtime` (allow, serial), optional production smoke; Playwright config targeting `http://127.0.0.1:3000` with `testIgnore: ['**/guard.spec.ts']` so the intentionally-failing child spec is excluded from normal `testMatch`; fixture reset/header/storage/IndexedDB/cache/SW cleanup; `allowFailure({status?,url?,message?,reason})`.
-- [ ] **Step 4: GREEN** — `pnpm --dir apps/pwa exec vitest run e2e/support/failure-guard.test.ts` (unit passes); `pnpm --dir apps/pwa exec vitest run e2e/support/guard-runner.test.ts` (parent passes because child exits 1 as expected); expected declared 422 passes; undeclared console/page/CSP/chunk/request/HTTP failure fails.
-- [ ] **Step 5: Commit** `git add apps/pwa/e2e/playwright.config.ts apps/pwa/e2e/fixtures/app.ts apps/pwa/e2e/support/failure-guard.ts apps/pwa/e2e/support/failure-guard.test.ts apps/pwa/e2e/support/guard-runner.test.ts apps/pwa/e2e/support/reset.ts apps/pwa/e2e/specs/guard.spec.ts apps/pwa/package.json && git commit -m "test: add deterministic pwa playwright foundation"`.
+- [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec vitest run e2e/support/failure-guard.test.ts` (unit fails — guard not impl) and `pnpm --dir apps/pwa exec vitest run e2e/support/guard-runner.test.ts` (parent fails — dedicated config missing or guard not impl).
+- [ ] **Step 3: Implement** projects `functional-mobile` (390x844, SW block), `functional-desktop` (1440x900), `pwa-runtime` (allow, serial), optional production smoke; main Playwright config targeting `http://127.0.0.1:3000`; dedicated `e2e/guard-fixture.config.ts` with `testMatch: ['**/guard.spec.ts']` to run only the intentionally-failing child spec; fixture reset/header/storage/IndexedDB/cache/SW cleanup; `allowFailure({status?,url?,message?,reason})`.
+- [ ] **Step 4: GREEN** — `pnpm --dir apps/pwa exec vitest run e2e/support/failure-guard.test.ts` (unit passes); `pnpm --dir apps/pwa exec vitest run e2e/support/guard-runner.test.ts` (parent passes because child exits 1 and stderr/stdout contains guard message); expected declared 422 passes; undeclared console/page/CSP/chunk/request/HTTP failure fails.
+- [ ] **Step 5: Commit** `git add apps/pwa/e2e/playwright.config.ts apps/pwa/e2e/guard-fixture.config.ts apps/pwa/e2e/fixtures/app.ts apps/pwa/e2e/support/failure-guard.ts apps/pwa/e2e/support/failure-guard.test.ts apps/pwa/e2e/support/guard-runner.test.ts apps/pwa/e2e/support/reset.ts apps/pwa/e2e/specs/guard.spec.ts apps/pwa/package.json && git commit -m "test: add deterministic pwa playwright foundation"`.
 
 ### Task 4: Auth, direct-load and navigation IDs
 
