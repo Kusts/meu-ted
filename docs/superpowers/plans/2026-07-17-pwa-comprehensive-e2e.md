@@ -92,7 +92,8 @@ it('allows declared failure', () => {
 // guard-runner.test.ts (vitest parent — spawns child via dedicated guard config)
 import { spawnSync } from 'child_process';
 it('guard spec exits non-zero and logs guard message on undeclared CSP', () => {
-  const { status, stderr, stdout } = spawnSync('pnpm', [
+  const pnpmCmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+  const { status, stderr, stdout } = spawnSync(pnpmCmd, [
     'exec', 'playwright', 'test',
     '--config=e2e/guard-fixture.config.ts'
   ], { cwd: 'apps/pwa', encoding: 'utf-8' });
@@ -230,7 +231,7 @@ test('dirty form retains waiting worker without activation', async ({ page }) =>
 - [ ] **Step 1: RED** — create `apps/pwa/e2e/run-ci.sh` stub that calls a nonexistent binary; verify it exits non-zero before CI infra exists.
 - [ ] **Step 2: Implement** — CI job timeout >= 45 minutes. `run-ci.sh` per design doc (3 services, trap before readiness, readiness timeout → exit 1, two consecutive full runs, no artifact removal). Artifact upload: `if: always()` preserves reports. `production-smoke` is the sole production project, opt-in via `workflow_dispatch` with `--project=production-smoke` and explicit URL (no fixture).
 - [ ] **Step 3: GREEN** — `bash apps/pwa/e2e/run-ci.sh` exits 0; inspect `test-results` and logs.
-- [ ] **Step 4: Commit** `git add .github/workflows/pwa-ci.yml apps/pwa/e2e/README.md apps/pwa/e2e/run-ci.sh apps/pwa/e2e/sw-harness/server.ts && git commit -m "ci: run comprehensive pwa e2e separately"`.
+- [ ] **Step 4: Commit** `git add .github/workflows/pwa-ci.yml apps/pwa/e2e/README.md apps/pwa/e2e/run-ci.sh && git commit -m "ci: run comprehensive pwa e2e separately"`.
 
 ### Task 11: Final verification
 
