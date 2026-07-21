@@ -10,7 +10,7 @@ import type { NavItem } from "@/components/BottomNav";
 import type { SaveData } from "@/components/NewTransactionSheet";
 import { useAppState } from "@/lib/state/app-state-context";
 import { useSheet } from "@/lib/sheet-context";
-import { useUnsavedChanges } from "@/lib/unsaved-changes";
+import { useUnsavedChangesSafe } from "@/lib/unsaved-changes";
 
 interface AppShellProps {
   children: ReactNode;
@@ -44,7 +44,7 @@ export default function AppShell({ children }: AppShellProps) {
     createInstallments,
   } = useAppState();
   const { sheetKind, closeSheet } = useSheet();
-  const { isDirty } = useUnsavedChanges();
+  const { isDirty } = useUnsavedChangesSafe();
   const [discardOpen, setDiscardOpen] = useState(false);
   const [pendingNav, setPendingNav] = useState<NavItem | null>(null);
 
