@@ -64,7 +64,7 @@ it('/insights/quick returns {items}', async () => {
 });
 ```
 - [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec vitest run e2e/fixture-api/contracts.test.ts`.
-- [ ] **Step 3: Implement** per-endpoint contracts (from design doc table — 50 rows). Key specifics: auth register `{token,deviceId,householdId}`; `/cards/installments` returns `{items:Transaction[]}` (wrapped); all deactivations and `DELETE` return 204; pay/cancel/contribute return the mutated entity. All mutate only the test-scoped store.
+- [ ] **Step 3: Implement** per-endpoint contracts (from design doc table — 50 rows). Key specifics: auth register `{token,deviceId,householdId}`; `/auth/devices/me` returns `{deviceId,householdId}` directly (not wrapped); `/cards/installments` returns `{items:Transaction[]}` (wrapped); deactivation endpoints and `DELETE` return **200 with the mutated entity** (confirmed from backend routes); pay/cancel/contribute return the mutated entity. All mutate only the test-scoped store.
 - [ ] **Step 4: GREEN** — command passes and journal asserts method/body for each mutation.
 - [ ] **Step 5: Commit** `git add apps/pwa/e2e/fixture-api/server.ts apps/pwa/e2e/fixture-api/contracts.test.ts && git commit -m "test: cover pwa fixture endpoint contracts"`.
 
@@ -146,7 +146,7 @@ test('fails undeclared CSP violations', async ({ page }) => {
 
 **Files:** Create `subscriptions.spec.ts`, `wallet.spec.ts`, `reports.spec.ts`, `profile.spec.ts`, `shared-ui.spec.ts`.
 
-- [ ] **Step 1: RED** implement `SUB-01..05`, `WAL-01`, `REP-01..03`, `PROF-01..06`, `UI-01..08`.
+- [ ] **Step 1: RED** implement `SUB-01..05`, `WAL-01..10`, `REP-01..04`, `PROF-01..06`, `UI-01..08`.
 - [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=functional-mobile e2e/specs/subscriptions.spec.ts e2e/specs/wallet.spec.ts e2e/specs/reports.spec.ts e2e/specs/profile.spec.ts e2e/specs/shared-ui.spec.ts`.
 - [ ] **Step 3: Implement fixture support and minimal labels** for notification dismiss/navigation, profile variants, stale/write-error banners and confirm dialog actions.
 - [ ] **Step 4: GREEN** — same command exits 0; assert empty/degraded, cancel and retry branches.
@@ -191,7 +191,7 @@ test('dirty form retains waiting worker without activation', async ({ page }) =>
 **Files:** Create `apps/pwa/e2e/specs/production-smoke.spec.ts`, `apps/pwa/e2e/support/matrix.ts`, `apps/pwa/e2e/support/matrix.test.ts`.
 
 - [ ] **Step 1: RED** assert every matrix ID (`AUTH`, `DIRECT`, `NAV`, `TX`, `HOME`, `REC`, `ACC`, `CAT`... and `SMOKE-01..04`) has an owning spec via `[ID]` title annotations (no manual mapping). Production smoke validates unauthenticated registration shell only, refuses registration/write unless `E2E_PRODUCTION_SMOKE=1`.
-- [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec vitest run e2e/support/matrix.test.ts` and `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=functional-desktop e2e/specs/production-smoke.spec.ts`.
+- [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec vitest run e2e/support/matrix.test.ts` and `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=production-smoke e2e/specs/production-smoke.spec.ts`.
 - [ ] **Step 3: Implement** matrix enforcement extracts IDs from test title `[ID]` annotations; desktop representative flows; explicit production read-only guard.
 - [ ] **Step 4: GREEN** — both commands exit 0; all IDs resolve and smoke is skipped by default.
 - [ ] **Step 5: Commit** `git add apps/pwa/e2e/specs/production-smoke.spec.ts apps/pwa/e2e/support/matrix.ts apps/pwa/e2e/support/matrix.test.ts && git commit -m "test: enforce pwa e2e coverage matrix"`.

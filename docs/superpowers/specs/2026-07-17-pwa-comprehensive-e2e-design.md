@@ -27,20 +27,20 @@ Contracts derived from actual backend responses (inspected `apiFetch` calls in `
 | Endpoint pattern | Method | Response shape | Notes |
 |---|---|---|---|
 | `/auth/devices/register` | POST | `{token:string, deviceId:string, householdId:string}` | Body `{deviceName}` |
-| `/auth/devices/me` | GET | `{device:{id:string, name:string}}` | Requires `x-device-token` |
+| `/auth/devices/me` | GET | `{deviceId:string, householdId:string}` | Direct response, not wrapped |
 | `/accounts` | GET | `{items:Account[], total:number}` | |
 | `/accounts` | POST | `Account` | |
 | `/accounts/:id` | PATCH | `Account` | |
-| `/accounts/:id/deactivate` | POST | **204 No Content** | Void |
+| `/accounts/:id/deactivate` | POST | `Account` | 200 with entity |
 | `/categories` | GET | `{items:Category[], total:number}` | |
 | `/categories` | POST | `Category` | Subcategory via `parentId` |
 | `/categories/:id` | PATCH | `Category` | |
-| `/categories/:id/deactivate` | POST | **204 No Content** | Void |
+| `/categories/:id/deactivate` | POST | `Category` | 200 with entity |
 | `/transactions` | GET | `{items:Transaction[], total:number}` | Query params `kind`,`limit`,`offset` |
 | `/transactions/expense` | POST | `Transaction` | |
 | `/transactions/income` | POST | `Transaction` | |
 | `/transactions/:id` | PATCH | `Transaction` | |
-| `/transactions/:id` | DELETE | **204 No Content** | Void |
+| `/transactions/:id` | DELETE | `Transaction` | 200 with entity (soft-delete, returns updated) |
 | `/transfers` | POST | `Transaction` | |
 | `/cards` | POST | `Account` | |
 | `/cards/:id` | PATCH | `Account` | |
@@ -73,6 +73,8 @@ Contracts derived from actual backend responses (inspected `apiFetch` calls in `
 | `/insights/quick` | GET | `{items:QuickInsight[]}` | No `total` |
 
 Mutations validate bodies, write to scoped store and journal every request. Scenarios match on normalized `pathname` + `search`; mode `offline:true` aborts via `socket.destroy()` without writing to journal.
+
+**Important:** Backend evidence confirms `POST /accounts/:id/deactivate`, `/categories/:id/deactivate`, and `DELETE /transactions/:id` return **200 with the mutated entity** (not 204). The fixture must match these response shapes.
 
 ## Playwright architecture
 - `e2e/fixtures/`: unauthenticated, seeded, empty, degraded/error and offline contexts.

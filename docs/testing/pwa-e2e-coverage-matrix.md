@@ -103,10 +103,20 @@ Every ID is atomic: one visible action, required state, expected UI/API effect, 
 | SUB-03 | `/assinaturas` | M | detail subscription → display values | empty state | subscriptions |
 | SUB-04 | `/assinaturas` | M | edit subscription → `PATCH /subscriptions/:id` | cancel confirmation | subscriptions |
 | SUB-05 | `/assinaturas` | M | cancel subscription → `POST /subscriptions/:id/cancel` | cancel confirmation/error | subscriptions |
-| WAL-01 | `/patrimonio` | M,D | open `/patrimonio` → wallet page renders | empty/degraded | wallet |
+| WAL-01 | `/patrimonio` | M | open `/patrimonio` → wallet page renders | empty/degraded | wallet |
+| WAL-02 | `/contas?accountId=` | M | tap account row → navigates to `/contas?accountId=X` | empty account | wallet |
+| WAL-03 | `/cartoes?cardId=` | M | tap card row → navigates to `/cartoes?cardId=X` | empty card | wallet |
+| WAL-04 | `/contas` | M | tap Gerenciar Contas header → `/contas` | empty account list | wallet |
+| WAL-05 | `/contas` | M | tap Adicionar conta button → `/contas` | cancel preserves page | wallet |
+| WAL-06 | `/cartoes` | M | tap Gerenciar Cartões header → `/cartoes` | empty card list | wallet |
+| WAL-07 | `/cartoes` | M | tap Adicionar cartão button → `/cartoes` | cancel preserves page | wallet |
+| WAL-08 | `/metas` | M | tap Ver metas link → `/metas` | empty goals | wallet |
+| WAL-09 | `/metas` | M | tap goal row → `/metas` | empty goals | wallet |
+| WAL-10 | `/cartoes?cardId=` | M | tap open statement row → `/cartoes?cardId=X` | empty statement | wallet |
 | REP-01 | `/relatorios` | M,D | tap month period chip → chart updates to month aggregation | empty transactions | reports |
 | REP-02 | `/relatorios` | M,D | tap last period chip → chart updates to last-month aggregation | empty transactions | reports |
 | REP-03 | `/relatorios` | M,D | tap quarter period chip → chart updates to quarter aggregation | empty transactions | reports |
+| REP-04 | `/relatorios` | M,D | tap year period chip → chart updates to year aggregation | empty transactions | reports |
 | PROF-01 | `/perfil` | M | save profile name → `PATCH /profile` | 422 | profile |
 | PROF-02 | `/perfil` | M | save avatar → `PATCH /profile` | 422 | profile |
 | PROF-03 | `/perfil` | M | save greeting → `PATCH /profile` | 422 | profile |
