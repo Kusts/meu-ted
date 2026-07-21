@@ -469,14 +469,24 @@ async function handleFixtureRequest(
   // ── Transfers ─────────────────────────────────────────────────────────────
 
   if (pathname === "/transfers" && method === "POST") {
+    const fromAccountId = (body?.fromAccountId as string) ?? "";
+    const toAccountId = (body?.toAccountId as string) ?? "";
+    if (!fromAccountId || !toAccountId || fromAccountId === toAccountId) {
+      journalPush(testId, method, pathname, body, 422);
+      sendJson(res, 422, {
+        code: "validation_error",
+        message: "Contas de origem e destino devem ser distintas",
+      });
+      return;
+    }
     const id = "trf-" + generateId();
     const newTrf = {
       id,
       description: (body?.description as string) ?? "Transfer",
       amountCents: (body?.amountCents as number) ?? 0,
       date: (body?.date as string) ?? "2026-07-17",
-      fromAccountId: (body?.fromAccountId as string) ?? "",
-      toAccountId: (body?.toAccountId as string) ?? "",
+      fromAccountId,
+      toAccountId,
     };
     store.seed.transfers.push(newTrf);
     journalPush(testId, method, pathname, body, 200);
@@ -504,7 +514,13 @@ async function handleFixtureRequest(
 
   if (pathname === "/cards/accounts" && method === "GET") {
     journalPush(testId, method, pathname, body, 200);
-    sendJson(res, 200, listResponse(store.seed.cardAccounts) as unknown as Record<string, unknown>);
+    const items = store.seed.cardAccounts.map((c) => ({
+      ...c,
+      kind: "credit_card" as const,
+      balanceCents: 0,
+      status: "active",
+    }));
+    sendJson(res, 200, listResponse(items) as unknown as Record<string, unknown>);
     return;
   }
 
@@ -580,6 +596,14 @@ async function handleFixtureRequest(
   if (pathname === "/cards/installments" && method === "POST") {
     const totalAmount = (body?.totalAmountCents as number) ?? 0;
     const count = (body?.installmentsTotal as number) ?? 1;
+    if (count < 2 || count > 48) {
+      journalPush(testId, method, pathname, body, 422);
+      sendJson(res, 422, {
+        code: "validation_error",
+        message: "Número de parcelas deve ser entre 2 e 48",
+      });
+      return;
+    }
     const amountPerInstallment = count > 0 ? Math.round(totalAmount / count) : 0;
     const description = (body?.description as string) ?? "";
     const purchaseDate = (body?.purchaseDate as string) ?? "2026-07-17";

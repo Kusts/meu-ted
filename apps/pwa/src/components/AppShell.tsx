@@ -31,7 +31,16 @@ export default function AppShell({ children }: AppShellProps) {
   const [preselectedKind, setPreselectedKind] = useState<
     "expense" | "income" | "transfer"
   >("expense");
-  const { accounts, categories, addTransaction, createTransfer, addAccount, addCategory, addCard, createInstallments } = useAppState();
+  const {
+    accounts,
+    categories,
+    addTransaction,
+    createTransfer,
+    addAccount,
+    addCategory,
+    addCard,
+    createInstallments,
+  } = useAppState();
   const { sheetKind, closeSheet } = useSheet();
 
   // Derive sheet open/mode from context (no setState-in-effect)
@@ -84,36 +93,40 @@ export default function AppShell({ children }: AppShellProps) {
     else if (item === "payables") router.push("/a-pagar");
   }
 
-  function handleSave(data: SaveData) {
-    if (data.kind === "transfer") {
-      createTransfer({
-        description: data.description || "Transferência",
-        amountCents: data.amountCents,
-        date: data.date,
-        fromAccountId: data.fromAccountId ?? "",
-        toAccountId: data.toAccountId ?? "",
-      });
-    } else if (data.installmentsTotal && data.installmentsTotal > 1 && data.accountId) {
-      createInstallments({
-        accountId: data.accountId,
-        description: data.description,
-        totalAmountCents: data.amountCents,
-        purchaseDate: data.date,
-        installmentsTotal: data.installmentsTotal,
-        categoryId: data.categoryId,
-      });
-    } else {
-      addTransaction({
-        id: nextId(),
-        description: data.description,
-        amountCents: data.amountCents,
-        date: data.date,
-        kind: data.kind,
-        categoryId: data.categoryId ?? "",
-        accountId: data.accountId ?? "",
-      });
+  async function handleSave(data: SaveData) {
+    try {
+      if (data.kind === "transfer") {
+        await createTransfer({
+          description: data.description || "Transferência",
+          amountCents: data.amountCents,
+          date: data.date,
+          fromAccountId: data.fromAccountId ?? "",
+          toAccountId: data.toAccountId ?? "",
+        });
+      } else if (data.installmentsTotal && data.installmentsTotal > 1 && data.accountId) {
+        await createInstallments({
+          accountId: data.accountId,
+          description: data.description,
+          totalAmountCents: data.amountCents,
+          purchaseDate: data.date,
+          installmentsTotal: data.installmentsTotal,
+          categoryId: data.categoryId,
+        });
+      } else {
+        await addTransaction({
+          id: nextId(),
+          description: data.description,
+          amountCents: data.amountCents,
+          date: data.date,
+          kind: data.kind,
+          categoryId: data.categoryId ?? "",
+          accountId: data.accountId ?? "",
+        });
+      }
+      closeSheetLocal();
+    } catch {
+      // Keep sheet open so draft inputs survive API validation errors (422).
     }
-    closeSheetLocal();
   }
 
   return (
