@@ -20,7 +20,7 @@
 
 import http from "node:http";
 import { URL } from "node:url";
-import { StoreManager, SEEDS, generateId, type JournalEntry, type ScenarioRule, type SeedData } from "./store";
+import { StoreManager, SEEDS, generateId, type JournalEntry, type ScenarioRule } from "./store";
 
 const ALLOWED_ORIGIN = "http://127.0.0.1:3000";
 const ALLOWED_METHODS = "GET,POST,PATCH,DELETE,OPTIONS";
@@ -234,13 +234,6 @@ function mutateById<T extends Identifiable>(items: T[], id: string, patch: Parti
   return item;
 }
 
-function pick<T, K extends keyof T>(obj: T, ...keys: K[]): Pick<T, K> {
-  const result = {} as Pick<T, K>;
-  for (const key of keys) {
-    result[key] = obj[key];
-  }
-  return result;
-}
 
 // ── Fixture request handler ──────────────────────────────────────────────────
 
@@ -858,7 +851,7 @@ async function handleFixtureRequest(
 
 // ── Server factory ───────────────────────────────────────────────────────────
 
-export function createServer(port = 4010): http.Server {
+export function createServer(): http.Server {
   const server = http.createServer(async (req, res) => {
     // CORS always applied first
     if (handleCors(req, res)) return;

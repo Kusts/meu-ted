@@ -72,7 +72,7 @@ describe("Fixture API protocol", () => {
   let server: http.Server;
 
   beforeEach(async () => {
-    server = createServer(0);
+    server = createServer();
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   });
 
