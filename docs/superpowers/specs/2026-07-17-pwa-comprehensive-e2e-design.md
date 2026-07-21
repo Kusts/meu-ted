@@ -40,7 +40,7 @@ Contracts derived from actual backend responses (inspected `apiFetch` calls in `
 | `/transactions/expense` | POST | `Transaction` | |
 | `/transactions/income` | POST | `Transaction` | |
 | `/transactions/:id` | PATCH | `Transaction` | |
-| `/transactions/:id` | DELETE | `Transaction` | 200 with entity (soft-delete, returns updated) |
+| `/transactions/:id` | DELETE | **204 No Content** | Void (soft-delete) |
 | `/transfers` | POST | `Transaction` | |
 | `/cards` | POST | `Account` | |
 | `/cards/:id` | PATCH | `Account` | |
@@ -74,7 +74,7 @@ Contracts derived from actual backend responses (inspected `apiFetch` calls in `
 
 Mutations validate bodies, write to scoped store and journal every request. Scenarios match on normalized `pathname` + `search`; mode `offline:true` aborts via `socket.destroy()` without writing to journal.
 
-**Important:** Backend evidence confirms `POST /accounts/:id/deactivate`, `/categories/:id/deactivate`, and `DELETE /transactions/:id` return **200 with the mutated entity** (not 204). The fixture must match these response shapes.
+**Important:** Backend evidence confirms `POST /accounts/:id/deactivate` and `/categories/:id/deactivate` return **200 with the mutated entity** (not 204). However `DELETE /transactions/:id` returns **204 No Content** (void). The fixture must match these response shapes.
 
 ## Playwright architecture
 - `e2e/fixtures/`: unauthenticated, seeded, empty, degraded/error and offline contexts.
@@ -103,11 +103,11 @@ Each route has direct-load ownership and client-navigation ownership: BottomNav 
 
 ### SW coordinator component and registration
 
-The `SWCoordinator` is a React component mounted **inside** `UnsavedChangesProvider` (which wraps all consumers needing dirty state). On mount, the coordinator calls `navigator.serviceWorker.register('/sw.js')` to ensure the SW is registered at the application level (not just build-time), then gets the `registration` via `navigator.serviceWorker.getRegistration()`. It listens for `updatefound` on the registration — when a waiting worker is detected (`registration.waiting`), it checks `UnsavedChangesProvider` for dirty state:
-- **Clean** (no unsaved changes): dispatches `CLEAN_UPDATE` message via `registration.waiting.postMessage({type:'CLEAN_UPDATE'})` → SW calls `self.skipWaiting()` → page reloads once
-- **Dirty** (unsaved changes present): retains the waiting worker without activation — no message sent, no reload
+Provider tree: `UnsavedChangesProvider > SWCoordinator > AppStateProvider > SheetProvider` — all consumers (including forms) are descendants of `UnsavedChangesProvider`.
 
-The coordinator exposes `{registerForUpdate, isDirty}` — tests call `registerForUpdate()` to trigger the update flow programmatically. The coordinator is mounted in `RootProviders` under `UnsavedChangesProvider`.
+The `SWCoordinator` is a React component mounted inside `UnsavedChangesProvider`. On mount it calls `navigator.serviceWorker.register('/sw.js')` and listens for `updatefound` on the registration. When a waiting worker is detected (`registration.waiting`), the coordinator reads dirty state from `UnsavedChangesProvider` context:
+- **Clean** (no unsaved changes): `registration.waiting.postMessage({type:'CLEAN_UPDATE'})` → SW calls `self.skipWaiting()` → page reload once
+- **Dirty** (unsaved changes present): retains waiting worker — no message, no reload, no activation
 
 ### SW registration and coordinator harness (`e2e/sw-harness/`)
 
@@ -121,7 +121,7 @@ SW registration is **origin-bound** — the page and `/sw.js` must share the sam
   3. Seed legacy cache entries via `page.evaluate`
   4. `POST /__e2e/sw/deploy {"version":"current"}` → `/sw.js` now serves new build
   5. `navigator.serviceWorker.getRegistration()` fires `updatefound` → `registration.waiting` populated
-  6. Coordinator's `registerForUpdate()`: if clean → `CLEAN_UPDATE` → SW activates → reload
+  6. Coordinator reads dirty state from `UnsavedChangesProvider`: if clean → `registration.waiting.postMessage({type:'CLEAN_UPDATE'})` → SW activates → reload; if dirty → waiting worker retained
 
 The harness must:
 - Seed legacy cache entries before updated worker activates
@@ -131,6 +131,10 @@ The harness must:
 - Verify clean forms allow activation; dirty forms retain waiting worker
 
 ## CI topology
+
+**Job timeout:** >= 45 minutes.
+
+**Artifact upload:** `if: always()` to preserve reports even on failure. Traces, screenshots, videos, `test-results`, and `playwright-report` are retained on all outcomes.
 
 **Script:** `apps/pwa/e2e/run-ci.sh` — single entry point, starts all services in the same shell with trap cleanup set BEFORE background processes.
 
@@ -178,7 +182,7 @@ pnpm --dir ${BUILD_DIR} exec playwright test --config=e2e/playwright.config.ts -
 pnpm --dir ${BUILD_DIR} exec playwright test --config=e2e/playwright.config.ts --workers=1 --retries=0
 ```
 
-`production-smoke` only on manual dispatch using `--project=production-smoke` with explicit production URL (no fixture, no CI script). All main projects (functional-mobile, functional-desktop, pwa-runtime) are included in the full run; smoke is excluded by default because `E2E_PRODUCTION_SMOKE` env is not set in CI. Each project uses isolated browser contexts and storage partitions. Upload `apps/pwa/test-results`, `playwright-report`, traces, screenshots and videos on failure.
+`production-smoke` is the sole production project, opt-in via `workflow_dispatch` using `--project=production-smoke` with explicit production URL (no fixture, no run-ci.sh). All main projects (functional-mobile, functional-desktop, pwa-runtime) are included by default; smoke is excluded because `E2E_PRODUCTION_SMOKE` env is not set in CI. Each project uses isolated browser contexts and storage partitions.
 
 ## Final gates
 1. Matrix has no unowned action ID.

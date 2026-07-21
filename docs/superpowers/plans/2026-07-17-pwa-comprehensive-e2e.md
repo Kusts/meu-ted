@@ -14,7 +14,7 @@
 
 ### Task 1: Fixture API protocol and deterministic stores
 
-**Files:** Create `apps/pwa/e2e/fixture-api/server.ts`, `apps/pwa/e2e/fixture-api/store.ts`, `apps/pwa/e2e/fixture-api/seeds.ts`, `apps/pwa/e2e/fixture-api/server.test.ts`; modify `apps/pwa/package.json` (add `tsx` devDep).
+**Files:** Create `apps/pwa/e2e/fixture-api/server.ts`, `apps/pwa/e2e/fixture-api/store.ts`, `apps/pwa/e2e/fixture-api/seeds.ts`, `apps/pwa/e2e/fixture-api/server.test.ts`; modify `apps/pwa/package.json` and `pnpm-lock.yaml` (add `tsx` devDep, `pnpm install`).
 
 - [ ] **Step 1: Write failing protocol tests**
 ```ts
@@ -34,7 +34,7 @@ it('resets only the requested test store', async () => {
   - `GET /__e2e/seed` — query `testId`
   Required `X-E2E-Test-ID` on all except `/__e2e/health`. CORS restricted to origin `http://127.0.0.1:3000`, methods `GET,POST,PATCH,DELETE,OPTIONS`, headers `content-type,authorization,x-e2e-test-id,x-device-token`, OPTIONS preflight handler. Journal `{method,path,body,status}`.
 - [ ] **Step 4: GREEN** — same command passes; add tests for missing test ID 400, delay/401/422/500/abort scenario.
-- [ ] **Step 5: Commit** `git add apps/pwa/e2e/fixture-api/server.ts apps/pwa/e2e/fixture-api/store.ts apps/pwa/e2e/fixture-api/seeds.ts apps/pwa/e2e/fixture-api/server.test.ts apps/pwa/package.json && git commit -m "test: add scoped pwa e2e fixture api"`.
+- [ ] **Step 5: Commit** `git add apps/pwa/e2e/fixture-api/server.ts apps/pwa/e2e/fixture-api/store.ts apps/pwa/e2e/fixture-api/seeds.ts apps/pwa/e2e/fixture-api/server.test.ts apps/pwa/package.json apps/pwa/pnpm-lock.yaml && git commit -m "test: add scoped pwa e2e fixture api"`.
 
 ### Task 2: Endpoint compatibility
 
@@ -70,7 +70,7 @@ it('/insights/quick returns {items}', async () => {
 
 ### Task 3: Playwright foundation and guard
 
-**Files:** Create `apps/pwa/e2e/playwright.config.ts`, `apps/pwa/e2e/guard-fixture.config.ts`, `apps/pwa/e2e/guard-fixture/guard.spec.ts`, `apps/pwa/e2e/fixtures/app.ts`, `apps/pwa/e2e/support/failure-guard.ts`, `apps/pwa/e2e/support/failure-guard.test.ts`, `apps/pwa/e2e/support/guard-runner.test.ts`, `apps/pwa/e2e/support/reset.ts`; modify `apps/pwa/package.json`.
+**Files:** Create `apps/pwa/e2e/playwright.config.ts` (projects: functional-mobile, functional-desktop, pwa-runtime, production-smoke; each with explicit testMatch scoped to own spec dir), `apps/pwa/e2e/guard-fixture.config.ts` (dedicated, testMatch only guard-fixture/), `apps/pwa/e2e/guard-fixture/guard.spec.ts`, `apps/pwa/e2e/fixtures/app.ts`, `apps/pwa/e2e/support/failure-guard.ts`, `apps/pwa/e2e/support/failure-guard.test.ts`, `apps/pwa/e2e/support/guard-runner.test.ts`, `apps/pwa/e2e/support/reset.ts`; modify `apps/pwa/package.json`.
 
 - [ ] **Step 1: RED** — write three tests:
 ```ts
@@ -108,7 +108,7 @@ test('fails undeclared CSP violations', async ({ page }) => {
 });
 ```
 - [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec vitest run e2e/support/failure-guard.test.ts` (unit fails — guard not impl) and `pnpm --dir apps/pwa exec vitest run e2e/support/guard-runner.test.ts` (parent fails — dedicated config missing or guard not impl).
-- [ ] **Step 3: Implement** projects `functional-mobile` (390x844, SW block), `functional-desktop` (1440x900), `pwa-runtime` (allow, serial), optional production smoke; main Playwright config with `testMatch: ['**/e2e/specs/**']`; dedicated `e2e/guard-fixture.config.ts` with `testMatch: ['**/guard-fixture/**']`; fixture reset/header/storage/IndexedDB/cache/SW cleanup; `allowFailure({status?,url?,message?,reason})`.
+- [ ] **Step 3: Implement** projects `functional-mobile` (390x844, SW block, testMatch: `functional/**` only), `functional-desktop` (1440x900, testMatch: `functional/**`), `pwa-runtime` (SW allowed, serial, testMatch: `pwa/**`), `production-smoke` (explicit URL, disabled unless env set, testMatch: `smoke/**`). Dedicated guard config `e2e/guard-fixture.config.ts` (`testMatch: guard-fixture/**` only). Fixture reset/header/storage/IndexedDB/cache/SW cleanup; `allowFailure({status?,url?,message?,reason})`.
 - [ ] **Step 4: GREEN** — `pnpm --dir apps/pwa exec vitest run e2e/support/failure-guard.test.ts` (unit passes); `pnpm --dir apps/pwa exec vitest run e2e/support/guard-runner.test.ts` (parent passes because child exit non-zero and stderr/stdout contains exact `Undeclared console error`); expected declared 422 passes; undeclared console/page/CSP/chunk/request/HTTP failure fails.
 - [ ] **Step 5: Commit** `git add apps/pwa/e2e/playwright.config.ts apps/pwa/e2e/guard-fixture.config.ts apps/pwa/e2e/guard-fixture/guard.spec.ts apps/pwa/e2e/fixtures/app.ts apps/pwa/e2e/support/failure-guard.ts apps/pwa/e2e/support/failure-guard.test.ts apps/pwa/e2e/support/guard-runner.test.ts apps/pwa/e2e/support/reset.ts apps/pwa/package.json && git commit -m "test: add deterministic pwa playwright foundation"`.
 
@@ -154,37 +154,64 @@ test('fails undeclared CSP violations', async ({ page }) => {
 
 ### Task 8: PWA stale-cache regression and coordinator
 
-**Files:** Modify `apps/pwa/src/sw.ts`, `apps/pwa/src/components/RootProviders.tsx`, `apps/pwa/src/lib/sw-coordinator.tsx`; create/modify `apps/pwa/e2e/specs/pwa-runtime.spec.ts`, `apps/pwa/src/sw-runtime.test.ts`, `apps/pwa/src/lib/sw-coordinator.test.tsx`.
+**Files:** Create `apps/pwa/e2e/sw-harness/server.ts`, `apps/pwa/e2e/sw-harness/legacy-sw.js` (legacy build artifact, concrete path); modify `apps/pwa/src/sw.ts`, `apps/pwa/src/components/RootProviders.tsx`, `apps/pwa/src/lib/sw-coordinator.tsx`; create/modify `apps/pwa/e2e/specs/pwa-runtime.spec.ts`, `apps/pwa/src/sw-runtime.test.ts`, `apps/pwa/src/lib/sw-coordinator.test.tsx`.
 
-- [ ] **Step 1: RED** write PWA tests for `PWA-01..06`. Use the SW harness (`e2e/sw-harness/server.ts` on `127.0.0.1:3000`, proxying to Next on `127.0.0.1:3001`). Playwright `baseURL` is `http://127.0.0.1:3000`:
+Provider tree: `UnsavedChangesProvider > SWCoordinator > AppStateProvider > SheetProvider` — all consumers inside.
+
+- [ ] **Step 1: RED** write PWA tests for `PWA-01..06`. Use the SW harness (`e2e/sw-harness/server.ts` on `127.0.0.1:3000`, proxying to Next on `127.0.0.1:3001`). Playwright `baseURL` is `http://127.0.0.1:3000`. No fictional APIs — use real browser SW API:
 ```ts
 test('never caches route HTML and removes legacy shell cache', async ({ page }) => {
+  // Deploy legacy SW via harness
+  await page.evaluate(() => fetch('/__e2e/sw/deploy', { method:'POST', body: JSON.stringify({version:'legacy'}) }));
   await page.goto('/');
-  await page.evaluate(() => fetch('/__e2e/sw/deploy', { method:'POST', body: JSON.stringify({version:'current'}) }));
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+  // Seed legacy cache entries
+  await page.evaluate(() => caches.open('pi-finance-shell').then(c => c.put('/registros', new Response('legacy'))));
+  // Deploy updated SW
+  await page.evaluate(() => fetch('/__e2e/sw/deploy', { method:'POST', body: JSON.stringify({version:'current'}) }));
+  // Force update check
+  const reg = await page.evaluate(() => navigator.serviceWorker.getRegistration());
+  await reg.update();
+  // Coordinator detects waiting worker → clean → CLEAN_UPDATE → reload
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+  // Legacy cache should be cleared
   expect(await cacheEntries(page, 'pi-finance-shell')).toEqual([]);
-  await expect(page.getByRole('button', { name: 'Registros' })).toBeEnabled();
 });
 test('clean form activates waiting worker once', async ({ page }) => {
+  await page.evaluate(() => fetch('/__e2e/sw/deploy', { method:'POST', body: JSON.stringify({version:'legacy'}) }));
   await page.goto('/');
-  await page.evaluate(() => window.__coordinator.registerForUpdate());
-  await expect(page.getByText('CLEAN_UPDATE')).toBeVisible();
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+  await page.evaluate(() => fetch('/__e2e/sw/deploy', { method:'POST', body: JSON.stringify({version:'current'}) }));
+  const reg = await page.evaluate(() => navigator.serviceWorker.getRegistration());
+  await reg.update();
+  // Clean → coordinator sends CLEAN_UPDATE → skipWaiting → controller changes
+  await page.waitForFunction(
+    old => navigator.serviceWorker.controller?.state !== old,
+    await page.evaluate(() => navigator.serviceWorker.controller?.state)
+  );
 });
 test('dirty form retains waiting worker without activation', async ({ page }) => {
+  await page.evaluate(() => fetch('/__e2e/sw/deploy', { method:'POST', body: JSON.stringify({version:'legacy'}) }));
   await page.goto('/');
-  await page.evaluate(() => window.__coordinator.setDirty(true));
-  await page.evaluate(() => window.__coordinator.registerForUpdate());
-  expect(await page.evaluate(() => navigator.serviceWorker.controller?.state)).not.toBe('activated');
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+  // Fill a form to make page dirty (real browser interaction)
+  await page.getByRole('button', { name: 'Nova despesa' }).click();
+  await page.getByLabel('Descrição').fill('Test dirty');
+  // Deploy updated SW
+  await page.evaluate(() => fetch('/__e2e/sw/deploy', { method:'POST', body: JSON.stringify({version:'current'}) }));
+  const reg = await page.evaluate(() => navigator.serviceWorker.getRegistration());
+  await reg.update();
+  // Dirty: coordinator should NOT activate — same controller remains
+  await page.waitForTimeout(1000);
+  const stillActive = await page.evaluate(() => navigator.serviceWorker.controller?.state);
+  expect(stillActive).toBe('activated');
+  expect(page.url()).not.toContain('/login'); // page didn't reload
 });
 ```
 - [ ] **Step 2: Run RED** — `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=pwa-runtime e2e/specs/pwa-runtime.spec.ts`.
-- [ ] **Step 3: Implement** network-only navigation plus precached offline-shell fallback; delete legacy `pi-finance-shell` on activate; never cache HTML/RSC. The `SWCoordinator` React component mounted inside `UnsavedChangesProvider` calls `navigator.serviceWorker.register('/sw.js')` on mount, gets the `registration`, listens for `updatefound`, and exposes `{registerForUpdate, isDirty}`. On `registerForUpdate()`: if clean → `registration.waiting.postMessage({type:'CLEAN_UPDATE'})` → `self.skipWaiting()` → page reload. If dirty → no message. The harness (`e2e/sw-harness/server.ts`) runs on `127.0.0.1:3000` and proxies all requests to Next.js on `127.0.0.1:3001` except `/sw.js` and `/__e2e/sw/deploy` which it handles directly. Playwright `baseURL` = `http://127.0.0.1:3000`. Deployment:
-  - `POST /__e2e/sw/deploy {"version":"legacy"}` → `/sw.js` serves old build
-  - Navigate to `/` → browser registers SW from same origin → legacy activates
-  - `POST /__e2e/sw/deploy {"version":"current"}` → `/sw.js` serves new build, `updatefound` fires
-  - Test calls `registerForUpdate()` → coordinator applies `CLEAN_UPDATE` or retains based on dirty state
-- [ ] **Step 4: GREEN** runtime test proves no old chunk request/404, no HTML/RSC cache, offline fallback only after abort, clean/dirty update behavior with controlled two-version harness.
-- [ ] **Step 5: Commit** `git add apps/pwa/src/sw.ts apps/pwa/src/components/RootProviders.tsx apps/pwa/src/lib/sw-coordinator.tsx apps/pwa/e2e/specs/pwa-runtime.spec.ts apps/pwa/src/sw-runtime.test.ts apps/pwa/src/lib/sw-coordinator.test.tsx && git commit -m "fix: harden pwa cache migration and updates"`.
+- [ ] **Step 3: Implement** network-only navigation plus precached offline-shell fallback; delete legacy `pi-finance-shell` on activate; never cache HTML/RSC. Provider tree: `UnsavedChangesProvider > SWCoordinator > AppStateProvider > SheetProvider`. The `SWCoordinator` component calls `navigator.serviceWorker.register('/sw.js')` on mount, listens for `updatefound` on the registration. When `registration.waiting` is detected: checks dirty state from `UnsavedChangesProvider` context — if clean, calls `registration.waiting.postMessage({type:'CLEAN_UPDATE'})` and reloads; if dirty, retains waiting worker. The harness (`e2e/sw-harness/server.ts`, legacy artifact at `e2e/sw-harness/legacy-sw.js`) runs on `127.0.0.1:3000` proxying to Next on `3001`, except `/sw.js` and `/__e2e/sw/deploy`. Deployment: (1) `POST /__e2e/sw/deploy {"version":"legacy"}` → old `/sw.js`; (2) navigate → browser registers; (3) `POST /__e2e/sw/deploy {"version":"current"}` → new `/sw.js`; (4) browser detects change via `updatefound`; (5) coordinator checks dirty state → CLEAN_UPDATE or retain.
+- [ ] **Step 4: GREEN** runtime test proves no old chunk request/404, no HTML/RSC cache, offline fallback only after abort, clean activates via CLEAN_UPDATE + reload, dirty retains waiting worker (same controller, no reload).
+- [ ] **Step 5: Commit** `git add apps/pwa/e2e/sw-harness/server.ts apps/pwa/e2e/sw-harness/legacy-sw.js apps/pwa/src/sw.ts apps/pwa/src/components/RootProviders.tsx apps/pwa/src/lib/sw-coordinator.tsx apps/pwa/e2e/specs/pwa-runtime.spec.ts apps/pwa/src/sw-runtime.test.ts apps/pwa/src/lib/sw-coordinator.test.tsx && git commit -m "fix: harden pwa cache migration and updates"`.
 
 ### Task 9: Desktop, smoke and matrix enforcement
 
@@ -198,10 +225,10 @@ test('dirty form retains waiting worker without activation', async ({ page }) =>
 
 ### Task 10: Separate CI E2E job
 
-**Files:** Create `apps/pwa/e2e/run-ci.sh` (chmod +x), `apps/pwa/e2e/sw-harness/server.ts`; modify `.github/workflows/pwa-ci.yml`; create `apps/pwa/e2e/README.md`.
+**Files:** Create `apps/pwa/e2e/run-ci.sh` (chmod +x); modify `.github/workflows/pwa-ci.yml`; create `apps/pwa/e2e/README.md`. (SW harness was created in Task 8.)
 
 - [ ] **Step 1: RED** — create `apps/pwa/e2e/run-ci.sh` stub that calls a nonexistent binary; verify it exits non-zero before CI infra exists.
-- [ ] **Step 2: Implement** — write `apps/pwa/e2e/run-ci.sh` (exact script from design doc: 3 services, trap before readiness, readiness timeout → exit 1, two consecutive full runs, no artifact removal). CI workflow runs `bash apps/pwa/e2e/run-ci.sh` after install+playwright install. Artifact upload on failure. Opt-in `production-smoke` via `workflow_dispatch` with `--project=production-smoke` and explicit production URL (no fixture).
+- [ ] **Step 2: Implement** — CI job timeout >= 45 minutes. `run-ci.sh` per design doc (3 services, trap before readiness, readiness timeout → exit 1, two consecutive full runs, no artifact removal). Artifact upload: `if: always()` preserves reports. `production-smoke` is the sole production project, opt-in via `workflow_dispatch` with `--project=production-smoke` and explicit URL (no fixture).
 - [ ] **Step 3: GREEN** — `bash apps/pwa/e2e/run-ci.sh` exits 0; inspect `test-results` and logs.
 - [ ] **Step 4: Commit** `git add .github/workflows/pwa-ci.yml apps/pwa/e2e/README.md apps/pwa/e2e/run-ci.sh apps/pwa/e2e/sw-harness/server.ts && git commit -m "ci: run comprehensive pwa e2e separately"`.
 
