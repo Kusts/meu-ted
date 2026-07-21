@@ -72,6 +72,7 @@ export default function RecordsPage() {
     },
     [deleteTransaction],
   );
+  const [staleDismissed, setStaleDismissed] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>("all");
@@ -260,13 +261,20 @@ export default function RecordsPage() {
         <WriteErrorBanner
           message={writeError}
           onDismiss={clearWriteError}
-          onRetry={() => router.refresh()}
+          onRetry={() => {
+            if (typeof window !== "undefined") window.location.reload();
+          }}
         />
 
-        <StaleBanner
-          domains={["transactions", "categories", "accounts"]}
-          onRetry={() => router.refresh()}
-        />
+        {!staleDismissed && (
+          <StaleBanner
+            domains={["transactions", "categories", "accounts"]}
+            onRetry={() => {
+              if (typeof window !== "undefined") window.location.reload();
+            }}
+            onDismiss={() => setStaleDismissed(true)}
+          />
+        )}
 
         {/* Search */}
         <div className="mx-5 mb-3 sm:mx-8 lg:mx-12">

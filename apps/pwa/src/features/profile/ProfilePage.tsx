@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
+import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import Icon from "@/components/ui/Icon";
 import Badge from "@/components/ui/Badge";
 import NotificationsSheet from "./NotificationsSheet";
@@ -176,7 +177,8 @@ function EditProfileSheet({
     greetingStyle: "auto" | "minimal" | "verbose";
   }) => Promise<void>;
 }) {
-  const { markDirty, markClean } = useFormDirtySafe();
+  const { isDirty, markDirty, markClean } = useFormDirtySafe();
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [name, setName] = useState(profile.name ?? "");
   const [email, setEmail] = useState(profile.email ?? "");
   const [phone, setPhone] = useState(profile.phone ?? "");
@@ -211,10 +213,25 @@ function EditProfileSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  function requestClose() {
+    if (isDirty) {
+      setDiscardOpen(true);
+      return;
+    }
+    onClose();
+  }
+
+  function confirmDiscard() {
+    markClean();
+    setDiscardOpen(false);
+    onClose();
+  }
+
   return (
-    <BottomSheet open={open} onClose={onClose} title="Editar perfil">
+    <>
+    <BottomSheet open={open} onClose={requestClose} title="Editar perfil">
       <div className="flex items-center gap-3 pb-5">
-        <BackButton onClick={onClose} />
+        <BackButton onClick={requestClose} />
       </div>
       <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <div>
@@ -333,6 +350,17 @@ function EditProfileSheet({
         </button>
       </div>
     </BottomSheet>
+    <ConfirmActionDialog
+      open={discardOpen}
+      title="Descartar alterações?"
+      message="Você tem alterações não salvas. Deseja sair sem salvar?"
+      confirmLabel="Descartar"
+      cancelLabel="Continuar editando"
+      danger
+      onConfirm={confirmDiscard}
+      onCancel={() => setDiscardOpen(false)}
+    />
+    </>
   );
 }
 

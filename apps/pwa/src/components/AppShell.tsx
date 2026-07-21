@@ -5,10 +5,12 @@ import { usePathname, useRouter } from "next/navigation";
 import BottomNav from "@/components/BottomNav";
 import BottomSheet from "@/components/BottomSheet";
 import NewTransactionSheet from "@/components/NewTransactionSheet";
+import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import type { NavItem } from "@/components/BottomNav";
 import type { SaveData } from "@/components/NewTransactionSheet";
 import { useAppState } from "@/lib/state/app-state-context";
 import { useSheet } from "@/lib/sheet-context";
+import { useUnsavedChanges } from "@/lib/unsaved-changes";
 
 interface AppShellProps {
   children: ReactNode;
@@ -42,6 +44,9 @@ export default function AppShell({ children }: AppShellProps) {
     createInstallments,
   } = useAppState();
   const { sheetKind, closeSheet } = useSheet();
+  const { isDirty } = useUnsavedChanges();
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [pendingNav, setPendingNav] = useState<NavItem | null>(null);
 
   // Derive sheet open/mode from context (no setState-in-effect)
   const effectiveSheetOpen = sheetOpen || sheetKind !== null;
@@ -84,13 +89,41 @@ export default function AppShell({ children }: AppShellProps) {
   function closeSheetLocal() {
     setSheetOpen(false);
     closeSheet();
+    setDiscardOpen(false);
+    setPendingNav(null);
   }
 
-  function handleNavClick(item: NavItem) {
-    closeSheetLocal();
+  function navigateTo(item: NavItem) {
     if (item === "home") router.push("/");
     else if (item === "records") router.push("/registros");
     else if (item === "payables") router.push("/a-pagar");
+  }
+
+  /** Close sheet, but confirm first when the form has unsaved edits. */
+  function requestCloseSheet() {
+    if (isDirty && (effectiveSheetMode === "new" || effectiveSheetMode === "preselected")) {
+      setPendingNav(null);
+      setDiscardOpen(true);
+      return;
+    }
+    closeSheetLocal();
+  }
+
+  function handleNavClick(item: NavItem) {
+    // Navigating away while the tx sheet is dirty also needs confirm.
+    if (isDirty && effectiveSheetOpen && (effectiveSheetMode === "new" || effectiveSheetMode === "preselected")) {
+      setPendingNav(item);
+      setDiscardOpen(true);
+      return;
+    }
+    closeSheetLocal();
+    navigateTo(item);
+  }
+
+  function confirmDiscard() {
+    const nav = pendingNav;
+    closeSheetLocal();
+    if (nav) navigateTo(nav);
   }
 
   async function handleSave(data: SaveData) {
@@ -124,8 +157,10 @@ export default function AppShell({ children }: AppShellProps) {
         });
       }
       closeSheetLocal();
-    } catch {
+    } catch (e) {
       // Keep sheet open so draft inputs survive API validation errors (422).
+      // Rethrow so the sheet keeps form dirty (markClean is skipped).
+      throw e;
     }
   }
 
@@ -145,7 +180,7 @@ export default function AppShell({ children }: AppShellProps) {
 
       <BottomSheet
         open={effectiveSheetOpen}
-        onClose={closeSheetLocal}
+        onClose={requestCloseSheet}
         title={
           effectiveSheetMode === "new"
             ? "Novo lançamento"
@@ -214,6 +249,20 @@ export default function AppShell({ children }: AppShellProps) {
           </div>
         )}
       </BottomSheet>
+
+      <ConfirmActionDialog
+        open={discardOpen}
+        title="Descartar alterações?"
+        message="Você tem alterações não salvas. Deseja sair sem salvar?"
+        confirmLabel="Descartar"
+        cancelLabel="Continuar editando"
+        danger
+        onConfirm={confirmDiscard}
+        onCancel={() => {
+          setDiscardOpen(false);
+          setPendingNav(null);
+        }}
+      />
     </div>
   );
 }

@@ -76,14 +76,26 @@ export function StaleBanner({ domains, onDismiss, onRetry }: StaleBannerProps) {
         <span aria-hidden="true">⚠</span> Não foi possível carregar os dados
         — backend indisponível.
       </span>
-      <button
-        type="button"
-        onClick={handleRetry}
-        aria-label="Tentar novamente"
-        className="flex-none rounded-[8px] border border-danger/40 bg-surface px-2.5 py-1 text-[11px] font-bold text-danger transition-colors hover:bg-danger/10"
-      >
-        Tentar novamente
-      </button>
+      <div className="flex flex-none items-center gap-1">
+        <button
+          type="button"
+          onClick={handleRetry}
+          aria-label="Tentar novamente"
+          className="rounded-[8px] border border-danger/40 bg-surface px-2.5 py-1 text-[11px] font-bold text-danger transition-colors hover:bg-danger/10"
+        >
+          Tentar novamente
+        </button>
+        {onDismiss && (
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label="Dispensar aviso"
+            className="flex-none text-[16px] leading-none text-danger/60 hover:text-danger"
+          >
+            ×
+          </button>
+        )}
+      </div>
     </div>
   );
 }
