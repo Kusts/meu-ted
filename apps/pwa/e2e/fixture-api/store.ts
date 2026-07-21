@@ -81,7 +81,7 @@ export interface SeedData {
     dueDate: string;
     totalCents: number;
     paidCents: number;
-    status: "open" | "closed" | "paid" | "overdue";
+    status: "open" | "closed" | "paid" | "overdue" | "partial";
     purchases: Array<{
       id: string;
       description: string;

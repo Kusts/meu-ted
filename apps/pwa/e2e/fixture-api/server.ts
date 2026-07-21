@@ -851,7 +851,8 @@ async function handleFixtureRequest(
 
 // ── Server factory ───────────────────────────────────────────────────────────
 
-export function createServer(): http.Server {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function createServer(port?: number): http.Server {
   const server = http.createServer(async (req, res) => {
     // CORS always applied first
     if (handleCors(req, res)) return;
