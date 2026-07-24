@@ -20,10 +20,14 @@ async function cacheShell(page: Page) {
 }
 
 test.describe("Offline Routes", () => {
-  test("shell routes cache", async ({ page }) => {
+  test("precaches offline shell without caching route HTML", async ({ page }) => {
     await cacheShell(page);
-    const caches = await page.evaluate(async () => (await caches.keys()).some(n => n.startsWith("pi-finance-shell")));
-    expect(caches).toBe(true);
+    const cacheNames = await page.evaluate(async () => caches.keys());
+    const offlineShellCached = await page.evaluate(
+      async () => Boolean(await caches.match("/offline-shell.html")),
+    );
+    expect(cacheNames.some((name) => name.startsWith("serwist-precache"))).toBe(true);
+    expect(offlineShellCached).toBe(true);
   });
   test("offline fallback", async ({ page }) => {
     await cacheShell(page);
