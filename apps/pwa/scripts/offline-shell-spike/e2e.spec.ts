@@ -22,12 +22,33 @@ async function cacheShell(page: Page) {
 test.describe("Offline Routes", () => {
   test("precaches offline shell without caching route HTML", async ({ page }) => {
     await cacheShell(page);
+
+    // 1) Serwist precache bucket must exist
     const cacheNames = await page.evaluate(async () => caches.keys());
+    expect(cacheNames.some((name) => name.startsWith("serwist-precache"))).toBe(true);
+
+    // 2) offline-shell.html must be cached
     const offlineShellCached = await page.evaluate(
       async () => Boolean(await caches.match("/offline-shell.html")),
     );
-    expect(cacheNames.some((name) => name.startsWith("serwist-precache"))).toBe(true);
     expect(offlineShellCached).toBe(true);
+
+    // 3) No SHELL route must have its HTML cached — SW serves them from
+    //    offline-shell.html at fetch time, never pre-caches individual routes.
+    const shellEntriesCached = await page.evaluate(
+      async (routes: string[]) => {
+        const results: { route: string; cached: boolean }[] = [];
+        for (const r of routes) {
+          const match = await caches.match(r);
+          results.push({ route: r, cached: Boolean(match) });
+        }
+        return results;
+      },
+      SHELL,
+    );
+    for (const entry of shellEntriesCached) {
+      expect(entry.cached).toBe(false);
+    }
   });
   test("offline fallback", async ({ page }) => {
     await cacheShell(page);
