@@ -48,7 +48,8 @@
 - [ ] Scan each approved dirty workspace, its refs/tags/objects/ignored/untracked files including `.env`, then scan each generated patch, safeguard branch, filtered clone, and final integration tree before it can advance; encrypt reports immediately and remove plaintext:
   ```bash
   set -euo pipefail
-  trap 'tar -C "$BACKUP_ROOT" -czf "$BACKUP_ROOT/secret-scans-on-exit.tar.gz" ./*.json 2>/dev/null || true; age -r "$BACKUP_AGE_RECIPIENT" -o "$BACKUP_ROOT/secret-scans-on-exit.age" "$BACKUP_ROOT/secret-scans-on-exit.tar.gz" 2>/dev/null || true; rm -f "$BACKUP_ROOT"/*.json "$BACKUP_ROOT/secret-scans-on-exit.tar.gz"' EXIT
+  reports="$BACKUP_ROOT/secret-reports"; mkdir -m 700 -p "$reports"
+  trap 'status=$?; set +e; tar -C "$reports" -czf "$BACKUP_ROOT/secret-reports.tar.gz" . && age -r "$BACKUP_AGE_RECIPIENT" -o "$BACKUP_ROOT/secret-reports.age" "$BACKUP_ROOT/secret-reports.tar.gz" && age --decrypt -i "$BACKUP_AGE_IDENTITY" -o "$BACKUP_ROOT/secret-reports.verify.tar.gz" "$BACKUP_ROOT/secret-reports.age" && cmp "$BACKUP_ROOT/secret-reports.tar.gz" "$BACKUP_ROOT/secret-reports.verify.tar.gz" && rm -rf "$reports" "$BACKUP_ROOT/secret-reports.tar.gz" "$BACKUP_ROOT/secret-reports.verify.tar.gz"; exit $status' EXIT
   for repo in D:/projetos/pi-financeiro D:/projetos/pi-finance-api D:/projetos/pi-financeiro-pwa-remediation D:/projetos/pi-financeiro-wt-group-filter; do
     name=$(basename "$repo")
     gitleaks git -s "$repo" --log-opts="--all" --redact --report-path "$BACKUP_ROOT/$name-history.json"
@@ -221,7 +222,9 @@
   ```bash
   git clone --no-local --branch safeguard/repository-consolidation D:/projetos/pi-finance-api D:/secure-work/pi-finance-api-filtered
   cd D:/secure-work/pi-finance-api-filtered
+  gitleaks git --log-opts="--all" --redact
   git filter-repo --to-subdirectory-filter apps/api
+  gitleaks git --log-opts="--all" --redact && gitleaks dir . --redact --no-git
   git -C C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation remote add api-filtered D:/secure-work/pi-finance-api-filtered
   git -C C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation fetch api-filtered
   git -C C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation merge --allow-unrelated-histories api-filtered/safeguard/repository-consolidation
@@ -286,8 +289,8 @@
 
 **Files:** none unless a test exposes a defect.
 
-- [ ] Run exact gates from integration worktree: `pnpm --filter ./apps/api... test`, `pnpm --filter ./apps/api... typecheck`, `pnpm --filter ./apps/api... build`, `pnpm --filter ./apps/pwa... test`, `pnpm --filter ./apps/pwa... e2e`, `pnpm --filter ./apps/whatsapp-bridge... test`, and `docker build -f apps/api/Dockerfile -t pi-finance-api:consolidation .`.
-- [ ] Run one controlled migration job against Task 5 restored copy before production: `PGSERVICE=pi_finance_restore PGOPTIONS='-c lock_timeout=5000 -c statement_timeout=60000' MIGRATIONS_MODE=run pnpm --dir apps/api db:migrate`; record advisory-lock key, ledger/checksum, compatibility result, and exit status in `$BACKUP_ROOT/migration-rehearsal.md`.
+- [ ] Run exact gates from integration worktree: `pnpm --filter ./apps/api... test`, `pnpm --filter ./apps/api... typecheck`, `pnpm --filter ./apps/api... build`, `pnpm --filter ./apps/pwa... test`, `pnpm --filter ./apps/whatsapp-bridge... test`, and `docker build -f apps/api/Dockerfile -t pi-finance-api:consolidation .`.
+- [ ] Before one controlled migration job, assert restored target identity equals `MIGRATION_EXPECTED_HOST`, `MIGRATION_EXPECTED_DATABASE`, and discovered schema; abort before acquiring lock on mismatch. Load `DATABASE_URL` only from `/run/secrets/pi-finance-restore.env`, set `DB_SCHEMA=legacy`, `MIGRATIONS_MODE=run`, and `PGOPTIONS='-c lock_timeout=5000 -c statement_timeout=60000'`; run `pnpm --dir apps/api db:migrate`; record advisory-lock key, ledger/checksum, compatibility, and exit status in `$BACKUP_ROOT/migration-rehearsal.md`.
 - [ ] Run PWA E2E with `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts` and API authenticated smoke against restored non-production legacy schema.
 - [ ] Expected: all commands exit 0; migration ledger/checksum and prior-image compatibility pass.
 - [ ] Stop: any failed gate.
@@ -303,7 +306,7 @@
 - [ ] Deploy approved `apps/api` image digest; retain prior compatible image and named application/database rollback operators. Write `$BACKUP_ROOT/cutover-evidence.md` with approver, digest, migration result, health response, and timestamps.
 - [ ] Expected: `/health`, authenticated API flow, and PWA flow pass.
 - [ ] Stop: migration lock failure, health failure, contract mismatch, error rate above approved baseline, or data anomaly.
-- [ ] Application rollback: redeploy recorded prior image digest and rerun `/health` plus authenticated smoke. Database rollback: invoke approved PITR runbook using Task 5 backup only for database-impacting failure; never treat image redeploy as database recovery.
+- [ ] Application rollback: redeploy recorded prior image digest and rerun `/health` plus authenticated smoke. Database rollback: use PITR only after base-backup/WAL rehearsal evidence exists; otherwise use the measured Task 5 logical-restore runbook. Never treat image redeploy as database recovery.
 - [ ] Commit: deployment references only after production approval.
 
 ## Task 16: Observe and decide rollback
@@ -346,17 +349,6 @@
 - [ ] Stop: active process, missing manifest, failed restore, or absent approval.
 - [ ] Rollback: restore quarantine archive; never force-remove a worktree.
 - [ ] Commit: none.
-
-## Final Production-Safety Overrides
-
-These commands supersede earlier shorthand where they differ.
-
-- [ ] Secret reports use explicit absolute paths. On `EXIT`, bundle only existing named reports, encrypt with `age`, decrypt-verify with `cmp`, then remove plaintext. If encryption or verification fails, retain restricted plaintext, exit nonzero, and stop.
-- [ ] API import order: scan safeguard branch; run `git filter-repo`; scan filtered clone; only then add/fetch its remote and merge. Rescan final integration tree after merge.
-- [ ] Database schema: `DB_SCHEMA=legacy` selects adapters, not a PostgreSQL schema name. Discover a single shared schema for `accounts` and `transactions` through `information_schema.tables`; record it; compare schema-qualified quoted tables in source/restore; stop if identities differ.
-- [ ] Migration rehearsal: use `PGSERVICEFILE=/run/secrets/pg_service.conf`, `PGSERVICE=pi_finance_restore`, `set -a; . /run/secrets/pi-finance-restore.env; set +a`, `DB_SCHEMA=legacy`, `MIGRATIONS_MODE=run`, and `PGOPTIONS='-c lock_timeout=5000 -c statement_timeout=60000'`. Record database/server/schema identity, advisory-lock key, ledger/checksum, compatibility, and exit status.
-- [ ] Recovery: use PITR only after separate base-backup/WAL rehearsal evidence. Otherwise database recovery means Task 5 logical restore with measured RPO/RTO. Application rollback remains redeploying prior image digest.
-- [ ] PWA E2E command is only `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts`.
 
 ## Tests
 
