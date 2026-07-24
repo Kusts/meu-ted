@@ -347,6 +347,17 @@
 - [ ] Rollback: restore quarantine archive; never force-remove a worktree.
 - [ ] Commit: none.
 
+## Final Production-Safety Overrides
+
+These commands supersede earlier shorthand where they differ.
+
+- [ ] Secret reports use explicit absolute paths. On `EXIT`, bundle only existing named reports, encrypt with `age`, decrypt-verify with `cmp`, then remove plaintext. If encryption or verification fails, retain restricted plaintext, exit nonzero, and stop.
+- [ ] API import order: scan safeguard branch; run `git filter-repo`; scan filtered clone; only then add/fetch its remote and merge. Rescan final integration tree after merge.
+- [ ] Database schema: `DB_SCHEMA=legacy` selects adapters, not a PostgreSQL schema name. Discover a single shared schema for `accounts` and `transactions` through `information_schema.tables`; record it; compare schema-qualified quoted tables in source/restore; stop if identities differ.
+- [ ] Migration rehearsal: use `PGSERVICEFILE=/run/secrets/pg_service.conf`, `PGSERVICE=pi_finance_restore`, `set -a; . /run/secrets/pi-finance-restore.env; set +a`, `DB_SCHEMA=legacy`, `MIGRATIONS_MODE=run`, and `PGOPTIONS='-c lock_timeout=5000 -c statement_timeout=60000'`. Record database/server/schema identity, advisory-lock key, ledger/checksum, compatibility, and exit status.
+- [ ] Recovery: use PITR only after separate base-backup/WAL rehearsal evidence. Otherwise database recovery means Task 5 logical restore with measured RPO/RTO. Application rollback remains redeploying prior image digest.
+- [ ] PWA E2E command is only `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts`.
+
 ## Tests
 
 | Type | Tool | Scope |
