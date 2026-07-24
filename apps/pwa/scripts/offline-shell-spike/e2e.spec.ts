@@ -27,34 +27,51 @@ test.describe("Offline Routes", () => {
     const cacheNames = await page.evaluate(async () => caches.keys());
     expect(cacheNames.some((name) => name.startsWith("serwist-precache"))).toBe(true);
 
-    // 2) offline-shell.html must be cached
+    // 2) offline-shell.html must be cached (in any cache)
     const offlineShellCached = await page.evaluate(
       async () => Boolean(await caches.match("/offline-shell.html")),
     );
     expect(offlineShellCached).toBe(true);
 
-    // 3) No SHELL route must have its HTML cached — SW serves them from
-    //    offline-shell.html at fetch time, never pre-caches individual routes.
-    const shellEntriesCached = await page.evaluate(
+    // 3) Enumerate EVERY cache entry across ALL caches. Fail if any entry
+    //    has a URL path matching a SHELL route — the SW must NOT pre-cache
+    //    individual shell routes; it serves them from offline-shell.html at
+    //    fetch time via the navigation fallback handler.
+    //    Static precache entries (JS, CSS, fonts, images, icons, etc.) are
+    //    expected and allowed.
+    const shellViolations = await page.evaluate(
       async (routes: string[]) => {
-        const results: { route: string; cached: boolean }[] = [];
-        for (const r of routes) {
-          const match = await caches.match(r);
-          results.push({ route: r, cached: Boolean(match) });
+        type Entry = { cacheName: string; url: string; contentType?: string };
+        const found: Entry[] = [];
+        for (const name of await caches.keys()) {
+          const cache = await caches.open(name);
+          for (const req of await cache.keys()) {
+            const url = new URL(req.url);
+            if (routes.includes(url.pathname)) {
+              const resp = await cache.match(req);
+              found.push({
+                cacheName: name,
+                url: req.url,
+                contentType: resp?.headers.get("content-type") ?? undefined,
+              });
+            }
+          }
         }
-        return results;
+        return found;
       },
       SHELL,
     );
-    for (const entry of shellEntriesCached) {
-      expect(entry.cached).toBe(false);
-    }
+    expect(shellViolations).toHaveLength(0);
   });
-  test("offline fallback", async ({ page }) => {
+
+  test("offline fallback", async ({ page, context }) => {
     await cacheShell(page);
-    await page.route("**/*", r => r.abort());
+    // Use real Playwright offline mode, not route aborting
+    await context.setOffline(true);
     await page.goto(`${BASE}/registros`, { waitUntil: "domcontentloaded", timeout: 8e3 });
     expect(await page.content()).toContain("Modo offline");
+    // Restore connectivity so Playwright cleanup doesn't hang
+    await context.setOffline(false);
   });
 });
 
