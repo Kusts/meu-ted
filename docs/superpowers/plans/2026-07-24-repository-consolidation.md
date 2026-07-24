@@ -39,12 +39,15 @@
 
 **Files:** Read API refs/objects/WIP; create encrypted external reports only.
 
-- [ ] Install or verify scanner outside repository:
+- [ ] Install or verify external tools before writing artifacts:
   ```bash
+  set -euo pipefail
+  command -v gitleaks; command -v age; command -v python3
   gitleaks version
   ```
 - [ ] Scan all API refs, tags, objects, ignored/untracked files, including `.env`, without printing values; encrypt reports immediately and remove plaintext:
   ```bash
+  set -euo pipefail
   cd D:/projetos/pi-finance-api
   gitleaks git --log-opts="--all" --redact --report-path "$BACKUP_ROOT/api-history.json"
   gitleaks dir . --redact --no-git --report-path "$BACKUP_ROOT/api-worktree.json"
@@ -63,6 +66,7 @@
 
 - [ ] For each dirty canonical/API/remediation/group-filter workspace, generate binary diff, NUL-safe untracked list, tar archive, and SHA-256 manifest outside Git:
   ```bash
+  set -euo pipefail
   repo=D:/projetos/pi-finance-api
   out="$BACKUP_ROOT/pi-finance-api"
   mkdir -p "$out"
@@ -70,8 +74,11 @@
   git -C "$repo" ls-files --others --exclude-standard -z > "$out/untracked-paths.nul"
   tar -C "$repo" --null -T "$out/untracked-paths.nul" -czf "$out/untracked.tar.gz"
   sha256sum "$out/tracked.patch" "$out/untracked-paths.nul" "$out/untracked.tar.gz" > "$out/SHA256SUMS"
-  age -r "$BACKUP_AGE_RECIPIENT" -o "$out/archive.age" "$out/tracked.patch" "$out/untracked.tar.gz"
-  rm "$out/tracked.patch" "$out/untracked.tar.gz"
+  tar -C "$out" -czf "$out/archive.tar.gz" tracked.patch untracked.tar.gz untracked-paths.nul SHA256SUMS
+  age -r "$BACKUP_AGE_RECIPIENT" -o "$out/archive.age" "$out/archive.tar.gz"
+  age --decrypt -i "$BACKUP_AGE_IDENTITY" -o "$out/verify.tar.gz" "$out/archive.age"
+  cmp "$out/archive.tar.gz" "$out/verify.tar.gz"
+  rm "$out/tracked.patch" "$out/untracked.tar.gz" "$out/archive.tar.gz" "$out/verify.tar.gz"
   ```
 - [ ] Decrypt into a restricted temporary directory, restore each archive, and compare `SHA256SUMS`.
 - [ ] Expected: every checksum and restoration succeeds.
@@ -101,22 +108,27 @@
 - [ ] Run from approved VPS session with externally supplied recipient, never echoed or committed:
   ```bash
   set -euo pipefail
+  export PGSERVICE=pi_finance_production PGSERVICEFILE=/run/secrets/pg_service.conf
   out="/srv/secure-export/pi-financeiro-consolidation/$RUN_ID"
   mkdir -p "$out"
-  pg_dump "$DATABASE_URL" --format=custom | age -r "$BACKUP_AGE_RECIPIENT" -o "$out/postgres.dump.age"
+  pg_dump --format=custom | age -r "$BACKUP_AGE_RECIPIENT" -o "$out/postgres.dump.age"
   sha256sum "$out/postgres.dump.age" > "$out/SHA256SUMS"
   ```
 - [ ] Record operator, target identity, timestamp, PostgreSQL metadata, RPO/RTO, and off-host copy. Verify and restore without printing credentials:
   ```bash
   sha256sum -c "$out/SHA256SUMS"
+  trap 'rm -f "$out/postgres.dump"' EXIT
   age --decrypt -i "$BACKUP_AGE_IDENTITY" -o "$out/postgres.dump" "$out/postgres.dump.age"
-  createdb --host "$RESTORE_DB_HOST" --username "$RESTORE_DB_USER" pi_finance_restore
-  pg_restore --host "$RESTORE_DB_HOST" --username "$RESTORE_DB_USER" --dbname pi_finance_restore --clean --if-exists "$out/postgres.dump"
-  psql "$DATABASE_URL" -Atc "select 'accounts',count(*) from accounts union all select 'transactions',count(*) from transactions" > "$out/source-counts.tsv"
-  psql "$RESTORE_DATABASE_URL" -Atc "select 'accounts',count(*) from accounts union all select 'transactions',count(*) from transactions" > "$out/restore-counts.tsv"
+  export PGSERVICE=pi_finance_restore PGSERVICEFILE=/run/secrets/pg_service.conf
+  createdb pi_finance_restore
+  pg_restore --dbname pi_finance_restore --clean --if-exists "$out/postgres.dump"
+  export PGSERVICE=pi_finance_production
+  psql -Atc "set search_path to public; select 'accounts',count(*) from accounts union all select 'transactions',count(*) from transactions" > "$out/source-counts.tsv"
+  export PGSERVICE=pi_finance_restore
+  psql -Atc "set search_path to public; select 'accounts',count(*) from accounts union all select 'transactions',count(*) from transactions" > "$out/restore-counts.tsv"
   diff -u "$out/source-counts.tsv" "$out/restore-counts.tsv"
   ```
-- [ ] Verify restored schema/extensions and run API contracts with `DB_SCHEMA=legacy`.
+- [ ] Verify restored schema/extensions and run API contracts with `DB_SCHEMA=legacy`. Write and rehearse `$BACKUP_ROOT/database-recovery-runbook.md` covering PITR trigger, operator, RPO/RTO, restore point, validation, and exit criteria before cutover.
 - [ ] Expected: restore succeeds; contract suite passes; recovery time meets recorded RTO.
 - [ ] Stop: failed restore, incompatible extension, failed contract, or missing off-host copy.
 - [ ] Rollback: discard isolated restore only; production remains untouched.
@@ -149,7 +161,7 @@
   ```bash
   cd C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation
   git merge --no-ff integration/pwa-e2e-cleanup
-  pnpm --filter ./apps/pwa... test && pnpm --filter ./apps/pwa... e2e
+  pnpm --filter ./apps/pwa... test && pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts
   ```
 - [ ] Expected: 31 remediation commits proven ancestors; selected 40-commit series applies cleanly.
 - [ ] Stop: conflict, test regression, or dependency lockfile conflict.
@@ -302,7 +314,7 @@
 **Files:** local filesystem only.
 
 - [ ] Move `pi-finance-ios` to `D:/projetos/arquivados/pi-finance-ios`, preserving `.git`.
-- [ ] Copy `pi-finance-web/docs/plano-redesign-premium.md` and `docs/superpowers/plans/2026-06-19-reports-page-fix.md` to `arquivados/pi-finance-web-legacy-docs/`; discard only invalidated review after approval.
+- [ ] Copy `pi-finance-web/docs/plano-redesign-premium.md` and `docs/superpowers/plans/2026-06-19-reports-page-fix.md` to `arquivados/pi-finance-web-legacy-docs/`; route the invalidated review into Task 18 quarantine, never discard it in this task.
 - [ ] Move LHCI report from `pi-financeiro-pwa-remediation-docker-report` into archive.
 - [ ] Expected: archive manifest and restore check pass.
 - [ ] Stop: destination exists with different content or manifest mismatch.
