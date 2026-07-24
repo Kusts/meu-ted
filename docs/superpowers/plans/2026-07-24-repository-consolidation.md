@@ -19,10 +19,13 @@
 
 ## Task 1: Preflight inventory
 
-**Files:** Create external inventory under `D:\secure-backups\pi-financeiro-consolidation\<timestamp>\`; modify none.
+**Files:** Create external inventory under `$BACKUP_ROOT`; modify none.
 
-- [ ] Run:
+- [ ] Initialize external-only run variables, then run:
   ```bash
+  export RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+  export BACKUP_ROOT="D:/secure-backups/pi-financeiro-consolidation/$RUN_ID"
+  umask 077; mkdir -p "$BACKUP_ROOT"
   git -C D:/projetos/pi-financeiro fetch --all --prune
   git -C D:/projetos/pi-financeiro worktree list --porcelain
   for d in D:/projetos/pi-finance*; do git -C "$d" status --short 2>/dev/null || true; done
@@ -40,13 +43,16 @@
   ```bash
   gitleaks version
   ```
-- [ ] Scan API history and working files:
+- [ ] Scan all API refs, tags, objects, ignored/untracked files, including `.env`, without printing values; encrypt reports immediately and remove plaintext:
   ```bash
   cd D:/projetos/pi-finance-api
-  gitleaks git --log-opts="--all" --redact --report-path D:/secure-backups/pi-financeiro-consolidation/<timestamp>/api-history.json
-  gitleaks dir . --redact --exclude-path=.env --report-path D:/secure-backups/pi-financeiro-consolidation/<timestamp>/api-worktree.json
+  gitleaks git --log-opts="--all" --redact --report-path "$BACKUP_ROOT/api-history.json"
+  gitleaks dir . --redact --no-git --report-path "$BACKUP_ROOT/api-worktree.json"
+  tar -C "$BACKUP_ROOT" -czf "$BACKUP_ROOT/api-secret-scan.tar.gz" api-history.json api-worktree.json
+  age -r "$BACKUP_AGE_RECIPIENT" -o "$BACKUP_ROOT/api-secret-scan.age" "$BACKUP_ROOT/api-secret-scan.tar.gz"
+  rm "$BACKUP_ROOT/api-history.json" "$BACKUP_ROOT/api-worktree.json" "$BACKUP_ROOT/api-secret-scan.tar.gz"
   ```
-- [ ] Expected: zero unapproved findings.
+- [ ] Expected: zero unapproved findings; only encrypted reports persist.
 - [ ] Stop: any credential, private key, database URL, token, or secret in history/WIP.
 - [ ] Rollback: none. On finding, revoke/rotate, purge with an approved history-remediation procedure, then rescan.
 - [ ] Commit: none.
@@ -58,15 +64,16 @@
 - [ ] For each dirty canonical/API/remediation/group-filter workspace, generate binary diff, NUL-safe untracked list, tar archive, and SHA-256 manifest outside Git:
   ```bash
   repo=D:/projetos/pi-finance-api
-  out=D:/secure-backups/pi-financeiro-consolidation/<timestamp>/pi-finance-api
+  out="$BACKUP_ROOT/pi-finance-api"
   mkdir -p "$out"
   git -C "$repo" diff --binary > "$out/tracked.patch"
   git -C "$repo" ls-files --others --exclude-standard -z > "$out/untracked-paths.nul"
-  tar --null -T "$out/untracked-paths.nul" -C "$repo" -czf "$out/untracked.tar.gz"
+  tar -C "$repo" --null -T "$out/untracked-paths.nul" -czf "$out/untracked.tar.gz"
   sha256sum "$out/tracked.patch" "$out/untracked-paths.nul" "$out/untracked.tar.gz" > "$out/SHA256SUMS"
+  age -r "$BACKUP_AGE_RECIPIENT" -o "$out/archive.age" "$out/tracked.patch" "$out/untracked.tar.gz"
+  rm "$out/tracked.patch" "$out/untracked.tar.gz"
   ```
-- [ ] Encrypt artifacts using approved local encryption outside Git.
-- [ ] Restore each archive into a temporary directory and compare `SHA256SUMS`.
+- [ ] Decrypt into a restricted temporary directory, restore each archive, and compare `SHA256SUMS`.
 - [ ] Expected: every checksum and restoration succeeds.
 - [ ] Stop: archive omission, checksum mismatch, or plaintext secret artifact lacks approved restricted storage.
 - [ ] Commit: none.
@@ -75,7 +82,7 @@
 
 **Files:** Read `../vps-hostinger/`; create external inventory only.
 
-- [ ] Inspect approved Hostinger deploy host, compose/service name, API image/revision, Postgres host/database/schema/version/extensions, TLS, disk, and active connections.
+- [ ] Record approved Hostinger SSH host fingerprint, deploy account, compose path, service/container, image digest, mounts, database host/port/name/schema/version/extensions/TLS/disk/connections, and approval record.
 - [ ] Run read-only commands over approved SSH:
   ```bash
   docker ps --format '{{.Names}} {{.Image}} {{.Status}}'
@@ -93,12 +100,13 @@
 - [ ] **USER APPROVAL REQUIRED:** create production backup.
 - [ ] Run from approved VPS session with externally supplied recipient, never echoed or committed:
   ```bash
-  out=/srv/secure-export/pi-financeiro-consolidation/<timestamp>
+  set -euo pipefail
+  out="/srv/secure-export/pi-financeiro-consolidation/$RUN_ID"
   mkdir -p "$out"
   pg_dump "$DATABASE_URL" --format=custom | age -r "$BACKUP_AGE_RECIPIENT" -o "$out/postgres.dump.age"
   sha256sum "$out/postgres.dump.age" > "$out/SHA256SUMS"
   ```
-- [ ] Copy encrypted dump/checksum to approved off-host storage, then restore into isolated PostgreSQL matching production major version; verify schema, extensions, row counts, and API contract tests against `DB_SCHEMA=legacy`.
+- [ ] Record operator, target identity, timestamp, PostgreSQL metadata, RPO/RTO, and off-host copy. Verify checksum, decrypt/restore into isolated PostgreSQL, compare production/source row counts, schema/extensions, and run API contracts with `DB_SCHEMA=legacy`.
 - [ ] Expected: restore succeeds; contract suite passes; recovery time meets recorded RTO.
 - [ ] Stop: failed restore, incompatible extension, failed contract, or missing off-host copy.
 - [ ] Rollback: discard isolated restore only; production remains untouched.
@@ -122,11 +130,17 @@
 
 - [ ] Verify ancestry and review diff:
   ```bash
-  git -C D:/projetos/pi-financeiro merge-base --is-ancestor 49d1a90 1c520ab
-  git -C C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation diff --stat origin/main 1c520ab
+  remediation_head=$(git -C D:/projetos/pi-financeiro-pwa-remediation rev-parse HEAD)
+  integration_head=$(git -C D:/projetos/pi-financeiro-main-deploy-3 rev-parse HEAD)
+  git -C D:/projetos/pi-financeiro merge-base --is-ancestor "$remediation_head" "$integration_head"
+  git -C C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation diff --stat origin/main "$integration_head"
   ```
-- [ ] Cherry-pick or merge reviewed integration branch commits into integration worktree.
-- [ ] Run PWA targeted unit/E2E checks before next task.
+- [ ] Merge exact reviewed branch and run exact PWA checks:
+  ```bash
+  cd C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation
+  git merge --no-ff integration/pwa-e2e-cleanup
+  pnpm --filter ./apps/pwa... test && pnpm --filter ./apps/pwa... e2e
+  ```
 - [ ] Expected: 31 remediation commits proven ancestors; selected 40-commit series applies cleanly.
 - [ ] Stop: conflict, test regression, or dependency lockfile conflict.
 - [ ] Rollback: abort merge/cherry-pick; reset integration branch only.
@@ -134,15 +148,19 @@
 
 ## Task 8: Apply remediation dirty delta
 
-**Files:** Only paths listed by `git -C D:/projetos/pi-financeiro-pwa-remediation diff --name-only`.
+**Files:** Tracked and approved untracked paths from `D:/projetos/pi-financeiro-pwa-remediation`.
 
-- [ ] Generate patch relative to updated `main-deploy-3` content; exclude `nul` and generated helpers unless approved.
-- [ ] Apply patch with index validation:
+- [ ] Classify all untracked paths. Delete accidental `apps/pwa/nul`; never stage it on Windows. Record approved untracked paths in `$BACKUP_ROOT/pwa-remediation-untracked.txt`.
+- [ ] Build separate tracked and approved-untracked deltas from remediation, then apply them to the branch containing `main-deploy-3`:
   ```bash
-  patch=D:/secure-backups/pi-financeiro-consolidation/<timestamp>/pwa-remediation-delta.patch
+  patch="$BACKUP_ROOT/pwa-remediation-tracked.patch"
   git -C D:/projetos/pi-financeiro-pwa-remediation diff --binary > "$patch"
-  git -C C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation apply --check "$patch"
+  git -C C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation apply --3way --check "$patch"
+  git -C C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation apply --3way "$patch"
+  tar -C D:/projetos/pi-financeiro-pwa-remediation -czf "$BACKUP_ROOT/pwa-remediation-approved-untracked.tar.gz" --files-from="$BACKUP_ROOT/pwa-remediation-untracked.txt"
+  tar -C C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation -xzf "$BACKUP_ROOT/pwa-remediation-approved-untracked.tar.gz"
   ```
+- [ ] Stage only reviewed paths and commit `fix(pwa): apply reviewed remediation delta`.
 - [ ] Run changed PWA test files and E2E specs.
 - [ ] Expected: only uncommitted delta applies; no duplicated 31-commit history.
 - [ ] Stop: patch touches undeclared files or tests fail.
@@ -153,14 +171,14 @@
 
 **Files:** `D:/projetos/pi-finance-api/**`; safeguard branch.
 
-- [ ] Split every modified/untracked API path into `import-ready` or `deferred`; include reason in commit body.
-- [ ] Create safeguard branch and commit import-ready sources, including approved migrations/routes/Docker assets:
+- [ ] Create `$BACKUP_ROOT/api-wip-classification.tsv` with one tab-delimited line per changed/untracked path: `path`, classification, reason, approver.
+- [ ] **USER APPROVAL REQUIRED:** resolve every deferred source path before API sibling removal. Commit only classification-approved import-ready paths:
   ```bash
   git -C D:/projetos/pi-finance-api switch -c safeguard/repository-consolidation
-  git -C D:/projetos/pi-finance-api add <reviewed-paths>
+  git -C D:/projetos/pi-finance-api add src/cards src/goals src/payables src/profile src/subscriptions src/read-models src/routes src/server src/types src/writes tests Dockerfile .dockerignore
   git -C D:/projetos/pi-finance-api commit -m "chore: safeguard API consolidation WIP"
   ```
-- [ ] Expected: all API paths have classification; no `.env`, logs, `node_modules`, or `dist` staged.
+- [ ] Expected: TSV covers all API changes; no `.env`, logs, `node_modules`, `dist`, or deferred source staged.
 - [ ] Stop: unclassified source, failing API tests, or secret finding.
 - [ ] Rollback: preserve branch and restore working tree from external artifacts.
 - [ ] Commit: safeguard commit in API repository.
@@ -176,8 +194,8 @@
   cd D:/secure-work/pi-finance-api-filtered
   git filter-repo --to-subdirectory-filter apps/api
   ```
-- [ ] Preserve filter-repo commit map outside Git. Merge filtered history into integration branch with `--allow-unrelated-histories`.
-- [ ] Fallback only after review: `git subtree add --prefix=apps/api <api-remote> safeguard/repository-consolidation --squash` plus equivalent provenance manifest.
+- [ ] Preserve filter-repo commit map outside Git. Merge filtered history into integration branch with `--allow-unrelated-histories`, then rerun `gitleaks git --log-opts="--all"` and `gitleaks dir apps/api --no-git` with encrypted reports.
+- [ ] Fallback only after review: `git subtree add --prefix=apps/api D:/projetos/pi-finance-api safeguard/repository-consolidation` without `--squash`, plus equivalent provenance manifest.
 - [ ] Expected: `apps/api` contains source history; no nested `.git`, `.env`, `node_modules`, `dist`, or logs.
 - [ ] Stop: commit map missing, secret scan fails, or imported tree has unapproved artifacts.
 - [ ] Rollback: reset integration branch to pre-import commit; retain temp clone and manifests.
@@ -187,14 +205,16 @@
 
 **Files:** `pnpm-workspace.yaml`, root `package.json`, root `pnpm-lock.yaml`, `apps/api/{package.json,Dockerfile,.dockerignore}`, active CI/deploy docs.
 
-- [ ] Add `apps/api` to workspace; reconcile package manager version and regenerate one root lockfile:
+- [ ] Decide one documented runtime baseline before changing files: retain Node 20/pnpm 9 across CI and Docker, or upgrade every workspace/CI image together. Baseline existing warnings; reject new warnings.
+- [ ] Add `apps/api` to workspace; remove imported nested lockfiles, then regenerate one root lockfile:
   ```bash
+  git rm apps/api/pnpm-lock.yaml apps/api/package-lock.json 2>/dev/null || true
   pnpm install
   pnpm --filter ./apps/api... test
   pnpm --filter ./apps/api... typecheck
   pnpm --filter ./apps/api... build
   ```
-- [ ] Replace standalone Docker context with monorepo-compatible build; validate without secrets:
+- [ ] Add TDD migration mode before Docker work: test `MIGRATIONS_MODE=disabled|verify-only|run`; update `apps/api/src/server/index.ts` so production startup never runs migrations unless explicit controlled-job mode is selected. Replace standalone Docker context with monorepo-compatible build; validate without secrets:
   ```bash
   docker build -f apps/api/Dockerfile -t pi-finance-api:consolidation .
   ```
@@ -233,8 +253,8 @@
 
 **Files:** none unless a test exposes a defect.
 
-- [ ] Run API, PWA, bridge, Docker, and isolated legacy-schema migration checks.
-- [ ] Run PWA E2E and API authenticated smoke against non-production environment.
+- [ ] Run exact gates from integration worktree: `pnpm --filter ./apps/api... test`, `pnpm --filter ./apps/api... typecheck`, `pnpm --filter ./apps/api... build`, `pnpm --filter ./apps/pwa... test`, `pnpm --filter ./apps/pwa... e2e`, `pnpm --filter ./apps/whatsapp-bridge... test`, and `docker build -f apps/api/Dockerfile -t pi-finance-api:consolidation .`.
+- [ ] Run PWA E2E and API authenticated smoke against restored non-production legacy schema.
 - [ ] Expected: all commands exit 0; migration ledger/checksum and prior-image compatibility pass.
 - [ ] Stop: any failed gate.
 - [ ] Rollback: no deploy; revert offending integration commit.
@@ -245,8 +265,8 @@
 **Files:** VPS deployment configuration only.
 
 - [ ] **USER APPROVAL REQUIRED:** deploy consolidated API.
-- [ ] Disable startup migrations in production; run one approved migration job with advisory lock, timeouts, ledger/checksum verification, and recorded result.
-- [ ] Build/deploy approved API revision from `apps/api`; retain prior compatible image.
+- [ ] Prove compose/entrypoint sets `MIGRATIONS_MODE=disabled`; run one named migration job against approved target with recorded advisory-lock key, statement/lock timeouts, transaction boundaries, ledger/checksum, drained connections, maintenance window, and exit status.
+- [ ] Deploy approved `apps/api` image digest; retain prior compatible image and named application/database rollback operators.
 - [ ] Expected: `/health`, authenticated API flow, and PWA flow pass.
 - [ ] Stop: migration lock failure, health failure, contract mismatch, or data anomaly.
 - [ ] Rollback: redeploy prior image; use PostgreSQL recovery/PITR runbook only for database-impacting failure.
@@ -278,7 +298,8 @@
 
 **Files:** local filesystem/worktree registry only.
 
-- [ ] Place `pi-financeiro-hotfix-test`, `pi-financeiro-main-deploy`, and `pi-financeiro-main-deploy-2` in dated quarantine after normalized source comparison against retained references.
+- [ ] For every candidate, including copies, report directory, empty directory, and baseline worktree: create provenance manifest, restore-tested archive, normalized comparison, active-process/reference check, and dated 30-day quarantine after post-cutover observation.
+- [ ] Place `pi-financeiro-hotfix-test`, `pi-financeiro-main-deploy`, and `pi-financeiro-main-deploy-2` in dated quarantine after those checks.
 - [ ] Remove `arquivados/pi-financeiro-e2e-baseline` only through:
   ```bash
   git -C D:/projetos/pi-financeiro worktree remove D:/projetos/arquivados/pi-financeiro-e2e-baseline
