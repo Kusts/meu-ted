@@ -49,15 +49,16 @@
   ```bash
   set -euo pipefail
   reports="$BACKUP_ROOT/secret-reports"; mkdir -m 700 -p "$reports"
-  trap 'status=$?; set +e; tar -C "$reports" -czf "$BACKUP_ROOT/secret-reports.tar.gz" . && age -r "$BACKUP_AGE_RECIPIENT" -o "$BACKUP_ROOT/secret-reports.age" "$BACKUP_ROOT/secret-reports.tar.gz" && age --decrypt -i "$BACKUP_AGE_IDENTITY" -o "$BACKUP_ROOT/secret-reports.verify.tar.gz" "$BACKUP_ROOT/secret-reports.age" && cmp "$BACKUP_ROOT/secret-reports.tar.gz" "$BACKUP_ROOT/secret-reports.verify.tar.gz" && rm -rf "$reports" "$BACKUP_ROOT/secret-reports.tar.gz" "$BACKUP_ROOT/secret-reports.verify.tar.gz"; exit $status' EXIT
   for repo in D:/projetos/pi-financeiro D:/projetos/pi-finance-api D:/projetos/pi-financeiro-pwa-remediation D:/projetos/pi-financeiro-wt-group-filter; do
     name=$(basename "$repo")
-    gitleaks git -s "$repo" --log-opts="--all" --redact --report-path "$BACKUP_ROOT/$name-history.json"
-    gitleaks dir "$repo" --redact --no-git --report-path "$BACKUP_ROOT/$name-worktree.json"
+    gitleaks git -s "$repo" --log-opts="--all" --redact --report-path "$reports/$name-history.json"
+    gitleaks dir "$repo" --redact --no-git --report-path "$reports/$name-worktree.json"
   done
-  tar -C "$BACKUP_ROOT" -czf "$BACKUP_ROOT/secret-scans.tar.gz" *-history.json *-worktree.json
+  tar -C "$reports" -czf "$BACKUP_ROOT/secret-scans.tar.gz" .
   age -r "$BACKUP_AGE_RECIPIENT" -o "$BACKUP_ROOT/secret-scans.age" "$BACKUP_ROOT/secret-scans.tar.gz"
-  rm "$BACKUP_ROOT"/*-history.json "$BACKUP_ROOT"/*-worktree.json "$BACKUP_ROOT/secret-scans.tar.gz"
+  age --decrypt -i "$BACKUP_AGE_IDENTITY" -o "$BACKUP_ROOT/secret-scans.verify.tar.gz" "$BACKUP_ROOT/secret-scans.age"
+  cmp "$BACKUP_ROOT/secret-scans.tar.gz" "$BACKUP_ROOT/secret-scans.verify.tar.gz"
+  rm -rf "$reports" "$BACKUP_ROOT/secret-scans.tar.gz" "$BACKUP_ROOT/secret-scans.verify.tar.gz"
   ```
 - [ ] Expected: zero unapproved findings; only encrypted reports persist.
 - [ ] Stop: any credential, private key, database URL, token, or secret in history/WIP.
@@ -290,7 +291,7 @@
 **Files:** none unless a test exposes a defect.
 
 - [ ] Run exact gates from integration worktree: `pnpm --filter ./apps/api... test`, `pnpm --filter ./apps/api... typecheck`, `pnpm --filter ./apps/api... build`, `pnpm --filter ./apps/pwa... test`, `pnpm --filter ./apps/whatsapp-bridge... test`, and `docker build -f apps/api/Dockerfile -t pi-finance-api:consolidation .`.
-- [ ] Before one controlled migration job, assert restored target identity equals `MIGRATION_EXPECTED_HOST`, `MIGRATION_EXPECTED_DATABASE`, and discovered schema; abort before acquiring lock on mismatch. Load `DATABASE_URL` only from `/run/secrets/pi-finance-restore.env`, set `DB_SCHEMA=legacy`, `MIGRATIONS_MODE=run`, and `PGOPTIONS='-c lock_timeout=5000 -c statement_timeout=60000'`; run `pnpm --dir apps/api db:migrate`; record advisory-lock key, ledger/checksum, compatibility, and exit status in `$BACKUP_ROOT/migration-rehearsal.md`.
+- [ ] Before one controlled migration job, load `/run/secrets/pi-finance-restore.env`, set `DB_SCHEMA=legacy`, `MIGRATIONS_MODE=run`, and `PGOPTIONS='-c lock_timeout=5000 -c statement_timeout=60000'`; query `actual_host`, `actual_database`, and `actual_schema`; execute `test "$actual_host" = "$MIGRATION_EXPECTED_HOST" && test "$actual_database" = "$MIGRATION_EXPECTED_DATABASE" && test "$actual_schema" = "$MIGRATION_EXPECTED_SCHEMA" || exit 1` before acquiring lock. Then run `pnpm --dir apps/api db:migrate`; record identity, advisory-lock key, ledger/checksum, compatibility, and exit status in `$BACKUP_ROOT/migration-rehearsal.md`.
 - [ ] Run PWA E2E with `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts` and API authenticated smoke against restored non-production legacy schema.
 - [ ] Expected: all commands exit 0; migration ledger/checksum and prior-image compatibility pass.
 - [ ] Stop: any failed gate.
