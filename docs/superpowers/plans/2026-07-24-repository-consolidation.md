@@ -42,12 +42,13 @@
 - [ ] Install or verify external tools before writing artifacts:
   ```bash
   set -euo pipefail
-  command -v gitleaks; command -v age; command -v python3
+  command -v gitleaks; command -v age; command -v python3; git filter-repo --version
   gitleaks version
   ```
 - [ ] Scan each approved dirty workspace, its refs/tags/objects/ignored/untracked files including `.env`, then scan each generated patch, safeguard branch, filtered clone, and final integration tree before it can advance; encrypt reports immediately and remove plaintext:
   ```bash
   set -euo pipefail
+  trap 'tar -C "$BACKUP_ROOT" -czf "$BACKUP_ROOT/secret-scans-on-exit.tar.gz" ./*.json 2>/dev/null || true; age -r "$BACKUP_AGE_RECIPIENT" -o "$BACKUP_ROOT/secret-scans-on-exit.age" "$BACKUP_ROOT/secret-scans-on-exit.tar.gz" 2>/dev/null || true; rm -f "$BACKUP_ROOT"/*.json "$BACKUP_ROOT/secret-scans-on-exit.tar.gz"' EXIT
   for repo in D:/projetos/pi-financeiro D:/projetos/pi-finance-api D:/projetos/pi-financeiro-pwa-remediation D:/projetos/pi-financeiro-wt-group-filter; do
     name=$(basename "$repo")
     gitleaks git -s "$repo" --log-opts="--all" --redact --report-path "$BACKUP_ROOT/$name-history.json"
@@ -126,7 +127,7 @@
   createdb pi_finance_restore
   pg_restore --dbname pi_finance_restore --clean --if-exists "$out/postgres.dump"
   export PGSERVICE=pi_finance_production
-  export TARGET_SCHEMA=$(psql -Atc 'show search_path' | cut -d, -f1 | tr -d ' ')
+  export TARGET_SCHEMA=$(psql -Atc 'select current_schema()')
   psql -Atc "set search_path to \"$TARGET_SCHEMA\"; select 'accounts',count(*) from accounts union all select 'transactions',count(*) from transactions" > "$out/source-counts.tsv"
   export PGSERVICE=pi_finance_restore
   psql -Atc "set search_path to \"$TARGET_SCHEMA\"; select 'accounts',count(*) from accounts union all select 'transactions',count(*) from transactions" > "$out/restore-counts.tsv"
@@ -202,7 +203,8 @@
 - [ ] **USER APPROVAL REQUIRED:** resolve every deferred source path before API sibling removal. Hash TSV and include hash plus explicit import-ready/deferred path lists in safeguard commit body. Commit only classification-approved import-ready paths:
   ```bash
   git -C D:/projetos/pi-finance-api switch -c safeguard/repository-consolidation
-  git -C D:/projetos/pi-finance-api add src/cards src/goals src/payables src/profile src/subscriptions src/read-models src/routes src/server src/types src/writes tests Dockerfile .dockerignore
+  awk -F '\t' '$2=="import-ready" {printf "%s%c", $1, 0}' "$BACKUP_ROOT/api-wip-classification.tsv" > "$BACKUP_ROOT/api-import-ready.nul"
+  git -C D:/projetos/pi-finance-api add --pathspec-from-file="$BACKUP_ROOT/api-import-ready.nul" --pathspec-file-nul
   git -C D:/projetos/pi-finance-api commit -m "chore: safeguard API consolidation WIP"
   ```
 - [ ] Expected: TSV covers all API changes; no `.env`, logs, `node_modules`, `dist`, or deferred source staged.
@@ -224,7 +226,7 @@
   git -C C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation fetch api-filtered
   git -C C:/Users/walis/.config/superpowers/worktrees/pi-financeiro/repository-consolidation merge --allow-unrelated-histories api-filtered/safeguard/repository-consolidation
   ```
-- [ ] Preserve filter-repo commit map outside Git. Rerun `gitleaks git --log-opts="--all"` and `gitleaks dir apps/api --no-git` with encrypted reports before next task.
+- [ ] Preserve filter-repo commit map outside Git. Run encrypted `gitleaks git --log-opts="--all"` and `gitleaks dir . --no-git` in filtered clone before merge, then rerun both in final integration tree after merge before next task.
 - [ ] Fallback only after review: `git subtree add --prefix=apps/api D:/projetos/pi-finance-api safeguard/repository-consolidation` without `--squash`, plus equivalent provenance manifest.
 - [ ] Expected: `apps/api` contains source history; no nested `.git`, `.env`, `node_modules`, `dist`, or logs.
 - [ ] Stop: commit map missing, secret scan fails, or imported tree has unapproved artifacts.
@@ -244,7 +246,7 @@
   pnpm --filter ./apps/api... typecheck
   pnpm --filter ./apps/api... build
   ```
-- [ ] Add TDD migration mode before Docker work: create `apps/api/src/server/index.test.ts` cases for `MIGRATIONS_MODE=disabled|verify-only|run`; run `pnpm --filter ./apps/api... test -- src/server/index.test.ts` RED, update `apps/api/src/server/index.ts` so only `run` invokes migrations, rerun GREEN. Add `apps/api/src/scripts/migrate.ts` as controlled-job entrypoint.
+- [ ] Add TDD migration mode and locking before Docker work: create `apps/api/src/server/index.test.ts` cases for `MIGRATIONS_MODE=disabled|verify-only|run` and `apps/api/src/scripts/migrate.test.ts` cases proving `pg_advisory_lock(82420260724)` is acquired/released once; run RED, update server so only `run` invokes migrations, add lock/timeout/ledger behavior to controlled `apps/api/src/scripts/migrate.ts`, then rerun GREEN.
 - [ ] Replace standalone Docker context with monorepo-compatible multi-stage Dockerfile: copy root workspace manifests plus `apps/api`, run `pnpm --filter ./apps/api... deploy --prod /app`, then copy `/app` into runtime image using chosen baseline Node/pnpm. Validate without secrets:
   ```bash
   docker build -f apps/api/Dockerfile -t pi-finance-api:consolidation .
@@ -334,6 +336,7 @@
 - [ ] Place `pi-financeiro-hotfix-test`, `pi-financeiro-main-deploy`, and `pi-financeiro-main-deploy-2` in dated quarantine after those checks.
 - [ ] Move `arquivados/pi-financeiro-e2e-baseline` into dated quarantine through Git, preserving recoverability:
   ```bash
+  mkdir -p D:/projetos/arquivados/quarantine
   git -C D:/projetos/pi-financeiro worktree move D:/projetos/arquivados/pi-financeiro-e2e-baseline D:/projetos/arquivados/quarantine/pi-financeiro-e2e-baseline-$RUN_ID
   ```
 - [ ] After 30 days, successful restore check, and explicit approval, remove it through `git worktree remove D:/projetos/arquivados/quarantine/pi-financeiro-e2e-baseline-$RUN_ID` then `git worktree prune`.
