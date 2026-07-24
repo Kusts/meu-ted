@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
@@ -52,7 +51,6 @@ interface Group {
 }
 
 export default function RecordsPage() {
-  const router = useRouter();
   const { transactions, categories, accounts, loading, error, writeError, clearWriteError, deleteTransaction } = useAppState();
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [actionOpen, setActionOpen] = useState(false);

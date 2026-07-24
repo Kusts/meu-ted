@@ -58,36 +58,6 @@ async function registerDevice(page: import("@playwright/test").Page): Promise<vo
   await page.waitForLoadState("networkidle");
 }
 
-async function getJournalEntries(
-  testId: string,
-): Promise<Array<{ method: string; path: string; status: number; body?: unknown }>> {
-  const response = await fetch(`${FIXTURE_URL}/__e2e/journal?testId=${testId}`, {
-    headers: { "x-e2e-test-id": testId },
-  });
-  if (!response.ok) return [];
-  return response.json();
-}
-
-async function setScenario(testId: string, scenario: Record<string, unknown>): Promise<void> {
-  const response = await fetch(`${FIXTURE_URL}/__e2e/scenario`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-e2e-test-id": testId },
-    body: JSON.stringify({ testId, ...scenario }),
-  });
-  expect(response.ok).toBe(true);
-}
-
-async function expectJournalEntry(
-  testId: string,
-  method: string,
-  path: string,
-  status: number,
-): Promise<void> {
-  await expect
-    .poll(async () => getJournalEntries(testId))
-    .toContainEqual(expect.objectContaining({ method, path, status }));
-}
-
 async function init(page: import("@playwright/test").Page, id: string) {
   const guard = createGuard();
   attachGuard(page, guard);

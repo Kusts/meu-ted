@@ -14,7 +14,6 @@
 
 import { test, expect } from "@playwright/test";
 import { createGuard, attachGuard, assertNoUndeclaredFailures, allowFailure } from "../support/failure-guard";
-import { FIXTURE_URL } from "../support/reset";
 
 const FIXED_CLOCK = "2026-07-17T12:00:00.000Z";
 const FIXTURE_PORT = 4010;

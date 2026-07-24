@@ -279,7 +279,7 @@ test("[TX-05] add category inline via create endpoint", async ({ page }) => {
   // Negative: blank name cancel — no POST /categories
   await dialog.getByRole("button", { name: "Cancelar" }).click();
   await expect(dialog.getByPlaceholder("Nome da categoria")).toHaveCount(0);
-  let journal = await getJournalEntries(id);
+  const journal = await getJournalEntries(id);
   expect(
     journal.filter((e) => e.method === "POST" && e.path === "/categories"),
   ).toHaveLength(0);
@@ -339,7 +339,7 @@ test("[TX-07] add account inline via create endpoint", async ({ page }) => {
   // Negative: blank cancel
   await dialog.getByRole("button", { name: "Cancelar" }).click();
   await expect(dialog.getByPlaceholder("Nome da conta")).toHaveCount(0);
-  let journal = await getJournalEntries(id);
+  const journal = await getJournalEntries(id);
   expect(
     journal.filter((e) => e.method === "POST" && e.path === "/accounts"),
   ).toHaveLength(0);
@@ -367,7 +367,7 @@ test("[TX-08] add card inline via create endpoint", async ({ page }) => {
   // Negative: blank cancel
   await dialog.getByRole("button", { name: "Cancelar" }).click();
   await expect(dialog.getByPlaceholder("Nome do cartão")).toHaveCount(0);
-  let journal = await getJournalEntries(id);
+  const journal = await getJournalEntries(id);
   expect(
     journal.filter((e) => e.method === "POST" && e.path === "/cards"),
   ).toHaveLength(0);
