@@ -65,9 +65,9 @@ pi-financeiro/
 - REQ-11 (event-driven): When applying `wt-group-filter`, the system shall apply its five-file patch on the updated base and run bridge tests.
 - REQ-12 (event-driven): When a Git-less copy has normalized source equality with retained history, the system shall create a manifest, verify archive restoration, quarantine it for 30 days, and require explicit approval before local deletion.
 - REQ-13 (unwanted): If any source file differs, provenance is uncertain, an active process uses it, or quarantine restoration fails, then the system shall retain that copy and request review.
-- REQ-14 (event-driven): When VPS cutover is approved, the system shall inspect approved host/service/image/database identity, create encrypted off-host PostgreSQL backup with checksum, restore it in isolation, validate schema/version/extensions/row counts/contracts, and record owner, RPO, and RTO.
+- REQ-14 (event-driven): When VPS cutover is approved, the system shall inspect approved host/service/image/database identity, create encrypted off-host PostgreSQL backup with checksum, restore it in isolation, validate schema/version/extensions/row counts/contracts, and record owner, RPO, and RTO; backups and secret-bearing files shall remain outside Git and shall never enter `apps/api`.
 - REQ-15 (state-driven): While migration recovery is unproven, the system shall not start an API container that auto-runs migrations against production.
-- REQ-16 (event-driven): When production migration is approved, one migration job shall run with advisory lock, ledger/checksum checks, timeouts, stop conditions, compatibility proof for the prior image, and a recorded exit result.
+- REQ-16 (event-driven): When production migration is approved, one migration job shall run with advisory lock, ledger/checksum checks, timeouts, stop conditions, compatibility proof for the prior image, and a recorded exit result; the production container shall then start with migrations disabled or verify-only.
 - REQ-17 (event-driven): When all validations and post-cutover observation pass, the system shall remove registered worktrees only through `git worktree remove` followed by `git worktree prune`.
 
 ## Integration Sequence
@@ -124,6 +124,6 @@ A directory is eligible for final deletion only when all conditions hold:
 ## Non-Goals
 
 - Moving PostgreSQL into the repository.
-- Changing the production API hostname or credentials.
+- Changing the production API hostname or credentials, except mandatory rotation after detected exposure.
 - Rewriting historical planning documents.
 - Deleting any repository before verification and explicit confirmation.
