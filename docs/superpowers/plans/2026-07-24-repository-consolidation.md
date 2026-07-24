@@ -223,6 +223,7 @@
 - [ ] Clone explicit safeguard branch to temporary external path; save pre-rewrite commit list/hash manifest.
 - [ ] Filter and merge history:
   ```bash
+  set -euo pipefail
   git clone --no-local --branch safeguard/repository-consolidation D:/projetos/pi-finance-api D:/secure-work/pi-finance-api-filtered
   cd D:/secure-work/pi-finance-api-filtered
   gitleaks git --log-opts="--all" --redact
@@ -293,7 +294,7 @@
 **Files:** none unless a test exposes a defect.
 
 - [ ] Run exact gates from integration worktree: `pnpm --filter ./apps/api... test`, `pnpm --filter ./apps/api... typecheck`, `pnpm --filter ./apps/api... build`, `pnpm --filter ./apps/pwa... test`, `pnpm --filter ./apps/whatsapp-bridge... test`, and `docker build -f apps/api/Dockerfile -t pi-finance-api:consolidation .`.
-- [ ] Before one controlled migration job, load `/run/secrets/pi-finance-restore.env`, set `DB_SCHEMA=legacy`, `MIGRATIONS_MODE=run`, and `PGOPTIONS='-c lock_timeout=5000 -c statement_timeout=60000'`; run `actual_addr=$(psql -Atc 'select inet_server_addr()::text'); actual_port=$(psql -Atc 'select inet_server_port()'); actual_database=$(psql -Atc 'select current_database()'); actual_schema=$(psql -Atc "select table_schema from information_schema.tables where table_name in ('accounts','transactions') group by table_schema having count(distinct table_name)=2"); test "$(printf '%s\n' "$actual_schema" | wc -l)" -eq 1; test "$actual_addr" = "$MIGRATION_EXPECTED_SERVER_ADDR"; test "$actual_port" = "$MIGRATION_EXPECTED_PORT"; test "$actual_database" = "$MIGRATION_EXPECTED_DATABASE"; test "$actual_schema" = "$MIGRATION_EXPECTED_SCHEMA"` before acquiring lock. Then run `pnpm --dir apps/api db:migrate`; record identity, advisory-lock key, ledger/checksum, compatibility, and exit status in `$BACKUP_ROOT/migration-rehearsal.md`.
+- [ ] Before one controlled migration job, load `/run/secrets/pi-finance-restore.env`, set `DB_SCHEMA=legacy`, `MIGRATIONS_MODE=run`, and `PGOPTIONS='-c lock_timeout=5000 -c statement_timeout=60000'`; run `set -euo pipefail; : "${MIGRATION_EXPECTED_SERVER_ADDR:?}" "${MIGRATION_EXPECTED_PORT:?}" "${MIGRATION_EXPECTED_DATABASE:?}" "${MIGRATION_EXPECTED_SCHEMA:?}"; actual_addr=$(psql -Atc 'select inet_server_addr()::text'); actual_port=$(psql -Atc 'select inet_server_port()'); actual_database=$(psql -Atc 'select current_database()'); actual_schema=$(psql -Atc "select table_schema from information_schema.tables where table_name in ('accounts','transactions') group by table_schema having count(distinct table_name)=2"); test "$(printf '%s\n' "$actual_schema" | wc -l)" -eq 1; test "$actual_addr" = "$MIGRATION_EXPECTED_SERVER_ADDR"; test "$actual_port" = "$MIGRATION_EXPECTED_PORT"; test "$actual_database" = "$MIGRATION_EXPECTED_DATABASE"; test "$actual_schema" = "$MIGRATION_EXPECTED_SCHEMA"` before acquiring lock. Then run `pnpm --dir apps/api db:migrate`; record identity, advisory-lock key, ledger/checksum, compatibility, and exit status in `$BACKUP_ROOT/migration-rehearsal.md`.
 - [ ] Run PWA E2E with `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts` and API authenticated smoke against restored non-production legacy schema.
 - [ ] Expected: all commands exit 0; migration ledger/checksum and prior-image compatibility pass.
 - [ ] Stop: any failed gate.
