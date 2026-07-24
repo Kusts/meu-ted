@@ -1813,10 +1813,11 @@ describe("AppStateProvider — every write action (coverage-core)", () => {
     expect(result.current.profile).not.toBeNull();
   });
 
-  it("rolls back and records writeError when commands reject", async () => {
+  it("rolls back and records writeError when addAccount rejects", async () => {
     apiReady();
     seedApiData();
-    const cmds = buildCommandsMock(true);
+    const cmds = buildCommandsMock(false);
+    cmds.addAccount.mockRejectedValue(new Error("cmd-fail"));
     vi.spyOn(commandsModule, "createCommands").mockReturnValue(cmds as unknown as Commands);
     const { result } = renderHook(() => useAppState(), { wrapper: AppStateProvider });
     await waitFor(() => expect(result.current.loading).toBe(false));
