@@ -717,8 +717,8 @@ describe("AppStateProvider — API write path", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     const prevCount = result.current.transactions.length;
 
-    await expect(
-      act(() =>
+    await act(async () => {
+      await expect(
         result.current.addTransaction({
           id: "tx-offline",
           description: "Offline expense",
@@ -728,11 +728,8 @@ describe("AppStateProvider — API write path", () => {
           categoryId: "cat1",
           accountId: "acc1",
         }),
-      ),
-    ).rejects.toThrow("Offline");
-
-    // Force React to flush pending state updates from the rejected act()
-    await act(() => {});
+      ).rejects.toThrow("Offline");
+    });
 
     // Transaction was rolled back (removed after API failure)
     expect(result.current.transactions).toHaveLength(prevCount);
@@ -1478,8 +1475,8 @@ describe("AppStateProvider — runtime 401", () => {
     );
     const { result } = renderHook(() => useAppState(), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
-    await expect(
-      act(() =>
+    await act(async () => {
+      await expect(
         result.current.addTransaction({
           id: "tx-401",
           description: "x",
@@ -1489,8 +1486,8 @@ describe("AppStateProvider — runtime 401", () => {
           categoryId: "cat1",
           accountId: "acc1",
         }),
-      ),
-    ).rejects.toThrow("Token inválido");
+      ).rejects.toThrow("Token inválido");
+    });
     expect(expireSession).toHaveBeenCalled();
     expect(result.current.writeError).toBeNull();
   });
