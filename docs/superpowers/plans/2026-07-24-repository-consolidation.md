@@ -37,7 +37,7 @@
 
 ## Task 2: Secret gate
 
-**Files:** Read API refs/objects/WIP; create encrypted external reports only.
+**Files:** Read every dirty canonical/API/remediation/group-filter workspace, safeguard branch, filtered clone, and final integration tree; create encrypted external reports only.
 
 - [ ] Install or verify external tools before writing artifacts:
   ```bash
@@ -45,15 +45,17 @@
   command -v gitleaks; command -v age; command -v python3
   gitleaks version
   ```
-- [ ] Scan all API refs, tags, objects, ignored/untracked files, including `.env`, without printing values; encrypt reports immediately and remove plaintext:
+- [ ] Scan each approved dirty workspace, its refs/tags/objects/ignored/untracked files including `.env`, then scan each generated patch, safeguard branch, filtered clone, and final integration tree before it can advance; encrypt reports immediately and remove plaintext:
   ```bash
   set -euo pipefail
-  cd D:/projetos/pi-finance-api
-  gitleaks git --log-opts="--all" --redact --report-path "$BACKUP_ROOT/api-history.json"
-  gitleaks dir . --redact --no-git --report-path "$BACKUP_ROOT/api-worktree.json"
-  tar -C "$BACKUP_ROOT" -czf "$BACKUP_ROOT/api-secret-scan.tar.gz" api-history.json api-worktree.json
-  age -r "$BACKUP_AGE_RECIPIENT" -o "$BACKUP_ROOT/api-secret-scan.age" "$BACKUP_ROOT/api-secret-scan.tar.gz"
-  rm "$BACKUP_ROOT/api-history.json" "$BACKUP_ROOT/api-worktree.json" "$BACKUP_ROOT/api-secret-scan.tar.gz"
+  for repo in D:/projetos/pi-financeiro D:/projetos/pi-finance-api D:/projetos/pi-financeiro-pwa-remediation D:/projetos/pi-financeiro-wt-group-filter; do
+    name=$(basename "$repo")
+    gitleaks git -s "$repo" --log-opts="--all" --redact --report-path "$BACKUP_ROOT/$name-history.json"
+    gitleaks dir "$repo" --redact --no-git --report-path "$BACKUP_ROOT/$name-worktree.json"
+  done
+  tar -C "$BACKUP_ROOT" -czf "$BACKUP_ROOT/secret-scans.tar.gz" *-history.json *-worktree.json
+  age -r "$BACKUP_AGE_RECIPIENT" -o "$BACKUP_ROOT/secret-scans.age" "$BACKUP_ROOT/secret-scans.tar.gz"
+  rm "$BACKUP_ROOT"/*-history.json "$BACKUP_ROOT"/*-worktree.json "$BACKUP_ROOT/secret-scans.tar.gz"
   ```
 - [ ] Expected: zero unapproved findings; only encrypted reports persist.
 - [ ] Stop: any credential, private key, database URL, token, or secret in history/WIP.
@@ -94,7 +96,8 @@
   ```bash
   docker ps --format '{{.Names}} {{.Image}} {{.Status}}'
   docker inspect pi-finance-api --format '{{.Image}} {{.Config.Image}}'
-  psql "$DATABASE_URL" -Atc 'show server_version; select current_database();'
+  export PGSERVICE=pi_finance_production PGSERVICEFILE=/run/secrets/pg_service.conf
+  psql -Atc 'show server_version; select current_database(); show search_path;'
   ```
 - [ ] Expected: inventory identifies `/home/deploy/infra/pi-finance-api`, `pi-finance-api`, database target, and prior deploy revision.
 - [ ] Stop: target differs from approved Hostinger topology or database identity is ambiguous.
@@ -123,12 +126,13 @@
   createdb pi_finance_restore
   pg_restore --dbname pi_finance_restore --clean --if-exists "$out/postgres.dump"
   export PGSERVICE=pi_finance_production
-  psql -Atc "set search_path to public; select 'accounts',count(*) from accounts union all select 'transactions',count(*) from transactions" > "$out/source-counts.tsv"
+  export TARGET_SCHEMA=$(psql -Atc 'show search_path' | cut -d, -f1 | tr -d ' ')
+  psql -Atc "set search_path to \"$TARGET_SCHEMA\"; select 'accounts',count(*) from accounts union all select 'transactions',count(*) from transactions" > "$out/source-counts.tsv"
   export PGSERVICE=pi_finance_restore
-  psql -Atc "set search_path to public; select 'accounts',count(*) from accounts union all select 'transactions',count(*) from transactions" > "$out/restore-counts.tsv"
+  psql -Atc "set search_path to \"$TARGET_SCHEMA\"; select 'accounts',count(*) from accounts union all select 'transactions',count(*) from transactions" > "$out/restore-counts.tsv"
   diff -u "$out/source-counts.tsv" "$out/restore-counts.tsv"
   ```
-- [ ] Verify restored schema/extensions and run API contracts with `DB_SCHEMA=legacy`. Write and rehearse `$BACKUP_ROOT/database-recovery-runbook.md` covering PITR trigger, operator, RPO/RTO, restore point, validation, and exit criteria before cutover.
+- [ ] Verify restored schema/extensions and run API contracts with `DB_SCHEMA=legacy`. Treat this logical dump as logical-restore recovery only; write `$BACKUP_ROOT/database-recovery-runbook.md` with its measured RPO/RTO. Before cutover, separately prove base-backup/WAL PITR or explicitly forbid PITR as an available rollback method.
 - [ ] Expected: restore succeeds; contract suite passes; recovery time meets recorded RTO.
 - [ ] Stop: failed restore, incompatible extension, failed contract, or missing off-host copy.
 - [ ] Rollback: discard isolated restore only; production remains untouched.
@@ -281,7 +285,8 @@
 **Files:** none unless a test exposes a defect.
 
 - [ ] Run exact gates from integration worktree: `pnpm --filter ./apps/api... test`, `pnpm --filter ./apps/api... typecheck`, `pnpm --filter ./apps/api... build`, `pnpm --filter ./apps/pwa... test`, `pnpm --filter ./apps/pwa... e2e`, `pnpm --filter ./apps/whatsapp-bridge... test`, and `docker build -f apps/api/Dockerfile -t pi-finance-api:consolidation .`.
-- [ ] Run PWA E2E and API authenticated smoke against restored non-production legacy schema.
+- [ ] Run one controlled migration job against Task 5 restored copy before production: `PGSERVICE=pi_finance_restore PGOPTIONS='-c lock_timeout=5000 -c statement_timeout=60000' MIGRATIONS_MODE=run pnpm --dir apps/api db:migrate`; record advisory-lock key, ledger/checksum, compatibility result, and exit status in `$BACKUP_ROOT/migration-rehearsal.md`.
+- [ ] Run PWA E2E with `pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts` and API authenticated smoke against restored non-production legacy schema.
 - [ ] Expected: all commands exit 0; migration ledger/checksum and prior-image compatibility pass.
 - [ ] Stop: any failed gate.
 - [ ] Rollback: no deploy; revert offending integration commit.
