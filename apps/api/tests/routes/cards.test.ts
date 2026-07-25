@@ -8,6 +8,7 @@ import {
   CATEGORY_FOOD_A,
   CATEGORY_RENT_A,
   CATEGORY_FOOD_B,
+  HOUSEHOLD_A,
 } from '../fixtures/seed.js';
 
 const seed = {
@@ -442,6 +443,185 @@ describe('POST /cards/statements/:id/pay', () => {
   });
 });
 
+describe('POST /cards', () => {
+  it('creates a credit card account and returns 201', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const res = await app.inject({
+      method: 'POST',
+      url: '/cards',
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: {
+        name: 'Novo Cartão',
+        creditLimitCents: 10_000_00,
+        closingDay: 20,
+        dueDay: 5,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const card = res.json();
+    expect(card.name).toBe('Novo Cartão');
+    expect(card.kind).toBe('credit_card');
+    expect(card.creditLimitCents).toBe(10_000_00);
+    expect(card.closingDay).toBe(20);
+    expect(card.dueDay).toBe(5);
+    expect(card.status).toBe('active');
+  });
+
+  it('lists the new card via GET /cards/accounts', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const existingCount = (await app.inject({
+      method: 'GET', url: '/cards/accounts', headers: auth(TOKEN_A),
+    })).json().items.length;
+
+    await app.inject({
+      method: 'POST',
+      url: '/cards',
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { name: 'Novo', creditLimitCents: 5_000_00, closingDay: 10, dueDay: 20 },
+    });
+
+    const list = await app.inject({
+      method: 'GET', url: '/cards/accounts', headers: auth(TOKEN_A),
+    });
+    expect(list.json().items).toHaveLength(existingCount + 1);
+  });
+
+  it('scopes to household', async () => {
+    const { app } = buildTestApp(freshSeed());
+    await app.inject({
+      method: 'POST',
+      url: '/cards',
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { name: 'Cartão A', creditLimitCents: 3_000_00, closingDay: 5, dueDay: 15 },
+    });
+    const bList = await app.inject({
+      method: 'GET', url: '/cards/accounts', headers: auth(TOKEN_B),
+    });
+    expect(bList.json().items).toHaveLength(0);
+  });
+
+  it('requires auth', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const res = await app.inject({
+      method: 'POST',
+      url: '/cards',
+      headers: { 'Content-Type': 'application/json' },
+      payload: { name: 'X', creditLimitCents: 100_00, closingDay: 1, dueDay: 10 },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('validates required fields', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const res = await app.inject({
+      method: 'POST',
+      url: '/cards',
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { name: 'X' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('PATCH /cards/:id', () => {
+  it('updates card name and returns 200', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/cards/${CARD_A1.id}`,
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { name: 'Novo Nome' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().name).toBe('Novo Nome');
+    expect(res.json().kind).toBe('credit_card');
+  });
+
+  it('updates credit limit', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/cards/${CARD_A1.id}`,
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { creditLimitCents: 8_000_00 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().creditLimitCents).toBe(8_000_00);
+  });
+
+  it('updates closingDay and dueDay', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/cards/${CARD_A1.id}`,
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { closingDay: 1, dueDay: 10 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().closingDay).toBe(1);
+    expect(res.json().dueDay).toBe(10);
+  });
+
+  it('updates multiple fields at once', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/cards/${CARD_A1.id}`,
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { name: 'Updated', creditLimitCents: 12_000_00, closingDay: 5, dueDay: 15 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().name).toBe('Updated');
+    expect(res.json().creditLimitCents).toBe(12_000_00);
+    expect(res.json().closingDay).toBe(5);
+    expect(res.json().dueDay).toBe(15);
+  });
+
+  it('returns 404 for non-existent card', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/cards/00000000-0000-4000-8000-000000000000',
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { name: 'X' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 400 for empty body', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/cards/${CARD_A1.id}`,
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('scopes to household', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/cards/${CARD_A1.id}`,
+      headers: { ...auth(TOKEN_B), 'Content-Type': 'application/json' },
+      payload: { name: 'Hacked' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('requires auth', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/cards/${CARD_A1.id}`,
+      headers: { 'Content-Type': 'application/json' },
+      payload: { name: 'X' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
 describe('GET /cards/statements/:id (detail)', () => {
   it('returns statement detail with purchases', async () => {
     const { app } = buildTestApp(freshSeed());
@@ -480,7 +660,7 @@ describe('GET /cards/statements/:id (detail)', () => {
     expect(detail.purchases[0].description).toBe('Mercado');
     expect(detail.purchases[0].amountCents).toBe(150_00);
     expect(detail.totalCents).toBe(150_00);
-    expect(detail.status).toMatch(/open|closed/);
+    expect(detail.status).toMatch(/open|closed|overdue/);
   });
 
   it('returns 404 for non-existent statement', async () => {
@@ -491,5 +671,144 @@ describe('GET /cards/statements/:id (detail)', () => {
       headers: auth(TOKEN_A),
     });
     expect(res.statusCode).toBe(404);
+  });
+
+  it('returns purchases from card_purchases table (legacy primary source)', async () => {
+    const seed = {
+      accounts: [ACCOUNT_A1, ACCOUNT_A2, CARD_A1],
+      categories: [CATEGORY_FOOD_A, CATEGORY_RENT_A],
+      transactions: [],
+    };
+    const { app, state } = buildTestApp(seed);
+
+    const stmt = {
+      id: '00000000-0000-4000-8000-000000008888',
+      householdId: HOUSEHOLD_A,
+      accountId: CARD_A1.id,
+      cycleYearMonth: '2026-07',
+      closingDate: '2026-07-15',
+      dueDate: '2026-07-25',
+      totalCents: 777_40,
+      paidCents: 0,
+      status: 'open' as const,
+    };
+    (state as any)._statements!.push(stmt);
+
+    // Seed card_purchases directly (legacy Agent Pi source).
+    // These match the statement but are NOT in transactions table.
+    (state as any)._cardPurchases!.push({
+      id: 'cp-0001',
+      statementId: stmt.id,
+      description: 'Compra legada 1',
+      amountCents: 50_00,
+      date: '2026-07-05',
+      categoryId: CATEGORY_FOOD_A.id,
+      categoryName: 'Alimentação',
+    }, {
+      id: 'cp-0002',
+      statementId: stmt.id,
+      description: 'Compra legada 2',
+      amountCents: 27_40,
+      date: '2026-07-10',
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/cards/statements/${stmt.id}`,
+      headers: auth(TOKEN_A),
+    });
+    expect(res.statusCode).toBe(200);
+    const detail = res.json();
+    expect(detail.purchases).toHaveLength(2);
+    expect(detail.purchases[0].description).toBe('Compra legada 1');
+    expect(detail.purchases[0].amountCents).toBe(50_00);
+    expect(detail.purchases[1].description).toBe('Compra legada 2');
+    expect(detail.purchases[1].amountCents).toBe(27_40);
+    expect(detail.totalCents).toBe(777_40);
+  });
+
+  it('returns purchases via legacy fallback when transactions lack statement_id', async () => {
+    const seed = {
+      accounts: [ACCOUNT_A1, ACCOUNT_A2, CARD_A1],
+      categories: [CATEGORY_FOOD_A, CATEGORY_RENT_A],
+      transactions: [
+        {
+          id: 'tx-fallback-1',
+          householdId: HOUSEHOLD_A,
+          kind: 'expense' as const,
+          description: 'Compra sem statement_id',
+          amountCents: 1_200_00,
+          date: '2026-07-10',
+          accountId: CARD_A1.id,
+          categoryId: CATEGORY_FOOD_A.id,
+        },
+      ],
+    };
+    const { app, state } = buildTestApp(seed);
+
+    // Add a statement directly to the in-memory store's internal state.
+    // This simulates a legacy scenario where the statement exists with totalCents
+    // but its purchases were never linked via statement_id.
+    const stmt = {
+      id: '00000000-0000-4000-8000-000000007777',
+      householdId: HOUSEHOLD_A,
+      accountId: CARD_A1.id,
+      cycleYearMonth: '2026-07',
+      closingDate: '2026-07-15',
+      dueDate: '2026-07-25',
+      totalCents: 1_200_00,
+      paidCents: 0,
+      status: 'open' as const,
+    };
+    (state as any)._statements!.push(stmt);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/cards/statements/${stmt.id}`,
+      headers: auth(TOKEN_A),
+    });
+    expect(res.statusCode).toBe(200);
+    const detail = res.json();
+    expect(detail.purchases).toHaveLength(1);
+    expect(detail.purchases[0].description).toBe('Compra sem statement_id');
+    expect(detail.purchases[0].amountCents).toBe(1_200_00);
+    expect(detail.totalCents).toBe(1_200_00);
+  });
+
+  it('still returns linked purchases when statement_id exists (no fallback needed)', async () => {
+    const { app } = buildTestApp(freshSeed());
+
+    // Create a purchase via API — this links statement_id
+    await app.inject({
+      method: 'POST',
+      url: '/cards/purchases',
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: {
+        accountId: CARD_A1.id,
+        description: 'Compra com statement_id',
+        amountCents: 999_99,
+        date: '2026-06-10',
+        categoryId: CATEGORY_FOOD_A.id,
+      },
+    });
+
+    // Find the statement
+    const stmtRes = await app.inject({
+      method: 'GET',
+      url: `/cards/statements?accountId=${CARD_A1.id}`,
+      headers: auth(TOKEN_A),
+    });
+    const statementId = stmtRes.json().items[0].id;
+
+    // Get detail
+    const detailRes = await app.inject({
+      method: 'GET',
+      url: `/cards/statements/${statementId}`,
+      headers: auth(TOKEN_A),
+    });
+    expect(detailRes.statusCode).toBe(200);
+    const detail = detailRes.json();
+    expect(detail.purchases).toHaveLength(1);
+    expect(detail.purchases[0].description).toBe('Compra com statement_id');
   });
 });

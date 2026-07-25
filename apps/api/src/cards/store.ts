@@ -58,4 +58,28 @@ export type CardStore = {
     amountCents: number;
     fromAccountId: string;
   }): Promise<Statement>;
+
+  /** Create a credit card account. */
+  createCard(householdId: string, input: {
+    name: string;
+    creditLimitCents: number;
+    closingDay: number;
+    dueDay: number;
+  }): Promise<Account>;
+
+  /** Update a credit card account (name, limit, closingDay, dueDay). */
+  updateCard(householdId: string, id: string, input: {
+    name?: string;
+    creditLimitCents?: number;
+    closingDay?: number;
+    dueDay?: number;
+  }): Promise<Account>;
+
+  /** Update a purchase on a statement. Returns updated statement detail. */
+  updatePurchase(householdId: string, purchaseId: string, input: {
+    description?: string;
+    amountCents?: number;
+    date?: string;
+    categoryId?: string;
+  }): Promise<StatementDetail>;
 };

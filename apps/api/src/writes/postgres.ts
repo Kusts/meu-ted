@@ -37,13 +37,18 @@ const mapAccount = (r: Row): Account => ({
   status: r['status'] as Account['status'],
 });
 
-const mapCategory = (r: Row): Category => ({
-  id: r['id'] as string,
-  householdId: r['household_id'] as string,
-  name: r['name'] as string,
-  kind: r['kind'] as Category['kind'],
-  status: r['status'] as Category['status'],
-});
+const mapCategory = (r: Row): Category => {
+  const parentId = r['parent_id'] as string | null | undefined;
+  const base: Category = {
+    id: r['id'] as string,
+    householdId: r['household_id'] as string,
+    name: r['name'] as string,
+    kind: r['kind'] as Category['kind'],
+    status: r['status'] as Category['status'],
+  };
+  if (parentId) base.parentId = parentId;
+  return base;
+};
 
 const mapTransaction = (r: Row): Transaction => {
   const base: Transaction = {
@@ -166,11 +171,19 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
 
     async createCategory(householdId, input) {
       return withTransaction(pool, async (client) => {
+        if (input.parentId) {
+          const parent = await findCategoryInHousehold(client, input.parentId, householdId);
+          if (parent.status !== 'active') throw domainErrors.notFound('Categoria pai');
+          if (parent.parentId) throw domainErrors.invalid('parentId', 'subcategoria não pode ter subcategoria');
+          if (parent.kind !== input.kind) {
+            throw domainErrors.invalid('parentId', 'categoria pai deve ter o mesmo kind');
+          }
+        }
         const res = await client.query<Row>(
-          `INSERT INTO categories (id, household_id, name, kind, status)
-           VALUES (gen_random_uuid(), $1, $2, $3, 'active')
-           RETURNING id, household_id, name, kind, status`,
-          [householdId, input.name, input.kind],
+          `INSERT INTO categories (id, household_id, name, kind, status, parent_id)
+           VALUES (gen_random_uuid(), $1, $2, $3, 'active', $4)
+           RETURNING id, household_id, name, kind, status, parent_id`,
+          [householdId, input.name, input.kind, input.parentId ?? null],
         );
         return mapCategory(res.rows[0]!);
       });

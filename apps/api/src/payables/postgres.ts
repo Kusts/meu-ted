@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import type { Payable, PayableTemplate, NotificationConfig } from '../types/domain.js';
 import type { PayableStore } from './store.js';
-import { domainErrors } from '../writes/errors.js';
+import { DomainError, domainErrors } from '../writes/errors.js';
 
 type Row = Record<string, unknown>;
 
@@ -98,13 +98,17 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
         }
       }
 
+      let paidTxId: string | null = null;
       if (input.createTransaction !== false) {
-        const txId = randomUUID();
+        paidTxId = randomUUID();
         await query(
           `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id)
            VALUES ($1,$2,'expense',$3,$4,$5,$6,$7)`,
-          [txId, householdId, p.description, p.amountCents, paidDate, p.accountId, p.categoryId ?? null],
+          [paidTxId, householdId, p.description, p.amountCents, paidDate, p.accountId, p.categoryId ?? null],
         );
+      }
+      if (paidTxId) {
+        await query(`UPDATE accounts_payable SET paid_transaction_id = $1 WHERE id = $2`, [paidTxId, payableId]);
       }
 
       const rows = await query<Row>(`SELECT * FROM accounts_payable WHERE id = $1`, [payableId]);
@@ -115,6 +119,43 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
       const existing = await query<Row>(`SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [payableId, householdId]);
       if (existing.length === 0) throw domainErrors.notFound('Conta a pagar');
       await query(`UPDATE accounts_payable SET status = 'cancelled', updated_at = NOW() WHERE id = $1`, [payableId]);
+      const rows = await query<Row>(`SELECT * FROM accounts_payable WHERE id = $1`, [payableId]);
+      return mapPayable(rows[0]!);
+    },
+
+    async updatePayable(householdId, payableId, input) {
+      const existing = await query<Row>(`SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [payableId, householdId]);
+      if (existing.length === 0) throw domainErrors.notFound('Conta a pagar');
+      if (existing[0]!.status === 'cancelled') throw new DomainError('validation.invalid', 'Conta cancelada não pode ser editada', 409);
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      let idx = 1;
+      if (input.description !== undefined) { sets.push(`description = $${idx++}`); params.push(input.description); }
+      if (input.amountCents !== undefined) { sets.push(`amount_cents = $${idx++}`); params.push(input.amountCents); }
+      if (input.dueDate !== undefined) { sets.push(`due_date = $${idx++}`); params.push(input.dueDate); }
+      if (input.accountId !== undefined) { sets.push(`account_id = $${idx++}`); params.push(input.accountId); }
+      if (input.categoryId !== undefined) { sets.push(`category_id = $${idx++}`); params.push(input.categoryId); }
+      if (sets.length === 0) return mapPayable(existing[0]!);
+      sets.push(`updated_at = NOW()`);
+      params.push(payableId);
+      await query(`UPDATE accounts_payable SET ${sets.join(', ')} WHERE id = $${idx}`, params);
+      const rows = await query<Row>(`SELECT * FROM accounts_payable WHERE id = $1`, [payableId]);
+      return mapPayable(rows[0]!);
+    },
+
+    async undoPayablePayment(householdId, payableId) {
+      const existing = await query<Row>(`SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [payableId, householdId]);
+      if (existing.length === 0) throw domainErrors.notFound('Conta a pagar');
+      if (existing[0]!.status !== 'paid') throw new DomainError('validation.invalid', 'Apenas contas pagas podem ter pagamento desfeito', 409);
+      const p = mapPayable(existing[0]!);
+      const newStatus = todayISO() <= p.dueDate ? 'pending' : 'overdue';
+      await query(
+        `UPDATE accounts_payable SET status = $1, paid_date = NULL, paid_amount_cents = NULL, paid_transaction_id = NULL, updated_at = NOW() WHERE id = $2`,
+        [newStatus, payableId],
+      );
+      if (p.paidTransactionId) {
+        await query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1`, [p.paidTransactionId]);
+      }
       const rows = await query<Row>(`SELECT * FROM accounts_payable WHERE id = $1`, [payableId]);
       return mapPayable(rows[0]!);
     },

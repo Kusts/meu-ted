@@ -169,6 +169,38 @@ export const registerPayableRoutes = (
     } catch (e) { return handleError(e, reply); }
   });
 
+  // POST /payables/:id/unpay — undo payment
+  app.post('/payables/:id/unpay', async (req, reply) => {
+    let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
+    try {
+      const p = await opts.payableStore.undoPayablePayment(ctx.householdId, params.data.id);
+      return reply.code(200).send(p);
+    } catch (e) { return handleError(e, reply); }
+  });
+
+  // PATCH /payables/:id — update editable fields
+  const updateSchema = z.object({
+    description: z.string().trim().min(1).max(120).optional(),
+    amountCents: z.number().int().positive().optional(),
+    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    accountId: z.string().uuid().optional(),
+    categoryId: z.string().uuid().optional(),
+  });
+
+  app.patch('/payables/:id', async (req, reply) => {
+    let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
+    const parsed = updateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    try {
+      const p = await opts.payableStore.updatePayable(ctx.householdId, params.data.id, parsed.data);
+      return reply.code(200).send(p);
+    } catch (e) { return handleError(e, reply); }
+  });
+
   // POST /payables/:id/cancel
   app.post('/payables/:id/cancel', async (req, reply) => {
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }

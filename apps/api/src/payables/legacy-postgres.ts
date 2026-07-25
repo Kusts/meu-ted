@@ -14,7 +14,7 @@ import type { Pool } from 'pg';
 import type { Payable, RecurringFrequency } from '../types/domain.js';
 import type { PayableStore } from './store.js';
 import { createPostgresPayableStore } from './postgres.js';
-import { domainErrors } from '../writes/errors.js';
+import { DomainError, domainErrors } from '../writes/errors.js';
 
 type Row = Record<string, unknown>;
 
@@ -60,6 +60,63 @@ export const createLegacyPostgresPayableStore = (pool: Pool): PayableStore => {
 
   return {
     ...base,
+    async updatePayable(householdId, payableId, input) {
+      const existing = await query<Row>(`SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [payableId, householdId]);
+      if (existing.length === 0) throw domainErrors.notFound('Conta a pagar');
+      if (existing[0]!.status === 'cancelled') throw new DomainError('validation.invalid', 'Conta cancelada não pode ser editada', 409);
+
+      // Build update sets for accounts_payable
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      let idx = 1;
+      if (input.description !== undefined) { sets.push(`description = $${idx++}`); params.push(input.description); }
+      if (input.amountCents !== undefined) { sets.push(`amount_cents = $${idx++}`); params.push(input.amountCents); }
+      if (input.dueDate !== undefined) { sets.push(`due_date = $${idx++}`); params.push(input.dueDate); }
+      if (input.accountId !== undefined) { sets.push(`account_id = $${idx++}`); params.push(input.accountId); }
+      if (input.categoryId !== undefined) { sets.push(`category_id = $${idx++}`); params.push(input.categoryId); }
+
+      // If status is paid and there's a linked transaction, sync it
+      const paidTxId = existing[0]!.paid_transaction_id as string | null;
+      if (paidTxId && (input.description !== undefined || input.amountCents !== undefined || input.accountId !== undefined || input.categoryId !== undefined)) {
+        const txSets: string[] = [];
+        const txParams: unknown[] = [];
+        let txIdx = 1;
+        if (input.description !== undefined) { txSets.push(`description = $${txIdx++}`); txParams.push(input.description); }
+        if (input.amountCents !== undefined) { txSets.push(`amount_cents = $${txIdx++}`); txParams.push(input.amountCents); }
+        if (input.accountId !== undefined) { txSets.push(`from_account_id = $${txIdx++}`); txParams.push(input.accountId); }
+        if (input.categoryId !== undefined) { txSets.push(`category_id = $${txIdx++}`); txParams.push(input.categoryId); }
+        txParams.push(paidTxId);
+        await query(`UPDATE transactions SET ${txSets.join(', ')} WHERE id = $${txIdx}`, txParams);
+      }
+
+      if (sets.length > 0) {
+        sets.push(`updated_at = NOW()`);
+        params.push(payableId);
+        await query(`UPDATE accounts_payable SET ${sets.join(', ')} WHERE id = $${idx}`, params);
+      }
+
+      const rows = await query<Row>(`SELECT * FROM accounts_payable WHERE id = $1`, [payableId]);
+      return mapPayable(rows[0]!);
+    },
+
+    async undoPayablePayment(householdId, payableId) {
+      const existing = await query<Row>(`SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [payableId, householdId]);
+      if (existing.length === 0) throw domainErrors.notFound('Conta a pagar');
+      if (existing[0]!.status !== 'paid') throw new DomainError('validation.invalid', 'Apenas contas pagas podem ter pagamento desfeito', 409);
+      const paidTxId = existing[0]!.paid_transaction_id as string | null;
+      const dueDate = (existing[0]!.due_date as Date).toISOString().slice(0, 10);
+      const newStatus = todayISO() <= dueDate ? 'pending' : 'overdue';
+      await query(
+        `UPDATE accounts_payable SET status = $1, paid_date = NULL, paid_transaction_id = NULL, updated_at = NOW() WHERE id = $2`,
+        [newStatus, payableId],
+      );
+      if (paidTxId) {
+        await query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1`, [paidTxId]);
+      }
+      const rows = await query<Row>(`SELECT * FROM accounts_payable WHERE id = $1`, [payableId]);
+      return mapPayable(rows[0]!);
+    },
+
     async markPayablePaid(householdId, payableId, input) {
       const existing = await query<Row>(`SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [payableId, householdId]);
       if (existing.length === 0) throw domainErrors.notFound('Conta a pagar');

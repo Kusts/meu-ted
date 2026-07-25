@@ -24,13 +24,18 @@ const mapAccount = (r: Row): Account => ({
   status: r['status'] as Account['status'],
 });
 
-const mapCategory = (r: Row): Category => ({
-  id: r['id'] as string,
-  householdId: r['household_id'] as string,
-  name: r['name'] as string,
-  kind: r['kind'] as Category['kind'],
-  status: r['status'] as Category['status'],
-});
+const mapCategory = (r: Row): Category => {
+  const parentId = r['parent_id'] as string | null | undefined;
+  const base: Category = {
+    id: r['id'] as string,
+    householdId: r['household_id'] as string,
+    name: r['name'] as string,
+    kind: r['kind'] as Category['kind'],
+    status: r['status'] as Category['status'],
+  };
+  if (parentId) base.parentId = parentId;
+  return base;
+};
 
 const mapTransaction = (r: Row): Transaction => {
   const base: Transaction = {
@@ -77,7 +82,7 @@ export const createPostgresReadModelStore = (opts: { pool: Pool }): ReadModelSto
 
     async listCategories(householdId) {
       const rows = await query<Row>(
-        `SELECT id, household_id, name, kind, status
+        `SELECT id, household_id, name, kind, status, parent_id
            FROM categories
           WHERE household_id = $1
             AND status = 'active'

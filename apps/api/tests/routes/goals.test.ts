@@ -63,3 +63,52 @@ describe('POST /goals/:id/cancel', () => {
     expect(res.json().status).toBe('cancelled');
   });
 });
+
+describe('PATCH /goals/:id', () => {
+  it('updates name and targetAmountCents', async () => {
+    const { app } = buildTestApp(seed);
+    const create = await app.inject({ method: 'POST', url: '/goals', headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' }, payload: { name: 'Viagem', goalType: 'savings', targetAmountCents: 10_000_00, startDate: '2026-06-01' } });
+    const id = create.json().id;
+
+    const res = await app.inject({ method: 'PATCH', url: `/goals/${id}`, headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' }, payload: { name: 'Viagem Europa', targetAmountCents: 15_000_00 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().name).toBe('Viagem Europa');
+    expect(res.json().targetAmountCents).toBe(15_000_00);
+  });
+
+  it('updates just name', async () => {
+    const { app } = buildTestApp(seed);
+    const create = await app.inject({ method: 'POST', url: '/goals', headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' }, payload: { name: 'Original', goalType: 'savings', targetAmountCents: 5_000_00, startDate: '2026-06-01' } });
+    const id = create.json().id;
+
+    const res = await app.inject({ method: 'PATCH', url: `/goals/${id}`, headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' }, payload: { name: 'Renomeado' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().name).toBe('Renomeado');
+    expect(res.json().targetAmountCents).toBe(5_000_00);
+  });
+
+  it('updates just targetAmountCents', async () => {
+    const { app } = buildTestApp(seed);
+    const create = await app.inject({ method: 'POST', url: '/goals', headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' }, payload: { name: 'Reserva', goalType: 'emergency_fund', targetAmountCents: 3_000_00, startDate: '2026-06-01' } });
+    const id = create.json().id;
+
+    const res = await app.inject({ method: 'PATCH', url: `/goals/${id}`, headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' }, payload: { targetAmountCents: 6_000_00 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().targetAmountCents).toBe(6_000_00);
+    expect(res.json().name).toBe('Reserva');
+  });
+
+  it('returns 404 for non-existent goal', async () => {
+    const { app } = buildTestApp(seed);
+    const res = await app.inject({ method: 'PATCH', url: '/goals/00000000-0000-4000-8000-000000000000', headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' }, payload: { name: 'X' } });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('validates at least one field', async () => {
+    const { app } = buildTestApp(seed);
+    const create = await app.inject({ method: 'POST', url: '/goals', headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' }, payload: { name: 'G', goalType: 'purchase', targetAmountCents: 1_00, startDate: '2026-06-01' } });
+    const id = create.json().id;
+    const res = await app.inject({ method: 'PATCH', url: `/goals/${id}`, headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' }, payload: {} });
+    expect(res.statusCode).toBe(400);
+  });
+});

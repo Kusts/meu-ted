@@ -53,6 +53,20 @@ const paySchema = z.object({
   fromAccountId: z.string().uuid(),
 });
 
+const createCardSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  creditLimitCents: z.number().int().positive(),
+  closingDay: z.number().int().min(1).max(31),
+  dueDay: z.number().int().min(1).max(31),
+});
+
+const updateCardSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  creditLimitCents: z.number().int().positive().optional(),
+  closingDay: z.number().int().min(1).max(31).optional(),
+  dueDay: z.number().int().min(1).max(31).optional(),
+}).refine((v) => v.name !== undefined || v.creditLimitCents !== undefined || v.closingDay !== undefined || v.dueDay !== undefined, { message: 'nenhum campo para atualizar' });
+
 const querySchema = z.object({
   accountId: z.string().uuid().optional(),
   status: z.enum(['open', 'closed', 'paid', 'partial', 'overdue', 'cancelled']).optional(),
@@ -217,6 +231,49 @@ export const registerCardRoutes = (
       const result = key ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, parsed.data, fn) : { response: await fn(), replayed: false };
       if (result.replayed) reply.header('Idempotent-Replayed', 'true');
       return reply.code(result.response.status).send(result.response.body);
+    } catch (e) { return handleError(e, reply); }
+  });
+
+  // POST /cards — create a credit card account
+  app.post('/cards', async (req, reply) => {
+    let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const parsed = createCardSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    try {
+      const card = await opts.cardStore.createCard(ctx.householdId, parsed.data);
+      return reply.code(201).send(card);
+    } catch (e) { return handleError(e, reply); }
+  });
+
+  // PATCH /cards/:id — update a credit card account
+  app.patch('/cards/:id', async (req, reply) => {
+    let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
+    const parsed = updateCardSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    try {
+      const card = await opts.cardStore.updateCard(ctx.householdId, params.data.id, parsed.data as Parameters<typeof opts.cardStore.updateCard>[2]);
+      return reply.code(200).send(card);
+    } catch (e) { return handleError(e, reply); }
+  });
+
+  // PATCH /cards/purchases/:id — update a purchase on a statement
+  app.patch('/cards/purchases/:id', async (req, reply) => {
+    let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
+    const purchaseSchema = z.object({
+      description: z.string().trim().min(1).max(240).optional(),
+      amountCents: z.number().int().positive().optional(),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD').optional(),
+      categoryId: z.string().uuid().optional(),
+    }).refine((v) => v.description !== undefined || v.amountCents !== undefined || v.date !== undefined || v.categoryId !== undefined, { message: 'nenhum campo para atualizar' });
+    const parsed = purchaseSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    try {
+      const detail = await opts.cardStore.updatePurchase(ctx.householdId, params.data.id, parsed.data as Parameters<typeof opts.cardStore.updatePurchase>[2]);
+      return reply.code(200).send(detail);
     } catch (e) { return handleError(e, reply); }
   });
 };

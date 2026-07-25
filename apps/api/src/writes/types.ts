@@ -26,6 +26,7 @@ export type UpdateAccountInput = z.infer<typeof updateAccountInputSchema>;
 export const createCategoryInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
   kind: z.enum(['expense', 'income']),
+  parentId: z.string().uuid().optional(),
 });
 export type CreateCategoryInput = z.infer<typeof createCategoryInputSchema>;
 

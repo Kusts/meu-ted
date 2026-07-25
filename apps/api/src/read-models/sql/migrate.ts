@@ -23,7 +23,7 @@ const MIGRATION_RE = /^V(\d+)__([\w-]+)\.sql$/;
 // V003 = device_tokens/idempotency; V008 = additive feature tables. The canonical
 // V001/V002/V004-V007 are skipped because they assume the canonical schema and use
 // the set_updated_at() trigger function that the legacy DB does not define.
-const LEGACY_SAFE_PREFIXES = ['V003', 'V008'];
+const LEGACY_SAFE_PREFIXES = ['V003', 'V008', 'V009', 'V010', 'V011', 'V012'];
 
 const ensureMigrationsTable = async (pool: DbPool): Promise<void> => {
   await pool.query(`

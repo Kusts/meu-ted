@@ -358,4 +358,155 @@ describe('GET /payables — filters', () => {
     const res = await app.inject({ method: 'GET', url: '/payables?dueWithinDays=7', headers: auth(TOKEN_A) });
     expect(res.json().items.length).toBeGreaterThanOrEqual(1);
   });
+
+  describe('PATCH /payables/:id', () => {
+    it('updates description and amountCents', async () => {
+      const { app } = buildTestApp(seed);
+      const created = await app.inject({
+        method: 'POST', url: '/payables',
+        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        payload: { accountId: ACCOUNT_A1.id, description: 'Teste', amountCents: 100_00, dueDate: '2026-07-15' },
+      });
+      const id = created.json().id;
+      const res = await app.inject({
+        method: 'PATCH', url: `/payables/${id}`,
+        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        payload: { description: 'Atualizado', amountCents: 200_00 },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().description).toBe('Atualizado');
+      expect(res.json().amountCents).toBe(200_00);
+    });
+
+    it('allows update on paid payable (description, amount, account, category)', async () => {
+      const { app } = buildTestApp(seed);
+      const created = await app.inject({
+        method: 'POST', url: '/payables',
+        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        payload: { accountId: ACCOUNT_A1.id, description: 'Teste', amountCents: 100_00, dueDate: '2026-07-15' },
+      });
+      const id = created.json().id;
+      await app.inject({ method: 'POST', url: `/payables/${id}/pay`, headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' }, payload: {} });
+      const res = await app.inject({
+        method: 'PATCH', url: `/payables/${id}`,
+        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        payload: { description: 'Atualizado apos pagamento', amountCents: 200_00 },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().description).toBe('Atualizado apos pagamento');
+      expect(res.json().amountCents).toBe(200_00);
+    });
+
+    it('rejects update on cancelled payable', async () => {
+      const { app } = buildTestApp(seed);
+      const created = await app.inject({
+        method: 'POST', url: '/payables',
+        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        payload: { accountId: ACCOUNT_A1.id, description: 'Teste', amountCents: 100_00, dueDate: '2026-07-15' },
+      });
+      const id = created.json().id;
+      await app.inject({ method: 'POST', url: `/payables/${id}/cancel`, headers: auth(TOKEN_A) });
+      const res = await app.inject({
+        method: 'PATCH', url: `/payables/${id}`,
+        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        payload: { description: 'Nao deve' },
+      });
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('returns 404 for non-existent payable', async () => {
+      const { app } = buildTestApp(seed);
+      const res = await app.inject({
+        method: 'PATCH', url: '/payables/00000000-0000-4000-8000-000000000099',
+        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        payload: { description: 'Nao existe' },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('requires auth', async () => {
+      const { app } = buildTestApp(seed);
+      const res = await app.inject({
+        method: 'PATCH', url: '/payables/00000000-0000-4000-8000-000000000099',
+        headers: { 'Content-Type': 'application/json' },
+        payload: { description: 'Sem token' },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  describe('POST /payables/:id/unpay', () => {
+    it('unpays a paid payable, reverts status to pending or overdue', async () => {
+      const { app } = buildTestApp(seed);
+      const created = await app.inject({
+        method: 'POST', url: '/payables',
+        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        payload: { accountId: ACCOUNT_A1.id, description: 'Undo Test', amountCents: 100_00, dueDate: '2099-01-01' },
+      });
+      const id = created.json().id;
+      // Pay it
+      await app.inject({ method: 'POST', url: `/payables/${id}/pay`, headers: auth(TOKEN_A) });
+      const paidRes = await app.inject({ method: 'GET', url: `/payables/${id}`, headers: auth(TOKEN_A) }).catch(() => null);
+
+      // Unpay
+      const unpayRes = await app.inject({
+        method: 'POST', url: `/payables/${id}/unpay`,
+        headers: auth(TOKEN_A),
+      });
+      expect(unpayRes.statusCode).toBe(200);
+      expect(unpayRes.json().status).toBe('pending');
+      expect(unpayRes.json().paidDate).toBeUndefined();
+    });
+
+    it('restores due-today payable to pending on unpay', async () => {
+      const { app } = buildTestApp(seed);
+      const today = new Date().toISOString().slice(0, 10);
+      const created = await app.inject({
+        method: 'POST', url: '/payables',
+        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        payload: { accountId: ACCOUNT_A1.id, description: 'Hoje', amountCents: 100_00, dueDate: today },
+      });
+      const id = created.json().id;
+      await app.inject({ method: 'POST', url: `/payables/${id}/pay`, headers: auth(TOKEN_A) });
+
+      const unpayRes = await app.inject({
+        method: 'POST', url: `/payables/${id}/unpay`,
+        headers: auth(TOKEN_A),
+      });
+      expect(unpayRes.statusCode).toBe(200);
+      expect(unpayRes.json().status).toBe('pending');
+    });
+
+    it('returns 404 for non-existent payable', async () => {
+      const { app } = buildTestApp(seed);
+      const res = await app.inject({
+        method: 'POST', url: '/payables/00000000-0000-4000-8000-000000000099/unpay',
+        headers: auth(TOKEN_A),
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('rejects unpay on non-paid payable', async () => {
+      const { app } = buildTestApp(seed);
+      const created = await app.inject({
+        method: 'POST', url: '/payables',
+        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        payload: { accountId: ACCOUNT_A1.id, description: 'Nao Paga', amountCents: 100_00, dueDate: '2099-01-01' },
+      });
+      const id = created.json().id;
+      const res = await app.inject({
+        method: 'POST', url: `/payables/${id}/unpay`,
+        headers: auth(TOKEN_A),
+      });
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('requires auth', async () => {
+      const { app } = buildTestApp(seed);
+      const res = await app.inject({
+        method: 'POST', url: '/payables/00000000-0000-4000-8000-000000000099/unpay',
+      });
+      expect(res.statusCode).toBe(401);
+    });
+  });
 });

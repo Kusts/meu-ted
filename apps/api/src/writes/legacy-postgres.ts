@@ -28,10 +28,15 @@ const mapAccount = (r: Row): Account => ({
   balanceCents: Number(r['balance_cents'] ?? 0),
   status: r['active'] ? 'active' : 'inactive',
 });
-const mapCategory = (r: Row): Category => ({
-  id: r['id'] as string, householdId: r['household_id'] as string, name: r['name'] as string,
-  kind: r['kind'] as Category['kind'], status: r['active'] ? 'active' : 'inactive',
-});
+const mapCategory = (r: Row): Category => {
+  const parentId = r['parent_id'] as string | null | undefined;
+  const base: Category = {
+    id: r['id'] as string, householdId: r['household_id'] as string, name: r['name'] as string,
+    kind: r['kind'] as Category['kind'], status: r['active'] ? 'active' : 'inactive',
+  };
+  if (parentId) base.parentId = parentId;
+  return base;
+};
 const mapTransaction = (r: Row): Transaction => {
   const kind = r['kind'] as Transaction['kind'];
   const fromId = r['from_account_id'] as string | null; const toId = r['to_account_id'] as string | null;
@@ -81,9 +86,21 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
 
     async createCategory(householdId: string, input: CreateCategoryInput) {
       return withTransaction(pool, async (client: PoolClient) => {
+        if (input.parentId) {
+          const parentRes = await client.query<Row>(
+            `SELECT id, household_id, name, kind, active, parent_id FROM categories WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL`,
+            [input.parentId, householdId],
+          );
+          if (parentRes.rowCount === 0) throw domainErrors.notFound('Categoria pai');
+          const parent = mapCategory(parentRes.rows[0]!);
+          if (parent.parentId) throw domainErrors.invalid('parentId', 'subcategoria não pode ter subcategoria');
+          if (parent.kind !== input.kind) {
+            throw domainErrors.invalid('parentId', 'categoria pai deve ter o mesmo kind');
+          }
+        }
         const res = await client.query<Row>(
-          `INSERT INTO categories (id, household_id, name, kind, active) VALUES (gen_random_uuid(), $1, $2, $3, true) RETURNING id, household_id, name, kind, active`,
-          [householdId, input.name, input.kind]);
+          `INSERT INTO categories (id, household_id, name, kind, active, parent_id) VALUES (gen_random_uuid(), $1, $2, $3, true, $4) RETURNING id, household_id, name, kind, active, parent_id`,
+          [householdId, input.name, input.kind, input.parentId ?? null]);
         return mapCategory(res.rows[0]!);
       });
     },

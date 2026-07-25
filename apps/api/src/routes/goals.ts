@@ -60,4 +60,17 @@ export const registerGoalRoutes = (app: FastifyInstance, opts: { goalStore: Goal
     try { const g = await opts.goalStore.cancelGoal(ctx.householdId, params.data.id); return reply.send(g); }
     catch (e) { return handleErr(e, reply); }
   });
+
+  app.patch('/goals/:id', async (req, reply) => {
+    let ctx; try { ctx = await resolve(req); } catch (e) { return handleErr(e, reply); }
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
+    const s = z.object({
+      name: z.string().trim().min(1).max(120).optional(),
+      targetAmountCents: z.number().int().positive().optional(),
+      targetDate: isoDate.optional(),
+    }).refine((v) => v.name !== undefined || v.targetAmountCents !== undefined || v.targetDate !== undefined, { message: 'nenhum campo para atualizar' });
+    const p = s.safeParse(req.body ?? {}); if (!p.success) return reply.code(400).send({ code: 'validation.error', issues: p.error.issues });
+    try { const g = await opts.goalStore.updateGoal(ctx.householdId, params.data.id, p.data as Parameters<typeof opts.goalStore.updateGoal>[2]); return reply.send(g); }
+    catch (e) { return handleErr(e, reply); }
+  });
 };

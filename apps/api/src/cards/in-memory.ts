@@ -8,6 +8,19 @@
 
 import { randomUUID, createHash } from 'node:crypto';
 import type { Account, Transaction, Statement, StatementDetail, StatementPurchase, RecurringPurchase } from '../types/domain.js';
+
+interface CardPurchase {
+  id: string;
+  statementId: string;
+  description: string;
+  amountCents: number;
+  date: string;
+  categoryId?: string;
+  categoryName?: string;
+  installmentsTotal?: number;
+  installmentNumber?: number;
+  isRecurring?: boolean;
+}
 import type { CardStore } from './store.js';
 import type { InMemoryState } from '../writes/in-memory.js';
 import { domainErrors } from '../writes/errors.js';
@@ -69,8 +82,10 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
   // Ensure state has card-specific containers.
   if (!(state as any)._statements) (state as any)._statements = [] as Statement[];
   if (!(state as any)._recurring) (state as any)._recurring = [] as RecurringPurchase[];
+  if (!(state as any)._cardPurchases) (state as any)._cardPurchases = [] as CardPurchase[];
   const statements = (state as any)._statements as Statement[];
   const recurring = (state as any)._recurring as RecurringPurchase[];
+  const cardPurchases = (state as any)._cardPurchases as CardPurchase[];
 
   const findAccount = (id: string, householdId: string): Account => {
     const a = state.accounts.find(x => x.id === id && x.householdId === householdId);
@@ -113,6 +128,14 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
     stmt.status = computeStatus(stmt, todayISO());
   };
 
+  const findCardForHousehold = (id: string, householdId: string): Account => {
+    const a = state.accounts.find(x => x.id === id && x.householdId === householdId);
+    if (!a) throw domainErrors.notFound('Cartão');
+    if (a.status !== 'active') throw domainErrors.notFound('Cartão');
+    if (a.kind !== 'credit_card') throw domainErrors.invalid('id', 'não é cartão de crédito');
+    return a;
+  };
+
   return {
     async listCreditCardAccounts(householdId) {
       return state.accounts.filter(a => a.householdId === householdId && a.kind === 'credit_card' && a.status === 'active');
@@ -131,22 +154,74 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
       const s = statements.find(x => x.id === statementId && x.householdId === householdId);
       if (!s) return null;
 
-      const purchases: StatementPurchase[] = state.transactions
+      // Helper: map a purchase source to StatementPurchase[]
+      const toPurchases = (items: { id: string; description: string; amountCents: number; date: string; categoryName?: string; installmentsTotal?: number; installmentNumber?: number; isRecurring?: boolean }[]): StatementPurchase[] =>
+        items.map(p => opt<StatementPurchase>(
+          { id: p.id, description: p.description, amountCents: p.amountCents, date: p.date, isRecurring: p.isRecurring ?? false },
+          {
+            categoryName: p.categoryName,
+            ...(p.installmentNumber != null ? { installmentNumber: p.installmentNumber } : {}),
+            ...(p.installmentsTotal != null ? { installmentsTotal: p.installmentsTotal } : {}),
+          } as Partial<StatementPurchase>,
+        ));
+
+      // 1. Primary source: card_purchases (legacy Agent Pi era)
+      const cps = cardPurchases.filter(cp => cp.statementId === statementId);
+      if (cps.length > 0) {
+        return { ...s, purchases: toPurchases(cps) };
+      }
+
+      // 2. Secondary: transactions by statement_id (new API inserts)
+      const txsByStmt: StatementPurchase[] = state.transactions
         .filter(t => (t as any).statementId === statementId && !state.deletedTransactions.has(t.id))
         .sort((a, b) => a.date.localeCompare(b.date))
         .map(t => {
           const instNum = (t as any).installmentNumber;
           const instTotal = (t as any).installmentsTotal;
+          const catName = (t as any).categoryName;
           return opt<StatementPurchase>(
             { id: t.id, description: t.description, amountCents: t.amountCents, date: t.date, isRecurring: false },
             {
+              categoryName: catName as string | undefined,
               ...(instNum != null ? { installmentNumber: instNum as number } : {}),
               ...(instTotal != null ? { installmentsTotal: instTotal as number } : {}),
             } as Partial<StatementPurchase>,
           );
         });
 
-      return { ...s, purchases };
+      if (txsByStmt.length > 0) {
+        return { ...s, purchases: txsByStmt };
+      }
+
+      // 3. Tertiary: transactions by account + cycle period (unlinked legacy)
+      const closing = new Date(s.closingDate + 'T00:00:00.000Z');
+      const prevClosing = new Date(closing);
+      prevClosing.setUTCMonth(prevClosing.getUTCMonth() - 1);
+      const periodStart = prevClosing.toISOString().slice(0, 10);
+
+      const txsByPeriod: StatementPurchase[] = state.transactions
+        .filter(t => {
+          if (state.deletedTransactions.has(t.id)) return false;
+          if (t.accountId !== s.accountId) return false;
+          if (t.date <= periodStart || t.date > s.closingDate) return false;
+          return true;
+        })
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map(t => {
+          const instNum = (t as any).installmentNumber;
+          const instTotal = (t as any).installmentsTotal;
+          const catName = (t as any).categoryName;
+          return opt<StatementPurchase>(
+            { id: t.id, description: t.description, amountCents: t.amountCents, date: t.date, isRecurring: false },
+            {
+              categoryName: catName as string | undefined,
+              ...(instNum != null ? { installmentNumber: instNum as number } : {}),
+              ...(instTotal != null ? { installmentsTotal: instTotal as number } : {}),
+            } as Partial<StatementPurchase>,
+          );
+        });
+
+      return { ...s, purchases: txsByPeriod };
     },
 
     async createCardPurchase(householdId, input) {
@@ -240,6 +315,61 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
       if (card) card.balanceCents += input.amountCents;
 
       return s;
+    },
+
+    async createCard(householdId, input) {
+      const card: Account = {
+        id: randomUUID(),
+        householdId,
+        name: input.name,
+        kind: 'credit_card',
+        balanceCents: 0,
+        status: 'active',
+        creditLimitCents: input.creditLimitCents,
+        closingDay: input.closingDay,
+        dueDay: input.dueDay,
+      };
+      state.accounts.push(card);
+      return card;
+    },
+
+    async updateCard(householdId, id, input) {
+      const card = findCardForHousehold(id, householdId);
+      if (input.name !== undefined) card.name = input.name;
+      if (input.creditLimitCents !== undefined) card.creditLimitCents = input.creditLimitCents;
+      if (input.closingDay !== undefined) card.closingDay = input.closingDay;
+      if (input.dueDay !== undefined) card.dueDay = input.dueDay;
+      return card;
+    },
+
+    async updatePurchase(householdId, purchaseId, input) {
+      // In-memory: transactions store purchases linked by statement_id
+      const tx = state.transactions.find(t => t.id === purchaseId && t.householdId === householdId && !state.deletedTransactions.has(t.id));
+      if (tx) {
+        if (input.description !== undefined) tx.description = input.description;
+        if (input.amountCents !== undefined) tx.amountCents = input.amountCents;
+        if (input.date !== undefined) tx.date = input.date;
+        if (input.categoryId !== undefined) tx.categoryId = input.categoryId;
+
+        const stmt = statements.find(s => s.id === (tx as any).statementId);
+        if (stmt) {
+          recalcTotal(stmt.id);
+          const detail = statements.find(s => s.id === stmt.id)!;
+          const purchases: StatementPurchase[] = state.transactions
+            .filter(t2 => (t2 as any).statementId === stmt.id && !state.deletedTransactions.has(t2.id))
+            .map(t2 => ({
+              id: t2.id,
+              description: t2.description,
+              amountCents: t2.amountCents,
+              date: t2.date,
+              categoryId: t2.categoryId,
+              isRecurring: false,
+            } as StatementPurchase));
+          return { ...detail, purchases };
+        }
+      }
+
+      throw domainErrors.notFound('Compra');
     },
   };
 };

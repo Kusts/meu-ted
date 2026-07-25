@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Payable, PayableTemplate, NotificationConfig, Transaction } from '../types/domain.js';
 import type { PayableStore } from './store.js';
 import type { InMemoryState } from '../writes/in-memory.js';
-import { domainErrors } from '../writes/errors.js';
+import { DomainError, domainErrors } from '../writes/errors.js';
 
 function todayISO(): string { return new Date().toISOString().slice(0, 10); }
 
@@ -75,6 +75,23 @@ export const createInMemoryPayableStore = (state: InMemoryState): PayableStore =
           { categoryId: p.categoryId } as Partial<Transaction>,
         );
         state.transactions.push(tx);
+        p.paidTransactionId = tx.id;
+      }
+      return p;
+    },
+
+    async undoPayablePayment(householdId, payableId) {
+      const p = payables.find(x => x.id === payableId && x.householdId === householdId);
+      if (!p) throw domainErrors.notFound('Conta a pagar');
+      if (p.status !== 'paid') throw new DomainError('validation.invalid', 'Apenas contas pagas podem ter pagamento desfeito', 409);
+      const txId = p.paidTransactionId;
+      p.status = todayISO() <= p.dueDate ? 'pending' : 'overdue';
+      (p as { paidDate?: string | undefined }).paidDate = undefined;
+      (p as { paidAmountCents?: number | undefined }).paidAmountCents = undefined;
+      (p as { paidTransactionId?: string | undefined }).paidTransactionId = undefined;
+      if (txId) {
+        const idx = state.transactions.findIndex((t: Transaction) => t.id === txId);
+        if (idx >= 0) state.transactions.splice(idx, 1);
       }
       return p;
     },
@@ -83,6 +100,18 @@ export const createInMemoryPayableStore = (state: InMemoryState): PayableStore =
       const p = payables.find(x => x.id === payableId && x.householdId === householdId);
       if (!p) throw domainErrors.notFound('Conta a pagar');
       p.status = 'cancelled';
+      return p;
+    },
+
+    async updatePayable(householdId, payableId, input) {
+      const p = payables.find(x => x.id === payableId && x.householdId === householdId);
+      if (!p) throw domainErrors.notFound('Conta a pagar');
+      if (p.status === 'cancelled') throw new DomainError('validation.invalid', 'Conta cancelada não pode ser editada', 409);
+      if (input.description !== undefined) p.description = input.description;
+      if (input.amountCents !== undefined) p.amountCents = input.amountCents;
+      if (input.dueDate !== undefined) p.dueDate = input.dueDate;
+      if (input.accountId !== undefined) p.accountId = input.accountId;
+      if (input.categoryId !== undefined) p.categoryId = input.categoryId;
       return p;
     },
 

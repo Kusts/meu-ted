@@ -46,5 +46,14 @@ export const createInMemoryGoalStore = (state: InMemoryState): GoalStore => {
       g.status = 'cancelled';
       return g;
     },
+
+    async updateGoal(householdId, goalId, input) {
+      const g = goals.find(x => x.id === goalId && x.householdId === householdId);
+      if (!g) throw domainErrors.notFound('Meta');
+      if (input.name !== undefined) g.name = input.name;
+      if (input.targetAmountCents !== undefined) g.targetAmountCents = input.targetAmountCents;
+      if (input.targetDate !== undefined) g.targetDate = input.targetDate;
+      return g;
+    },
   };
 };

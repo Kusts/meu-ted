@@ -35,6 +35,7 @@ export type Category = {
   name: string;
   kind: CategoryKind;
   status: CategoryStatus;
+  parentId?: UUID;
 };
 
 export type TransactionKind = 'expense' | 'income' | 'transfer';
@@ -94,6 +95,45 @@ export type QuickInsight = {
   severity: 'info' | 'warn' | 'good';
 };
 
+// ── Household profile (Slice B / Resumo) ────────────────────
+// One row per household, set during onboarding or via /perfil.
+// Only the fields that ship in Slice B; expanded later (timezone,
+// locale, default account, etc.) if needed.
+
+export type Profile = {
+  householdId: UUID;
+  /** Display name shown on Home greeting + profile page. */
+  name: string;
+  /** Contact email shown on the profile page. */
+  email: string;
+  /** Contact phone shown on the profile page. */
+  phone: string;
+  /** Avatar background color (hex). Used to color the Home avatar circle. */
+  avatarColor: string;
+  /** Greeting style preference (future-proofing; default "auto" follows time-of-day). */
+  greetingStyle: 'auto' | 'minimal' | 'verbose';
+  updatedAt: string; // ISO datetime
+};
+
+// ── Subscription types ────────────────────────────────────────────
+
+export type SubscriptionStatus = 'active' | 'cancelled';
+
+export type SubscriptionCycle = 'monthly' | 'yearly' | 'weekly';
+
+export type Subscription = {
+  id: UUID;
+  householdId: UUID;
+  name: string;
+  amountCents: MoneyCents;
+  cycle: SubscriptionCycle;
+  day: number;
+  paymentMethod: string;
+  status: SubscriptionStatus;
+  createdAt: string;
+  cancelledAt?: string;
+};
+
 // ── Credit card types ─────────────────────────────────────────────
 
 export type StatementStatus = 'open' | 'closed' | 'paid' | 'partial' | 'overdue' | 'cancelled';
@@ -115,6 +155,7 @@ export type StatementPurchase = {
   description: string;
   amountCents: MoneyCents;
   date: ISODate;
+  categoryId?: UUID;
   categoryName?: string;
   installmentNumber?: number;
   installmentsTotal?: number;
@@ -158,6 +199,8 @@ export type Payable = {
   status: PayableStatus;
   paidDate?: ISODate;
   paidAmountCents?: MoneyCents;
+  /** Transaction id created when paying this payable. Used by undo payment flow. */
+  paidTransactionId?: UUID;
   reminderDaysBefore?: number;
   notes?: string;
   categoryId?: UUID;

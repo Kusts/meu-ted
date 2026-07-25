@@ -11,6 +11,8 @@ import { createInMemoryCardStore } from '../src/cards/in-memory.js';
 import { createInMemoryPayableStore } from '../src/payables/in-memory.js';
 import { createInMemoryBudgetStore } from '../src/budgets/in-memory.js';
 import { createInMemoryGoalStore } from '../src/goals/in-memory.js';
+import { createInMemorySubscriptionStore } from '../src/subscriptions/in-memory.js';
+import { createInMemoryProfileStore } from '../src/profile/in-memory.js';
 
 export type TestApp = { app: FastifyInstance; store: ReadModelStore; state: InMemoryState };
 
@@ -44,9 +46,12 @@ export const buildTestApp = (seed: { accounts?: Account[]; categories?: Category
   const payableStore = createInMemoryPayableStore(state);
   const budgetStore = createInMemoryBudgetStore(state);
   const goalStore = createInMemoryGoalStore(state);
+  const subscriptionState = { subscriptions: [] as import('../src/types/domain.js').Subscription[] };
+  const subscriptionStore = createInMemorySubscriptionStore(subscriptionState);
+  const profileStore = createInMemoryProfileStore();
   const app = Fastify({ logger: false });
   registerCors(app);
-  registerRoutes(app, { store, writes, tokenStore: createTestTokenStore(), idempotency: createInMemoryIdempotencyStore(), cardStore, payableStore, budgetStore, goalStore });
+  registerRoutes(app, { store, writes, tokenStore: createTestTokenStore(), idempotency: createInMemoryIdempotencyStore(), cardStore, payableStore, budgetStore, goalStore, subscriptionStore, profileStore });
   return { app, store, state };
 };
 

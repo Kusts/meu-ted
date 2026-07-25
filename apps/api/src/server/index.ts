@@ -23,6 +23,11 @@ import { createPostgresBudgetStore } from '../budgets/postgres.js';
 import { createInMemoryGoalStore } from '../goals/in-memory.js';
 import { createPostgresGoalStore } from '../goals/postgres.js';
 import { createLegacyPostgresGoalStore } from '../goals/legacy-postgres.js';
+import { createInMemorySubscriptionStore } from '../subscriptions/in-memory.js';
+import { createPostgresSubscriptionStore } from '../subscriptions/postgres.js';
+import { createLegacyPostgresSubscriptionStore } from '../subscriptions/legacy-postgres.js';
+import { createInMemoryProfileStore } from '../profile/in-memory.js';
+import { createPostgresProfileStore } from '../profile/postgres.js';
 
 const start = async (): Promise<void> => {
   const cfg = loadConfig();
@@ -44,7 +49,9 @@ const start = async (): Promise<void> => {
       const payableStore = createLegacyPostgresPayableStore(pool);
       const budgetStore = createPostgresBudgetStore(pool);
       const goalStore = createLegacyPostgresGoalStore(pool);
-      registerRoutes(app, { store, writes, tokenStore, idempotency, defaultHouseholdId: cfg.defaultHouseholdId, cardStore, payableStore, budgetStore, goalStore });
+      const subscriptionStore = createLegacyPostgresSubscriptionStore(pool);
+      const profileStore = createPostgresProfileStore({ pool });
+      registerRoutes(app, { store, writes, tokenStore, idempotency, defaultHouseholdId: cfg.defaultHouseholdId, cardStore, payableStore, budgetStore, goalStore, subscriptionStore, profileStore });
     } else {
       const result = await runMigrations(pool);
       app.log.info({ database: 'postgres', appliedMigrations: result.applied }, 'using postgres stores');
@@ -56,7 +63,9 @@ const start = async (): Promise<void> => {
       const payableStore = createPostgresPayableStore(pool);
       const budgetStore = createPostgresBudgetStore(pool);
       const goalStore = createPostgresGoalStore(pool);
-      registerRoutes(app, { store, writes, tokenStore, idempotency, defaultHouseholdId: cfg.defaultHouseholdId, cardStore, payableStore, budgetStore, goalStore });
+      const subscriptionStore = createPostgresSubscriptionStore(pool);
+      const profileStore = createPostgresProfileStore({ pool });
+      registerRoutes(app, { store, writes, tokenStore, idempotency, defaultHouseholdId: cfg.defaultHouseholdId, cardStore, payableStore, budgetStore, goalStore, subscriptionStore, profileStore });
     }
     app.addHook('onClose', async () => { await pool.end(); });
   } else {
@@ -68,7 +77,10 @@ const start = async (): Promise<void> => {
     const payableStore = createInMemoryPayableStore(state);
     const budgetStore = createInMemoryBudgetStore(state);
     const goalStore = createInMemoryGoalStore(state);
-    registerRoutes(app, { store, writes, tokenStore, idempotency: createInMemoryIdempotencyStore(), cardStore, payableStore, budgetStore, goalStore });
+    const subscriptionState = { subscriptions: [] as import('../types/domain.js').Subscription[] };
+    const subscriptionStore = createInMemorySubscriptionStore(subscriptionState);
+    const profileStore = createInMemoryProfileStore();
+    registerRoutes(app, { store, writes, tokenStore, idempotency: createInMemoryIdempotencyStore(), cardStore, payableStore, budgetStore, goalStore, subscriptionStore, profileStore });
   }
 
   try { await app.listen({ port: cfg.port, host: cfg.host }); }

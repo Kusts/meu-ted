@@ -11,4 +11,10 @@ export type GoalStore = {
     amountCents: number; contributionDate?: string; source?: string; notes?: string;
   }): Promise<GoalContribution>;
   cancelGoal(householdId: string, goalId: string, reason?: string): Promise<Goal>;
+
+  updateGoal(householdId: string, goalId: string, input: {
+    name?: string;
+    targetAmountCents?: number;
+    targetDate?: string;
+  }): Promise<Goal>;
 };

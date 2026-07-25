@@ -33,6 +33,16 @@ export type PayableStore = {
 
   cancelPayable(householdId: string, payableId: string, reason?: string): Promise<Payable>;
 
+  updatePayable(householdId: string, payableId: string, input: {
+    description?: string | undefined;
+    amountCents?: number | undefined;
+    dueDate?: string | undefined;
+    accountId?: string | undefined;
+    categoryId?: string | undefined;
+  }): Promise<Payable>;
+
+  undoPayablePayment(householdId: string, payableId: string): Promise<Payable>;
+
   // Templates
   listTemplates(householdId: string, activeOnly?: boolean): Promise<PayableTemplate[]>;
 

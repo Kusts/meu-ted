@@ -90,12 +90,23 @@ export const createInMemoryWriteStore = (state: InMemoryState): WriteStore => {
     },
 
     async createCategory(householdId, input) {
+      if (input.parentId) {
+        const parent = state.categories.find(
+          (c) => c.id === input.parentId && c.householdId === householdId && c.status === 'active',
+        );
+        if (!parent) throw domainErrors.notFound('Categoria pai');
+        if (parent.parentId) throw domainErrors.invalid('parentId', 'subcategoria não pode ter subcategoria');
+        if (parent.kind !== input.kind) {
+          throw domainErrors.invalid('parentId', 'categoria pai deve ter o mesmo kind');
+        }
+      }
       const cat: Category = {
         id: randomUUID(),
         householdId,
         name: input.name,
         kind: input.kind,
         status: 'active',
+        ...(input.parentId ? { parentId: input.parentId } : {}),
       };
       state.categories.push(cat);
       return cat;

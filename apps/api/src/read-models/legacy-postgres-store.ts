@@ -29,13 +29,18 @@ const mapAccount = (r: Row): Account => ({
   status: r['active'] ? 'active' : 'inactive',
 });
 
-const mapCategory = (r: Row): Category => ({
-  id: r['id'] as string,
-  householdId: r['household_id'] as string,
-  name: r['name'] as string,
-  kind: r['kind'] as Category['kind'],
-  status: r['active'] ? 'active' : 'inactive',
-});
+const mapCategory = (r: Row): Category => {
+  const parentId = r['parent_id'] as string | null | undefined;
+  const base: Category = {
+    id: r['id'] as string,
+    householdId: r['household_id'] as string,
+    name: r['name'] as string,
+    kind: r['kind'] as Category['kind'],
+    status: r['active'] ? 'active' : 'inactive',
+  };
+  if (parentId) base.parentId = parentId;
+  return base;
+};
 
 const mapTransaction = (r: Row): Transaction => {
   const kind = r['kind'] as Transaction['kind'];
@@ -100,7 +105,7 @@ export const createLegacyPostgresReadModelStore = (opts: { pool: Pool }): ReadMo
 
     async listCategories(householdId: string) {
       const rows = await query<Row>(
-        `SELECT id, household_id, name, kind, active
+        `SELECT id, household_id, name, kind, active, parent_id
            FROM categories
           WHERE household_id = $1 AND active = true AND deleted_at IS NULL`,
         [householdId],
