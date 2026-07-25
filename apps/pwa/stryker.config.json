@@ -14,7 +14,7 @@
   },
   "reporters": ["clear-text"],
   "concurrency": 1,
-  "timeoutMS": 30000,
+  "timeoutMS": 120000,
   "tempDirName": ".stryker-tmp",
   "thresholds": {
     "high": 80,

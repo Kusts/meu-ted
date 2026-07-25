@@ -57,11 +57,12 @@ async function main() {
 
   if (pwaResult.acao === null) {
     console.log(
-      "⚠  Live CORS check skipped — API not reachable from this environment.",
+      "✗  API not reachable — CORS contract cannot be verified.",
     );
     console.log(
-      "   Verify deployment manually: curl -I -X OPTIONS -H 'Origin: <pwa>' -H 'Access-Control-Request-Method: GET' <api>/ping",
+      "   Ensure CI has network access to the API or configure PWA_CONTRACT_API_BASE_URL.",
     );
+    pass = false;
   } else if (pwaResult.acao === PWA_ORIGIN || pwaResult.acao === "*") {
     console.log("✓  Canonical PWA origin gets ACAO");
   } else if (pwaResult.acao === "null") {
@@ -75,7 +76,7 @@ async function main() {
   console.log("");
 
   if (hostileResult.acao === null) {
-    console.log("⚠  Live hostile check skipped (API unreachable)");
+    console.log("✗  API not reachable — hostile check skipped (already counted as failure)");
   } else if (hostileResult.acao) {
     console.log(`✗  Hostile origin received ACAO: ${hostileResult.acao} (should be denied)`);
     pass = false;

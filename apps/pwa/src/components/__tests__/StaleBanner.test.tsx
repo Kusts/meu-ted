@@ -69,6 +69,24 @@ describe("StaleBanner", () => {
       expect(screen.getByText(/dados de .*— modo leitura/i)).toBeInTheDocument();
     });
 
+    it("shows generic cache message when syncedAt is null", () => {
+      vi.spyOn(ctx, "useAppState").mockReturnValue({
+        readOnly: true,
+        sync: {
+          accounts: { source: "snapshot", syncedAt: null },
+          categories: { source: "live", syncedAt: null },
+          transactions: { source: "live", syncedAt: null },
+          payables: { source: "live", syncedAt: null },
+          budgets: { source: "live", syncedAt: null },
+          goals: { source: "live", syncedAt: null },
+          subscriptions: { source: "live", syncedAt: null },
+          cardStatements: { source: "live", syncedAt: null },
+        },
+      } as unknown as ctx.AppState);
+      render(<StaleBanner domains={["accounts"]} />);
+      expect(screen.getByText(/dados em cache/i)).toBeInTheDocument();
+    });
+
     it("communicates read-only mode clearly", () => {
       stub("snapshot");
       render(<StaleBanner domains={["accounts"]} />);
@@ -114,6 +132,16 @@ describe("StaleBanner", () => {
       render(<StaleBanner domains={["accounts"]} onRetry={vi.fn()} />);
       expect(
         screen.getByRole("button", { name: /tentar novamente/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("renders a dismiss button on unavailable banner when onDismiss is provided", () => {
+      stub("unavailable");
+      render(
+        <StaleBanner domains={["accounts"]} onDismiss={vi.fn()} />,
+      );
+      expect(
+        screen.getByRole("button", { name: /dispensar/i }),
       ).toBeInTheDocument();
     });
 

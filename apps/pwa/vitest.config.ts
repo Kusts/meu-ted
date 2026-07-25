@@ -10,8 +10,10 @@ import path from "path";
 const CHANGED_PRODUCTION = [
   "src/app/pwa-control/route.ts",
   "src/app/api/observability/rum/route.ts",
+  "src/components/AppShell.tsx",
   "src/components/NewTransactionSheet.tsx",
   "src/components/RootProviders.tsx",
+  "src/components/StaleBanner.tsx",
   "src/components/StatusBar.tsx",
   "src/features/accounts/AccountsPage.tsx",
   "src/features/auth/AuthGate.tsx",
