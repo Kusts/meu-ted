@@ -491,6 +491,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
       handleWriteErrorRef.current(e);
+      throw e;
     }
   }, []);
 
@@ -1003,6 +1004,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           );
         }
         handleWriteErrorRef.current(e);
+        throw e;
       }
     },
     [],
@@ -1397,6 +1399,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setCardStatements(stmts);
       } catch (e) {
         handleWriteErrorRef.current(e);
+        throw e;
       }
     },
     [],

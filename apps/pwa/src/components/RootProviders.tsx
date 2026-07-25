@@ -1,37 +1,38 @@
 "use client";
 
+import { useEffect } from "react";
 import { isApiConfigured } from "@/lib/api/client";
 import { AuthGate } from "@/features/auth/AuthGate";
 import { AppStateProvider } from "@/lib/state/app-state-context";
 import { SheetProvider } from "@/lib/sheet-context";
 import { UnsavedChangesProvider } from "@/lib/unsaved-changes";
+import { SWCoordinator } from "@/lib/sw-coordinator";
 import { initRUM } from "@/lib/observability/web-vitals";
 
-import { useEffect } from "react";
-
+/**
+ * Provider tree (design Task 8):
+ *   UnsavedChangesProvider > SWCoordinator > AppStateProvider > SheetProvider
+ *
+ * AuthGate wraps the tree when API is configured (session gate).
+ */
 export function RootProviders({ children }: { children: React.ReactNode }) {
-  // Feature-flagged RUM: default OFF, enable via localStorage pi-finance:rum = 1
-  useEffect(() => { initRUM(); }, []);
+  useEffect(() => {
+    initRUM();
+  }, []);
 
-  // UnsavedChangesProvider wraps both AppStateProvider and children so
-  // the AppState write functions can access trackWrite() via hooks.
-  const providers = (
-    <AppStateProvider>
-      <SheetProvider>
-        <UnsavedChangesProvider>
-          {children}
-        </UnsavedChangesProvider>
-      </SheetProvider>
-    </AppStateProvider>
+  const tree = (
+    <UnsavedChangesProvider>
+      <SWCoordinator>
+        <AppStateProvider>
+          <SheetProvider>{children}</SheetProvider>
+        </AppStateProvider>
+      </SWCoordinator>
+    </UnsavedChangesProvider>
   );
 
   if (!isApiConfigured()) {
-    return providers;
+    return tree;
   }
 
-  return (
-    <AuthGate>
-      {providers}
-    </AuthGate>
-  );
+  return <AuthGate>{tree}</AuthGate>;
 }

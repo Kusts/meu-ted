@@ -230,6 +230,8 @@ export default function NewTransactionSheet({
     if (amountCents <= 0) return;
     let data: SaveData;
     if (isTransfer) {
+      // Reject missing or same origin/destination before hitting the API.
+      if (!fromAccountId || !toAccountId || fromAccountId === toAccountId) return;
       data = {
         kind: "transfer",
         amountCents,

@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // scripts/measure-bundle.mjs
 //
 // Computes gzip sizes of the JS chunks emitted into .open-next/assets/_next/static/chunks

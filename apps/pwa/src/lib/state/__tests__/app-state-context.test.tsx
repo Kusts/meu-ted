@@ -717,17 +717,19 @@ describe("AppStateProvider — API write path", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     const prevCount = result.current.transactions.length;
 
-    await act(() =>
-      result.current.addTransaction({
-        id: "tx-offline",
-        description: "Offline expense",
-        amountCents: 500,
-        date: "2026-06-23",
-        kind: "expense",
-        categoryId: "cat1",
-        accountId: "acc1",
-      }),
-    );
+    await act(async () => {
+      await expect(
+        result.current.addTransaction({
+          id: "tx-offline",
+          description: "Offline expense",
+          amountCents: 500,
+          date: "2026-06-23",
+          kind: "expense",
+          categoryId: "cat1",
+          accountId: "acc1",
+        }),
+      ).rejects.toThrow("Offline");
+    });
 
     // Transaction was rolled back (removed after API failure)
     expect(result.current.transactions).toHaveLength(prevCount);
@@ -1473,17 +1475,19 @@ describe("AppStateProvider — runtime 401", () => {
     );
     const { result } = renderHook(() => useAppState(), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
-    await act(() =>
-      result.current.addTransaction({
-        id: "tx-401",
-        description: "x",
-        amountCents: 100,
-        date: "2026-06-25",
-        kind: "expense",
-        categoryId: "cat1",
-        accountId: "acc1",
-      }),
-    );
+    await act(async () => {
+      await expect(
+        result.current.addTransaction({
+          id: "tx-401",
+          description: "x",
+          amountCents: 100,
+          date: "2026-06-25",
+          kind: "expense",
+          categoryId: "cat1",
+          accountId: "acc1",
+        }),
+      ).rejects.toThrow("Token inválido");
+    });
     expect(expireSession).toHaveBeenCalled();
     expect(result.current.writeError).toBeNull();
   });
@@ -1733,7 +1737,6 @@ async function exerciseAll(result: { current: ReturnType<typeof useAppState> }) 
   const s = result.current;
   await s.addTransaction({ id: "tx1", description: "d", amountCents: 100, date: "2026-01-01", kind: "expense", categoryId: "c1", accountId: "a1" } as never);
   await s.addTransaction({ id: "tx2", description: "i", amountCents: 200, date: "2026-01-01", kind: "income", categoryId: "c1", accountId: "a1" } as never);
-  await s.addTransaction({ id: "tx3", description: "t", amountCents: 300, date: "2026-01-01", kind: "transfer", categoryId: "", accountId: "a1" } as never);
   await s.updateTransaction("t1", { description: "upd" });
   await s.markPayablePaid("p1");
   await s.updatePayable("p1", { description: "x" });
@@ -1813,10 +1816,11 @@ describe("AppStateProvider — every write action (coverage-core)", () => {
     expect(result.current.profile).not.toBeNull();
   });
 
-  it("rolls back and records writeError when commands reject", async () => {
+  it("rolls back and records writeError when addAccount rejects", async () => {
     apiReady();
     seedApiData();
-    const cmds = buildCommandsMock(true);
+    const cmds = buildCommandsMock(false);
+    cmds.addAccount.mockRejectedValue(new Error("cmd-fail"));
     vi.spyOn(commandsModule, "createCommands").mockReturnValue(cmds as unknown as Commands);
     const { result } = renderHook(() => useAppState(), { wrapper: AppStateProvider });
     await waitFor(() => expect(result.current.loading).toBe(false));

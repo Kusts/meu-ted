@@ -87,6 +87,8 @@ describe("NewTransactionSheet", () => {
     await user.type(valorInput, "5000");
     const [originBtn] = screen.getAllByText("Nubank");
     await user.click(originBtn);
+    const [, destinationBtn] = screen.getAllByText("Itaú");
+    await user.click(destinationBtn);
     await user.click(screen.getByText("Transferir"));
     expect(onSave).toHaveBeenCalledTimes(1);
     const saved = onSave.mock.calls[0][0];

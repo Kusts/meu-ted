@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
@@ -52,7 +51,6 @@ interface Group {
 }
 
 export default function RecordsPage() {
-  const router = useRouter();
   const { transactions, categories, accounts, loading, error, writeError, clearWriteError, deleteTransaction } = useAppState();
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [actionOpen, setActionOpen] = useState(false);
@@ -72,6 +70,7 @@ export default function RecordsPage() {
     },
     [deleteTransaction],
   );
+  const [staleDismissed, setStaleDismissed] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>("all");
@@ -260,13 +259,20 @@ export default function RecordsPage() {
         <WriteErrorBanner
           message={writeError}
           onDismiss={clearWriteError}
-          onRetry={() => router.refresh()}
+          onRetry={() => {
+            if (typeof window !== "undefined") window.location.reload();
+          }}
         />
 
-        <StaleBanner
-          domains={["transactions", "categories", "accounts"]}
-          onRetry={() => router.refresh()}
-        />
+        {!staleDismissed && (
+          <StaleBanner
+            domains={["transactions", "categories", "accounts"]}
+            onRetry={() => {
+              if (typeof window !== "undefined") window.location.reload();
+            }}
+            onDismiss={() => setStaleDismissed(true)}
+          />
+        )}
 
         {/* Search */}
         <div className="mx-5 mb-3 sm:mx-8 lg:mx-12">
