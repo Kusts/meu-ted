@@ -142,6 +142,41 @@ describe("AppShell", () => {
       expect(screen.getByText("Cartões")).toBeInTheDocument();
       expect(screen.getByText("Contas")).toBeInTheDocument();
     });
+
+    it("navigates when clicking a Mais grid item", async () => {
+      const user = userEvent.setup();
+      const pushSpy = vi.fn();
+      mockPush = pushSpy;
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open Mais grid
+      const buttons = screen.getAllByRole("button");
+      await user.click(buttons[4]);
+      expect(screen.getByText("Cartões")).toBeInTheDocument();
+
+      // Click Cartões grid item — should navigate
+      await user.click(screen.getByText("Cartões"));
+      expect(pushSpy).toHaveBeenCalledWith("/cartoes");
+    });
+
+    it("closes Mais grid then navigates to secondary route on item click", async () => {
+      const user = userEvent.setup();
+      const pushSpy = vi.fn();
+      mockPush = pushSpy;
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open Mais grid
+      const buttons = screen.getAllByRole("button");
+      await user.click(buttons[4]);
+      expect(screen.getByText("Cartões")).toBeInTheDocument();
+
+      // Click Orçamentos to navigate
+      await user.click(screen.getByText("Orçamentos"));
+      expect(pushSpy).toHaveBeenCalledWith("/orcamentos");
+
+      // Sheet should close and Mais grid gone
+      expect(screen.queryByText("Cartões")).not.toBeInTheDocument();
+    });
   });
 
   describe("sheet close behaviors", () => {
