@@ -34,10 +34,17 @@ import {
   mockSubscriptions,
 } from "./mock-data";
 import { isApiConfigured, getAuthToken } from "@/lib/api/client";
-import { type DomainKey, saveDomain, loadDomain } from "./snapshot-store";
+import { type DomainKey } from "./snapshot-store";
 import { useSession } from "@/lib/auth/session-context";
 import { ApiError } from "@/lib/api/client";
 import * as endpoints from "@/lib/api/endpoints";
+import { runBootstrap, type SnapshotPreload } from "./sync-engine";
+import type { AppStateAction } from "./state-reducer";
+import { migrateV1toV2, loadSnapshotDomain } from "./snapshot-store";
+import { createCommands, type Commands } from "./commands";
+import { useUnsavedChangesSafe } from "@/lib/unsaved-changes";
+import { createProfileAdapter } from "./profile-adapter";
+import { createSubscriptionsAdapter } from "./subscriptions-adapter";
 
 export interface AppState {
   // Data
@@ -305,36 +312,99 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     stmtsRef.current = cardStatements;
   });
 
-  // Applies one settled list-domain result: live on success (+persist), snapshot if cached,
-  // else "unavailable" (empty + backend-down). NEVER mock.
-  const applyListDomain = useCallback(
-    function <K extends Exclude<DomainKey, "transactions">>(
-      domain: K,
-      result: PromiseSettledResult<unknown>,
-      token: string,
-      setData: (d: unknown) => void,
-    ): void {
-      if (result.status === "fulfilled") {
-        const value = result.value as never;
-        setData(value);
-        saveDomain(token, domain, value);
-        setSyncFor(domain, {
+  // ── Bootstrap dispatch: maps reducer actions to provider state ───────
+  // This replaces the former applyListDomain + inline fetch.
+  const bootstrapDispatch = useCallback((action: AppStateAction) => {
+    switch (action.type) {
+      case "BOOTSTRAP_START":
+        setLoading(true);
+        setError(null);
+        break;
+      case "BOOTSTRAP_COMPLETE":
+        setLoading(false);
+        break;
+      case "BOOTSTRAP_401":
+        setLoading(false);
+        break;
+      case "DOMAIN_LIVE": {
+        setSyncFor(action.domain, {
           source: "live",
-          syncedAt: new Date().toISOString(),
+          syncedAt: action.syncedAt,
         });
-        return;
+        switch (action.domain) {
+          case "accounts": setAccounts(action.data as Account[]); break;
+          case "categories": setCategories(action.data as Category[]); break;
+          case "transactions": setTransactions(action.data as Transaction[]); break;
+          case "payables": setPayables(action.data as Payable[]); break;
+          case "budgets": setBudgets(action.data as Budget[]); break;
+          case "goals": setGoals(action.data as Goal[]); break;
+          case "cardStatements": setCardStatements(action.data as CardStatement[]); break;
+        }
+        break;
       }
-      const snap = loadDomain(token, domain);
-      if (snap) {
-        setData(snap.data);
-        setSyncFor(domain, { source: "snapshot", syncedAt: snap.syncedAt });
-      } else {
-        setData([]);
-        setSyncFor(domain, { source: "unavailable", syncedAt: null });
-      }
-    },
-    [setSyncFor],
-  );
+      case "DOMAIN_SNAPSHOT":
+        setSyncFor(action.domain, {
+          source: "snapshot",
+          syncedAt: action.syncedAt,
+        });
+        switch (action.domain) {
+          case "accounts": setAccounts(action.data as Account[]); break;
+          case "categories": setCategories(action.data as Category[]); break;
+          case "transactions": setTransactions(action.data as Transaction[]); break;
+          case "payables": setPayables(action.data as Payable[]); break;
+          case "budgets": setBudgets(action.data as Budget[]); break;
+          case "goals": setGoals(action.data as Goal[]); break;
+          case "cardStatements": setCardStatements(action.data as CardStatement[]); break;
+        }
+        break;
+      case "DOMAIN_UNAVAILABLE":
+        setSyncFor(action.domain, { source: "unavailable", syncedAt: null });
+        switch (action.domain) {
+          case "accounts": setAccounts([]); break;
+          case "categories": setCategories([]); break;
+          case "transactions": setTransactions([]); break;
+          case "payables": setPayables([]); break;
+          case "budgets": setBudgets([]); break;
+          case "goals": setGoals([]); break;
+          case "cardStatements": setCardStatements([]); break;
+        }
+        break;
+      case "SET_ERROR":
+        setError(action.error);
+        break;
+    }
+  }, [setSyncFor]);
+
+  // Preload v2 snapshot data for all domains before bootstrap.
+  const preloadSnapshot = useCallback(async (token: string): Promise<SnapshotPreload> => {
+    const domains: DomainKey[] = ["accounts","categories","transactions","payables","budgets","goals","cardStatements"];
+    const entries = await Promise.all(
+      domains.map((d) => loadSnapshotDomain(token, d).then((v) => [d, v] as const)),
+    );
+    const preload: SnapshotPreload = {};
+    for (const [domain, value] of entries) {
+      if (value) preload[domain] = { data: value.data, syncedAt: value.syncedAt };
+    }
+    return preload;
+  }, []);
+
+  // ── Write boundary: commands factory (offline-safe) ───────────────
+  // Every UI write goes through `commands.x(...)`; when `online` is false
+  // the command throws `OfflineWriteError` with zero network/optimistic
+  // side-effects. Stored in a ref so write callbacks (which keep `[]`
+  // deps to stay referentially stable) always read the latest commands
+  // at call time.
+  const { trackWrite } = useUnsavedChangesSafe();
+  const commandsRef = useRef<Commands | null>(null);
+  useEffect(() => {
+    commandsRef.current = createCommands({
+      online: apiUsable(),
+      token: getAuthToken() ?? undefined,
+      dispatch: bootstrapDispatch,
+      api: endpoints,
+      trackWrite,
+    });
+  }, [bootstrapDispatch, trackWrite]);
 
   // ── Fetch from API when configured + token exists ─────────────────
   useEffect(() => {
@@ -346,161 +416,33 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     const load = async () => {
       const token = getAuthToken();
       if (!token) return;
-      setLoading(true);
-      setError(null);
 
-      const results = await Promise.allSettled([
-        endpoints.fetchAccounts(),
-        endpoints.fetchCategories(),
-        endpoints.fetchTransactions({ limit: 200 }),
-        endpoints.fetchPayables(),
-        endpoints.fetchBudgets(),
-        endpoints.fetchGoals(),
-        endpoints.fetchStatements(),
-        endpoints.fetchCards(),
-        endpoints.fetchProfile(),
-        endpoints.fetchQuickInsights(),
-      ]);
+      // 1. Migrate v1 → v2 (reads v1 localStorage, writes v2 IndexedDB, deletes v1)
+      await migrateV1toV2(token);
+
+      // 2. Preload existing v2 snapshot for offline fallback
+      const snapshotPreload = await preloadSnapshot(token);
+
+      // 3. Run bootstrap with preloaded snapshot data
+      await runBootstrap(token, bootstrapDispatch, expireSession, snapshotPreload);
+
       if (cancelled) return;
 
-      // Runtime 401 short-circuit across ALL domains (Task 5 wires the side-effect).
-      const unauthorized = results.some(
-        (r) =>
-          r.status === "rejected" &&
-          r.reason instanceof ApiError &&
-          r.reason.status === 401,
-      );
-      if (unauthorized) {
-        expireSession();
-        setLoading(false);
-        return;
+      // Profile and insights are fetched inside runBootstrap but
+      // handled separately by the provider (not in reducer).
+      // Refresh them after bootstrap completes.
+      try {
+        const profileResult = await endpoints.fetchProfile();
+        setProfile(profileResult);
+      } catch {
+        // profile failure is non-fatal
       }
-
-      // ── Accounts + credit cards merge ────────────────────────
-      // /accounts (results[0]) returns checking/savings accounts.
-      // /cards/accounts (results[7]) returns credit card accounts.
-      // Merge both, deduplicating by id.
-      {
-        const accountsResult = results[0];
-        const cardsResult = results[7];
-        const accountsOk = accountsResult.status === "fulfilled";
-        const cardsOk = cardsResult.status === "fulfilled";
-        const cardsData = cardsOk ? (cardsResult.value as Account[]) : [];
-
-        if (accountsOk) {
-          // Accounts succeeded — merge cards in, keep live.
-          // /accounts returns some card accounts as kind="bank" (API quirk).
-          // /cards/accounts has the correct kind="credit_card" + card fields.
-          // Cards OVERWRITE same-id entries from accounts (kind normalization).
-          const merged: Account[] = [...(accountsResult.value as Account[])];
-          for (const c of cardsData) {
-            const idx = merged.findIndex((m) => m.id === c.id);
-            if (idx >= 0) {
-              merged[idx] = c; // overwrite with card data
-            } else {
-              merged.push(c);
-            }
-          }
-          setAccounts(merged);
-          saveDomain(token, "accounts", merged);
-          setSyncFor("accounts", {
-            source: "live",
-            syncedAt: new Date().toISOString(),
-          });
-        } else if (cardsData.length > 0) {
-          // Only cards available — use cards as partial accounts
-          setAccounts(cardsData);
-          saveDomain(token, "accounts", cardsData);
-          setSyncFor("accounts", {
-            source: "live",
-            syncedAt: new Date().toISOString(),
-          });
-        } else {
-          // Both failed or cards empty — snapshot or unavailable
-          const snap = loadDomain(token, "accounts");
-          if (snap) {
-            setAccounts(snap.data);
-            setSyncFor("accounts", {
-              source: "snapshot",
-              syncedAt: snap.syncedAt,
-            });
-          } else {
-            setAccounts([]);
-            setSyncFor("accounts", {
-              source: "unavailable",
-              syncedAt: null,
-            });
-          }
-        }
+      try {
+        const insights = await endpoints.fetchQuickInsights();
+        setQuickInsights(insights);
+      } catch {
+        setQuickInsights([]);
       }
-      applyListDomain("categories", results[1], token, (d) =>
-        setCategories(d as Category[]),
-      );
-      // transactions has shape { items, total }: unwrap before applying
-      if (results[2].status === "fulfilled") {
-        const items = (results[2].value as { items: Transaction[] }).items;
-        setTransactions(items);
-        saveDomain(token, "transactions", items);
-        setSyncFor("transactions", {
-          source: "live",
-          syncedAt: new Date().toISOString(),
-        });
-      } else {
-        const snap = loadDomain(token, "transactions");
-        if (snap) {
-          setTransactions(snap.data);
-          setSyncFor("transactions", {
-            source: "snapshot",
-            syncedAt: snap.syncedAt,
-          });
-        } else {
-          setTransactions([]);
-          setSyncFor("transactions", {
-            source: "unavailable",
-            syncedAt: null,
-          });
-        }
-      }
-      applyListDomain("payables", results[3], token, (d) =>
-        setPayables(d as Payable[]),
-      );
-      applyListDomain("budgets", results[4], token, (d) =>
-        setBudgets(d as Budget[]),
-      );
-      applyListDomain("goals", results[5], token, (d) =>
-        setGoals(d as Goal[]),
-      );
-      applyListDomain("cardStatements", results[6], token, (d) =>
-        setCardStatements(d as CardStatement[]),
-      );
-
-      // /profile (results[8]) — household profile. Failure is non-fatal
-      // because the page falls back to a default name/color via effectiveProfile.
-      {
-        const profileResult = results[8];
-        if (profileResult.status === "fulfilled") {
-          setProfile(profileResult.value);
-        }
-      }
-
-      {
-        const insightsResult = results[9];
-        if (insightsResult.status === "fulfilled") {
-          setQuickInsights(insightsResult.value as QuickInsight[]);
-        } else {
-          setQuickInsights([]);
-        }
-      }
-
-      // Only essential-domain failures trigger global banner;
-      // non-essential domains (subscriptions, cardStatements)
-      // degrade independently for their own pages.
-      const anyEssentialFailed = ESSENTIAL_DOMAINS.some(
-        (_, i) => results[i].status === "rejected",
-      );
-      if (anyEssentialFailed)
-        setError("Alguns dados não puderam ser atualizados.");
-      setLoading(false);
     };
 
     load();
@@ -508,7 +450,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [bootstrapDispatch, expireSession]);
 
   // ── Write actions ─────────────────────────────────────────────────
 
@@ -520,7 +462,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     try {
       if (tx.kind === "expense") {
-        const created = await endpoints.createExpenseTransaction({
+        const created = await commandsRef.current!.createExpenseTransaction({
           description: tx.description,
           amountCents: tx.amountCents,
           date: tx.date,
@@ -535,7 +477,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           "Use createTransfer mutator for transfers, not addTransaction",
         );
       } else {
-        const created = await endpoints.createIncomeTransaction({
+        const created = await commandsRef.current!.createIncomeTransaction({
           description: tx.description,
           amountCents: tx.amountCents,
           date: tx.date,
@@ -549,6 +491,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
       handleWriteErrorRef.current(e);
+      throw e;
     }
   }, []);
 
@@ -594,7 +537,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.updateTransaction(id, input);
+        await commandsRef.current!.updateTransaction(id, input);
       } catch (e) {
         // Rollback to previous state
         setTransactions((curr) =>
@@ -614,7 +557,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      await endpoints.deleteTransaction(id);
+      await commandsRef.current!.deleteTransaction(id);
     } catch (e) {
       if (prev) setTransactions((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
@@ -635,7 +578,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      await endpoints.markPayablePaid(id, today);
+      await commandsRef.current!.markPayablePaid(id, today);
     } catch (e) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? prev : p)),
@@ -660,7 +603,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.updateAccount(id, input);
+        await commandsRef.current!.updateAccount(id, input);
       } catch (e) {
         setAccounts((curr) =>
           curr.map((a) => (a.id === id ? prev : a)),
@@ -682,7 +625,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.deactivateAccount(id);
+      await commandsRef.current!.deactivateAccount(id);
     } catch (e) {
       setAccounts((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
@@ -704,7 +647,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.updateCategory(id, input);
+        await commandsRef.current!.updateCategory(id, input);
       } catch (e) {
         setCategories((curr) =>
           curr.map((c) => (c.id === id ? prev : c)),
@@ -725,7 +668,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.deactivateCategory(id);
+      await commandsRef.current!.deactivateCategory(id);
     } catch (e) {
       setCategories((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
@@ -752,7 +695,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.addAccount(input);
+        const created = await commandsRef.current!.addAccount(input);
         setAccounts((prev) =>
           prev.map((a) =>
             a.id === optimisticId
@@ -788,7 +731,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.addCategory(input);
+        const created = await commandsRef.current!.addCategory(input);
         setCategories((prev) =>
           prev.map((c) =>
             c.id === optimisticId ? { ...created, icon: c.icon } : c,
@@ -826,7 +769,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.createCard(input);
+        const created = await commandsRef.current!.createCard(input);
         setAccounts((prev) =>
           prev.map((a) =>
             a.id === optimisticId
@@ -877,7 +820,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable() || !prev) return;
 
       try {
-        const updated = await endpoints.updateCard(id, input);
+        const updated = await commandsRef.current!.updateCard(id, input);
         setAccounts((curr) =>
           curr.map((a) => (a.id === id ? { ...a, ...updated, color: a.color } : a)),
         );
@@ -916,7 +859,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.addSubscription(input);
+        const created = await commandsRef.current!.addSubscription(input);
         setSubscriptions((prev) =>
           prev.map((s) => (s.id === optimisticId ? created : s)),
         );
@@ -940,7 +883,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      await endpoints.cancelSubscription(id);
+      await commandsRef.current!.cancelSubscription(id);
     } catch (e) {
       setSubscriptions((curr) =>
         curr.map((s) => (s.id === id ? prev : s)),
@@ -970,7 +913,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.updateSubscription(id, input);
+      await commandsRef.current!.updateSubscription(id, input);
     } catch (e) {
       // Rollback
       setSubscriptions((curr) =>
@@ -983,41 +926,23 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // ── Lazy load subscriptions (not fetched during bootstrap) ────
 
   const refreshSubscriptions = useCallback(async () => {
-    if (!apiUsable()) return; // keep existing data (mock or empty)
-
     const token = getAuthToken();
     if (!token) return;
 
-    try {
-      const data = await endpoints.fetchSubscriptions();
-      setSubscriptions(data);
-      saveDomain(token, "subscriptions", data);
-      setSyncFor("subscriptions", {
-        source: "live",
-        syncedAt: new Date().toISOString(),
-      });
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
-        expireSession();
-        return;
-      }
-      // Fallback to snapshot or unavailable
-      const snap = loadDomain(token, "subscriptions");
-      if (snap) {
-        setSubscriptions(snap.data);
-        setSyncFor("subscriptions", {
-          source: "snapshot",
-          syncedAt: snap.syncedAt,
-        });
-      } else {
-        setSubscriptions([]);
-        setSyncFor("subscriptions", {
-          source: "unavailable",
-          syncedAt: null,
-        });
-      }
+    const adapter = createSubscriptionsAdapter({ token, online: apiUsable() });
+    const result = await adapter.refresh();
+
+    if (result === null) {
+      // Offline — keep existing data (mock or empty)
+      return;
     }
-  }, [setSyncFor, expireSession]);
+
+    setSubscriptions(result.data);
+    setSyncFor("subscriptions", {
+      source: result.source,
+      syncedAt: result.syncedAt,
+    });
+  }, [setSyncFor]);
 
   const createTransfer = useCallback(
     async (input: {
@@ -1065,7 +990,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.createTransfer(input);
+        await commandsRef.current!.createTransfer(input);
       } catch (e) {
         setTransactions((prev) => prev.filter((t) => t.id !== optimisticId));
         if (prevFrom) {
@@ -1079,6 +1004,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           );
         }
         handleWriteErrorRef.current(e);
+        throw e;
       }
     },
     [],
@@ -1099,7 +1025,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      await endpoints.cancelPayable(id);
+      await commandsRef.current!.cancelPayable(id);
     } catch (e) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? { ...prev } : p)),
@@ -1130,7 +1056,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.updatePayable(id, input);
+        await commandsRef.current!.updatePayable(id, input);
       } catch (e) {
         setPayables((curr) =>
           curr.map((p) => (p.id === id ? { ...prev } : p)),
@@ -1158,7 +1084,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.undoPayablePayment(id);
+      await commandsRef.current!.undoPayablePayment(id);
     } catch (e) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? { ...prev } : p)),
@@ -1190,7 +1116,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.createPayable(input);
+        const created = await commandsRef.current!.createPayable(input);
         setPayables((curr) =>
           curr.map((p) => (p.id === optimisticId ? created : p)),
         );
@@ -1226,7 +1152,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.createBudget(input);
+        const created = await commandsRef.current!.createBudget(input);
         setBudgets((curr) =>
           curr.map((b) => (b.id === optimistic.id ? created : b)),
         );
@@ -1263,7 +1189,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.updateBudget(id, input);
+        await commandsRef.current!.updateBudget(id, input);
       } catch (e) {
         setBudgets((curr) =>
           curr.map((b) => (b.id === id ? prev : b)),
@@ -1296,7 +1222,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const created = await endpoints.createGoal(input);
+        const created = await commandsRef.current!.createGoal(input);
         setGoals((curr) =>
           curr.map((g) => (g.id === optimistic.id ? created : g)),
         );
@@ -1329,7 +1255,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        await endpoints.contributeToGoal(id, input);
+        await commandsRef.current!.contributeToGoal(id, input);
       } catch (e) {
         setGoals((curr) =>
           curr.map((g) => (g.id === id ? { ...prev } : g)),
@@ -1350,7 +1276,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.cancelGoal(id);
+      await commandsRef.current!.cancelGoal(id);
     } catch (e) {
       setGoals((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
@@ -1376,7 +1302,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await endpoints.updateGoal(id, input);
+      await commandsRef.current!.updateGoal(id, input);
     } catch (e) {
       setGoals((curr) => curr.map((g) => (g.id === id ? prev : g)));
       handleWriteErrorRef.current(e);
@@ -1425,7 +1351,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!apiUsable()) return;
 
       try {
-        const updated = await endpoints.payStatement(statementId, input);
+        const updated = await commandsRef.current!.payStatement(statementId, input);
         setCardStatements((curr) =>
           curr.map((s) =>
             s.id === statementId
@@ -1468,22 +1394,32 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        await endpoints.createInstallments(input);
+        await commandsRef.current!.createInstallments(input);
         const stmts = await endpoints.fetchStatements(input.accountId);
         setCardStatements(stmts);
       } catch (e) {
         handleWriteErrorRef.current(e);
+        throw e;
       }
     },
     [],
   );
 
-  // ── Profile save/load (Slice B) ───────────────────────────
-  // saveProfile updates the household profile. When API is configured
-  // and a token exists it PATCHes /profile and reflects the result;
-  // otherwise it falls back to a local-only update so the PWA is usable
-  // in mock mode (and that local value survives refreshes via
-  // localStorage because the initial state hydrates from it).
+  // ── Profile adapter ────────────────────────────────────────
+  // Injected persistence/API projection adapter. The adapter handles both
+  // API mode (endpoints.patchProfile/fetchProfile) and local fallback mode
+  // (localStorage). The provider facade (saveProfile, refreshProfile) is
+  // unchanged.
+  const profileAdapter = useMemo(
+    () => createProfileAdapter({ apiUsable: apiUsable() }),
+    [],
+  );
+
+  // ── Profile save/load ─────────────────────────────────────
+  // Delegates to the injected adapter. When API is configured, the adapter
+  // calls endpoints.patchProfile and returns the server projection; otherwise
+  // it applies a local merge with defaults. In both cases setProfile is
+  // called with the result.
   const saveProfile = useCallback(
     async (input: {
       name?: string;
@@ -1492,66 +1428,41 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       avatarColor?: string;
       greetingStyle?: Profile["greetingStyle"];
     }) => {
-      if (apiUsable()) {
-        try {
-          const updated = await endpoints.patchProfile(input);
-          setProfile(updated);
-        } catch (e) {
-          handleWriteErrorRef.current(e);
-        }
-        return;
+      try {
+        const result = await profileAdapter.save(input, profile);
+        setProfile(result);
+      } catch (e) {
+        handleWriteErrorRef.current(e);
       }
-      // Local-only fallback. Use a stable synthetic household id so
-      // the persisted shape matches the API contract.
-      const householdId = profile?.householdId ?? "local-household";
-      const next: Profile = {
-        householdId,
-        name: input.name ?? profile?.name ?? "Usuário",
-        email: input.email ?? profile?.email ?? "",
-        phone: input.phone ?? profile?.phone ?? "",
-        avatarColor: input.avatarColor ?? profile?.avatarColor ?? "#0E8C5A",
-        greetingStyle: input.greetingStyle ?? profile?.greetingStyle ?? "auto",
-        updatedAt: new Date().toISOString(),
-      };
-      setProfile(next);
     },
-    [profile],
+    [profile, profileAdapter],
   );
 
   const refreshProfile = useCallback(async () => {
-    if (!apiUsable()) return;
     try {
-      const fresh = await endpoints.fetchProfile();
-      setProfile(fresh);
+      const fresh = await profileAdapter.refresh();
+      if (fresh) setProfile(fresh);
     } catch {
       // ignore — keep previous profile state
     }
-  }, []);
+  }, [profileAdapter]);
 
-  // ── Local-mode persistence for profile (mock/local-storage) ─────────
+  // ── Local-mode persistence for profile (mock/local-storage) ─
   // When the API is configured, saveProfile already persists server-side;
   // in mock mode we hydrate from localStorage on mount and write back
-  // after every saveProfile call. This is what makes the spec test
-  // "edits survive a refresh" pass without a real backend.
+  // after every saveProfile call.
   useEffect(() => {
     if (apiUsable()) return;
-    try {
-      const raw = localStorage.getItem("pi-finance:profile");
-      if (raw) setProfile(JSON.parse(raw) as Profile);
-    } catch {
-      // ignore corrupt localStorage
-    }
-  }, []);
+    const local = profileAdapter.hydrate();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (local) setProfile(local);
+  }, [profileAdapter]);
 
   useEffect(() => {
     if (apiUsable()) return;
     if (!profile) return;
-    try {
-      localStorage.setItem("pi-finance:profile", JSON.stringify(profile));
-    } catch {
-      // localStorage may be unavailable (private mode) — silently noop
-    }
-  }, [profile]);
+    profileAdapter.persist(profile);
+  }, [profile, profileAdapter]);
 
 
   return (

@@ -240,5 +240,28 @@ describe("PayablesPage", () => {
       expect(screen.getByText("Nova conta a pagar")).toBeInTheDocument();
       expect(screen.getByText("Salvar conta")).toBeInTheDocument();
     });
+
+    it("creates a payable via the new form", async () => {
+      const createSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ createPayable: createSpy }));
+      const user = userEvent.setup();
+      const { container } = render(<PayablesPage />);
+      await user.click(screen.getByText("Nova"));
+      await user.type(screen.getByPlaceholderText(/Aluguel, Netflix/i), "Conta Nova");
+      await user.type(screen.getByPlaceholderText("0,00"), "123450");
+      const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+      await user.type(dateInput, "2026-07-10");
+      const [accountSelect, catSelect] = screen.getAllByRole("combobox");
+      await user.selectOptions(accountSelect, "acc2");
+      await user.selectOptions(catSelect, "cat1");
+      await user.click(screen.getByText("Salvar conta"));
+      expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({
+        description: "Conta Nova",
+        amountCents: 123450,
+        dueDate: "2026-07-10",
+        accountId: "acc2",
+        categoryId: "cat1",
+      }));
+    });
   });
 });

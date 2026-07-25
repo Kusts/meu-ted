@@ -8,6 +8,7 @@ import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
+import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import type { Payable } from "@/lib/state/types";
 
 function formatInputBRL(value: string): string {
@@ -39,27 +40,41 @@ function NewPayableSheet({
     amountCents: number;
     dueDate: string;
     categoryId?: string;
-  }) => void;
+  }) => void | Promise<void>;
   accounts: { id: string; name: string }[];
   categories: { id: string; name: string; kind: string }[];
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [description, setDescription] = useState("");
   const [amountStr, setAmountStr] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
   const [categoryId, setCategoryId] = useState("");
 
-  function handleSave() {
+  async function handleSave() {
     if (!description.trim() || !dueDate) return;
     const amountCents = parseBRLToCents(amountStr);
     if (amountCents <= 0) return;
-    onSave({
-      accountId,
-      description: description.trim(),
-      amountCents,
-      dueDate,
-      categoryId: categoryId || undefined,
-    });
+    try {
+      await onSave({
+        accountId,
+        description: description.trim(),
+        amountCents,
+        dueDate,
+        categoryId: categoryId || undefined,
+      });
+      markClean();
+      setDescription("");
+      setAmountStr("");
+      setDueDate("");
+      onClose();
+    } catch {
+      // Save failed: keep dirty so the user does not lose unsaved edits.
+    }
+  }
+
+  function handleCancel() {
+    markClean();
     setDescription("");
     setAmountStr("");
     setDueDate("");
@@ -71,8 +86,8 @@ function NewPayableSheet({
   );
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Nova conta a pagar">
-      <div className="flex flex-col gap-4">
+    <BottomSheet open={open} onClose={handleCancel} title="Nova conta a pagar">
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <fieldset>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Descrição</label>
           <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: Aluguel, Netflix..." className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
@@ -149,18 +164,41 @@ function DetailSheet({
   accounts: { id: string; name: string; kind?: string }[];
   categories: { id: string; name: string; kind: string }[];
   onClose: () => void;
-  onSave: (id: string, input: { description?: string; amountCents?: number; dueDate?: string; accountId?: string; categoryId?: string }) => void;
+  onSave: (id: string, input: { description?: string; amountCents?: number; dueDate?: string; accountId?: string; categoryId?: string }) => void | Promise<void>;
   onMarkPaid: (id: string) => void;
   onUndoPay: (id: string) => void;
   onCancel: (p: Payable) => void;
 }) {
-  const isEditable = payable?.status === "pending" || payable?.status === "overdue" || payable?.status === "paid";
+  const { markDirty, markClean } = useFormDirtySafe();
   const isCancelled = payable?.status === "cancelled";
   const [description, setDescription] = useState(payable?.description ?? "");
   const [amountStr, setAmountStr] = useState(payable ? formatInputBRL(String(payable.amountCents)) : "");
   const [dueDate, setDueDate] = useState(payable?.dueDate ?? "");
   const [accountId, setAccountId] = useState(payable?.accountId ?? "");
   const [categoryId, setCategoryId] = useState(payable?.categoryId ?? "");
+
+  function handleClose() {
+    markClean();
+    onClose();
+  }
+
+  async function handleSave() {
+    if (!payable) return;
+    const parsed = parseBRLToCents(amountStr);
+    try {
+      await onSave(payable.id, {
+        description: description.trim() || undefined,
+        amountCents: parsed > 0 ? parsed : undefined,
+        dueDate: dueDate || undefined,
+        accountId: accountId || undefined,
+        categoryId: categoryId || undefined,
+      });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
+  }
 
   if (!payable) return null;
 
@@ -170,8 +208,8 @@ function DetailSheet({
   const showUndo = !isCancelled && payable.status === "paid";
 
   return (
-    <BottomSheet open={open} onClose={onClose} title={payable.description}>
-      <div className="flex flex-col gap-4">
+    <BottomSheet open={open} onClose={handleClose} title={payable.description}>
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         {isCancelled ? (
           <>
             <div className="space-y-3">
@@ -220,17 +258,7 @@ function DetailSheet({
             </fieldset>
             <button
               type="button"
-              onClick={() => {
-                const parsed = parseBRLToCents(amountStr);
-                onSave(payable.id, {
-                  description: description.trim() || undefined,
-                  amountCents: parsed > 0 ? parsed : undefined,
-                  dueDate: dueDate || undefined,
-                  accountId: accountId || undefined,
-                  categoryId: categoryId || undefined,
-                });
-                onClose();
-              }}
+              onClick={handleSave}
               className="w-full rounded-[12px] bg-primary py-3 text-[13px] font-bold text-white"
             >
               Salvar alterações
@@ -239,14 +267,14 @@ function DetailSheet({
               <>
                 <button
                   type="button"
-                  onClick={() => { onMarkPaid(payable.id); onClose(); }}
+                  onClick={() => { markClean(); onMarkPaid(payable.id); onClose(); }}
                   className="w-full rounded-[12px] bg-[#0E8C5A] py-3 text-[13px] font-bold text-white"
                 >
                   Marcar como paga
                 </button>
                 <button
                   type="button"
-                  onClick={() => { onCancel(payable); onClose(); }}
+                  onClick={() => { markClean(); onCancel(payable); onClose(); }}
                   className="w-full rounded-[12px] border border-danger bg-surface py-3 text-[13px] font-bold text-danger"
                 >
                   Cancelar conta
@@ -256,7 +284,7 @@ function DetailSheet({
             {showUndo && (
               <button
                 type="button"
-                onClick={() => { onUndoPay(payable.id); onClose(); }}
+                onClick={() => { markClean(); onUndoPay(payable.id); onClose(); }}
                 className="w-full rounded-[12px] border border-warning bg-surface py-3 text-[13px] font-bold text-warning"
               >
                 Desfazer pagamento
@@ -437,7 +465,7 @@ export default function PayablesPage() {
         onClose={() => { setDetailOpen(false); setDetailPayable(null); }}
         onSave={(id, input) => updatePayable(id, input)}
         onMarkPaid={(id) => markPayablePaid(id)}
-        onUndoPay={(id) => setConfirmUndo(detailPayable)}
+        onUndoPay={() => setConfirmUndo(detailPayable)}
         onCancel={(p) => setConfirmCancel(p)}
       />
 

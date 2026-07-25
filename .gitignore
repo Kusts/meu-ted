@@ -46,6 +46,10 @@ data/
 *.lcov
 coverage/
 .nyc_output/*.tsbuildinfo
+.stryker-tmp/
+apps/pwa/.stryker-tmp/
+apps/pwa/.execution-log/
+apps/pwa/.tdd-log.tsv
 
 # Local Pi runtime / secrets
 .env.pi

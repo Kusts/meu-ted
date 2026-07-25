@@ -1,0 +1,94 @@
+name: PWA CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/pwa/**"
+      - "scripts/check-pwa-audit.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/pwa/**"
+      - "scripts/check-pwa-audit.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: pwa-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      matrix:
+        node-version: [20]
+        pnpm-version: [9]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ matrix.pnpm-version }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint PWA
+        run: pnpm --dir apps/pwa lint
+
+      - name: Build PWA (Cloudflare)
+        run: pnpm --dir apps/pwa build:cloudflare
+
+      - name: Test PWA
+        run: pnpm --dir apps/pwa exec vitest run
+
+      - name: Validate _headers propagation
+        run: pnpm --dir apps/pwa exec vitest run src/headers.test.ts
+
+      - name: Check initial JS gzip <=200KB
+        run: |
+          cd apps/pwa
+          node -e "
+          const z=require('zlib'),fs=require('fs');
+          const d='.open-next/assets/_next/static/chunks';
+          const files=fs.readdirSync(d).filter(f=>f.endsWith('.js'));
+          const init=files.filter(f=>['framework','main-','polyfills'].some(p=>f.startsWith(p)))
+            .reduce((s,f)=>{try{return s+z.gzipSync(fs.readFileSync(d+'/'+f)).length}catch{return s}},0);
+          console.log('initial JS gzip: '+(init/1024).toFixed(1)+'KB');
+          if(init>200*1024){console.log('FAIL: >200KB');process.exit(1)}
+          "
+
+      - name: Lighthouse CI
+        run: |
+          cd apps/pwa
+          pnpm exec lhci autorun
+
+      - name: Scoped audit
+        run: node scripts/pwa-audit.mjs
+
+      - name: CORS contract (passive)
+        run: timeout 10 node apps/pwa/scripts/contract-cors.mjs
+        continue-on-error: true
+
+      - name: Install Playwright browser
+        run: pnpm --dir apps/pwa exec playwright install --with-deps chromium
+
+      - name: E2E (Playwright offline shell)
+        run: |
+          pnpm --dir apps/pwa build:next:cloudflare
+          pnpm --dir apps/pwa exec playwright test --config=scripts/offline-shell-spike/playwright.config.ts

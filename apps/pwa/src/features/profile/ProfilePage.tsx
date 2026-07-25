@@ -2,14 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { resetLocalSession } from "@/lib/reset-session";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
+import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import Icon from "@/components/ui/Icon";
 import Badge from "@/components/ui/Badge";
 import NotificationsSheet from "./NotificationsSheet";
 import { useAppState } from "@/lib/state/app-state-context";
+import { useSession } from "@/lib/auth/session-context";
+import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import { useEffectiveProfile } from "./hooks";
 
 type ProfileSheet = "edit" | "chat" | "notifications" | null;
@@ -47,6 +49,7 @@ export default function ProfilePage() {
   const [editKey, setEditKey] = useState(0);
   const profile = useEffectiveProfile();
   const { saveProfile } = useAppState();
+  const { expireSession } = useSession();
 
   function handleItem(key: string) {
     if (key === "edit") {
@@ -56,15 +59,10 @@ export default function ProfilePage() {
     else if (key === "notifications") setOpen("notifications");
   }
 
-  function handleLogout() {
-    resetLocalSession();
-    try {
-      localStorage.removeItem("pi-finance:profile");
-    } catch {
-      /* noop */
-    }
+  async function handleLogout() {
+    // expireSession clears token/snapshot AND flips AuthGate back to register.
+    await expireSession();
     router.push("/");
-    router.refresh();
   }
 
   return (
@@ -179,32 +177,63 @@ function EditProfileSheet({
     greetingStyle: "auto" | "minimal" | "verbose";
   }) => Promise<void>;
 }) {
-  const [name, setName] = useState(profile.name);
-  const [email, setEmail] = useState(profile.email);
-  const [phone, setPhone] = useState(profile.phone);
-  const [avatarColor, setAvatarColor] = useState(profile.avatarColor);
-  const [greetingStyle, setGreetingStyle] = useState(profile.greetingStyle);
+  const { isDirty, markDirty, markClean } = useFormDirtySafe();
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [name, setName] = useState(profile.name ?? "");
+  const [email, setEmail] = useState(profile.email ?? "");
+  const [phone, setPhone] = useState(profile.phone ?? "");
+  const [avatarColor, setAvatarColor] = useState(profile.avatarColor ?? "#0E8C5A");
+  const [greetingStyle, setGreetingStyle] = useState<
+    "auto" | "minimal" | "verbose"
+  >(
+    profile.greetingStyle === "minimal" || profile.greetingStyle === "verbose"
+      ? profile.greetingStyle
+      : "auto",
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset form fields whenever the sheet opens or the underlying profile
-  // changes (e.g. a previous save landed while the sheet was closed).
+  // Hydrate only when the sheet opens. Do NOT depend on markClean — it is
+  // recreated when dirty context updates, which would wipe in-progress edits.
   useEffect(() => {
     if (!open) return;
-    setName(profile.name);
-    setEmail(profile.email);
-    setPhone(profile.phone);
-    setAvatarColor(profile.avatarColor);
-    setGreetingStyle(profile.greetingStyle);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setName(profile.name ?? "");
+    setEmail(profile.email ?? "");
+    setPhone(profile.phone ?? "");
+    setAvatarColor(profile.avatarColor ?? "#0E8C5A");
+    setGreetingStyle(
+      profile.greetingStyle === "minimal" || profile.greetingStyle === "verbose"
+        ? profile.greetingStyle
+        : "auto",
+    );
     setError(null);
-  }, [open, profile.name, profile.email, profile.phone, profile.avatarColor, profile.greetingStyle]);
+    markClean();
+    // Intentionally only [open]: parent remounts via key=editKey on each open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  function requestClose() {
+    if (isDirty) {
+      setDiscardOpen(true);
+      return;
+    }
+    onClose();
+  }
+
+  function confirmDiscard() {
+    markClean();
+    setDiscardOpen(false);
+    onClose();
+  }
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Editar perfil">
+    <>
+    <BottomSheet open={open} onClose={requestClose} title="Editar perfil">
       <div className="flex items-center gap-3 pb-5">
-        <BackButton onClick={onClose} />
+        <BackButton onClick={requestClose} />
       </div>
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
             Nome
@@ -254,7 +283,7 @@ function EditProfileSheet({
                 key={c}
                 type="button"
                 aria-label={`Cor ${c}`}
-                onClick={() => setAvatarColor(c)}
+                onClick={() => { markDirty(); setAvatarColor(c); }}
                 className={`h-9 w-9 rounded-full transition-transform ${
                   avatarColor === c
                     ? "ring-2 ring-text-primary ring-offset-2 ring-offset-surface"
@@ -275,7 +304,7 @@ function EditProfileSheet({
               <button
                 key={s}
                 type="button"
-                onClick={() => setGreetingStyle(s)}
+                onClick={() => { markDirty(); setGreetingStyle(s); }}
                 className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-colors ${
                   greetingStyle === s
                     ? "bg-surface text-text-primary shadow-sm"
@@ -308,6 +337,7 @@ function EditProfileSheet({
                 avatarColor,
                 greetingStyle,
               });
+              markClean();
             } catch (e) {
               setError((e as Error).message || "Falha ao salvar");
             } finally {
@@ -320,6 +350,17 @@ function EditProfileSheet({
         </button>
       </div>
     </BottomSheet>
+    <ConfirmActionDialog
+      open={discardOpen}
+      title="Descartar alterações?"
+      message="Você tem alterações não salvas. Deseja sair sem salvar?"
+      confirmLabel="Descartar"
+      cancelLabel="Continuar editando"
+      danger
+      onConfirm={confirmDiscard}
+      onCancel={() => setDiscardOpen(false)}
+    />
+    </>
   );
 }
 

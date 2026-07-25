@@ -294,5 +294,73 @@ describe("NotificationsSheet", () => {
     render(<NotificationsSheet open onClose={vi.fn()} />);
     expect(screen.queryByText(/Nada urgente agora/i)).not.toBeInTheDocument();
   });
+
+  describe("extra branch coverage", () => {
+    it("shows urgent 'estourou' when budget spent >= amount", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...baseState(),
+        budgets: [
+          { id: "b9", categoryId: "c9", name: "Lazer", amountCents: 100000, spentCents: 120000, period: "monthly" },
+        ],
+      } as AppState);
+      render(<NotificationsSheet open onClose={vi.fn()} />);
+      expect(screen.getByText(/Lazer.*estourou/i)).toBeInTheDocument();
+    });
+
+    it("does NOT alert a fully-funded goal (pct >= 100)", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...baseState(),
+        goals: [
+          { id: "g9", name: "Casa", goalType: "savings",
+            targetAmountCents: 100000, currentAmountCents: 100000 },
+        ],
+      } as AppState);
+      render(<NotificationsSheet open onClose={vi.fn()} />);
+      expect(screen.queryByText(/Casa/i)).not.toBeInTheDocument();
+    });
+
+    it("shows card over-limit as urgent when ratio > 1", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...baseState(),
+        accounts: [
+          { id: "card9", name: "Credicard", kind: "credit_card",
+            color: "#000", creditLimitCents: 100000, closingDay: 5, dueDay: 12 },
+        ] as Account[],
+        cardStatements: [
+          { id: "stmt9", accountId: "card9", cycleYearMonth: "2026-07",
+            closingDate: "2026-07-05", dueDate: "2026-07-12", totalCents: 130000, paidCents: 0, status: "open" },
+        ] as CardStatement[],
+      } as AppState);
+      render(<NotificationsSheet open onClose={vi.fn()} />);
+      expect(screen.getByText(/Credicard.*130%/i)).toBeInTheDocument();
+    });
+
+    it("shows 'Tudo limpo' after dismissing all items", async () => {
+      const user = userEvent.setup();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...baseState(),
+        payables: [
+          { id: "p1", description: "Internet", amountCents: 12000, dueDate: "2026-06-15", status: "overdue" },
+        ],
+      } as AppState);
+      render(<NotificationsSheet open onClose={vi.fn()} />);
+      await user.click(screen.getByText("Dispensar"));
+      expect(screen.getByText(/Tudo limpo/i)).toBeInTheDocument();
+    });
+
+    it("persists dismissed ids to localStorage", async () => {
+      const user = userEvent.setup();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...baseState(),
+        payables: [
+          { id: "p1", description: "Internet", amountCents: 12000, dueDate: "2026-06-15", status: "overdue" },
+        ],
+      } as AppState);
+      render(<NotificationsSheet open onClose={vi.fn()} />);
+      await user.click(screen.getByText("Dispensar"));
+      const raw = localStorage.getItem("pi-finance:notifications-dismissed");
+      expect(raw).toContain("payable:p1");
+    });
+  });
 });
 

@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
+import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { StaleBanner } from "@/components/StaleBanner";
 import Skeleton from "@/components/ui/Skeleton";
 import { TransactionActionSheet } from "./components/TransactionActionSheet";
@@ -19,8 +19,6 @@ import type { Transaction } from "@/lib/state/types";
 // to fade into the page edge, signalling more content off-screen.
 // Uses percentages instead of `calc(...)` to stay compatible with jsdom's
 // CSSStyleDeclaration parser used in unit tests.
-const HORIZONTAL_FADE_MASK =
-  "linear-gradient(to right, transparent 0%, black 6%, black 94%, transparent 100%)";
 
 type TypeFilter = "all" | "expense" | "income" | "transfer";
 type PeriodFilter = "all" | "today" | 7 | 30 | "month" | "custom";
@@ -54,11 +52,12 @@ interface Group {
 }
 
 export default function RecordsPage() {
-  const router = useRouter();
   const { transactions, categories, accounts, loading, error, writeError, clearWriteError, deleteTransaction } = useAppState();
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [actionOpen, setActionOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deletePendingTx, setDeletePendingTx] = useState<Transaction | null>(null);
   const handleRowClick = useCallback((tx: Transaction) => {
     setSelectedTx(tx);
     setActionOpen(true);
@@ -69,11 +68,28 @@ export default function RecordsPage() {
     setEditOpen(true);
   }, []);
   const handleDelete = useCallback(
-    async (tx: Transaction) => {
-      await deleteTransaction(tx.id);
+    (tx: Transaction) => {
+      setDeletePendingTx(tx);
+      setDeleteConfirmOpen(true);
     },
-    [deleteTransaction],
+    [],
   );
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (deletePendingTx) {
+      await deleteTransaction(deletePendingTx.id);
+    }
+    setDeleteConfirmOpen(false);
+    setDeletePendingTx(null);
+    setActionOpen(false);
+    setSelectedTx(null);
+  }, [deletePendingTx, deleteTransaction]);
+
+  const handleDeleteCancel = useCallback(() => {
+    setDeleteConfirmOpen(false);
+    setDeletePendingTx(null);
+  }, []);
+  const [staleDismissed, setStaleDismissed] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>("all");
@@ -91,6 +107,7 @@ export default function RecordsPage() {
     const params = new URLSearchParams(window.location.search);
     const rawType = params.get("type");
     if (rawType === "expense" || rawType === "income" || rawType === "transfer") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTypeFilter(rawType);
     }
     const cat = params.get("categoryId");
@@ -261,13 +278,20 @@ export default function RecordsPage() {
         <WriteErrorBanner
           message={writeError}
           onDismiss={clearWriteError}
-          onRetry={() => router.refresh()}
+          onRetry={() => {
+            if (typeof window !== "undefined") window.location.reload();
+          }}
         />
 
-        <StaleBanner
-          domains={["transactions", "categories", "accounts"]}
-          onRetry={() => router.refresh()}
-        />
+        {!staleDismissed && (
+          <StaleBanner
+            domains={["transactions", "categories", "accounts"]}
+            onRetry={() => {
+              if (typeof window !== "undefined") window.location.reload();
+            }}
+            onDismiss={() => setStaleDismissed(true)}
+          />
+        )}
 
         {/* Search */}
         <div className="mx-5 mb-3 sm:mx-8 lg:mx-12">
@@ -550,6 +574,17 @@ export default function RecordsPage() {
           setEditOpen(false);
           setSelectedTx(null);
         }}
+      />
+
+      <ConfirmActionDialog
+        open={deleteConfirmOpen}
+        title="Excluir lan\u00e7amento"
+        message="Esta a\u00e7\u00e3o n\u00e3o pode ser desfeita. Deseja realmente excluir?"
+        confirmLabel="Excluir"
+        cancelLabel="Cancelar"
+        danger
+        onConfirm={handleDeleteConfirm}
+        onCancel={handleDeleteCancel}
       />
     </div>
   );

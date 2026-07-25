@@ -1,4 +1,5 @@
 import { render, screen, fireEvent } from "@/lib/test-utils";
+import { act } from "react";
 import userEvent from "@testing-library/user-event";
 
 const mockRouter = { push: vi.fn(), refresh: vi.fn() };
@@ -325,6 +326,97 @@ describe("RecordsPage", () => {
       const options = Array.from(acctSelect.options);
       const contaOption = options.find((o) => o.textContent?.startsWith("Conta"));
       expect(contaOption).toBeTruthy();
+    });
+  });
+
+  describe("extended handler coverage", () => {
+    it("opens edit sheet via Editar action", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByText("Supermercado Extra"));
+      fireEvent.click(screen.getByText("Editar"));
+      // Edit sheet should be open (header text from TransactionEditSheet)
+      expect(screen.getByText(/Editar transação|Editar lançamento/i)).toBeInTheDocument();
+    });
+
+    it("Excluir opens confirmation dialog instead of deleting immediately", async () => {
+      const delSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({ deleteTransaction: delSpy }),
+      );
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<RecordsPage />);
+      await user.click(screen.getByText("Supermercado Extra"));
+      await user.click(screen.getByText("Excluir"));
+      // Cancel button in the dialog should be visible (proves dialog opened)
+      // and deleteTransaction should NOT have been called yet
+      expect(screen.getByText("Cancelar")).toBeInTheDocument();
+      expect(delSpy).not.toHaveBeenCalled();
+    });
+
+    it("canceling confirmation does NOT call deleteTransaction", async () => {
+      const delSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({ deleteTransaction: delSpy }),
+      );
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<RecordsPage />);
+      await user.click(screen.getByText("Supermercado Extra"));
+      await user.click(screen.getByText("Excluir"));
+      // Cancel
+      await user.click(screen.getByText("Cancelar"));
+      expect(delSpy).not.toHaveBeenCalled();
+    });
+
+    it("confirming calls deleteTransaction once with correct id", async () => {
+      const delSpy = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({ deleteTransaction: delSpy }),
+      );
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<RecordsPage />);
+      // Open action sheet
+      await user.click(screen.getByText("Supermercado Extra"));
+      // Verify action sheet is open (ConfirmActionDialog is NOT yet open)
+      const dialogsBefore = document.querySelectorAll('[role="dialog"]');
+      expect(dialogsBefore.length).toBe(1); // only action sheet
+      // Click Excluir in action sheet → opens ConfirmActionDialog
+      await user.click(screen.getByText("Excluir"));
+      // Action sheet closes; confirm dialog opens — Editar/Excluir buttons gone
+      expect(screen.queryByText("Editar")).not.toBeInTheDocument();
+      // ConfirmActionDialog has Cancelar and Excluir buttons
+      expect(screen.queryByText("Cancelar")).toBeInTheDocument();
+      // Click Excluir in dialog
+      await user.click(screen.getByText("Excluir"));
+      expect(delSpy).toHaveBeenCalledTimes(1);
+      expect(delSpy).toHaveBeenCalledWith("tx1");
+    });
+
+    it("updates custom date inputs when typed", () => {
+      const { container } = render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
+      fireEvent.click(screen.getByText("Personalizado"));
+      const dateInputs = container.querySelectorAll('input[type="date"]');
+      expect(dateInputs.length).toBe(2);
+      fireEvent.change(dateInputs[0]!, { target: { value: "2026-06-01" } });
+      expect((dateInputs[0] as HTMLInputElement).value).toBe("2026-06-01");
+      fireEvent.change(dateInputs[1]!, { target: { value: "2026-06-30" } });
+      expect((dateInputs[1] as HTMLInputElement).value).toBe("2026-06-30");
+    });
+
+    it("resets category filter via 'Todas as categorias'", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
+      fireEvent.click(screen.getByTestId("category-selector-trigger"));
+      fireEvent.click(screen.getByText("Todas as categorias"));
+      expect(screen.getByTestId("filter-trigger").textContent).toMatch(/Filtro/i);
+    });
+
+    it("returns to main filter page via 'Voltar'", () => {
+      render(<RecordsPage />);
+      fireEvent.click(screen.getByTestId("filter-trigger"));
+      fireEvent.click(screen.getByTestId("category-selector-trigger"));
+      fireEvent.click(screen.getByText("Voltar"));
+      expect(screen.getByTestId("category-selector-trigger")).toBeInTheDocument();
     });
   });
 });

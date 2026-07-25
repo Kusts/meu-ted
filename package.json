@@ -2,7 +2,7 @@
   "name": "pi-financeiro",
   "version": "0.1.0",
   "private": true,
-  "description": "WhatsApp ↔ Pi RPC bridge (Node). Financial domain lives in the Agent Pi.",
+  "description": "WhatsApp \u00e2\u2020\u201d Pi RPC bridge (Node). Financial domain lives in the Agent Pi.",
   "scripts": {
     "build": "pnpm --filter @pi-financeiro/whatsapp-bridge build",
     "dev": "pnpm --filter @pi-financeiro/whatsapp-bridge dev",
@@ -19,6 +19,18 @@
     "@vitest/coverage-v8": "3.2.6",
     "typescript": "^5.7.0",
     "vitest": "^3.2.6"
+  },
+  "pnpm": {
+    "overrides": {
+      "vite": ">=7.3.5",
+      "postcss": ">=8.5.10",
+      "qs": ">=6.15.2",
+      "tmp": ">=0.2.3",
+      "uuid": ">=9.0.0"
+    },
+    "onlyBuiltDependencies": [
+      "next"
+    ]
   },
   "engines": {
     "node": ">=20.0.0",

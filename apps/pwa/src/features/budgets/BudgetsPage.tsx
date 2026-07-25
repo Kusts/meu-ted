@@ -7,6 +7,7 @@ import BottomSheet from "@/components/BottomSheet";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
 import { useAppState } from "@/lib/state/app-state-context";
+import { useFormDirtySafe } from "@/lib/unsaved-changes";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -43,9 +44,10 @@ function NewBudgetSheet({
     amountCents: number;
     period: "monthly" | "quarterly" | "yearly";
     startDate: string;
-  }) => void;
+  }) => void | Promise<void>;
   categories: { id: string; name: string; kind: string; icon?: string }[];
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [step, setStep] = useState<"choose" | "form">("choose");
   const [budgetType, setBudgetType] = useState<"expense" | "income" | null>(null);
   const [categoryId, setCategoryId] = useState("");
@@ -54,31 +56,38 @@ function NewBudgetSheet({
 
   useEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStep("choose");
       setBudgetType(null);
       setCategoryId("");
       setAmount("");
       setCategoryPage(false);
+      markClean();
     }
-  }, [open]);
+  }, [open, markClean]);
 
   const filteredCategories = budgetType
     ? categories.filter((c) => c.kind === budgetType)
     : [];
 
-  function handleSave() {
+  async function handleSave() {
     if (!categoryId) return;
     const amountCents = parseBRLToCents(amount);
     if (amountCents <= 0) return;
     const cat = categories.find((c) => c.id === categoryId);
-    onSave({
-      categoryId,
-      name: cat?.name ?? "Orçamento",
-      amountCents,
-      period: "monthly" as const,
-      startDate: new Date().toISOString().slice(0, 10),
-    });
-    onClose();
+    try {
+      await onSave({
+        categoryId,
+        name: cat?.name ?? "Orçamento",
+        amountCents,
+        period: "monthly" as const,
+        startDate: new Date().toISOString().slice(0, 10),
+      });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
   }
 
   return (
@@ -88,7 +97,7 @@ function NewBudgetSheet({
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={() => { setBudgetType("expense"); setStep("form"); }}
+              onClick={() => { markDirty(); setBudgetType("expense"); setStep("form"); }}
               className="flex-1 rounded-[16px] border-2 border-border bg-surface p-5 text-center transition-colors hover:border-primary"
             >
               <div className="text-[16px] font-bold text-text-primary">Orçamento de despesa</div>
@@ -98,7 +107,7 @@ function NewBudgetSheet({
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={() => { setBudgetType("income"); setStep("form"); }}
+              onClick={() => { markDirty(); setBudgetType("income"); setStep("form"); }}
               className="flex-1 rounded-[16px] border-2 border-border bg-surface p-5 text-center transition-colors hover:border-primary"
             >
               <div className="text-[16px] font-bold text-text-primary">Previsão de receita</div>
@@ -107,7 +116,7 @@ function NewBudgetSheet({
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
           {categoryPage ? (
             <div className="flex flex-col gap-1">
               <button
@@ -122,7 +131,7 @@ function NewBudgetSheet({
               {filteredCategories.map((c) => (
                 <button
                   key={c.id}
-                  onClick={() => { setCategoryId(c.id); setCategoryPage(false); }}
+                  onClick={() => { markDirty(); setCategoryId(c.id); setCategoryPage(false); }}
                   className={`w-full rounded-[10px] px-3 py-2.5 text-left text-[13px] font-semibold transition-colors ${
                     categoryId === c.id ? "bg-primary-tint text-primary" : "text-text-primary hover:bg-fill-light"
                   }`}
@@ -196,16 +205,22 @@ function BudgetDetailSheet({
   spent: number;
   open: boolean;
   onClose: () => void;
-  onSave: (id: string, input: { amountCents?: number; alertThreshold?: number }) => void;
+  onSave: (id: string, input: { amountCents?: number; alertThreshold?: number }) => void | Promise<void>;
 }) {
+  const { markDirty, markClean } = useFormDirtySafe();
   const [editMode, setEditMode] = useState(false);
   const [amountDisplay, setAmountDisplay] = useState("");
 
   useEffect(() => {
     if (budget && open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAmountDisplay(formatInputBRL(String(budget.amountCents)));
       setEditMode(false);
+      markClean();
     }
+  // `markClean` changes identity whenever context state changes. Depending on it
+  // here re-enters the effect and resets editMode immediately after Edit is clicked.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [budget, open]);
 
   if (!budget) return null;
@@ -213,19 +228,28 @@ function BudgetDetailSheet({
   const pct = budget.amountCents > 0 ? Math.min((spent / budget.amountCents) * 100, 100) : 0;
   const barColor = pct >= 100 ? "var(--color-danger)" : pct >= 80 ? "var(--color-warning)" : "var(--color-primary)";
 
-  function handleSave() {
-    if (!budget) return;
-    const amountCents = parseBRLToCents(amountDisplay);
-    if (amountCents > 0) {
-      onSave(budget.id, { amountCents });
-    }
+  function handleClose() {
+    markClean();
     onClose();
   }
 
+  async function handleSave() {
+    if (!budget) return;
+    const amountCents = parseBRLToCents(amountDisplay);
+    if (amountCents <= 0) return;
+    try {
+      await onSave(budget.id, { amountCents });
+      markClean();
+      onClose();
+    } catch {
+      // Save failed: keep dirty.
+    }
+  }
+
   return (
-    <BottomSheet open={open} onClose={onClose} title={editMode ? "Editar orçamento" : "Detalhes do orçamento"}>
+    <BottomSheet open={open} onClose={handleClose} title={editMode ? "Editar orçamento" : "Detalhes do orçamento"}>
       {editMode ? (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
           <fieldset>
             <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Limite mensal</label>
             <div className="relative">

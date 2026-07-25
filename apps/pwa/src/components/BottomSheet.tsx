@@ -62,6 +62,7 @@ export default function BottomSheet({
           animation: "sheetUp 0.28s cubic-bezier(.2,.8,.2,1)",
           padding: "22px 20px 32px",
         }}
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Drag handle */}
         <div className="mx-auto mb-[18px] h-1 w-9 flex-none rounded-full bg-border-strong" />

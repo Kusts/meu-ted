@@ -14,7 +14,6 @@ import type {
   Subscription,
   CardStatement,
   StatementDetail,
-  StatementPurchase,
   Profile,
   QuickInsight,
 } from "@/lib/state/types";

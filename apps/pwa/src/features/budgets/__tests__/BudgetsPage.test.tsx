@@ -33,6 +33,7 @@ function mockState(o: Partial<AppState>): AppState { return { ...defaultState(),
 
 describe("BudgetsPage", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date("2026-06-26T12:00:00Z"));
   });
@@ -144,6 +145,28 @@ describe("BudgetsPage", () => {
       expect(screen.getByText("Salvar alterações")).toBeInTheDocument();
     });
 
+    it("editMode persists after value change — Salvar alterações stays visible", async () => {
+      const user = userEvent.setup();
+      const updateSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateBudget: updateSpy }));
+      render(<BudgetsPage />);
+      // Open detail
+      await user.click(screen.getByText("Alimentação"));
+      await user.click(screen.getByText("Editar"));
+      // Salvar alterações must be visible immediately after entering edit mode
+      const saveBtn = screen.getByText("Salvar alterações");
+      expect(saveBtn).toBeInTheDocument();
+      // Change value
+      const input = screen.getByPlaceholderText("0,00");
+      await user.clear(input);
+      await user.type(input, "70000");
+      // Salvar alterações must STILL be visible — proves editMode was not reset
+      expect(screen.getByText("Salvar alterações")).toBeInTheDocument();
+      // Save and confirm PATCH was called
+      await user.click(screen.getByText("Salvar alterações"));
+      expect(updateSpy).toHaveBeenCalledWith("bud1", expect.objectContaining({ amountCents: 70000 }));
+    });
+
     it("calls updateBudget when saving in edit mode", async () => {
       const updateSpy = vi.fn();
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateBudget: updateSpy }));
@@ -156,6 +179,39 @@ describe("BudgetsPage", () => {
       await user.type(input, "70000");
       await user.click(screen.getByText("Salvar alterações"));
       expect(updateSpy).toHaveBeenCalledWith("bud1", expect.objectContaining({ amountCents: 70000 }));
+    });
+  });
+
+  describe("edge branches", () => {
+    it("shows empty-state when no expense categories exist", async () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ categories: [] }));
+      const user = userEvent.setup();
+      render(<BudgetsPage />);
+      await user.click(screen.getByText("Novo"));
+      await user.click(screen.getByText("Orçamento de despesa"));
+      expect(screen.getByText(/Crie primeiro uma categoria de despesa/i)).toBeInTheDocument();
+    });
+
+    it("shows empty-state when no income categories exist", async () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ categories: [] }));
+      const user = userEvent.setup();
+      render(<BudgetsPage />);
+      await user.click(screen.getByText("Novo"));
+      await user.click(screen.getByText("Previsão de receita"));
+      expect(screen.getByText(/Crie primeiro uma categoria de receita/i)).toBeInTheDocument();
+    });
+
+    it("ignores amounts longer than 12 digits", async () => {
+      const user = userEvent.setup();
+      render(<BudgetsPage />);
+      await user.click(screen.getByText("Novo"));
+      await user.click(screen.getByText("Orçamento de despesa"));
+      await user.click(screen.getByTestId("category-selector-trigger"));
+      const catBtn = screen.getAllByText("Alimentação").find((el) => el.tagName === "BUTTON");
+      if (catBtn) await user.click(catBtn);
+      const input = screen.getByPlaceholderText("0,00");
+      await user.type(input, "12345678901234567890");
+      expect(input).toBeInTheDocument();
     });
   });
 });

@@ -17,6 +17,9 @@ const eslintConfig = defineConfig([
     "coverage/**",
     // Wrangler dev artifacts:
     ".wrangler/**",
+    // Generated SW (built from src/sw.ts via @serwist/next) and minified shell:
+    "public/sw.js",
+    "public/offline-shell.js",
   ]),
 ]);
 

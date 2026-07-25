@@ -230,9 +230,10 @@ describe("AppShell", () => {
       const descInput = screen.getByPlaceholderText(/Aluguel, mercado/);
       await user.type(descInput, "PIX para poupança");
       const nubankButtons = screen.getAllByText("Nubank");
-      await user.click(nubankButtons[0]);
+      await user.click(nubankButtons[0]); // origin
       const interButtons = screen.getAllByText("Inter");
-      await user.click(interButtons[0]);
+      // last Inter chip is under Destino (entrada)
+      await user.click(interButtons[interButtons.length - 1]);
       await user.click(screen.getByText("Transferir"));
 
       expect(transferSpy).toHaveBeenCalledTimes(1);

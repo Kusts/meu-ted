@@ -1,6 +1,7 @@
 packages:
   - 'apps/whatsapp-bridge'
   - 'apps/pwa'
+  - 'apps/api'
 
 ignoredBuiltDependencies:
   - sharp

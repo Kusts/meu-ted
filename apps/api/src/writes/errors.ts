@@ -1,0 +1,58 @@
+/**
+ * Domain errors for write operations.
+ *
+ * Mapped to HTTP 4xx by the route layer. `code` is the stable machine
+ * string; `message` is human PT-BR.
+ */
+
+export type DomainErrorCode =
+  | 'validation.required'
+  | 'validation.invalid'
+  | 'not_found'
+  | 'household_mismatch'
+  | 'in_use'
+  | 'idempotency.conflict'
+  | 'unsupported';
+
+export class DomainError extends Error {
+  readonly statusCode: number;
+  readonly code: DomainErrorCode;
+
+  constructor(code: DomainErrorCode, message: string, statusCode = 400) {
+    super(message);
+    this.name = 'DomainError';
+    this.code = code;
+    this.statusCode = statusCode;
+  }
+}
+
+const messages = {
+  required: (field: string): string => `O campo "${field}" é obrigatório.`,
+  invalid: (field: string, why?: string): string =>
+    `O campo "${field}" é inválido${why ? ` (${why})` : ''}.`,
+  notFound: (entity: string): string => `${entity} não encontrado.`,
+  householdMismatch: (entity: string): string =>
+    `${entity} não pertence ao seu household.`,
+  inUse: (entity: string, what: string): string =>
+    `${entity} possui ${what} ativos; resolva antes de desativar.`,
+  idempotencyConflict: (): string =>
+    'Chave de idempotência já utilizada com payload diferente.',
+  unsupported: (what: string): string => `Operação não suportada: ${what}.`,
+};
+
+export const domainErrors = {
+  required: (field: string): DomainError =>
+    new DomainError('validation.required', messages.required(field), 400),
+  invalid: (field: string, why?: string): DomainError =>
+    new DomainError('validation.invalid', messages.invalid(field, why), 400),
+  notFound: (entity: string): DomainError =>
+    new DomainError('not_found', messages.notFound(entity), 404),
+  householdMismatch: (entity: string): DomainError =>
+    new DomainError('household_mismatch', messages.householdMismatch(entity), 403),
+  inUse: (entity: string, what: string): DomainError =>
+    new DomainError('in_use', messages.inUse(entity, what), 409),
+  idempotencyConflict: (): DomainError =>
+    new DomainError('idempotency.conflict', messages.idempotencyConflict(), 409),
+  unsupported: (what: string): DomainError =>
+    new DomainError('unsupported', messages.unsupported(what), 400),
+};

@@ -47,6 +47,7 @@ export function TransactionActionSheet({
 
         <button
           type="button"
+          data-testid="action-sheet-delete"
           onClick={() => {
             onDelete(transaction);
             onClose();

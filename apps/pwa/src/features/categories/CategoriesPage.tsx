@@ -128,6 +128,7 @@ function CategoryEditSheet({ open, category, onClose, onSave }: {
   const [name, setName] = useState("");
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (category) setName(category.name);
   }, [category]);
 
