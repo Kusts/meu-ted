@@ -1,0 +1,130 @@
+/**
+ * Subscription routes — minimal CRUD (GET/POST/cancel).
+ *
+ * Registered under /subscriptions/*. Requires X-Device-Token header.
+ * Idempotency-key supported for POST endpoints.
+ */
+
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { z } from 'zod';
+import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
+import { DomainError } from '../writes/errors.js';
+import type { IdempotencyStore } from '../writes/idempotency.js';
+import type { SubscriptionStore } from '../subscriptions/store.js';
+import type { AuthResolver } from './auth.js';
+
+const IDEMPOTENCY_HEADER = 'idempotency-key';
+
+// ── Input schemas ────────────────────────────────────────────────
+
+const createSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  amountCents: z.number().int().positive(),
+  cycle: z.enum(['monthly', 'yearly', 'weekly']),
+  day: z.number().int().min(1).max(31),
+  paymentMethod: z.string().trim().min(1).max(60),
+});
+
+const listQuerySchema = z.object({
+  status: z.enum(['active', 'cancelled']).optional(),
+});
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+const resolveAuth = (resolveToken: AuthResolver) => async (req: FastifyRequest) => {
+  const token = req.headers[DEVICE_TOKEN_HEADER];
+  return resolveToken(Array.isArray(token) ? token[0] : token);
+};
+
+const handleError = (err: unknown, reply: FastifyReply) => {
+  if (err instanceof DomainError) {
+    return reply.code(err.statusCode).send({ code: err.code, message: err.message });
+  }
+  if ((err as { statusCode?: number }).statusCode) {
+    const e = err as { statusCode: number; code: string; message: string };
+    return reply.code(e.statusCode).send({ code: e.code, message: e.message });
+  }
+  throw err;
+};
+
+const idemKey = (req: FastifyRequest): string | undefined => {
+  const v = req.headers[IDEMPOTENCY_HEADER];
+  if (typeof v === 'string' && v.trim() !== '') return v.trim();
+  if (Array.isArray(v) && v[0]) return v[0].trim();
+  return undefined;
+};
+
+// ── Registration ─────────────────────────────────────────────────
+
+export const registerSubscriptionRoutes = (
+  app: FastifyInstance,
+  opts: { subscriptionStore: SubscriptionStore; resolveToken: AuthResolver; idempotency: IdempotencyStore },
+): void => {
+  const resolve = resolveAuth(opts.resolveToken);
+
+  // GET /subscriptions — list active subscriptions
+  app.get('/subscriptions', async (req, reply) => {
+    let ctx;
+    try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const parsed = listQuerySchema.safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    try {
+      const items = await opts.subscriptionStore.listSubscriptions(ctx.householdId, parsed.data.status);
+      return reply.code(200).send({ items, total: items.length });
+    } catch (e) { return handleError(e, reply); }
+  });
+
+  // POST /subscriptions — create a subscription
+  app.post('/subscriptions', async (req, reply) => {
+    let ctx;
+    try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const parsed = createSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    const key = idemKey(req);
+    const fn = async () => {
+      const sub = await opts.subscriptionStore.createSubscription(ctx.householdId, parsed.data);
+      return { status: 201 as const, body: sub };
+    };
+    try {
+      const result = key
+        ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, parsed.data, fn)
+        : { response: await fn(), replayed: false };
+      if (result.replayed) reply.header('Idempotent-Replayed', 'true');
+      return reply.code(result.response.status).send(result.response.body);
+    } catch (e) { return handleError(e, reply); }
+  });
+
+  // POST /subscriptions/:id/cancel — cancel a subscription
+  app.post('/subscriptions/:id/cancel', async (req, reply) => {
+    let ctx;
+    try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
+    try {
+      const sub = await opts.subscriptionStore.cancelSubscription(ctx.householdId, params.data.id);
+      return reply.code(200).send(sub);
+    } catch (e) { return handleError(e, reply); }
+  });
+
+  // PATCH /subscriptions/:id — update a subscription
+  const updateSchema = z.object({
+    name: z.string().trim().min(1).max(120).optional(),
+    amountCents: z.number().int().positive().optional(),
+    cycle: z.enum(['monthly', 'yearly', 'weekly']).optional(),
+    day: z.number().int().min(1).max(31).optional(),
+    paymentMethod: z.string().trim().min(1).max(60).optional(),
+  }).refine((v) => v.name !== undefined || v.amountCents !== undefined || v.cycle !== undefined || v.day !== undefined || v.paymentMethod !== undefined, { message: 'nenhum campo para atualizar' });
+
+  app.patch('/subscriptions/:id', async (req, reply) => {
+    let ctx;
+    try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
+    const parsed = updateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    try {
+      const sub = await opts.subscriptionStore.updateSubscription(ctx.householdId, params.data.id, parsed.data as Parameters<typeof opts.subscriptionStore.updateSubscription>[2]);
+      return reply.code(200).send(sub);
+    } catch (e) { return handleError(e, reply); }
+  });
+};

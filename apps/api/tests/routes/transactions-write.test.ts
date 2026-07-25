@@ -1,0 +1,361 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { buildTestApp, TOKEN_A } from '../test-app.js';
+import { randomUUID } from 'node:crypto';
+
+const isoDate = '2026-06-10';
+
+type Setup = {
+  app: ReturnType<typeof buildTestApp>['app'];
+  accountId: string;
+  categoryId: string;
+};
+
+const setupAccountAndCategory = async (): Promise<Setup> => {
+  const { app } = buildTestApp();
+  const acc = await app.inject({
+    method: 'POST',
+    url: '/accounts',
+    headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+    payload: { name: 'A', kind: 'bank', initialBalanceCents: 5_000 },
+  });
+  const cat = await app.inject({
+    method: 'POST',
+    url: '/categories',
+    headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+    payload: { name: 'Food', kind: 'expense' },
+  });
+  return { app, accountId: acc.json().id, categoryId: cat.json().id };
+};
+
+describe('POST /transactions/expense', () => {
+  let s: Setup;
+  beforeEach(async () => {
+    s = await setupAccountAndCategory();
+  });
+
+  it('creates an expense', async () => {
+    const res = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'Lunch',
+        amountCents: 1500,
+        date: isoDate,
+        accountId: s.accountId,
+        categoryId: s.categoryId,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().kind).toBe('expense');
+  });
+
+  it('rejects amount <= 0', async () => {
+    const res = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'X',
+        amountCents: 0,
+        date: isoDate,
+        accountId: s.accountId,
+        categoryId: s.categoryId,
+      },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects invalid account', async () => {
+    const res = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'X',
+        amountCents: 100,
+        date: isoDate,
+        accountId: randomUUID(),
+        categoryId: s.categoryId,
+      },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().message).toMatch(/Conta/);
+  });
+
+  it('rejects invalid date', async () => {
+    const res = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'X',
+        amountCents: 100,
+        date: '2026/06/10',
+        accountId: s.accountId,
+        categoryId: s.categoryId,
+      },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('POST /transactions/income', () => {
+  it('creates an income', async () => {
+    const { app } = buildTestApp();
+    const acc = await app.inject({
+      method: 'POST',
+      url: '/accounts',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'A', kind: 'bank', initialBalanceCents: 0 },
+    });
+    const cat = await app.inject({
+      method: 'POST',
+      url: '/categories',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'Salary', kind: 'income' },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/transactions/income',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'Paycheck',
+        amountCents: 12_000_00,
+        date: isoDate,
+        accountId: acc.json().id,
+        categoryId: cat.json().id,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().kind).toBe('income');
+  });
+});
+
+describe('POST /transfers', () => {
+  it('creates a transfer between two accounts', async () => {
+    const { app } = buildTestApp();
+    const a = await app.inject({
+      method: 'POST',
+      url: '/accounts',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'A', kind: 'bank', initialBalanceCents: 0 },
+    });
+    const b = await app.inject({
+      method: 'POST',
+      url: '/accounts',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'B', kind: 'cash', initialBalanceCents: 0 },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/transfers',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'Move',
+        amountCents: 500,
+        date: isoDate,
+        fromAccountId: a.json().id,
+        toAccountId: b.json().id,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().kind).toBe('transfer');
+    expect(res.json().transferToAccountId).toBe(b.json().id);
+  });
+
+  it('rejects fromAccount === toAccount', async () => {
+    const { app } = buildTestApp();
+    const a = await app.inject({
+      method: 'POST',
+      url: '/accounts',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'A', kind: 'bank', initialBalanceCents: 0 },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/transfers',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'X',
+        amountCents: 100,
+        date: isoDate,
+        fromAccountId: a.json().id,
+        toAccountId: a.json().id,
+      },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('PATCH /transactions/:id', () => {
+  it('updates description on expense', async () => {
+    const s = await setupAccountAndCategory();
+    const tx = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'Old',
+        amountCents: 1000,
+        date: isoDate,
+        accountId: s.accountId,
+        categoryId: s.categoryId,
+      },
+    });
+    const res = await s.app.inject({
+      method: 'PATCH',
+      url: `/transactions/${tx.json().id}`,
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { description: 'New' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().description).toBe('New');
+  });
+
+  it('rejects amount change on transfer (unsupported)', async () => {
+    const { app } = buildTestApp();
+    const a = await app.inject({
+      method: 'POST',
+      url: '/accounts',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'A', kind: 'bank', initialBalanceCents: 0 },
+    });
+    const b = await app.inject({
+      method: 'POST',
+      url: '/accounts',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'B', kind: 'cash', initialBalanceCents: 0 },
+    });
+    const tx = await app.inject({
+      method: 'POST',
+      url: '/transfers',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'X',
+        amountCents: 100,
+        date: isoDate,
+        fromAccountId: a.json().id,
+        toAccountId: b.json().id,
+      },
+    });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/transactions/${tx.json().id}`,
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { amountCents: 200 },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('unsupported');
+  });
+});
+
+describe('DELETE /transactions/:id (soft)', () => {
+  it('soft-deletes; subsequent GET /transactions excludes it', async () => {
+    const s = await setupAccountAndCategory();
+    const tx = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'X',
+        amountCents: 100,
+        date: isoDate,
+        accountId: s.accountId,
+        categoryId: s.categoryId,
+      },
+    });
+    const id = tx.json().id;
+    const del = await s.app.inject({
+      method: 'DELETE',
+      url: `/transactions/${id}`,
+      headers: { 'x-device-token': TOKEN_A },
+    });
+    expect(del.statusCode).toBe(204);
+    const list = await s.app.inject({
+      method: 'GET',
+      url: '/transactions',
+      headers: { 'x-device-token': TOKEN_A },
+    });
+    expect(list.json().items.find((t: { id: string }) => t.id === id)).toBeUndefined();
+  });
+
+  it('returns 404 on second delete', async () => {
+    const s = await setupAccountAndCategory();
+    const tx = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'X',
+        amountCents: 100,
+        date: isoDate,
+        accountId: s.accountId,
+        categoryId: s.categoryId,
+      },
+    });
+    const id = tx.json().id;
+    await s.app.inject({ method: 'DELETE', url: `/transactions/${id}`, headers: { 'x-device-token': TOKEN_A } });
+    const res = await s.app.inject({ method: 'DELETE', url: `/transactions/${id}`, headers: { 'x-device-token': TOKEN_A } });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe('idempotency', () => {
+  it('replays the same response on duplicate key + same payload', async () => {
+    const s = await setupAccountAndCategory();
+    const payload = {
+      description: 'Idem',
+      amountCents: 100,
+      date: isoDate,
+      accountId: s.accountId,
+      categoryId: s.categoryId,
+    };
+    const headers = {
+      'x-device-token': TOKEN_A,
+      'content-type': 'application/json',
+      'idempotency-key': 'abc-123',
+    };
+    const first = await s.app.inject({ method: 'POST', url: '/transactions/expense', headers, payload });
+    const second = await s.app.inject({ method: 'POST', url: '/transactions/expense', headers, payload });
+    expect(first.statusCode).toBe(201);
+    expect(second.statusCode).toBe(201);
+    expect(first.json().id).toBe(second.json().id);
+    expect(second.headers['idempotent-replayed']).toBe('true');
+  });
+
+  it('returns 409 on duplicate key + different payload', async () => {
+    const s = await setupAccountAndCategory();
+    const headers = {
+      'x-device-token': TOKEN_A,
+      'content-type': 'application/json',
+      'idempotency-key': 'abc-456',
+    };
+    await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers,
+      payload: {
+        description: 'First',
+        amountCents: 100,
+        date: isoDate,
+        accountId: s.accountId,
+        categoryId: s.categoryId,
+      },
+    });
+    const res = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers,
+      payload: {
+        description: 'Different',
+        amountCents: 200,
+        date: isoDate,
+        accountId: s.accountId,
+        categoryId: s.categoryId,
+      },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('idempotency.conflict');
+  });
+});
