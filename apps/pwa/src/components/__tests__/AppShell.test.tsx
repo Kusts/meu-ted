@@ -2,13 +2,15 @@ import { render, screen } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import AppShell from "../AppShell";
 import * as appStateModule from "@/lib/state/app-state-context";
+import * as unsavedModule from "@/lib/unsaved-changes";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
 import type { AppState } from "@/lib/state/app-state-context";
 
 let mockPath = "/";
+let mockPush = vi.fn();
 vi.mock("next/navigation", () => ({
   usePathname: () => mockPath,
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: mockPush }),
 }));
 
 function defaultState(): AppState {
@@ -54,6 +56,7 @@ describe("AppShell", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     mockPath = "/";
+    mockPush = vi.fn();
   });
 
   describe("rendering", () => {
@@ -187,6 +190,236 @@ describe("AppShell", () => {
 
       // After close, no dialog should remain
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("dirty form confirmation (useUnsavedChangesSafe)", () => {
+    function renderWithDirtyForm(dirty: boolean) {
+      vi.spyOn(unsavedModule, "useUnsavedChangesSafe").mockReturnValue({
+        isDirty: dirty,
+        trackWrite: () => () => {},
+        markDirty: () => {},
+        markClean: () => {},
+        isFormDirty: () => dirty,
+      });
+    }
+
+    it("closes sheet normally when form is clean", async () => {
+      renderWithDirtyForm(false);
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open sheet
+      await user.click(screen.getByLabelText("Nova transação"));
+      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+
+      // Close via backdrop
+      const dialog = screen.getByRole("dialog");
+      const overlay = dialog.firstElementChild;
+      await user.click(overlay!);
+
+      // Sheet should close without confirm dialog
+      expect(screen.queryByText("Descartar alterações?")).not.toBeInTheDocument();
+      expect(screen.queryByText("Novo lançamento")).not.toBeInTheDocument();
+    });
+
+    it("shows confirm dialog when closing sheet with dirty form", async () => {
+      renderWithDirtyForm(true);
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open sheet
+      await user.click(screen.getByLabelText("Nova transação"));
+      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+
+      // Click the sheet close button to trigger requestCloseSheet
+      const closeButtons = screen.getAllByRole("button").filter(b => b.getAttribute("aria-label") === "Fechar");
+      if (closeButtons.length > 0) {
+        await user.click(closeButtons[0]);
+      } else {
+        // Fallback: press Escape
+        await user.keyboard("{Escape}");
+      }
+
+      // Confirm dialog visible
+      expect(screen.getByText("Descartar alterações?")).toBeInTheDocument();
+
+      // Sheet still open underneath
+      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+    });
+
+    it("keeps sheet open when user cancels discard", async () => {
+      renderWithDirtyForm(true);
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open sheet
+      await user.click(screen.getByLabelText("Nova transação"));
+      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+
+      // Press Escape to trigger requestCloseSheet
+      await user.keyboard("{Escape}");
+
+      // Cancel
+      await user.click(screen.getByText("Continuar editando"));
+
+      // Sheet stays open, confirm gone
+      expect(screen.queryByText("Descartar alterações?")).not.toBeInTheDocument();
+      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+    });
+
+    it("discards and closes sheet when user confirms", async () => {
+      renderWithDirtyForm(true);
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open sheet
+      await user.click(screen.getByLabelText("Nova transação"));
+
+      // Press Escape to trigger requestCloseSheet (shows confirm dialog)
+      await user.keyboard("{Escape}");
+
+      // Confirm discard
+      await user.click(screen.getByText("Descartar"));
+
+      // Sheet closes, no navigation (no pendingNav)
+      expect(screen.queryByText("Novo lançamento")).not.toBeInTheDocument();
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it("shows confirm on dirty + nav click, then navigates on confirm", async () => {
+      renderWithDirtyForm(true);
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open sheet
+      await user.click(screen.getByLabelText("Nova transação"));
+      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+
+      // Click nav to /registros while dirty
+      await user.click(screen.getByText("Registros"));
+
+      // Confirm dialog shown
+      expect(screen.getByText("Descartar alterações?")).toBeInTheDocument();
+
+      // Confirm
+      await user.click(screen.getByText("Descartar"));
+
+      // Sheet closes AND navigates
+      expect(screen.queryByText("Novo lançamento")).not.toBeInTheDocument();
+      expect(mockPush).toHaveBeenCalledWith("/registros");
+    });
+
+    it("closes sheet on nav click when clean (no confirm)", async () => {
+      renderWithDirtyForm(false);
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open sheet
+      await user.click(screen.getByLabelText("Nova transação"));
+      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+
+      // Navigate while clean
+      await user.click(screen.getByText("Registros"));
+
+      // No confirm, sheet closed, navigated
+      expect(screen.queryByText("Descartar alterações?")).not.toBeInTheDocument();
+      expect(screen.queryByText("Novo lançamento")).not.toBeInTheDocument();
+      expect(mockPush).toHaveBeenCalledWith("/registros");
+    });
+
+    it("does not show confirm for clean nav click even with sheet open", async () => {
+      renderWithDirtyForm(false);
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open Mais sheet ("more" mode — no form)
+      const buttons = screen.getAllByRole("button");
+      await user.click(buttons[4]);
+      expect(screen.getByText("Cartões")).toBeInTheDocument();
+
+      // Navigate — clean, no confirm
+      await user.click(screen.getByText("Registros"));
+      expect(screen.queryByText("Descartar alterações?")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("save error handling", () => {
+    it("keeps sheet open when addTransaction rejects", async () => {
+      const error = new Error("API validation error");
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const addSpy = vi.fn().mockRejectedValue(error);
+      const state = { ...defaultState(), addTransaction: addSpy };
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(state);
+
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      // Open sheet and fill form
+      await user.click(screen.getByLabelText("Nova transação"));
+      await user.type(screen.getByPlaceholderText("0,00"), "5000");
+      await user.type(screen.getByPlaceholderText(/Aluguel, mercado/), "Teste");
+      await user.click(screen.getByText("Alimentação"));
+      await user.click(screen.getByText("Nubank"));
+
+      // Save — will reject. The click handler rethrows the error as an
+      // unhandled rejection (not propagated to the click caller).
+      // Use a try-catch to swallow the unhandled rejection so we can verify
+      // the sheet state after the save attempt.
+      try {
+        await user.click(screen.getByText("Salvar"));
+      } catch {
+        // swallow — rethrow is expected from handleSave
+      }
+
+      // Wait for re-render after rejected save
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Sheet stays open so draft survives validation errors
+      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+    });
+  });
+
+  describe("custom event preselected mode", () => {
+    it("opens sheet with expense preselected when pwa:open-tx fires expense", async () => {
+      render(<AppShell><div>Content</div></AppShell>);
+
+      window.dispatchEvent(
+        new CustomEvent("pwa:open-tx", { detail: { kind: "expense" } }),
+      );
+
+      // BottomSheet re-renders async after state update
+      expect(await screen.findByText("Nova despesa")).toBeInTheDocument();
+    });
+
+    it("opens sheet with income preselected when pwa:open-tx fires income", async () => {
+      render(<AppShell><div>Content</div></AppShell>);
+
+      window.dispatchEvent(
+        new CustomEvent("pwa:open-tx", { detail: { kind: "income" } }),
+      );
+
+      expect(await screen.findByText("Nova receita")).toBeInTheDocument();
+    });
+
+    it("opens sheet with transfer preselected when pwa:open-tx fires transfer", async () => {
+      render(<AppShell><div>Content</div></AppShell>);
+
+      window.dispatchEvent(
+        new CustomEvent("pwa:open-tx", { detail: { kind: "transfer" } }),
+      );
+
+      expect(await screen.findByText("Nova transferência")).toBeInTheDocument();
+    });
+
+    it("ignores pwa:open-tx event with no kind", async () => {
+      render(<AppShell><div>Content</div></AppShell>);
+
+      window.dispatchEvent(new CustomEvent("pwa:open-tx", { detail: {} }));
+
+      // No sheet should be open
+      expect(screen.queryByText("Nova despesa")).not.toBeInTheDocument();
+      expect(screen.queryByText("Novo lançamento")).not.toBeInTheDocument();
     });
   });
 

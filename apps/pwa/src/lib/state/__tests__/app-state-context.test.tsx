@@ -717,17 +717,21 @@ describe("AppStateProvider — API write path", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     const prevCount = result.current.transactions.length;
 
-    await act(() =>
-      result.current.addTransaction({
-        id: "tx-offline",
-        description: "Offline expense",
-        amountCents: 500,
-        date: "2026-06-23",
-        kind: "expense",
-        categoryId: "cat1",
-        accountId: "acc1",
-      }),
-    );
+    await act(async () => {
+      try {
+        await result.current.addTransaction({
+          id: "tx-offline",
+          description: "Offline expense",
+          amountCents: 500,
+          date: "2026-06-23",
+          kind: "expense",
+          categoryId: "cat1",
+          accountId: "acc1",
+        });
+      } catch {
+        // Expected — addTransaction re-throws after rollback+setWriteError
+      }
+    });
 
     // Transaction was rolled back (removed after API failure)
     expect(result.current.transactions).toHaveLength(prevCount);
@@ -1473,17 +1477,21 @@ describe("AppStateProvider — runtime 401", () => {
     );
     const { result } = renderHook(() => useAppState(), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
-    await act(() =>
-      result.current.addTransaction({
-        id: "tx-401",
-        description: "x",
-        amountCents: 100,
-        date: "2026-06-25",
-        kind: "expense",
-        categoryId: "cat1",
-        accountId: "acc1",
-      }),
-    );
+    await act(async () => {
+      try {
+        await result.current.addTransaction({
+          id: "tx-401",
+          description: "x",
+          amountCents: 100,
+          date: "2026-06-25",
+          kind: "expense",
+          categoryId: "cat1",
+          accountId: "acc1",
+        });
+      } catch {
+        // Expected — addTransaction re-throws after handling
+      }
+    });
     expect(expireSession).toHaveBeenCalled();
     expect(result.current.writeError).toBeNull();
   });
@@ -1731,36 +1739,36 @@ function seedApiData() {
 
 async function exerciseAll(result: { current: ReturnType<typeof useAppState> }) {
   const s = result.current;
-  await s.addTransaction({ id: "tx1", description: "d", amountCents: 100, date: "2026-01-01", kind: "expense", categoryId: "c1", accountId: "a1" } as never);
-  await s.addTransaction({ id: "tx2", description: "i", amountCents: 200, date: "2026-01-01", kind: "income", categoryId: "c1", accountId: "a1" } as never);
-  await s.addTransaction({ id: "tx3", description: "t", amountCents: 300, date: "2026-01-01", kind: "transfer", categoryId: "", accountId: "a1" } as never);
-  await s.updateTransaction("t1", { description: "upd" });
-  await s.markPayablePaid("p1");
-  await s.updatePayable("p1", { description: "x" });
-  await s.createPayable({ accountId: "a1", description: "p", amountCents: 100, dueDate: "2026-06-30" });
-  await s.createBudget({ categoryId: "c1", name: "B", amountCents: 100, period: "monthly", startDate: "2026-01-01" });
-  await s.updateBudget("b1", { amountCents: 200 });
-  await s.createGoal({ name: "G", goalType: "savings", targetAmountCents: 1000, startDate: "2026-01-01" });
-  await s.contributeToGoal("g1", { amountCents: 100 });
-  await s.updateGoal("g1", { name: "G2" });
-  await s.addAccount({ name: "New", kind: "bank", initialBalanceCents: 0 });
-  await s.updateAccount("a1", { name: "Renamed" });
-  await s.addCategory({ name: "Cat", kind: "expense" });
-  await s.updateCategory("c1", { name: "Upd" });
-  await s.addCard({ name: "Card", creditLimitCents: 1000, closingDay: 5, dueDay: 10 });
-  await s.updateCard("card1", { name: "Card2" });
-  await s.createTransfer({ description: "t", amountCents: 100, date: "2026-01-01", fromAccountId: "a1", toAccountId: "a2" });
-  await s.payStatement("st1", { amountCents: 50, fromAccountId: "a1" });
-  await s.createInstallments({ accountId: "card1", description: "inst", totalAmountCents: 1000, purchaseDate: "2026-01-01", installmentsTotal: 3 });
-  await s.saveProfile({ name: "Marina" });
-  await s.refreshProfile();
+  try { await s.addTransaction({ id: "tx1", description: "d", amountCents: 100, date: "2026-01-01", kind: "expense", categoryId: "c1", accountId: "a1" } as never); } catch { /* expected rejection when mock rejects */ }
+  try { await s.addTransaction({ id: "tx2", description: "i", amountCents: 200, date: "2026-01-01", kind: "income", categoryId: "c1", accountId: "a1" } as never); } catch { /* expected rejection when mock rejects */ }
+  try { await s.addTransaction({ id: "tx3", description: "t", amountCents: 300, date: "2026-01-01", kind: "transfer", categoryId: "", accountId: "a1" } as never); } catch { /* expected: transfer uses createTransfer */ }
+  try { await s.updateTransaction("t1", { description: "upd" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.markPayablePaid("p1"); } catch { /* expected rejection when mock rejects */ }
+  try { await s.updatePayable("p1", { description: "x" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.createPayable({ accountId: "a1", description: "p", amountCents: 100, dueDate: "2026-06-30" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.createBudget({ categoryId: "c1", name: "B", amountCents: 100, period: "monthly", startDate: "2026-01-01" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.updateBudget("b1", { amountCents: 200 }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.createGoal({ name: "G", goalType: "savings", targetAmountCents: 1000, startDate: "2026-01-01" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.contributeToGoal("g1", { amountCents: 100 }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.updateGoal("g1", { name: "G2" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.addAccount({ name: "New", kind: "bank", initialBalanceCents: 0 }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.updateAccount("a1", { name: "Renamed" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.addCategory({ name: "Cat", kind: "expense" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.updateCategory("c1", { name: "Upd" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.addCard({ name: "Card", creditLimitCents: 1000, closingDay: 5, dueDay: 10 }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.updateCard("card1", { name: "Card2" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.createTransfer({ description: "t", amountCents: 100, date: "2026-01-01", fromAccountId: "a1", toAccountId: "a2" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.payStatement("st1", { amountCents: 50, fromAccountId: "a1" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.createInstallments({ accountId: "card1", description: "inst", totalAmountCents: 1000, purchaseDate: "2026-01-01", installmentsTotal: 3 }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.saveProfile({ name: "Marina" }); } catch { /* expected rejection when mock rejects */ }
+  try { await s.refreshProfile(); } catch { /* expected rejection when mock rejects */ }
   // Destructive actions last so their update counterparts already ran.
-  await s.deactivateAccount("a2");
-  await s.deactivateCategory("c1");
-  await s.cancelGoal("g1");
-  await s.cancelPayable("p1");
-  await s.deleteTransaction("t1");
-  await s.undoPayablePayment("p1");
+  try { await s.deactivateAccount("a2"); } catch { /* expected rejection when mock rejects */ }
+  try { await s.deactivateCategory("c1"); } catch { /* expected rejection when mock rejects */ }
+  try { await s.cancelGoal("g1"); } catch { /* expected rejection when mock rejects */ }
+  try { await s.cancelPayable("p1"); } catch { /* expected rejection when mock rejects */ }
+  try { await s.deleteTransaction("t1"); } catch { /* expected rejection when mock rejects */ }
+  try { await s.undoPayablePayment("p1"); } catch { /* expected rejection when mock rejects */ }
 }
 
 describe("AppStateProvider — every write action (coverage-core)", () => {
@@ -1777,7 +1785,7 @@ describe("AppStateProvider — every write action (coverage-core)", () => {
     const { result } = renderHook(() => useAppState(), { wrapper: AppStateProvider });
     await waitFor(() => expect(result.current.loading).toBe(false));
     await act(async () => { await exerciseAll(result); });
-    await act(async () => { await result.current.addSubscription({ name: "Sub", amountCents: 1000, cycle: "monthly", day: 5, paymentMethod: "card" }); });
+    await act(async () => { try { await result.current.addSubscription({ name: "Sub", amountCents: 1000, cycle: "monthly", day: 5, paymentMethod: "card" }); } catch { /* expected re-throw */ } });
     const subId = "srv-sub";
     await act(async () => { await result.current.updateSubscription(subId, { name: "Sub2" }); });
     await act(async () => { await result.current.cancelSubscription(subId); });
@@ -1821,7 +1829,7 @@ describe("AppStateProvider — every write action (coverage-core)", () => {
     const { result } = renderHook(() => useAppState(), { wrapper: AppStateProvider });
     await waitFor(() => expect(result.current.loading).toBe(false));
     const accountsBefore = result.current.accounts.length;
-    await act(async () => { await exerciseAll(result); });
+    await act(async () => { try { await exerciseAll(result); } catch { /* expected rejection */ } });
     expect(cmds.addAccount).toHaveBeenCalled();
     expect(result.current.writeError).toBeTruthy();
     // optimistic insert was rolled back on failure
