@@ -2,28 +2,10 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    globals: true,
-    environment: 'node',
-    include: ['apps/whatsapp-bridge/src/**/*.test.ts', 'apps/whatsapp-bridge/scripts/**/*.test.ts'],
-    exclude: [
-      'node_modules',
-      'dist',
-      '**/*.d.ts',
-      'vitest.config.ts',
+    workspace: [
+      'apps/whatsapp-bridge',
+      'apps/api',
+      'apps/pwa',
     ],
-    coverage: {
-      provider: 'v8',
-      reporter: ['text', 'json', 'html'],
-      include: ['apps/whatsapp-bridge/src/**/*.ts', 'apps/whatsapp-bridge/scripts/**/*.ts'],
-      exclude: [
-        'node_modules',
-        'dist',
-        '**/*.d.ts',
-        '**/*.test.ts',
-        'vitest.config.ts',
-      ],
-    },
-    reporters: ['default'],
-    pool: 'forks',
   },
 });
