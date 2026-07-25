@@ -120,7 +120,9 @@ export default function BottomNav({
         return (
           <button
             key={item.key}
-            onClick={() => onNavClick(item.key)}
+            onClick={() => {
+              if (item.key !== "more") onNavClick(item.key);
+            }}
             className="flex flex-1 flex-col items-center justify-center gap-0.5 pt-1.5"
             style={{ color: isActive ? "var(--color-primary)" : "var(--color-text-muted)" }}
           >
