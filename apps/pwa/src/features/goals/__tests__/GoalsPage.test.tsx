@@ -241,6 +241,29 @@ describe("GoalsPage", () => {
       expect(screen.getByText("Editar")).toBeInTheDocument();
     });
 
+    it("editMode persists when changing name — save button stays visible", async () => {
+      const updateSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateGoal: updateSpy }));
+      const user = userEvent.setup();
+      render(<GoalsPage />);
+      // Open detail
+      await user.click(screen.getAllByText("Reserva de emergência")[0]);
+      await user.click(screen.getByText("Editar"));
+      // Salvar alterações must be visible immediately after entering edit mode
+      const saveBtn = screen.getByText("Salvar alterações");
+      expect(saveBtn).toBeInTheDocument();
+      // Change name
+      const nameInput = screen.getByDisplayValue("Reserva de emergência");
+      await user.clear(nameInput);
+      await user.type(nameInput, "Reserva Editada");
+      // Salvar alterações must STILL be visible — editMode was not reset
+      expect(screen.getByText("Salvar alterações")).toBeInTheDocument();
+      // Save and confirm update was called
+      await user.click(screen.getByText("Salvar alterações"));
+      expect(updateSpy).toHaveBeenCalled();
+    });
+
+
     it("inline Adicionar and Cancelar buttons remain on goal cards", async () => {
       render(<GoalsPage />);
       const addBtns = screen.getAllByRole("button", { name: /^Adicionar$/ });

@@ -5,6 +5,7 @@ import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
+import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { StaleBanner } from "@/components/StaleBanner";
 import Skeleton from "@/components/ui/Skeleton";
 import { TransactionActionSheet } from "./components/TransactionActionSheet";
@@ -55,6 +56,8 @@ export default function RecordsPage() {
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [actionOpen, setActionOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deletePendingTx, setDeletePendingTx] = useState<Transaction | null>(null);
   const handleRowClick = useCallback((tx: Transaction) => {
     setSelectedTx(tx);
     setActionOpen(true);
@@ -65,11 +68,27 @@ export default function RecordsPage() {
     setEditOpen(true);
   }, []);
   const handleDelete = useCallback(
-    async (tx: Transaction) => {
-      await deleteTransaction(tx.id);
+    (tx: Transaction) => {
+      setDeletePendingTx(tx);
+      setDeleteConfirmOpen(true);
     },
-    [deleteTransaction],
+    [],
   );
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (deletePendingTx) {
+      await deleteTransaction(deletePendingTx.id);
+    }
+    setDeleteConfirmOpen(false);
+    setDeletePendingTx(null);
+    setActionOpen(false);
+    setSelectedTx(null);
+  }, [deletePendingTx, deleteTransaction]);
+
+  const handleDeleteCancel = useCallback(() => {
+    setDeleteConfirmOpen(false);
+    setDeletePendingTx(null);
+  }, []);
   const [staleDismissed, setStaleDismissed] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
@@ -555,6 +574,17 @@ export default function RecordsPage() {
           setEditOpen(false);
           setSelectedTx(null);
         }}
+      />
+
+      <ConfirmActionDialog
+        open={deleteConfirmOpen}
+        title="Excluir lan\u00e7amento"
+        message="Esta a\u00e7\u00e3o n\u00e3o pode ser desfeita. Deseja realmente excluir?"
+        confirmLabel="Excluir"
+        cancelLabel="Cancelar"
+        danger
+        onConfirm={handleDeleteConfirm}
+        onCancel={handleDeleteCancel}
       />
     </div>
   );

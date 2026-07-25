@@ -5,14 +5,7 @@ const FIXTURE_PORT = 4010;
 const HARNESS_PORT = 3000;
 const NEXT_PORT = 3001;
 const PWA_ROOT = path.resolve(__dirname, "..");
-const STANDALONE_SERVER = path.join(
-  PWA_ROOT,
-  ".next",
-  "standalone",
-  "apps",
-  "pwa",
-  "server.js",
-);
+const PWA_APP_DIR = PWA_ROOT;
 
 export default defineConfig({
   testDir: ".",
@@ -83,16 +76,14 @@ export default defineConfig({
       timeout: 15000,
     },
     {
-      // Next standalone on 3001 (harness proxies 3000 → 3001)
-      command: `node "${STANDALONE_SERVER}"`,
+      // Next.js production server on 3001 (harness proxies 3000 → 3001)
+      command: `pnpm exec next start --port ${NEXT_PORT}`,
       port: NEXT_PORT,
-      cwd: path.join(PWA_ROOT, ".next", "standalone", "apps", "pwa"),
+      cwd: PWA_APP_DIR,
       reuseExistingServer: !process.env.CI,
       timeout: 30000,
       env: {
         ...process.env,
-        PORT: String(NEXT_PORT),
-        HOSTNAME: "127.0.0.1",
         NEXT_PUBLIC_PI_FINANCE_API_BASE_URL: `http://127.0.0.1:${FIXTURE_PORT}`,
       },
     },

@@ -145,6 +145,28 @@ describe("BudgetsPage", () => {
       expect(screen.getByText("Salvar alterações")).toBeInTheDocument();
     });
 
+    it("editMode persists after value change — Salvar alterações stays visible", async () => {
+      const user = userEvent.setup();
+      const updateSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateBudget: updateSpy }));
+      render(<BudgetsPage />);
+      // Open detail
+      await user.click(screen.getByText("Alimentação"));
+      await user.click(screen.getByText("Editar"));
+      // Salvar alterações must be visible immediately after entering edit mode
+      const saveBtn = screen.getByText("Salvar alterações");
+      expect(saveBtn).toBeInTheDocument();
+      // Change value
+      const input = screen.getByPlaceholderText("0,00");
+      await user.clear(input);
+      await user.type(input, "70000");
+      // Salvar alterações must STILL be visible — proves editMode was not reset
+      expect(screen.getByText("Salvar alterações")).toBeInTheDocument();
+      // Save and confirm PATCH was called
+      await user.click(screen.getByText("Salvar alterações"));
+      expect(updateSpy).toHaveBeenCalledWith("bud1", expect.objectContaining({ amountCents: 70000 }));
+    });
+
     it("calls updateBudget when saving in edit mode", async () => {
       const updateSpy = vi.fn();
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateBudget: updateSpy }));

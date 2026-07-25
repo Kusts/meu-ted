@@ -184,6 +184,22 @@ describe("SubscriptionsPage", () => {
       expect(screen.getByText("Netflix Edit")).toBeInTheDocument();
     });
 
+    it("editMode persists after field modification — save button stays visible", async () => {
+      const user = userEvent.setup();
+      render(<SubscriptionsPage />);
+      await user.click(screen.getByText("Spotify"));
+      const sheet = screen.getByRole("dialog");
+      await user.click(within(sheet).getByText("Editar"));
+      const saveBtn = within(sheet).getByRole("button", { name: /Salvar alterações/i });
+      expect(saveBtn).toBeInTheDocument();
+      const nameInput = within(sheet).getByDisplayValue("Spotify");
+      await user.clear(nameInput);
+      await user.type(nameInput, "Spotify Editado");
+      expect(saveBtn).toBeInTheDocument();
+      await user.click(saveBtn);
+      expect(screen.getByText("Spotify Editado")).toBeInTheDocument();
+    });
+
     it("edit mode disables save when the name is empty (empty -> undefined branch)", async () => {
       const user = userEvent.setup();
       render(<SubscriptionsPage />);

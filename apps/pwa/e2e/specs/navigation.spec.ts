@@ -25,19 +25,23 @@ function tid(prefix: string): string {
 }
 
 async function allowFixtureCsp(page: import("@playwright/test").Page): Promise<void> {
-  await page.route("**", async (route) => {
-    const response = await route.fetch();
-    const csp = response.headers()["content-security-policy"];
-    if (csp) {
-      const modified = csp
-        .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
-        .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
-      await route.fulfill({
-        response,
-        headers: { ...response.headers(), "content-security-policy": modified },
-      });
-    } else {
-      await route.fulfill({ response });
+  await page.route("**/*", async (route) => {
+    try {
+      const response = await route.fetch();
+      const csp = response.headers()["content-security-policy"];
+      if (csp) {
+        const modified = csp
+          .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
+          .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
+        await route.fulfill({
+          response,
+          headers: { ...response.headers(), "content-security-policy": modified },
+        });
+      } else {
+        await route.fulfill({ response });
+      }
+    } catch {
+      // teardown race
     }
   });
 }
@@ -66,13 +70,20 @@ async function setup(page: import("@playwright/test").Page, id: string): Promise
   await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
 }
 
+/** Allow RSC prefetch aborted on nav — race in route.fetch teardown. */
+function allowNavAborts(guard: ReturnType<typeof createGuard>): ReturnType<typeof createGuard> {
+  allowFailure(guard, { url: "_rsc", reason: "RSC prefetch aborted on nav" });
+  allowFailure(guard, { message: "ERR_ABORTED", reason: "RSC prefetch aborted on nav" });
+  return guard;
+}
+
 /** Click Registrar button and wait for auth to complete. */
 async function registerDevice(page: import("@playwright/test").Page): Promise<void> {
   await page.getByRole("button", { name: "Registrar" }).click({ timeout: 10000 });
   // Wait for network to settle — registration API call completes
   await page.waitForLoadState("networkidle", { timeout: 15000 });
-  // Wait a tick for React state updates
-  await page.waitForTimeout(500);
+  // FAB confirms authenticated state (rendered by AppShell after auth)
+  await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout: 10000 });
 }
 
 /** Assert the fixture journal has no unexpected write entries (exclude auth registration). */
@@ -82,6 +93,10 @@ async function assertNoUnexpectedWrites(testId: string): Promise<void> {
   const writes = journal.filter((e) => e.method !== "GET" && e.path !== "/auth/devices/register");
   expect(writes).toHaveLength(0);
 }
+
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
 
 const SW = { message: "reading 'waiting'", reason: "SW blocked by functional project" };
 

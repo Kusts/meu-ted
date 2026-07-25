@@ -76,7 +76,6 @@ test("[AUTH-01] register device: POST /auth/devices/register 200, token stored, 
   await expect(page.getByRole("button", { name: "Registrar" })).toBeVisible({ timeout: 15000 });
 
   await page.getByRole("button", { name: "Registrar" }).click();
-  await page.waitForTimeout(1500);
   await page.waitForLoadState("networkidle");
 
   // Journal: POST /auth/devices/register → 200

@@ -104,6 +104,8 @@ async function init(page: import("@playwright/test").Page, id: string) {
   await page.clock.setFixedTime(FIXED_CLOCK);
   await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
   allowFailure(guard, SW);
+  allowFailure(guard, { message: "ERR_ABORTED", reason: "RSC prefetch abort on nav" });
+  allowFailure(guard, { url: "_rsc", reason: "RSC prefetch aborted on nav" });
   // Clear dismissed notifications so HOME-07/08 see seed alerts
   await page.addInitScript(() => {
     try {

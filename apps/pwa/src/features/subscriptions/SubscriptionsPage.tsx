@@ -285,7 +285,10 @@ function SubscriptionDetailSheet({
       setEditMode(false);
       markClean();
     }
-  }, [subscription, open, markClean]);
+    // `markClean` changes identity whenever context state changes. Depending on it
+    // here re-enters the effect and resets editMode immediately after Edit is clicked.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subscription, open]);
 
   if (!subscription) return null;
 

@@ -1,4 +1,6 @@
 import { render, screen, fireEvent } from "@/lib/test-utils";
+import { act } from "react";
+import userEvent from "@testing-library/user-event";
 
 const mockRouter = { push: vi.fn(), refresh: vi.fn() };
 vi.mock("next/navigation", () => ({
@@ -336,15 +338,57 @@ describe("RecordsPage", () => {
       expect(screen.getByText(/Editar transação|Editar lançamento/i)).toBeInTheDocument();
     });
 
-    it("calls deleteTransaction when Excluir is clicked", () => {
+    it("Excluir opens confirmation dialog instead of deleting immediately", async () => {
       const delSpy = vi.fn();
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(
         mockState({ deleteTransaction: delSpy }),
       );
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
       render(<RecordsPage />);
-      fireEvent.click(screen.getByText("Supermercado Extra"));
-      fireEvent.click(screen.getByText("Excluir"));
-      expect(delSpy).toHaveBeenCalled();
+      await user.click(screen.getByText("Supermercado Extra"));
+      await user.click(screen.getByText("Excluir"));
+      // Cancel button in the dialog should be visible (proves dialog opened)
+      // and deleteTransaction should NOT have been called yet
+      expect(screen.getByText("Cancelar")).toBeInTheDocument();
+      expect(delSpy).not.toHaveBeenCalled();
+    });
+
+    it("canceling confirmation does NOT call deleteTransaction", async () => {
+      const delSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({ deleteTransaction: delSpy }),
+      );
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<RecordsPage />);
+      await user.click(screen.getByText("Supermercado Extra"));
+      await user.click(screen.getByText("Excluir"));
+      // Cancel
+      await user.click(screen.getByText("Cancelar"));
+      expect(delSpy).not.toHaveBeenCalled();
+    });
+
+    it("confirming calls deleteTransaction once with correct id", async () => {
+      const delSpy = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({ deleteTransaction: delSpy }),
+      );
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<RecordsPage />);
+      // Open action sheet
+      await user.click(screen.getByText("Supermercado Extra"));
+      // Verify action sheet is open (ConfirmActionDialog is NOT yet open)
+      const dialogsBefore = document.querySelectorAll('[role="dialog"]');
+      expect(dialogsBefore.length).toBe(1); // only action sheet
+      // Click Excluir in action sheet → opens ConfirmActionDialog
+      await user.click(screen.getByText("Excluir"));
+      // Action sheet closes; confirm dialog opens — Editar/Excluir buttons gone
+      expect(screen.queryByText("Editar")).not.toBeInTheDocument();
+      // ConfirmActionDialog has Cancelar and Excluir buttons
+      expect(screen.queryByText("Cancelar")).toBeInTheDocument();
+      // Click Excluir in dialog
+      await user.click(screen.getByText("Excluir"));
+      expect(delSpy).toHaveBeenCalledTimes(1);
+      expect(delSpy).toHaveBeenCalledWith("tx1");
     });
 
     it("updates custom date inputs when typed", () => {
