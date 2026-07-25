@@ -1,12 +1,10 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "mutate": [
-    "src/lib/state/commands.ts",
-    "src/lib/state/profile-adapter.ts",
-    "src/lib/state/subscriptions-adapter.ts",
+    "src/lib/session.ts",
     "src/lib/state/snapshot-db.ts",
     "src/lib/state/sync-engine.ts",
-    "src/lib/session.ts"
+    "src/lib/state/commands.ts"
   ],
   "testRunner": "vitest",
   "vitest": {
