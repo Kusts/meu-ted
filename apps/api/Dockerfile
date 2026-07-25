@@ -1,14 +1,23 @@
+# Monorepo Dockerfile for pi-finance-api
+# Baseline: Node 22 Alpine, pnpm 10 (matching VPS production)
+# Build from repo root: docker build -f apps/api/Dockerfile .
+
 FROM node:22-alpine
-
 RUN npm install -g pnpm@10.34.1
+WORKDIR /monorepo
 
-WORKDIR /app
+# Copy workspace config and root lockfile
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+# Copy only apps/api package.json for install
+COPY apps/api/package.json apps/api/package.json
+RUN pnpm install --frozen-lockfile --filter ./apps/api... --ignore-scripts=false
 
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile --ignore-scripts=false
-
-COPY . .
+# Copy API source and build
+COPY apps/api apps/api
+WORKDIR /monorepo/apps/api
+RUN pnpm build
 
 EXPOSE 3001
-
-CMD ["pnpm", "start"]
+ENV NODE_ENV=production
+ENV MIGRATIONS_MODE=disabled
+CMD ["node", "dist/server/index.js"]
