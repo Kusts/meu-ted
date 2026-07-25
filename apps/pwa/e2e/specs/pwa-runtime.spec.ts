@@ -11,6 +11,16 @@ const FIXED_CLOCK = "2026-07-17T12:00:00.000Z";
 
 async function allowFixtureCsp(page: Page): Promise<void> {
   await page.route("**/*", async (route) => {
+    // Pass SW and harness routes through without interception
+    try {
+      const url = new URL(route.request().url());
+      if (url.pathname === "/sw.js" || url.pathname.startsWith("/__e2e/")) {
+        await route.continue();
+        return;
+      }
+    } catch {
+      // malformed URL — fall through to CSP transform
+    }
     try {
       const response = await route.fetch();
       const headers = { ...response.headers() };
@@ -241,6 +251,9 @@ test("[PWA-04] clean form triggers waiting worker → activates once and reloads
     { timeout: 35000 },
   );
 
+  // Wait for navigation to complete after reload
+  await page.waitForLoadState('networkidle');
+
   const after = await page.evaluate(async () => {
     const reg = await navigator.serviceWorker.getRegistration();
     return {
@@ -296,19 +309,20 @@ test("[PWA-06] dirty form retains waiting worker → no activation on dirty", as
   await deploySw(context, "current");
   await forceUpdate(page);
 
-  // Allow coordinator to observe waiting + dirty
-  await page.waitForTimeout(2000);
-
-  const state = await page.evaluate(async () => {
-    const reg = await navigator.serviceWorker.getRegistration();
-    return {
-      waiting: !!reg?.waiting,
-      controller: navigator.serviceWorker.controller?.scriptURL ?? "",
-    };
-  });
-
-  // Controller must not have swapped due to CLEAN_UPDATE while dirty
-  expect(state.controller).toBe(controllerBefore);
-  // Prefer waiting worker retained (current SW does not skipWaiting on install)
-  expect(state.waiting).toBe(true);
+  // Wait for coordinator to observe waiting worker + dirty state
+  await expect
+    .poll(
+      async () => {
+        const state = await page.evaluate(async () => {
+          const reg = await navigator.serviceWorker.getRegistration();
+          return {
+            waiting: !!reg?.waiting,
+            controller: navigator.serviceWorker.controller?.scriptURL ?? "",
+          };
+        });
+        return state.waiting && state.controller === controllerBefore;
+      },
+      { timeout: 5000 },
+    )
+    .toBe(true);
 });

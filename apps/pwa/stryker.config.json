@@ -19,7 +19,7 @@
   "thresholds": {
     "high": 80,
     "low": 70,
-    "break": 60
+    "break": 70
   },
   "plugins": [
     "@stryker-mutator/vitest-runner"

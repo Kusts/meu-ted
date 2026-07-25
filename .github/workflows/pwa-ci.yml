@@ -54,8 +54,8 @@ jobs:
       - name: Build PWA (Cloudflare)
         run: pnpm --dir apps/pwa build:cloudflare
 
-      - name: Test PWA
-        run: pnpm --dir apps/pwa exec vitest run
+      - name: Test PWA (coverage)
+        run: pnpm --dir apps/pwa exec vitest run --coverage
 
       - name: Validate _headers propagation
         run: pnpm --dir apps/pwa exec vitest run src/headers.test.ts
@@ -81,9 +81,11 @@ jobs:
       - name: Scoped audit
         run: node scripts/pwa-audit.mjs
 
-      - name: CORS contract (passive)
+      - name: CORS contract
         run: timeout 10 node apps/pwa/scripts/contract-cors.mjs
-        continue-on-error: true
+
+      - name: Mutation (Stryker)
+        run: pnpm --dir apps/pwa exec stryker run
 
       - name: Install Playwright browser
         run: pnpm --dir apps/pwa exec playwright install --with-deps chromium

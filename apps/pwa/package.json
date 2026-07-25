@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:mutation": "stryker run",
     "build:next:cloudflare": "next build --webpack",
     "build:cloudflare": "pnpm build:next:cloudflare && pnpm opennextjs-cloudflare build --skipBuild",
     "preview": "pnpm build:cloudflare && wrangler dev",
