@@ -6,7 +6,7 @@ import BottomNav from "@/components/BottomNav";
 import BottomSheet from "@/components/BottomSheet";
 import NewTransactionSheet from "@/components/NewTransactionSheet";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
-import type { NavItem } from "@/components/BottomNav";
+import type { NavItem, RouteNavItem } from "@/components/BottomNav";
 import type { SaveData } from "@/components/NewTransactionSheet";
 import { useAppState } from "@/lib/state/app-state-context";
 import { useSheet } from "@/lib/sheet-context";
@@ -46,7 +46,7 @@ export default function AppShell({ children }: AppShellProps) {
   const { sheetKind, closeSheet } = useSheet();
   const { isDirty } = useUnsavedChangesSafe();
   const [discardOpen, setDiscardOpen] = useState(false);
-  const [pendingNav, setPendingNav] = useState<NavItem | null>(null);
+  const [pendingNav, setPendingNav] = useState<RouteNavItem | null>(null);
 
   // Derive sheet open/mode from context (no setState-in-effect)
   const effectiveSheetOpen = sheetOpen || sheetKind !== null;
@@ -93,10 +93,14 @@ export default function AppShell({ children }: AppShellProps) {
     setPendingNav(null);
   }
 
-  function navigateTo(item: NavItem) {
-    if (item === "home") router.push("/");
-    else if (item === "records") router.push("/registros");
-    else if (item === "payables") router.push("/a-pagar");
+  const ROUTE_MAP: Record<RouteNavItem, string> = {
+    home: "/",
+    records: "/registros",
+    payables: "/a-pagar",
+  };
+
+  function navigateTo(item: RouteNavItem) {
+    router.push(ROUTE_MAP[item]);
   }
 
   /** Close sheet, but confirm first when the form has unsaved edits. */
@@ -109,7 +113,7 @@ export default function AppShell({ children }: AppShellProps) {
     closeSheetLocal();
   }
 
-  function handleNavClick(item: NavItem) {
+  function handleNavClick(item: RouteNavItem) {
     // Navigating away while the tx sheet is dirty also needs confirm.
     if (isDirty && effectiveSheetOpen && (effectiveSheetMode === "new" || effectiveSheetMode === "preselected")) {
       setPendingNav(item);

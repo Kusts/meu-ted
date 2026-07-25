@@ -1,12 +1,14 @@
 "use client";
 
 export type NavItem = "home" | "records" | "payables" | "more";
+/** Route destinations — all NavItem values except "more". */
+export type RouteNavItem = Exclude<NavItem, "more">;
 
 interface BottomNavProps {
   active: NavItem;
   onFabClick: () => void;
   onMoreClick: () => void;
-  onNavClick: (item: NavItem) => void;
+  onNavClick: (item: RouteNavItem) => void;
 }
 
 /* ── Minimal inline icons ── */
