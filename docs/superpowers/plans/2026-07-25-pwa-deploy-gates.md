@@ -16,6 +16,8 @@
 |---|---|
 | `apps/pwa/budget.json` | Restaurar baseline histórico exato |
 | `apps/pwa/src/__tests__/root-build-script.test.ts` | Contrato root build canônico |
+| `apps/pwa/src/__tests__/next-config.test.ts` | Contrato standalone OpenNext |
+| `apps/pwa/next.config.ts` | Manter output standalone |
 | `package.json` | Delegar `build:pwa` ao build Cloudflare |
 | `docs/runbooks/pwa-cloudflare-release.md` | Runbook manual release/rollback |
 
@@ -61,7 +63,7 @@ git commit -m "fix: restore PWA bundle baseline"
 
 ### Task 2: Make root build canonical
 
-**Files:** Create `apps/pwa/src/__tests__/root-build-script.test.ts`; Modify `package.json`.
+**Files:** Create `apps/pwa/src/__tests__/root-build-script.test.ts`, `apps/pwa/src/__tests__/next-config.test.ts`; Modify `package.json`, `apps/pwa/next.config.ts`.
 
 - [ ] Write RED test:
 
@@ -99,10 +101,38 @@ pnpm --dir apps/pwa exec vitest run src/__tests__/root-build-script.test.ts
 
 Expected: 1 test passes.
 
+- [ ] Write and verify RED standalone contract:
+
+```ts
+expect(config).toContain('output: "standalone"');
+```
+
+```bash
+pnpm --dir apps/pwa exec vitest run src/__tests__/next-config.test.ts
+```
+
+Expected: FAIL because `output: "standalone"` is absent.
+
+- [ ] Restore standalone output and verify artifact:
+
+```ts
+const nextConfig: NextConfig = {
+  output: "standalone",
+  poweredByHeader: false,
+};
+```
+
+```bash
+pnpm --dir apps/pwa build:next:cloudflare
+test -f apps/pwa/.next/standalone/apps/pwa/.next/server/pages-manifest.json
+```
+
+Expected: exit 0.
+
 - [ ] Commit:
 
 ```bash
-git add package.json apps/pwa/src/__tests__/root-build-script.test.ts
+git add package.json apps/pwa/next.config.ts apps/pwa/src/__tests__/root-build-script.test.ts apps/pwa/src/__tests__/next-config.test.ts
 git commit -m "fix: make PWA build use Cloudflare webpack"
 ```
 
