@@ -1,5 +1,4 @@
 import { render, screen, fireEvent } from "@/lib/test-utils";
-import { act } from "react";
 import userEvent from "@testing-library/user-event";
 
 const mockRouter = { push: vi.fn(), refresh: vi.fn() };

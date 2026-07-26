@@ -68,15 +68,6 @@ async function getJournalEntries(
   return response.json();
 }
 
-async function setScenario(testId: string, scenario: Record<string, unknown>): Promise<void> {
-  const response = await fetch(`${FIXTURE_URL}/__e2e/scenario`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-e2e-test-id": testId },
-    body: JSON.stringify({ testId, ...scenario }),
-  });
-  expect(response.ok).toBe(true);
-}
-
 async function expectJournalEntry(
   testId: string,
   method: string,

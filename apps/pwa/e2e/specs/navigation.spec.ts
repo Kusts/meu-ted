@@ -70,13 +70,6 @@ async function setup(page: import("@playwright/test").Page, id: string): Promise
   await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
 }
 
-/** Allow RSC prefetch aborted on nav — race in route.fetch teardown. */
-function allowNavAborts(guard: ReturnType<typeof createGuard>): ReturnType<typeof createGuard> {
-  allowFailure(guard, { url: "_rsc", reason: "RSC prefetch aborted on nav" });
-  allowFailure(guard, { message: "ERR_ABORTED", reason: "RSC prefetch aborted on nav" });
-  return guard;
-}
-
 /** Click Registrar button and wait for auth to complete. */
 async function registerDevice(page: import("@playwright/test").Page): Promise<void> {
   await page.getByRole("button", { name: "Registrar" }).click({ timeout: 10000 });
