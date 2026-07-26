@@ -2,18 +2,20 @@
 
 ## Objective
 
-Remove PWA scoped-audit high advisories without bypassing the audit gate or changing VPS/API.
+Remove every PWA scoped-audit high advisory without bypassing the audit gate or changing VPS/API. The baseline command is `node scripts/pwa-audit.mjs`; this implementation requires zero advisories. Any exception requires a separate user-approved specification.
 
 ## Approach
 
 Use direct, compatible dependency upgrades only. Do not add global `sharp` or `brace-expansion` overrides and do not patch `minimatch`; those approaches broke OpenNext bundling or legacy consumers.
 
-Apply upgrades in this order, validating `pnpm --dir apps/pwa build:cloudflare` after each increment:
+Apply upgrades in this order, validating `pnpm --dir apps/pwa build:cloudflare` and `node scripts/pwa-audit.mjs` after each increment:
 
 1. `next` with matching `eslint-config-next`.
 2. `@opennextjs/cloudflare` and its supported transitive toolchain.
 3. `@lhci/cli`.
 4. Direct ESLint packages when an upstream compatible release removes remaining advisories.
+
+An increment must preserve or reduce the advisory count and keep the OpenNext build passing; otherwise revert that increment. If no compatible upstream release can remove an advisory, stop and report it rather than adding an override or patch.
 
 Correct PWA CI path filtering to watch `scripts/pwa-audit.mjs`, the script actually executed by the workflow.
 
