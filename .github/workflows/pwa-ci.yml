@@ -5,14 +5,14 @@ on:
     branches: [main]
     paths:
       - "apps/pwa/**"
-      - "scripts/check-pwa-audit.mjs"
+      - "scripts/pwa-audit.mjs"
       - "package.json"
       - "pnpm-lock.yaml"
   pull_request:
     branches: [main]
     paths:
       - "apps/pwa/**"
-      - "scripts/check-pwa-audit.mjs"
+      - "scripts/pwa-audit.mjs"
       - "package.json"
       - "pnpm-lock.yaml"
 
