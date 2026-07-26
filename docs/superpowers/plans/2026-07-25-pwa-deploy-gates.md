@@ -148,7 +148,8 @@ git commit -m "docs: add PWA Cloudflare release runbook"
 - [ ] Run Docker Linux gate from repository root:
 
 ```bash
-docker run --rm -v "$PWD:/workspace" -w /workspace node:20-bookworm-slim sh -lc '
+git archive HEAD | docker run --rm -i node:20-bookworm-slim sh -lc '
+  mkdir /workspace && tar -x -C /workspace && cd /workspace &&
   corepack enable && corepack prepare pnpm@9.15.9 --activate &&
   pnpm install --frozen-lockfile &&
   pnpm --dir apps/pwa lint &&
@@ -163,7 +164,8 @@ Expected: exit 0. If build fails only due unsupported host mount/Windows path, r
 - [ ] Run offline E2E in same image after installing Chromium:
 
 ```bash
-docker run --rm -v "$PWD:/workspace" -w /workspace node:20-bookworm-slim sh -lc '
+git archive HEAD | docker run --rm -i node:20-bookworm-slim sh -lc '
+  mkdir /workspace && tar -x -C /workspace && cd /workspace &&
   corepack enable && corepack prepare pnpm@9.15.9 --activate &&
   pnpm install --frozen-lockfile &&
   pnpm --dir apps/pwa exec playwright install --with-deps chromium &&
