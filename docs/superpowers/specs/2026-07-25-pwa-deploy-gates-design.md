@@ -6,26 +6,28 @@ Cloudflare PWA ativa é anterior ao HEAD local. API VPS já coincide com conteú
 
 ## Requirements
 
-- REQ-1: When `pnpm build:pwa` runs, system shall execute build Cloudflare baseado em webpack.
-- REQ-2: When bundle-budget test runs after build, system shall read baseline versionado e validar regressão máxima de 5%.
-- REQ-3: When release is preparada, system shall registrar SHA e instrução de rollback sem publicar automaticamente.
-- REQ-4: While API/VPS is saudável e idêntica ao conteúdo local, system shall not modificar ou publicar API.
+- REQ-1: When `pnpm build:pwa` runs, system shall execute `pnpm --filter pwa build:cloudflare` baseado em webpack.
+- REQ-2: When bundle-budget test runs after build, system shall read baseline histórico versionado e validar regressão máxima de 5%.
+- REQ-3: When release é preparada, system shall documentar SHA, versão e rollback em `docs/runbooks/pwa-cloudflare-release.md`, sem publicar automaticamente.
+- REQ-4: While API/VPS é saudável e idêntica ao conteúdo local, system shall not modificar ou publicar API.
+- REQ-5: When gate Linux roda, system shall usar container Docker `node:20-bookworm-slim` com pnpm `9.15.9`.
 
 ## Design
 
 | Item | Decisão |
 |---|---|
-| Baseline | Restaurar `apps/pwa/budget.json` do histórico (`135.9`, `280.7`, limite `5%`) |
-| Build canônico | Root `build:pwa` delega para `pwa build:cloudflare` |
-| Validação | Linux com Node 20/pnpm 9: lint, build, Vitest, headers e E2E offline |
-| Rastreabilidade | Documentar comando de deploy com `--message git:<SHA>` e rollback por versão Wrangler |
-| Deploy | Fora deste escopo; requer confirmação após gates verdes |
+| Baseline | Restaurar conteúdo histórico exato de `apps/pwa/budget.json` (`135.9`, `280.7`, limite `5%`); sem recalibração |
+| Build canônico | Root `build:pwa` delega para `pnpm --filter pwa build:cloudflare` |
+| Validação | Docker `node:20-bookworm-slim` + pnpm `9.15.9`: lint, build, Vitest completo (budget/headers), E2E offline, Git limpo |
+| Rastreabilidade | Criar `docs/runbooks/pwa-cloudflare-release.md`: SHA em `wrangler deploy --message`, descoberta de versão, health checks e rollback |
+| Deploy | Fora deste escopo; requer confirmação explícita após gates verdes |
 
 ## Non-goals
 
 - Não publicar Worker nem alterar VPS/API.
 - Não corrigir bridge TypeScript.
 - Não alterar limites de bundle sem nova medição aprovada.
+- Não executar deploy ou rollback documentados.
 
 ## Tests
 
