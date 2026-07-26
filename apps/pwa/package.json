@@ -18,7 +18,7 @@
     "@serwist/next": "9.5.11",
     "@serwist/precaching": "9.5.11",
     "@serwist/sw": "9.5.11",
-    "next": "16.2.9",
+    "next": "16.2.12",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "serwist": "9.5.11"
@@ -40,7 +40,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^9",
-    "eslint-config-next": "16.2.9",
+    "eslint-config-next": "16.2.12",
     "fake-indexeddb": "^6.0.0",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4",
