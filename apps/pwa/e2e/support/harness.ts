@@ -105,20 +105,8 @@ export type InitOptions = {
   allow?: ReadonlyArray<{ message?: string; url?: string; reason: string }>;
 };
 
-/**
- * Full per-test setup: guard, CSP rewrite, fixture reset, fixed clock,
- * test-id header, authentication, navigation.
- *
- * Returns the guard so the spec can call assertNoUndeclaredFailures().
- */
-export async function initSpec(
-  page: Page,
-  testId: string,
-  options: InitOptions = {},
-): Promise<GuardState> {
-  const guard = createGuard();
-  attachGuard(page, guard);
-
+/** Intercept every response and widen its CSP so the fixture API is reachable. */
+export async function applyCspRewrite(page: Page): Promise<void> {
   await page.route("**/*", async (route) => {
     try {
       const response = await route.fetch();
@@ -130,13 +118,48 @@ export async function initSpec(
       /* route already handled or page closed */
     }
   });
+}
 
+/**
+ * Everything a spec needs *before* it navigates: guard, CSP rewrite, fixture
+ * reset, fixed clock, test-id header, tolerated failures.
+ *
+ * Does NOT navigate and does NOT authenticate — the caller decides the order.
+ * Specs that deep-link into a route and only then register (records REC-02..04,
+ * every navigation spec) must use this instead of `initSpec`, because the order
+ * `goto(route)` → `authenticate()` is exactly what those tests exercise.
+ */
+export async function prepareSpec(
+  page: Page,
+  testId: string,
+  options: Pick<InitOptions, "allow"> = {},
+): Promise<GuardState> {
+  const guard = createGuard();
+  attachGuard(page, guard);
+
+  await applyCspRewrite(page);
   await resetFixture(testId);
   await page.clock.setFixedTime(FIXED_CLOCK);
   await page.context().setExtraHTTPHeaders({ [E2E_TEST_ID_HEADER]: testId });
 
   for (const entry of BASELINE_ALLOWED) allowFailure(guard, entry);
   for (const entry of options.allow ?? []) allowFailure(guard, entry);
+
+  return guard;
+}
+
+/**
+ * Full per-test setup for the common case: prepare, land on "/", authenticate,
+ * then navigate to the target route.
+ *
+ * Returns the guard so the spec can call assertNoUndeclaredFailures().
+ */
+export async function initSpec(
+  page: Page,
+  testId: string,
+  options: InitOptions = {},
+): Promise<GuardState> {
+  const guard = await prepareSpec(page, testId, options);
 
   await page.goto("/");
   await authenticate(page);
