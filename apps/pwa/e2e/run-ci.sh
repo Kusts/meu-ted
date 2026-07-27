@@ -8,6 +8,18 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 PWA="$ROOT/apps/pwa"
 RESULT=0
 
+# Point the PWA at the local fixture API. REQUIRED.
+#
+# src/lib/api/client.ts:baseUrl() returns undefined when this is unset and the
+# host is not the production PWA — which puts the app in mock mode, so the
+# registration screen never renders and every spec fails on
+# getByRole("button", { name: "Registrar" }).
+#
+# NEXT_PUBLIC_* is inlined at build time, so this must be exported before
+# `pnpm build:next:cloudflare`, not only before `next start`.
+export NEXT_PUBLIC_PI_FINANCE_API_BASE_URL="${NEXT_PUBLIC_PI_FINANCE_API_BASE_URL:-http://127.0.0.1:4010}"
+echo "[run-ci] API base URL: $NEXT_PUBLIC_PI_FINANCE_API_BASE_URL"
+
 cleanup() {
   echo "[run-ci] cleaning up..."
   kill "$FIXTURE_PID" 2>/dev/null || true
