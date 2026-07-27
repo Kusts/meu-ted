@@ -70,6 +70,21 @@ arquivos de teste, então o build inicial serve para as 18 migrações.
 
 Ao fechar a fase, valide com o runner oficial: `bash apps/pwa/e2e/run-ci.sh`.
 
+> **A suíte é flaky em ~1–3%. Uma rodada única não é sinal.**
+>
+> Baseline medido em 2026-07-27 (após o fix da env var): run 1 = 3 falhas/121,
+> run 2 = 1 falha/121, **sem nenhuma sobreposição** entre as duas — `accounts:ACC-06`,
+> `cards:CARD-05`, `categories:CAT-02` numa; `subscriptions:SUB-05` na outra. Desktop 121/121,
+> pwa-runtime 6/6, matrix gate ok. Nenhum teste falha de forma determinística.
+>
+> **Consequência para a Task 3:** ao verificar um spec migrado, rode **duas vezes**. Só trate
+> como regressão o teste que falhar nas duas. Uma falha isolada que passa na repetição é flake
+> pré-existente, não efeito da migração — mas confirme que o teste também falhava/passava assim
+> **antes** da migração antes de descartar.
+>
+> Estabilizar a flakiness **não** é escopo da Fase 0. Registrar aqui evita que quem executa
+> confunda ruído com regressão.
+
 ---
 
 ## Estrutura de arquivos
