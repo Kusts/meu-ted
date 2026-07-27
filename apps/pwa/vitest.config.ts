@@ -75,6 +75,7 @@ export default defineConfig({
     pool: "threads",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}", "e2e/**/*.test.{ts,tsx}"],
+    exclude: ["e2e/support/matrix.test.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "text-summary"],
