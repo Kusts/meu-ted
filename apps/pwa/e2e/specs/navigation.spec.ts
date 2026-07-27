@@ -13,10 +13,12 @@
  */
 
 import { test, expect } from "@playwright/test";
-import { createGuard, attachGuard, assertNoUndeclaredFailures, allowFailure } from "../support/failure-guard";
-
-const FIXED_CLOCK = "2026-07-17T12:00:00.000Z";
-const FIXTURE_PORT = 4010;
+import { assertNoUndeclaredFailures } from "../support/failure-guard";
+import {
+  prepareSpec,
+  authenticate as registerDevice,
+  getJournal,
+} from "../support/harness";
 
 let counter = 0;
 function tid(prefix: string): string {
@@ -24,59 +26,22 @@ function tid(prefix: string): string {
   return `nav-${prefix}-${counter}`;
 }
 
-async function allowFixtureCsp(page: import("@playwright/test").Page): Promise<void> {
-  await page.route("**/*", async (route) => {
-    try {
-      const response = await route.fetch();
-      const csp = response.headers()["content-security-policy"];
-      if (csp) {
-        const modified = csp
-          .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
-          .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
-        await route.fulfill({
-          response,
-          headers: { ...response.headers(), "content-security-policy": modified },
-        });
-      } else {
-        await route.fulfill({ response });
-      }
-    } catch {
-      // teardown race
-    }
+/**
+ * Per-test setup for this spec.
+ *
+ * Every test here deep-links into a route and only then registers — that order
+ * is the point of the spec, so it stays in the test bodies rather than being
+ * folded into `initSpec`.
+ *
+ * `baselineAllows: false` keeps the original strict guard: this spec tolerated
+ * only the service-worker failure, and inheriting the harness baseline set
+ * would leave these 25 tests green while detecting less.
+ */
+async function setup(page: import("@playwright/test").Page, id: string) {
+  return prepareSpec(page, id, {
+    baselineAllows: false,
+    allow: [{ message: "reading 'waiting'", reason: "SW blocked by functional project" }],
   });
-}
-
-async function resetFixture(testId: string): Promise<void> {
-  const res = await fetch(`http://127.0.0.1:${FIXTURE_PORT}/__e2e/reset`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-e2e-test-id": testId },
-    body: JSON.stringify({ testId, seed: "populated" }),
-  });
-  if (!res.ok) throw new Error(`Fixture reset failed: ${res.status}`);
-}
-
-async function getJournal(testId: string): Promise<Array<{ method: string; path: string; status: number }>> {
-  const res = await fetch(`http://127.0.0.1:${FIXTURE_PORT}/__e2e/journal?testId=${testId}`, {
-    headers: { "x-e2e-test-id": testId },
-  });
-  if (!res.ok) return [];
-  return res.json();
-}
-
-async function setup(page: import("@playwright/test").Page, id: string): Promise<void> {
-  await allowFixtureCsp(page);
-  await resetFixture(id);
-  await page.clock.setFixedTime(FIXED_CLOCK);
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-}
-
-/** Click Registrar button and wait for auth to complete. */
-async function registerDevice(page: import("@playwright/test").Page): Promise<void> {
-  await page.getByRole("button", { name: "Registrar" }).click({ timeout: 10000 });
-  // Wait for network to settle — registration API call completes
-  await page.waitForLoadState("networkidle", { timeout: 15000 });
-  // FAB confirms authenticated state (rendered by AppShell after auth)
-  await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout: 10000 });
 }
 
 /** Assert the fixture journal has no unexpected write entries (exclude auth registration). */
@@ -91,7 +56,6 @@ test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
-const SW = { message: "reading 'waiting'", reason: "SW blocked by functional project" };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DIRECT-01..12: Direct load each route
@@ -101,96 +65,84 @@ const SW = { message: "reading 'waiting'", reason: "SW blocked by functional pro
 // Headings are not asserted because route pages vary in heading role usage.
 
 test("[DIRECT-01] direct load / renders shell, zero unexpected writes", async ({ page }) => {
-  const id = tid("direct"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("direct"); const guard = await setup(page, id);
   await page.goto("/"); await registerDevice(page);
   expect(page.url()).toContain("/");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 test("[DIRECT-02] direct load /registros renders shell", async ({ page }) => {
-  const id = tid("direct"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("direct"); const guard = await setup(page, id);
   await page.goto("/registros"); await registerDevice(page);
   expect(page.url()).toContain("/registros");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 test("[DIRECT-03] direct load /a-pagar renders shell", async ({ page }) => {
-  const id = tid("direct"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("direct"); const guard = await setup(page, id);
   await page.goto("/a-pagar"); await registerDevice(page);
   expect(page.url()).toContain("/a-pagar");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 test("[DIRECT-04] direct load /assinaturas renders shell", async ({ page }) => {
-  const id = tid("direct"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("direct"); const guard = await setup(page, id);
   await page.goto("/assinaturas"); await registerDevice(page);
   expect(page.url()).toContain("/assinaturas");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 test("[DIRECT-05] direct load /cartoes renders shell", async ({ page }) => {
-  const id = tid("direct"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("direct"); const guard = await setup(page, id);
   await page.goto("/cartoes"); await registerDevice(page);
   expect(page.url()).toContain("/cartoes");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 test("[DIRECT-06] direct load /categorias renders shell", async ({ page }) => {
-  const id = tid("direct"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("direct"); const guard = await setup(page, id);
   await page.goto("/categorias"); await registerDevice(page);
   expect(page.url()).toContain("/categorias");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 test("[DIRECT-07] direct load /contas renders shell", async ({ page }) => {
-  const id = tid("direct"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("direct"); const guard = await setup(page, id);
   await page.goto("/contas"); await registerDevice(page);
   expect(page.url()).toContain("/contas");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 test("[DIRECT-08] direct load /metas renders shell", async ({ page }) => {
-  const id = tid("direct"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("direct"); const guard = await setup(page, id);
   await page.goto("/metas"); await registerDevice(page);
   expect(page.url()).toContain("/metas");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 test("[DIRECT-09] direct load /orcamentos renders shell", async ({ page }) => {
-  const id = tid("direct"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("direct"); const guard = await setup(page, id);
   await page.goto("/orcamentos"); await registerDevice(page);
   expect(page.url()).toContain("/orcamentos");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 test("[DIRECT-10] direct load /patrimonio renders shell", async ({ page }) => {
-  const id = tid("direct"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("direct"); const guard = await setup(page, id);
   await page.goto("/patrimonio"); await registerDevice(page);
   expect(page.url()).toContain("/patrimonio");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 test("[DIRECT-11] direct load /perfil renders shell", async ({ page }) => {
-  const id = tid("direct"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("direct"); const guard = await setup(page, id);
   await page.goto("/perfil"); await registerDevice(page);
   expect(page.url()).toContain("/perfil");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 test("[DIRECT-12] direct load /relatorios renders shell", async ({ page }) => {
-  const id = tid("direct"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("direct"); const guard = await setup(page, id);
   await page.goto("/relatorios"); await registerDevice(page);
   expect(page.url()).toContain("/relatorios");
   await assertNoUnexpectedWrites(id);
@@ -202,8 +154,7 @@ test("[DIRECT-12] direct load /relatorios renders shell", async ({ page }) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test("[NAV-01] BottomNav Resumo click navigates to /", async ({ page }) => {
-  const id = tid("nav"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("nav"); const guard = await setup(page, id);
   await page.goto("/registros"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Resumo" }).click({ timeout: 5000 });
@@ -212,8 +163,7 @@ test("[NAV-01] BottomNav Resumo click navigates to /", async ({ page }) => {
 });
 
 test("[NAV-02] BottomNav Registros click navigates to /registros", async ({ page }) => {
-  const id = tid("nav"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("nav"); const guard = await setup(page, id);
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Registros" }).click({ timeout: 5000 });
@@ -222,8 +172,7 @@ test("[NAV-02] BottomNav Registros click navigates to /registros", async ({ page
 });
 
 test("[NAV-03] BottomNav A pagar click navigates to /a-pagar", async ({ page }) => {
-  const id = tid("nav"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("nav"); const guard = await setup(page, id);
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "A pagar" }).click({ timeout: 5000 });
@@ -236,8 +185,7 @@ test("[NAV-03] BottomNav A pagar click navigates to /a-pagar", async ({ page }) 
 // ═══════════════════════════════════════════════════════════════════════════
 
 test("[NAV-04] tap Mais opens bottom sheet overlay (mobile)", async ({ page }) => {
-  const id = tid("nav"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("nav"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 
@@ -265,8 +213,7 @@ async function navigateFromMoreMenu(
 }
 
 test("[NAV-05] More Patrimônio navigates to /patrimonio", async ({ page }) => {
-  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("more"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
   await navigateFromMoreMenu(page, "Patrimônio", /\/patrimonio$/);
@@ -274,8 +221,7 @@ test("[NAV-05] More Patrimônio navigates to /patrimonio", async ({ page }) => {
 });
 
 test("[NAV-06] More Contas navigates to /contas", async ({ page }) => {
-  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("more"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
   await navigateFromMoreMenu(page, "Contas", /\/contas$/);
@@ -283,8 +229,7 @@ test("[NAV-06] More Contas navigates to /contas", async ({ page }) => {
 });
 
 test("[NAV-07] More Cartões navigates to /cartoes", async ({ page }) => {
-  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("more"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
   await navigateFromMoreMenu(page, "Cartões", /\/cartoes$/);
@@ -292,8 +237,7 @@ test("[NAV-07] More Cartões navigates to /cartoes", async ({ page }) => {
 });
 
 test("[NAV-08] More Assinaturas navigates to /assinaturas", async ({ page }) => {
-  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("more"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
   await navigateFromMoreMenu(page, "Assinaturas", /\/assinaturas$/);
@@ -301,8 +245,7 @@ test("[NAV-08] More Assinaturas navigates to /assinaturas", async ({ page }) => 
 });
 
 test("[NAV-09] More Orçamentos navigates to /orcamentos", async ({ page }) => {
-  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("more"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
   await navigateFromMoreMenu(page, "Orçamentos", /\/orcamentos$/);
@@ -310,8 +253,7 @@ test("[NAV-09] More Orçamentos navigates to /orcamentos", async ({ page }) => {
 });
 
 test("[NAV-10] More Metas navigates to /metas", async ({ page }) => {
-  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("more"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
   await navigateFromMoreMenu(page, "Metas", /\/metas$/);
@@ -319,8 +261,7 @@ test("[NAV-10] More Metas navigates to /metas", async ({ page }) => {
 });
 
 test("[NAV-11] More Categorias navigates to /categorias", async ({ page }) => {
-  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("more"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
   await navigateFromMoreMenu(page, "Categorias", /\/categorias$/);
@@ -328,8 +269,7 @@ test("[NAV-11] More Categorias navigates to /categorias", async ({ page }) => {
 });
 
 test("[NAV-12] More Relatórios navigates to /relatorios", async ({ page }) => {
-  const id = tid("more"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("more"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
   await navigateFromMoreMenu(page, "Relatórios", /\/relatorios$/);
@@ -341,8 +281,7 @@ test("[NAV-12] More Relatórios navigates to /relatorios", async ({ page }) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test("[NAV-13] tap overlay/backdrop closes Mais sheet, route preserved", async ({ page }) => {
-  const id = tid("nav13"); const guard = createGuard(); attachGuard(page, guard);
-  await setup(page, id); allowFailure(guard, SW);
+  const id = tid("nav13"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 

@@ -103,6 +103,14 @@ export type InitOptions = {
   navigateTo?: string;
   /** Extra tolerated failures on top of BASELINE_ALLOWED. */
   allow?: ReadonlyArray<{ message?: string; url?: string; reason: string }>;
+  /**
+   * Apply BASELINE_ALLOWED. Defaults to true.
+   *
+   * Set false for specs that deliberately run a stricter guard — navigation.spec
+   * tolerates only the service-worker failure, and silently widening it to the
+   * baseline set would keep those 25 tests green while detecting less.
+   */
+  baselineAllows?: boolean;
 };
 
 /** Intercept every response and widen its CSP so the fixture API is reachable. */
@@ -132,7 +140,7 @@ export async function applyCspRewrite(page: Page): Promise<void> {
 export async function prepareSpec(
   page: Page,
   testId: string,
-  options: Pick<InitOptions, "allow"> = {},
+  options: Pick<InitOptions, "allow" | "baselineAllows"> = {},
 ): Promise<GuardState> {
   const guard = createGuard();
   attachGuard(page, guard);
@@ -142,7 +150,9 @@ export async function prepareSpec(
   await page.clock.setFixedTime(FIXED_CLOCK);
   await page.context().setExtraHTTPHeaders({ [E2E_TEST_ID_HEADER]: testId });
 
-  for (const entry of BASELINE_ALLOWED) allowFailure(guard, entry);
+  if (options.baselineAllows !== false) {
+    for (const entry of BASELINE_ALLOWED) allowFailure(guard, entry);
+  }
   for (const entry of options.allow ?? []) allowFailure(guard, entry);
 
   return guard;
