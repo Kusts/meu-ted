@@ -55,7 +55,7 @@ async function init(page: import("@playwright/test").Page, id: string) {
 test("[CAT-01] create expense category → POST /categories", async ({ page }) => {
   const id = tid(); const g = await init(page, id);
 
-  await page.getByRole("button", { name: "Nova categoria" }).click();
+  await page.getByRole("button", { name: "Nova", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Nova categoria" })).toBeVisible({ timeout: 5000 });
   await page.getByPlaceholder("Ex: Alimentação, Salário...").fill("Lazer E2E");
   await page.getByRole("button", { name: "Salvar" }).click();
@@ -66,7 +66,7 @@ test("[CAT-01] create expense category → POST /categories", async ({ page }) =
 test("[CAT-02] create income category → POST /categories", async ({ page }) => {
   const id = tid(); const g = await init(page, id);
 
-  await page.getByRole("button", { name: "Nova categoria" }).click();
+  await page.getByRole("button", { name: "Nova", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Nova categoria" })).toBeVisible({ timeout: 5000 });
   await page.getByPlaceholder("Ex: Alimentação, Salário...").fill("Freelance E2E");
   await page.getByRole("button", { name: "Receita" }).click();
