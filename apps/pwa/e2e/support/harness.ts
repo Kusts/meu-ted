@@ -26,3 +26,123 @@ export function rewriteCspForFixture(csp: string): string {
     .replace(/connect-src\s+([^;]+)/, `connect-src ${FIXTURE_URL} $1`)
     .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
 }
+
+import type { Page } from "@playwright/test";
+import { expect } from "@playwright/test";
+import {
+  createGuard,
+  attachGuard,
+  allowFailure,
+  type GuardState,
+} from "./failure-guard";
+
+// Reused from ./reset — do not redeclare these values here.
+import { FIXED_CLOCK, E2E_TEST_ID_HEADER } from "./reset";
+
+export { FIXED_CLOCK, E2E_TEST_ID_HEADER };
+
+/** Failures every spec tolerates. Previously redeclared in each spec file. */
+const BASELINE_ALLOWED = [
+  { message: "reading 'waiting'", reason: "SW blocked" },
+  { url: "/profile", reason: "fixture has no /profile" },
+  { url: "/pwa-control", reason: "fixture has no /pwa-control" },
+  { url: "/auth/devices/me", reason: "intermittent cross-test token" },
+] as const;
+
+/**
+ * Establish an authenticated session.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * PHASE 1 AUTH SWAP HAPPENS HERE AND NOWHERE ELSE.
+ * Today: device registration (button "Registrar" → POST /auth/devices/register).
+ * Phase 1: invite-based user login. Rewrite this body only.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function authenticate(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Registrar" })).toBeVisible({
+    timeout: 15000,
+  });
+  await page.getByRole("button", { name: "Registrar" }).click();
+  await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout: 15000 });
+}
+
+/** Reset the fixture store for a test id. */
+export async function resetFixture(testId: string): Promise<void> {
+  const res = await fetch(`${FIXTURE_URL}/__e2e/reset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", [E2E_TEST_ID_HEADER]: testId },
+    body: JSON.stringify({ testId, seed: "populated" }),
+  });
+  if (!res.ok) throw new Error(`Fixture reset failed: ${res.status}`);
+}
+
+export type JournalEntry = { method: string; path: string; status: number };
+
+/** Read the fixture request journal for a test id. */
+export async function getJournal(testId: string): Promise<JournalEntry[]> {
+  const res = await fetch(`${FIXTURE_URL}/__e2e/journal?testId=${testId}`, {
+    headers: { [E2E_TEST_ID_HEADER]: testId },
+  });
+  return res.ok ? res.json() : [];
+}
+
+/** Assert the journal eventually contains a matching request. */
+export async function expectJournal(
+  testId: string,
+  method: string,
+  path: string | RegExp,
+  status: number,
+): Promise<void> {
+  await expect
+    .poll(() => getJournal(testId), { timeout: 8000 })
+    .toContainEqual(expect.objectContaining({ method, path, status }));
+}
+
+export type InitOptions = {
+  /** Path to navigate to after authenticating. Defaults to "/". */
+  navigateTo?: string;
+  /** Extra tolerated failures on top of BASELINE_ALLOWED. */
+  allow?: ReadonlyArray<{ message?: string; url?: string; reason: string }>;
+};
+
+/**
+ * Full per-test setup: guard, CSP rewrite, fixture reset, fixed clock,
+ * test-id header, authentication, navigation.
+ *
+ * Returns the guard so the spec can call assertNoUndeclaredFailures().
+ */
+export async function initSpec(
+  page: Page,
+  testId: string,
+  options: InitOptions = {},
+): Promise<GuardState> {
+  const guard = createGuard();
+  attachGuard(page, guard);
+
+  await page.route("**/*", async (route) => {
+    try {
+      const response = await route.fetch();
+      const headers = { ...response.headers() };
+      const csp = headers["content-security-policy"];
+      if (csp) headers["content-security-policy"] = rewriteCspForFixture(csp);
+      await route.fulfill({ response, headers });
+    } catch {
+      /* route already handled or page closed */
+    }
+  });
+
+  await resetFixture(testId);
+  await page.clock.setFixedTime(FIXED_CLOCK);
+  await page.context().setExtraHTTPHeaders({ [E2E_TEST_ID_HEADER]: testId });
+
+  for (const entry of BASELINE_ALLOWED) allowFailure(guard, entry);
+  for (const entry of options.allow ?? []) allowFailure(guard, entry);
+
+  await page.goto("/");
+  await authenticate(page);
+  if (options.navigateTo && options.navigateTo !== "/") {
+    await page.goto(options.navigateTo);
+  }
+
+  return guard;
+}
