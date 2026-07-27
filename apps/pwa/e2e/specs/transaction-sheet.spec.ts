@@ -17,15 +17,11 @@
  */
 
 import { test, expect } from "@playwright/test";
-import {
-  allowFailure,
-  assertNoUndeclaredFailures,
-  attachGuard,
-  createGuard,
-} from "../support/failure-guard";
+import { allowFailure, assertNoUndeclaredFailures } from "../support/failure-guard";
 import { FIXTURE_URL } from "../support/reset";
+import { initSpec, getJournal, expectJournal } from "../support/harness";
 
-const SW = { message: "reading 'waiting'", reason: "SW blocked" };
+
 let counter = 0;
 
 function tid(): string {
@@ -33,60 +29,13 @@ function tid(): string {
   return `tx-${counter}`;
 }
 
-async function allowFixtureCsp(page: import("@playwright/test").Page): Promise<void> {
-  await page.route("**", async (route) => {
-    const response = await route.fetch();
-    const csp = response.headers()["content-security-policy"];
-    if (csp) {
-      const modified = csp
-        .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
-        .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
-      await route.fulfill({
-        response,
-        headers: { ...response.headers(), "content-security-policy": modified },
-      });
-    } else {
-      await route.fulfill({ response });
-    }
-  });
-}
-
-async function resetFixture(testId: string, seed = "populated") {
-  const response = await fetch(`${FIXTURE_URL}/__e2e/reset`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-e2e-test-id": testId },
-    body: JSON.stringify({ testId, seed }),
-  });
-  expect(response.ok).toBe(true);
-}
-
-async function registerDevice(page: import("@playwright/test").Page): Promise<void> {
-  const registerButton = page.getByRole("button", { name: "Registrar" });
-  await expect(registerButton).toBeVisible({ timeout: 15000 });
-  await registerButton.click();
-  await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout: 15000 });
-}
-
-async function getJournalEntries(
-  testId: string,
-): Promise<Array<{ method: string; path: string; status: number; body?: unknown }>> {
-  const response = await fetch(`${FIXTURE_URL}/__e2e/journal?testId=${testId}`, {
-    headers: { "x-e2e-test-id": testId },
-  });
-  if (!response.ok) return [];
-  return response.json();
-}
-
 async function init(page: import("@playwright/test").Page, id: string) {
-  const guard = createGuard();
-  attachGuard(page, guard);
-  await allowFixtureCsp(page);
-  await resetFixture(id);
-  await page.clock.setFixedTime("2026-07-17T12:00:00.000Z");
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(guard, SW);
-  await page.goto("/");
-  await registerDevice(page);
+  const guard = await initSpec(page, id, {
+    baselineAllows: false,
+    allow: [
+      { message: "reading 'waiting'", reason: "SW blocked" },
+    ],
+  });
   return guard;
 }
 
@@ -107,16 +56,7 @@ async function openTransactionSheet(page: import("@playwright/test").Page) {
   return dialog;
 }
 
-async function expectJournalEntry(
-  testId: string,
-  method: string,
-  path: string,
-  status: number,
-) {
-  await expect
-    .poll(async () => getJournalEntries(testId))
-    .toContainEqual(expect.objectContaining({ method, path, status }));
-}
+
 
 async function typeAmount(
   dialog: import("@playwright/test").Locator,
@@ -158,7 +98,7 @@ test("[TX-02] save expense via POST /transactions/expense with validation", asyn
   // Negative: zero amount keeps Salvar disabled — no POST
   const saveBtn = dialog.getByRole("button", { name: /^Salvar$/ });
   await expect(saveBtn).toBeDisabled();
-  const before = await getJournalEntries(id);
+  const before = await getJournal(id);
   const expensePostsBefore = before.filter(
     (e) => e.method === "POST" && e.path === "/transactions/expense",
   );
@@ -173,7 +113,7 @@ test("[TX-02] save expense via POST /transactions/expense with validation", asyn
   await saveBtn.click();
 
   await expect(dialog).toBeHidden();
-  await expectJournalEntry(id, "POST", "/transactions/expense", 200);
+  await expectJournal(id, "POST", "/transactions/expense", 200);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -203,7 +143,7 @@ test("[TX-03] save income via POST /transactions/income with 422 preserved", asy
   await dialog.getByRole("button", { name: /^Salvar$/ }).click();
 
   // Negative: 422 keeps sheet open and preserves inputs
-  await expectJournalEntry(id, "POST", "/transactions/income", 422);
+  await expectJournal(id, "POST", "/transactions/income", 422);
   await expect(dialog).toBeVisible();
   await expect(dialog.getByPlaceholder("Ex: Aluguel, mercado...")).toHaveValue(
     "Salário mensal",
@@ -213,7 +153,7 @@ test("[TX-03] save income via POST /transactions/income with 422 preserved", asy
   // Retry succeeds (scenario once consumed)
   await dialog.getByRole("button", { name: /^Salvar$/ }).click();
   await expect(dialog).toBeHidden();
-  await expectJournalEntry(id, "POST", "/transactions/income", 200);
+  await expectJournal(id, "POST", "/transactions/income", 200);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -241,7 +181,7 @@ test("[TX-04] save transfer via POST /transfers with invalid same account reject
   // Negative: missing destination — Transferir must not POST
   await dialog.getByRole("button", { name: /^Transferir$/ }).click();
   await expect(dialog).toBeVisible();
-  let journal = await getJournalEntries(id);
+  let journal = await getJournal(id);
   expect(
     journal.filter((e) => e.method === "POST" && e.path === "/transfers"),
   ).toHaveLength(0);
@@ -250,7 +190,7 @@ test("[TX-04] save transfer via POST /transfers with invalid same account reject
   await contaCorrente.nth(1).click();
   await dialog.getByRole("button", { name: /^Transferir$/ }).click();
   await expect(dialog).toBeVisible();
-  journal = await getJournalEntries(id);
+  journal = await getJournal(id);
   expect(
     journal.filter((e) => e.method === "POST" && e.path === "/transfers"),
   ).toHaveLength(0);
@@ -260,7 +200,7 @@ test("[TX-04] save transfer via POST /transfers with invalid same account reject
   await dinheiro.nth(1).click();
   await dialog.getByRole("button", { name: /^Transferir$/ }).click();
   await expect(dialog).toBeHidden();
-  await expectJournalEntry(id, "POST", "/transfers", 200);
+  await expectJournal(id, "POST", "/transfers", 200);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -279,7 +219,7 @@ test("[TX-05] add category inline via create endpoint", async ({ page }) => {
   // Negative: blank name cancel — no POST /categories
   await dialog.getByRole("button", { name: "Cancelar" }).click();
   await expect(dialog.getByPlaceholder("Nome da categoria")).toHaveCount(0);
-  const journal = await getJournalEntries(id);
+  const journal = await getJournal(id);
   expect(
     journal.filter((e) => e.method === "POST" && e.path === "/categories"),
   ).toHaveLength(0);
@@ -288,7 +228,7 @@ test("[TX-05] add category inline via create endpoint", async ({ page }) => {
   await dialog.getByText("Nova").first().click();
   await dialog.getByPlaceholder("Nome da categoria").fill("Mercado E2E");
   await dialog.getByRole("button", { name: "Salvar categoria" }).click();
-  await expectJournalEntry(id, "POST", "/categories", 200);
+  await expectJournal(id, "POST", "/categories", 200);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -311,11 +251,11 @@ test("[TX-06] add subcategory inline via create endpoint", async ({ page }) => {
   await dialog.getByPlaceholder("Nome da subcategoria").fill("Hortifruti E2E");
   await dialog.getByRole("button", { name: "Salvar subcategoria" }).click();
 
-  await expectJournalEntry(id, "POST", "/categories", 200);
+  await expectJournal(id, "POST", "/categories", 200);
   // parentId must be present in the create payload
   await expect
     .poll(async () => {
-      const entries = await getJournalEntries(id);
+      const entries = await getJournal(id);
       const post = entries.find(
         (e) => e.method === "POST" && e.path === "/categories",
       );
@@ -339,7 +279,7 @@ test("[TX-07] add account inline via create endpoint", async ({ page }) => {
   // Negative: blank cancel
   await dialog.getByRole("button", { name: "Cancelar" }).click();
   await expect(dialog.getByPlaceholder("Nome da conta")).toHaveCount(0);
-  const journal = await getJournalEntries(id);
+  const journal = await getJournal(id);
   expect(
     journal.filter((e) => e.method === "POST" && e.path === "/accounts"),
   ).toHaveLength(0);
@@ -347,7 +287,7 @@ test("[TX-07] add account inline via create endpoint", async ({ page }) => {
   await dialog.getByText("Nova").nth(1).click();
   await dialog.getByPlaceholder("Nome da conta").fill("Caixa E2E");
   await dialog.getByRole("button", { name: "Salvar conta" }).click();
-  await expectJournalEntry(id, "POST", "/accounts", 200);
+  await expectJournal(id, "POST", "/accounts", 200);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -367,7 +307,7 @@ test("[TX-08] add card inline via create endpoint", async ({ page }) => {
   // Negative: blank cancel
   await dialog.getByRole("button", { name: "Cancelar" }).click();
   await expect(dialog.getByPlaceholder("Nome do cartão")).toHaveCount(0);
-  const journal = await getJournalEntries(id);
+  const journal = await getJournal(id);
   expect(
     journal.filter((e) => e.method === "POST" && e.path === "/cards"),
   ).toHaveLength(0);
@@ -375,7 +315,7 @@ test("[TX-08] add card inline via create endpoint", async ({ page }) => {
   await novoCard.click();
   await dialog.getByPlaceholder("Nome do cartão").fill("Inter Card E2E");
   await dialog.getByRole("button", { name: "Salvar cartão" }).click();
-  await expectJournalEntry(id, "POST", "/cards", 200);
+  await expectJournal(id, "POST", "/cards", 200);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -416,7 +356,7 @@ test("[TX-09] save installments via POST /cards/installments with invalid count 
   await save12.click();
 
   // Negative: 422 keeps sheet open
-  await expectJournalEntry(id, "POST", "/cards/installments", 422);
+  await expectJournal(id, "POST", "/cards/installments", 422);
   await expect(dialog).toBeVisible();
   await expect(dialog.getByPlaceholder("Ex: Aluguel, mercado...")).toHaveValue(
     "Notebook E2E",
@@ -425,6 +365,6 @@ test("[TX-09] save installments via POST /cards/installments with invalid count 
   // Retry succeeds
   await save12.click();
   await expect(dialog).toBeHidden();
-  await expectJournalEntry(id, "POST", "/cards/installments", 200);
+  await expectJournal(id, "POST", "/cards/installments", 200);
   assertNoUndeclaredFailures(guard);
 });
