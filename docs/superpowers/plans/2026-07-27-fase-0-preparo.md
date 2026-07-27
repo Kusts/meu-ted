@@ -40,6 +40,12 @@ Suba-os **uma vez** em terminais separados e deixe rodando durante toda a Task 3
 > Verificado: sem a env, 121 testes falham; com a env, `accounts.spec.ts` passa 6/6 em 10,8s.
 > Por ser `NEXT_PUBLIC_*`, o valor é embutido em build time — **rebuildar** não basta reiniciar.
 >
+> **E o rebuild precisa ser limpo: `rm -rf .next` antes.** Observado em 2026-07-27: um build
+> incremental por cima de um `.next` gerado sem a variável mantém chunks antigos, e a suíte volta
+> ao modo mock mesmo com a env exportada — `accounts.spec.ts` passou 6/6, regrediu para 0/6 após
+> um rebuild incremental, e voltou a 6/6 só depois de `rm -rf .next`. Sintoma de diagnóstico:
+> o fixture API não recebe requisição nenhuma.
+>
 > `apps/pwa/e2e/run-ci.sh` e `.github/workflows/pwa-ci.yml` **não setam essa variável**. Ver
 > Task 0 abaixo.
 
