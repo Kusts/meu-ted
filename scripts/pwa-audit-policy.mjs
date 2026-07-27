@@ -1,4 +1,5 @@
-// PWA audit policy — strict acceptance with expiring allowlist.
+// PWA audit policy — strict acceptance with optional expiring allowlist.
+// expiresOn is optional — entries without it are permanent.
 // Pure functions: no side effects, no filesystem, no network.
 
 const REQUIRED_ALLOWLIST_FIELDS = [
@@ -11,7 +12,6 @@ const REQUIRED_ALLOWLIST_FIELDS = [
   "scope",
   "owner",
   "justification",
-  "expiresOn",
 ];
 
 const VALID_SCOPES = new Set(["runtime", "build-time", "dev-only"]);
@@ -33,7 +33,9 @@ function validateAllowlistEntry(entry) {
   if (!Array.isArray(entry.via)) errors.push("via must be an array");
   if (!Array.isArray(entry.effects)) errors.push("effects must be an array");
   if (entry.scope && !VALID_SCOPES.has(entry.scope)) errors.push(`invalid scope: ${entry.scope}`);
-  if (entry.expiresOn && !isValidDate(entry.expiresOn)) errors.push(`invalid expiresOn: ${entry.expiresOn}`);
+  if (entry.expiresOn !== undefined && entry.expiresOn !== null && !isValidDate(entry.expiresOn)) {
+    errors.push(`invalid expiresOn: ${entry.expiresOn}`);
+  }
   if (typeof entry.name !== "string" || entry.name.length === 0) errors.push("name must be a non-empty string");
   return errors;
 }
@@ -82,9 +84,9 @@ export function evaluateAudit({ audit, allowlist, today }) {
     return { status: "BLOCKED", blocked, resolved, accepted };
   }
 
-  // Check allowlist expiry
+  // Check allowlist expiry (only when expiresOn is present)
   for (const entry of allowlist) {
-    if (entry.expiresOn < today) {
+    if (entry.expiresOn && entry.expiresOn < today) {
       blocked.push({ name: entry.name, reason: `allowlist entry expired on ${entry.expiresOn}` });
     }
   }
