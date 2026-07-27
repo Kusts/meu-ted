@@ -9,6 +9,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { evaluateAudit } from "./pwa-audit-policy.mjs";
+import allowlist from "./pwa-audit-allowlist.json" with { type: "json" };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -115,24 +117,35 @@ function main() {
     }
 
     const parsed = tryParse(auditOutput);
-    if (parsed && parsed.vulnerabilities) {
-      const vulns = parsed.vulnerabilities;
-      const names = Object.keys(vulns);
-      if (names.length > 0) {
-        console.error(
-          `check-pwa-audit: BLOCKED — ${names.length} PWA advisory(ies):`,
-        );
-        for (const name of names) {
-          const v = vulns[name];
-          console.error(`  ${name} (${v.severity}): ${v.via?.[0]?.title || v.via?.[0] || ""}`);
-        }
+    if (parsed && parsed.vulnerabilities && Object.keys(parsed.vulnerabilities).length > 0) {
+      // Policy evaluation
+      const today = new Date().toISOString().slice(0, 10);
+      const result = evaluateAudit({ audit: parsed, allowlist, today });
+
+      for (const a of result.accepted) {
+        console.error(`check-pwa-audit: ACCEPTED ${a.name} (${a.scope}, expires ${a.expiresOn})`);
+      }
+      for (const r of result.resolved) {
+        console.error(`check-pwa-audit: RESOLVED ${r.name}`);
+      }
+      for (const b of result.blocked) {
+        console.error(`check-pwa-audit: BLOCKED ${b.name} — ${b.reason}`);
+      }
+
+      if (result.status === "BLOCKED") {
+        exitCode = 1;
       } else {
-        console.error("check-pwa-audit: PASS — no advisories");
+        console.error(`check-pwa-audit: ${result.status} — ${result.accepted.length} accepted, ${result.resolved.length} resolved`);
+        exitCode = 0;
       }
     } else {
-      if (exitCode === 0) {
+      // No vulnerabilities or empty audit — policy still applies for PASS
+      const today = new Date().toISOString().slice(0, 10);
+      const result = evaluateAudit({ audit: parsed || { vulnerabilities: {} }, allowlist, today });
+      if (result.status === "PASS") {
         console.error("check-pwa-audit: PASS — no advisories");
       }
+      exitCode = 0;
     }
 
     // Clean up

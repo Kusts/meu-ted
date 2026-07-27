@@ -7,8 +7,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../.
 const workflow = fs.readFileSync(path.join(root, ".github/workflows/pwa-ci.yml"), "utf8");
 
 describe("PWA CI audit trigger", () => {
-  it("watches the scoped audit script it executes", () => {
-    expect(workflow).toContain('"scripts/pwa-audit.mjs"');
+  it("watches the scoped audit scripts it executes", () => {
+    expect(workflow).toContain('"scripts/pwa-audit*"');
+    expect(workflow).toContain("node --test scripts/pwa-audit-policy.test.mjs");
     expect(workflow).not.toContain('"scripts/check-pwa-audit.mjs"');
   });
 });

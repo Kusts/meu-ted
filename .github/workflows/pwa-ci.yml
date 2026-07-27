@@ -5,14 +5,14 @@ on:
     branches: [main]
     paths:
       - "apps/pwa/**"
-      - "scripts/pwa-audit.mjs"
+      - "scripts/pwa-audit*"
       - "package.json"
       - "pnpm-lock.yaml"
   pull_request:
     branches: [main]
     paths:
       - "apps/pwa/**"
-      - "scripts/pwa-audit.mjs"
+      - "scripts/pwa-audit*"
       - "package.json"
       - "pnpm-lock.yaml"
 
@@ -77,6 +77,9 @@ jobs:
         run: |
           cd apps/pwa
           pnpm exec lhci autorun
+
+      - name: Test PWA audit policy
+        run: node --test scripts/pwa-audit-policy.test.mjs
 
       - name: Scoped audit
         run: node scripts/pwa-audit.mjs
