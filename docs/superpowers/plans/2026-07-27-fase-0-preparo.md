@@ -31,12 +31,28 @@ A suíte E2E precisa de **três** serviços. `apps/pwa/e2e/run-ci.sh` sobe todos
 
 Suba-os **uma vez** em terminais separados e deixe rodando durante toda a Task 3:
 
+> **`NEXT_PUBLIC_PI_FINANCE_API_BASE_URL` é obrigatória — no build e no start.**
+> `apps/pwa/src/lib/api/client.ts:13-22`: sem ela, e fora do host de produção, `baseUrl()`
+> retorna `undefined` → `isApiConfigured()` é `false` → o PWA sobe em **modo mock**, nunca
+> mostra a tela de registro, e **toda** a suíte falha com `getByRole('button', { name:
+> 'Registrar' })` não encontrado (timeout de 15s por teste).
+>
+> Verificado: sem a env, 121 testes falham; com a env, `accounts.spec.ts` passa 6/6 em 10,8s.
+> Por ser `NEXT_PUBLIC_*`, o valor é embutido em build time — **rebuildar** não basta reiniciar.
+>
+> `apps/pwa/e2e/run-ci.sh` e `.github/workflows/pwa-ci.yml` **não setam essa variável**. Ver
+> Task 0 abaixo.
+
 ```bash
+export NEXT_PUBLIC_PI_FINANCE_API_BASE_URL=http://127.0.0.1:4010
+
 # Terminal 1 — fixture API (:4010)
 cd apps/pwa && pnpm exec tsx e2e/fixture-api/server.ts
 
 # Terminal 2 — build uma vez, depois Next (:3001)
-cd apps/pwa && pnpm build:next:cloudflare && pnpm exec next start --port 3001
+cd apps/pwa && NEXT_PUBLIC_PI_FINANCE_API_BASE_URL=http://127.0.0.1:4010 \
+  pnpm build:next:cloudflare && \
+  NEXT_PUBLIC_PI_FINANCE_API_BASE_URL=http://127.0.0.1:4010 pnpm exec next start --port 3001
 
 # Terminal 3 — SW harness (:3000, proxia para :3001)
 cd apps/pwa && pnpm exec tsx e2e/sw-harness/server.ts
