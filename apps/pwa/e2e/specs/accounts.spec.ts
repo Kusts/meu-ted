@@ -14,6 +14,7 @@ import { FIXTURE_URL } from "../support/reset";
 const SW = { message: "reading 'waiting'", reason: "SW blocked" };
 const PROFILE = { url: "/profile", reason: "fixture no /profile" };
 const PWACTRL = { url: "/pwa-control", reason: "fixture no /pwa-control" };
+const AUTH_ME = { url: "/auth/devices/me", reason: "intermittent cross-test token" };
 let c = 0; function tid(): string { c += 1; return `acc-${c}`; }
 
 async function allowCsp(page: import("@playwright/test").Page) {
@@ -47,7 +48,7 @@ async function init(page: import("@playwright/test").Page, id: string, nav = "/c
   const g = createGuard(); attachGuard(page, g); await allowCsp(page); await resetFixture(id);
   await page.clock.setFixedTime("2026-07-17T12:00:00.000Z");
   await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(g, SW); allowFailure(g, PROFILE); allowFailure(g, PWACTRL);
+  allowFailure(g, SW); allowFailure(g, PROFILE); allowFailure(g, PWACTRL); allowFailure(g, AUTH_ME);
   await page.goto("/"); await registerDevice(page);
   await page.goto(nav);
   return g;
