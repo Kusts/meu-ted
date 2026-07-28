@@ -13,16 +13,9 @@
  */
 
 import { test, expect } from "@playwright/test";
-import {
-  allowFailure,
-  assertNoUndeclaredFailures,
-  attachGuard,
-  createGuard,
-} from "../support/failure-guard";
-import { FIXTURE_URL } from "../support/reset";
+import { assertNoUndeclaredFailures } from "../support/failure-guard";
+import { prepareSpec, authenticate } from "../support/harness";
 
-const FIXED_CLOCK = "2026-07-17T12:00:00.000Z";
-const SW = { message: "reading 'waiting'", reason: "SW blocked" };
 
 let counter = 0;
 function tid(): string {
@@ -30,54 +23,21 @@ function tid(): string {
   return `rep-${counter}`;
 }
 
-async function allowFixtureCsp(page: import("@playwright/test").Page): Promise<void> {
-  await page.route("**/*", async (route) => {
-    try {
-      const response = await route.fetch();
-      const headers = { ...response.headers() };
-      const csp = headers["content-security-policy"];
-      if (csp) {
-        headers["content-security-policy"] = csp
-          .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
-          .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
-      }
-      await route.fulfill({ response, headers });
-    } catch {
-      // teardown race
-    }
-  });
-}
 
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
-async function resetFixture(testId: string, seed = "populated"): Promise<void> {
-  const res = await fetch(`${FIXTURE_URL}/__e2e/reset`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-e2e-test-id": testId },
-    body: JSON.stringify({ testId, seed }),
-  });
-  if (!res.ok) throw new Error(`Fixture reset failed: ${res.status}`);
-}
 
-async function registerDevice(page: import("@playwright/test").Page): Promise<void> {
-  const registerButton = page.getByRole("button", { name: "Registrar" });
-  await expect(registerButton).toBeVisible({ timeout: 15000 });
-  await registerButton.click();
-  await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout: 15000 });
-}
 
 async function init(page: import("@playwright/test").Page, id: string) {
-  const guard = createGuard();
-  attachGuard(page, guard);
-  await allowFixtureCsp(page);
-  await resetFixture(id);
-  await page.clock.setFixedTime(FIXED_CLOCK);
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(guard, SW);
+  // Deep-links into /relatorios before registering — order preserved.
+  const guard = await prepareSpec(page, id, {
+    baselineAllows: false,
+    allow: [{ message: "reading 'waiting'", reason: "SW blocked" }],
+  });
   await page.goto("/relatorios");
-  await registerDevice(page);
+  await authenticate(page);
   await expect(page.getByRole("heading", { name: "Relatórios" })).toBeVisible({
     timeout: 10000,
   });

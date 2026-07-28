@@ -76,7 +76,13 @@ export async function resetFixture(testId: string): Promise<void> {
   if (!res.ok) throw new Error(`Fixture reset failed: ${res.status}`);
 }
 
-export type JournalEntry = { method: string; path: string; status: number };
+export type JournalEntry = {
+  method: string;
+  path: string;
+  status: number;
+  /** Request payload, when the fixture recorded one. Asserted by profile specs. */
+  body?: unknown;
+};
 
 /** Read the fixture request journal for a test id. */
 export async function getJournal(testId: string): Promise<JournalEntry[]> {
