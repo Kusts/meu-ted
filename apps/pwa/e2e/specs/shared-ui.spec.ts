@@ -15,16 +15,10 @@
  */
 
 import { test, expect } from "@playwright/test";
-import {
-  allowFailure,
-  assertNoUndeclaredFailures,
-  attachGuard,
-  createGuard,
-} from "../support/failure-guard";
+// `allowFailure` stays: UI-07/UI-08 declare tolerated failures inline.
+import { allowFailure, assertNoUndeclaredFailures } from "../support/failure-guard";
 import { FIXTURE_URL } from "../support/reset";
-
-const FIXED_CLOCK = "2026-07-17T12:00:00.000Z";
-const SW = { message: "reading 'waiting'", reason: "SW blocked" };
+import { prepareSpec, authenticate, getJournal } from "../support/harness";
 
 let counter = 0;
 function tid(): string {
@@ -32,36 +26,11 @@ function tid(): string {
   return `ui-${counter}`;
 }
 
-async function allowFixtureCsp(page: import("@playwright/test").Page): Promise<void> {
-  await page.route("**/*", async (route) => {
-    try {
-      const response = await route.fetch();
-      const headers = { ...response.headers() };
-      const csp = headers["content-security-policy"];
-      if (csp) {
-        headers["content-security-policy"] = csp
-          .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
-          .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
-      }
-      await route.fulfill({ response, headers });
-    } catch {
-      /* teardown */
-    }
-  });
-}
 
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
-async function resetFixture(testId: string, seed = "populated"): Promise<void> {
-  const res = await fetch(`${FIXTURE_URL}/__e2e/reset`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-e2e-test-id": testId },
-    body: JSON.stringify({ testId, seed }),
-  });
-  if (!res.ok) throw new Error(`Fixture reset failed: ${res.status}`);
-}
 
 async function setScenario(
   testId: string,
@@ -80,37 +49,21 @@ async function setScenario(
   if (!res.ok) throw new Error(`Scenario failed: ${res.status}`);
 }
 
-async function getJournal(
-  testId: string,
-): Promise<Array<{ method: string; path: string; status: number }>> {
-  const res = await fetch(`${FIXTURE_URL}/__e2e/journal?testId=${testId}`, {
-    headers: { "x-e2e-test-id": testId },
-  });
-  if (!res.ok) return [];
-  return res.json();
-}
 
-async function registerDevice(page: import("@playwright/test").Page): Promise<void> {
-  const registerButton = page.getByRole("button", { name: "Registrar" });
-  await expect(registerButton).toBeVisible({ timeout: 15000 });
-  await registerButton.click();
-  await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout: 15000 });
-}
+
+const SW_ONLY = [{ message: "reading 'waiting'", reason: "SW blocked" }] as const;
 
 async function init(
   page: import("@playwright/test").Page,
   id: string,
   path = "/",
 ) {
-  const guard = createGuard();
-  attachGuard(page, guard);
-  await allowFixtureCsp(page);
-  await resetFixture(id);
-  await page.clock.setFixedTime(FIXED_CLOCK);
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(guard, SW);
+  const guard = await prepareSpec(page, id, {
+    baselineAllows: false,
+    allow: SW_ONLY,
+  });
   await page.goto(path);
-  await registerDevice(page);
+  await authenticate(page);
   return guard;
 }
 
@@ -215,15 +168,14 @@ test("[UI-04] cancel discard on dirty form → stays on form", async ({ page }) 
 
 test("[UI-05] stale error retry button → retry journal", async ({ page }) => {
   const id = tid();
-  const guard = createGuard();
-  attachGuard(page, guard);
-  await allowFixtureCsp(page);
-  await resetFixture(id);
-  await page.clock.setFixedTime(FIXED_CLOCK);
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(guard, SW);
-  allowFailure(guard, { status: 503, reason: "forced unavailable bootstrap" });
-  allowFailure(guard, { message: "503", reason: "forced unavailable bootstrap" });
+  const guard = await prepareSpec(page, id, {
+    baselineAllows: false,
+    allow: [
+      ...SW_ONLY,
+      { status: 503, reason: "forced unavailable bootstrap" },
+      { message: "503", reason: "forced unavailable bootstrap" },
+    ],
+  });
 
   // Fail essential list reads so domains become unavailable (no prior snapshot).
   for (const pathname of ["/transactions", "/accounts", "/categories"]) {
@@ -231,7 +183,7 @@ test("[UI-05] stale error retry button → retry journal", async ({ page }) => {
   }
 
   await page.goto("/registros");
-  await registerDevice(page);
+  await authenticate(page);
 
   const banner = page.getByTestId("stale-banner");
   await expect(banner).toBeVisible({ timeout: 15000 });
@@ -256,22 +208,21 @@ test("[UI-05] stale error retry button → retry journal", async ({ page }) => {
 
 test("[UI-06] stale error dismiss button → no retry", async ({ page }) => {
   const id = tid();
-  const guard = createGuard();
-  attachGuard(page, guard);
-  await allowFixtureCsp(page);
-  await resetFixture(id);
-  await page.clock.setFixedTime(FIXED_CLOCK);
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(guard, SW);
-  allowFailure(guard, { status: 503, reason: "forced unavailable for dismiss" });
-  allowFailure(guard, { message: "503", reason: "forced unavailable for dismiss" });
+  const guard = await prepareSpec(page, id, {
+    baselineAllows: false,
+    allow: [
+      ...SW_ONLY,
+      { status: 503, reason: "forced unavailable for dismiss" },
+      { message: "503", reason: "forced unavailable for dismiss" },
+    ],
+  });
 
   for (const pathname of ["/transactions", "/accounts", "/categories"]) {
     await setScenario(id, { method: "GET", pathname, status: 503, once: false });
   }
 
   await page.goto("/registros");
-  await registerDevice(page);
+  await authenticate(page);
 
   const banner = page.getByTestId("stale-banner");
   await expect(banner).toBeVisible({ timeout: 15000 });
