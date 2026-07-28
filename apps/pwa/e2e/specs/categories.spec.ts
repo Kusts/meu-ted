@@ -94,7 +94,7 @@ test("[CAT-05] deactivate category → confirm dialog opens", async ({ page }) =
     await expect(page.getByRole("heading", { name: "Desativar categoria" })).toBeVisible({ timeout: 3000 });
     // Cancel closes dialog
     await page.getByRole("button", { name: "Cancelar" }).click();
-    let j = await getJournal(id);
+    const j = await getJournal(id);
     expect(j.filter(e => e.method === "POST" && e.path.includes("deactivate"))).toHaveLength(0);
   }
   assertNoUndeclaredFailures(g);

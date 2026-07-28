@@ -120,7 +120,7 @@ popd >/dev/null
 # ── Run matrix gate ─────────────────────────────────────────────────────────
 echo "[run-ci] matrix gate..."
 pushd "$PWA" >/dev/null
-node --experimental-strip-types --test e2e/support/matrix.test.ts || RESULT=1
+pnpm exec tsx --test e2e/support/matrix.test.ts || RESULT=1
 popd >/dev/null
 
 # ── Report ──────────────────────────────────────────────────────────────────
