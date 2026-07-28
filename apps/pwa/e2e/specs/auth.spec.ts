@@ -11,46 +11,18 @@
 import { test, expect } from "@playwright/test";
 import { createGuard, attachGuard, assertNoUndeclaredFailures, allowFailure } from "../support/failure-guard";
 import { FIXTURE_URL } from "../support/reset";
+// This spec exercises registration itself, so it deliberately does NOT use
+// `authenticate()` — it drives the Registrar button directly. Only the
+// transport-level helpers come from the harness.
+import { applyCspRewrite, resetFixture, getJournal } from "../support/harness";
 
 const FIXED_CLOCK = "2026-07-17T12:00:00.000Z";
 const TOKEN_KEY = "pi-finance:token";
 let counter = 0;
 function tid(): string { counter++; return `auth-${counter}`; }
 
-async function allowFixtureCsp(page: import("@playwright/test").Page): Promise<void> {
-  await page.route("**", async (route) => {
-    const response = await route.fetch();
-    const csp = response.headers()["content-security-policy"];
-    if (csp) {
-      const modified = csp
-        .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
-        .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
-      await route.fulfill({
-        response,
-        headers: { ...response.headers(), "content-security-policy": modified },
-      });
-    } else {
-      await route.fulfill({ response });
-    }
-  });
-}
 
-async function resetFixture(testId: string, seed: string): Promise<void> {
-  const res = await fetch(`${FIXTURE_URL}/__e2e/reset`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-e2e-test-id": testId },
-    body: JSON.stringify({ testId, seed }),
-  });
-  if (!res.ok) throw new Error(`Fixture reset failed: ${res.status}`);
-}
 
-async function getJournal(testId: string): Promise<Array<{ method: string; path: string; status: number }>> {
-  const res = await fetch(`${FIXTURE_URL}/__e2e/journal?testId=${testId}`, {
-    headers: { "x-e2e-test-id": testId },
-  });
-  if (!res.ok) return [];
-  return res.json();
-}
 
 async function addScenario(testId: string, method: string, pathname: string, status: number): Promise<void> {
   await fetch(`${FIXTURE_URL}/__e2e/scenario`, {
@@ -66,7 +38,7 @@ test("[AUTH-01] register device: POST /auth/devices/register 200, token stored, 
   const id = tid();
   const guard = createGuard();
   attachGuard(page, guard);
-  await allowFixtureCsp(page);
+  await applyCspRewrite(page);
   await resetFixture(id, "populated");
   await page.clock.setFixedTime(FIXED_CLOCK);
   await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
@@ -101,7 +73,7 @@ test("[AUTH-02] expired token: GET /auth/devices/me 401, storage cleared, regist
   const id = tid();
   const guard = createGuard();
   attachGuard(page, guard);
-  await allowFixtureCsp(page);
+  await applyCspRewrite(page);
   // Use populated seed so fixture has authRegister data for normal flow
   await resetFixture(id, "populated");
   await page.clock.setFixedTime(FIXED_CLOCK);

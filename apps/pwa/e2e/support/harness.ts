@@ -58,20 +58,28 @@ const BASELINE_ALLOWED = [
  * Phase 1: invite-based user login. Rewrite this body only.
  * ─────────────────────────────────────────────────────────────────────────
  */
-export async function authenticate(page: Page): Promise<void> {
-  await expect(page.getByRole("button", { name: "Registrar" })).toBeVisible({
-    timeout: 15000,
-  });
+export async function authenticate(
+  page: Page,
+  /** Service-worker specs need a longer wait than the default. */
+  options: { timeout?: number } = {},
+): Promise<void> {
+  const timeout = options.timeout ?? 15000;
+  await expect(page.getByRole("button", { name: "Registrar" })).toBeVisible({ timeout });
   await page.getByRole("button", { name: "Registrar" }).click();
-  await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout });
 }
 
-/** Reset the fixture store for a test id. */
-export async function resetFixture(testId: string): Promise<void> {
+/**
+ * Reset the fixture store for a test id.
+ *
+ * `seed` is explicit for auth specs, which reset to non-populated states to
+ * exercise registration and token expiry.
+ */
+export async function resetFixture(testId: string, seed = "populated"): Promise<void> {
   const res = await fetch(`${FIXTURE_URL}/__e2e/reset`, {
     method: "POST",
     headers: { "Content-Type": "application/json", [E2E_TEST_ID_HEADER]: testId },
-    body: JSON.stringify({ testId, seed: "populated" }),
+    body: JSON.stringify({ testId, seed }),
   });
   if (!res.ok) throw new Error(`Fixture reset failed: ${res.status}`);
 }

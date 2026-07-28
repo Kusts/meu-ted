@@ -6,39 +6,15 @@
 
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import { FIXTURE_URL } from "../support/reset";
+import { applyCspRewrite, resetFixture, authenticate } from "../support/harness";
 
 const FIXED_CLOCK = "2026-07-17T12:00:00.000Z";
 
-async function allowFixtureCsp(page: Page): Promise<void> {
-  await page.route("**/*", async (route) => {
-    try {
-      const response = await route.fetch();
-      const headers = { ...response.headers() };
-      const csp = headers["content-security-policy"];
-      if (csp) {
-        headers["content-security-policy"] = csp
-          .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
-          .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
-      }
-      await route.fulfill({ response, headers });
-    } catch {
-      /* teardown */
-    }
-  });
-}
 
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
-async function resetFixture(testId: string): Promise<void> {
-  const res = await fetch(`${FIXTURE_URL}/__e2e/reset`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-e2e-test-id": testId },
-    body: JSON.stringify({ testId, seed: "populated" }),
-  });
-  if (!res.ok) throw new Error(`reset failed ${res.status}`);
-}
 
 async function deploySw(
   context: BrowserContext,
@@ -64,15 +40,13 @@ async function forceUpdate(page: Page) {
 }
 
 async function registerAndHome(page: Page, testId: string) {
-  await allowFixtureCsp(page);
+  await applyCspRewrite(page);
   await resetFixture(testId);
   await page.clock.setFixedTime(FIXED_CLOCK);
   await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": testId });
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  const registerButton = page.getByRole("button", { name: "Registrar" });
-  await expect(registerButton).toBeVisible({ timeout: 20000 });
-  await registerButton.click();
-  await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout: 20000 });
+  // 20s: SW activation makes this slower than the harness default.
+  await authenticate(page, { timeout: 20000 });
 }
 
 async function dirtifyExpenseSheet(page: Page) {
