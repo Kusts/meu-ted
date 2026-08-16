@@ -162,7 +162,7 @@ Executar em ordem:
 5. coverage ≥ 80% conforme contrato canônico;
 6. integração com PostgreSQL descartável e guards ativos;
 7. E2E de fluxos críticos e authz;
-8. builds da API, bridge transitório, PWA e Agent;
+8. builds da API, PWA e Agent ativos, mais build isolado do bridge transitório a partir da tag de rollback criada antes de P3;
 9. secrets, dependências, SAST e containers sem CRITICAL;
 10. smoke read-only de produção para health, auth deny, assets e rollback.
 
