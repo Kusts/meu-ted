@@ -131,7 +131,7 @@ describe('POST /payables/:id/pay', () => {
   });
 
   it('auto-creates next recurring payable after payment', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const create = await app.inject({
       method: 'POST', url: '/payables',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },

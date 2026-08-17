@@ -28,6 +28,10 @@ import { createInMemoryPushSubscriptionStore } from "../src/push/store.js";
 import type { PushDelivery } from "../src/push/delivery.js";
 import type { AdoptionStore } from "../src/observability/adoption.js";
 import type { PendingOperationStore } from "../src/approvals/pending.js";
+export type TestAppOptions = {
+  clock?: () => Date;
+};
+
 export type TestApp = {
   app: FastifyInstance;
   store: ReadModelStore;
@@ -80,6 +84,16 @@ export const buildTestApp = (
   ...optional: unknown[]
 ): TestApp => {
   const { state, writes } = createInMemoryStores(seed);
+  const clock = optional.find(
+    (value): value is () => Date => {
+      if (typeof value !== "function") return false;
+      try {
+        return (value as () => unknown)() instanceof Date;
+      } catch {
+        return false;
+      }
+    },
+  );
   const store = createInMemoryReadModelStore({
     accounts: state.accounts,
     categories: state.categories,
@@ -87,8 +101,8 @@ export const buildTestApp = (
     deletedTransactionIds: state.deletedTransactions,
   });
   const cardStore = createInMemoryCardStore(state);
-  const payableStore = createInMemoryPayableStore(state);
-  const budgetStore = createInMemoryBudgetStore(state);
+  const payableStore = createInMemoryPayableStore(state, clock);
+  const budgetStore = createInMemoryBudgetStore(state, clock);
   const goalStore = createInMemoryGoalStore(state);
   const subscriptionState = {
     subscriptions: [] as import("../src/types/domain.js").Subscription[],
@@ -184,6 +198,7 @@ export const buildTestApp = (
     ...(inviteService ? { inviteService } : {}),
     ...(authorizeInviteCreate ? { authorizeInviteCreate } : {}),
     ...(workspaceStore ? { workspaceStore } : {}),
+    ...(clock ? { clock } : {}),
   });
   return { app, store, state };
 };

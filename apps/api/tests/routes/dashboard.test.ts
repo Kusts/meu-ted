@@ -18,7 +18,7 @@ const seed = {
 
 describe('GET /dashboard/summary', () => {
   it('returns 200 with aggregated fields for the household', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({
       method: 'GET',
       url: '/dashboard/summary',
@@ -34,7 +34,7 @@ describe('GET /dashboard/summary', () => {
   });
 
   it('computes totalBalance as sum of active bank/cash balances (no credit cards in V1)', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({
       method: 'GET',
       url: '/dashboard/summary',
@@ -45,7 +45,7 @@ describe('GET /dashboard/summary', () => {
   });
 
   it('sums month income/expense for the current month', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({
       method: 'GET',
       url: '/dashboard/summary',
@@ -59,7 +59,7 @@ describe('GET /dashboard/summary', () => {
   });
 
   it('returns top expenses sorted desc by amount, capped at 5', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({
       method: 'GET',
       url: '/dashboard/summary',
@@ -73,7 +73,7 @@ describe('GET /dashboard/summary', () => {
   });
 
   it('scopes the summary to the household derived from device token', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({
       method: 'GET',
       url: '/dashboard/summary',
@@ -86,13 +86,13 @@ describe('GET /dashboard/summary', () => {
   });
 
   it('requires auth', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({ method: 'GET', url: '/dashboard/summary' });
     expect(res.statusCode).toBe(401);
   });
 
   it('returns top expense categories aggregated', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({ method: 'GET', url: '/dashboard/summary', headers: { 'x-device-token': TOKEN_A } });
     const cats = res.json().topExpenseCategories;
     expect(cats.length).toBeGreaterThan(0);
@@ -100,7 +100,7 @@ describe('GET /dashboard/summary', () => {
   });
 
   it('returns month-over-month change', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({ method: 'GET', url: '/dashboard/summary', headers: { 'x-device-token': TOKEN_A } });
     const mom = res.json().monthOverMonth;
     expect(typeof mom.incomeChangePercent === 'number' || mom.incomeChangePercent === null).toBe(true);
@@ -108,7 +108,7 @@ describe('GET /dashboard/summary', () => {
   });
 
   it('returns alerts array', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({ method: 'GET', url: '/dashboard/summary', headers: { 'x-device-token': TOKEN_A } });
     expect(Array.isArray(res.json().alerts)).toBe(true);
   });

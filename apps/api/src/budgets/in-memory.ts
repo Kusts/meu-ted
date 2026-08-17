@@ -33,12 +33,12 @@ function getPeriodBounds(date: string, period: string): { start: string; end: st
   return { start, end };
 }
 
-export const createInMemoryBudgetStore = (state: InMemoryState): BudgetStore => {
+export const createInMemoryBudgetStore = (state: InMemoryState, clock: () => Date = () => new Date()): BudgetStore => {
   if (!(state as any)._budgets) (state as any)._budgets = [] as Budget[];
   const budgets = (state as any)._budgets as Budget[];
 
   const calcSpent = (budget: Budget): number => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = clock().toISOString().slice(0, 10);
     const { start, end } = getPeriodBounds(today, budget.period);
     return state.transactions
       .filter(t => t.householdId === budget.householdId && t.categoryId === budget.categoryId && t.kind === 'expense' && t.date >= start && t.date <= end && !state.deletedTransactions.has(t.id))
@@ -77,7 +77,7 @@ export const createInMemoryBudgetStore = (state: InMemoryState): BudgetStore => 
       const b = budgets.find(x => x.id === budgetId && x.householdId === householdId);
       if (!b) throw domainErrors.notFound('Orçamento');
       const trends: BudgetTrend[] = [];
-      const now = new Date();
+      const now = clock();
       for (let i = monthsBack - 1; i >= 0; i--) {
         const d = new Date(now); d.setUTCMonth(d.getUTCMonth() - i);
         const ym = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;

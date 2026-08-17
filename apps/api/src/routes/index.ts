@@ -82,6 +82,7 @@ export type RouteDeps = {
   inviteService?: InviteService;
   authorizeInviteCreate?: (input: { userId: string; householdId: string }) => Promise<boolean>;
   workspaceStore?: WorkspaceStore;
+  clock?: () => Date;
 };
 
 export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
@@ -89,7 +90,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   const contextReplayGuard = deps.contextReplayGuard ?? createInMemoryContextTokenReplayGuard();
   const idempotency = deps.idempotency ?? createInMemoryIdempotencyStore();
   const resolveToken: AuthResolver = async (token) => tokenStore.resolve(token);
-
+  const clock = deps.clock ?? (() => new Date());
   app.addHook("preHandler", async (request) => {
     const rawHeader = request.headers[CONTEXT_TOKEN_HEADER];
     if (rawHeader === undefined) return;
@@ -160,7 +161,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     resolveToken,
     idempotency,
   });
-  registerDashboardRoutes(app, { store: deps.store, resolveToken });
+  registerDashboardRoutes(app, { store: deps.store, resolveToken, clock });
   registerInsightRoutes(app, { store: deps.store, resolveToken });
   if (deps.profileStore) {
     registerProfileRoutes(app, {

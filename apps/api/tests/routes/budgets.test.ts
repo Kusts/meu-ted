@@ -7,13 +7,13 @@ function auth(t: string) { return { 'x-device-token': t }; }
 
 describe('GET /budgets', () => {
   it('returns empty when no budgets', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({ method: 'GET', url: '/budgets', headers: auth(TOKEN_A) });
     expect(res.statusCode).toBe(200);
     expect(res.json().items).toHaveLength(0);
   });
   it('requires auth', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({ method: 'GET', url: '/budgets' });
     expect(res.statusCode).toBe(401);
   });
@@ -21,7 +21,7 @@ describe('GET /budgets', () => {
 
 describe('POST /budgets', () => {
   it('creates a budget and returns 201', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({
       method: 'POST', url: '/budgets',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
@@ -32,7 +32,7 @@ describe('POST /budgets', () => {
     expect(res.json().amountCents).toBe(1_000_00);
   });
   it('appears in list with computed status', async () => {
-    const { app, state } = buildTestApp(seed);
+    const { app, state } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     await app.inject({
       method: 'POST', url: '/budgets',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
@@ -45,7 +45,7 @@ describe('POST /budgets', () => {
     expect(list.json().items[0].percentUsed).toBe(50);
   });
   it('validates required fields', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({
       method: 'POST', url: '/budgets',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
@@ -57,7 +57,7 @@ describe('POST /budgets', () => {
 
 describe('PATCH /budgets/:id', () => {
   it('updates budget amount', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const create = await app.inject({
       method: 'POST', url: '/budgets',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
@@ -73,7 +73,7 @@ describe('PATCH /budgets/:id', () => {
     expect(res.json().amountCents).toBe(2_000_00);
   });
   it('returns 404 for non-existent', async () => {
-    const { app } = buildTestApp(seed);
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({
       method: 'PATCH', url: '/budgets/00000000-0000-0000-0000-000000000000',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
@@ -85,7 +85,7 @@ describe('PATCH /budgets/:id', () => {
 
 describe('GET /budgets/check', () => {
   it('returns budgets above alert threshold', async () => {
-    const { app, state } = buildTestApp(seed);
+    const { app, state } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     await app.inject({
       method: 'POST', url: '/budgets',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
@@ -99,7 +99,7 @@ describe('GET /budgets/check', () => {
 
 describe('GET /budgets/:id/trends', () => {
   it('returns N months of trend data', async () => {
-    const { app, state } = buildTestApp(seed);
+    const { app, state } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const create = await app.inject({
       method: 'POST', url: '/budgets',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
