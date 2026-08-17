@@ -9,21 +9,33 @@
     "dev": "tsx watch src/server/index.ts",
     "start": "node --import tsx src/server/index.ts",
     "test": "vitest run",
+    "test:integration": "node ../../scripts/require-reminder-integration-env.mjs && vitest run tests/integration/postgres-reminder-dedupe.test.ts tests/integration/postgres-reminder-lock.test.ts",
+    "test:integration:adoption": "node ../../scripts/require-adoption-integration-env.mjs && vitest run tests/integration/postgres-adoption.test.ts",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "db:migrate": "tsx src/scripts/migrate.ts"
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "db:migrate": "tsx src/scripts/migrate.ts",
+    "reminders:run": "tsx src/scripts/reminder-job.ts",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format:reminders:check": "node ../../scripts/check-reminder-format.mjs",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\""
   },
   "dependencies": {
     "fastify": "^5.2.0",
     "pg": "^8.21.0",
+    "web-push": "^3.6.7",
+    "better-auth": "^1.6.26",
+    "kysely": "^0.29.5",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/pg": "^8.20.0",
+    "@types/web-push": "^3.6.4",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^3.2.6"
+    "vitest": "^3.2.6",
+    "prettier": "3.6.2",
+    "@biomejs/biome": "2.2.4"
   },
   "engines": {
     "node": ">=20.0.0"

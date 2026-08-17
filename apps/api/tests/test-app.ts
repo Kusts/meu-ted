@@ -2,6 +2,9 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { registerRoutes } from "../src/routes/index.js";
 import { createInMemoryAuditLogStore, type AuditLogStore } from "../src/audit/store.js";
 import type { OwnershipTransferStore } from "../src/auth/ownership-transfers-postgres.js";
+import type { BetterAuth } from "../src/auth/better-auth.js";
+import type { InviteService } from "../src/auth/invites.js";
+import type { WorkspaceStore } from "../src/auth/workspaces-http.js";
 import {
   createInMemoryReadModelStore,
   type ReadModelStore,
@@ -131,6 +134,32 @@ export const buildTestApp = (
       typeof (value as OwnershipTransferStore).create === "function" &&
       typeof (value as OwnershipTransferStore).accept === "function",
   );
+  const auth = optional.find(
+    (value): value is BetterAuth =>
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as BetterAuth).api === "object" &&
+      typeof (value as BetterAuth).options === "object",
+  );
+  const inviteService = optional.find(
+    (value): value is InviteService =>
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as InviteService).createInvite === "function" &&
+      typeof (value as InviteService).acceptInvite === "function",
+  );
+  const authorizeInviteCreate = optional.find(
+    (value): value is (input: { userId: string; householdId: string }) => Promise<boolean> =>
+      typeof value === "function",
+  );
+  const workspaceStore = optional.find(
+    (value): value is WorkspaceStore =>
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as WorkspaceStore).list === "function" &&
+      typeof (value as WorkspaceStore).create === "function" &&
+      typeof (value as WorkspaceStore).listMembers === "function",
+  );
   const app = Fastify({ logger: false });
   registerCors(app);
   registerRoutes(app, {
@@ -151,6 +180,10 @@ export const buildTestApp = (
     ...(adoptionStore ? { adoptionStore } : {}),
     ...(auditStore ? { auditLogs: auditStore } : {}),
     ...(ownershipTransferStore ? { ownershipTransferStore } : {}),
+    ...(auth ? { auth } : {}),
+    ...(inviteService ? { inviteService } : {}),
+    ...(authorizeInviteCreate ? { authorizeInviteCreate } : {}),
+    ...(workspaceStore ? { workspaceStore } : {}),
   });
   return { app, store, state };
 };

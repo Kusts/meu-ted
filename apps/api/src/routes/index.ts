@@ -50,6 +50,12 @@ import { registerOwnershipTransferRoutes } from "../auth/ownership-transfers-htt
 import type { AuditLogStore } from "../audit/store.js";
 import { createInMemoryAuditLogStore } from "../audit/store.js";
 import type { OwnershipTransferStore } from "../auth/ownership-transfers-postgres.js";
+import { registerBetterAuthRoutes } from "../auth/better-auth-http.js";
+import { registerInviteRoutes } from "../auth/invites-http.js";
+import { registerWorkspaceRoutes } from "../auth/workspaces-http.js";
+import type { BetterAuth } from "../auth/better-auth.js";
+import type { InviteService } from "../auth/invites.js";
+import type { WorkspaceStore } from "../auth/workspaces-http.js";
 
 export type RouteDeps = {
   store: ReadModelStore;
@@ -72,6 +78,10 @@ export type RouteDeps = {
   vapidPublicKey?: string;
   auditLogs?: AuditLogStore;
   ownershipTransferStore?: OwnershipTransferStore;
+  auth?: BetterAuth;
+  inviteService?: InviteService;
+  authorizeInviteCreate?: (input: { userId: string; householdId: string }) => Promise<boolean>;
+  workspaceStore?: WorkspaceStore;
 };
 
 export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
@@ -206,5 +216,18 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   registerAuditRoutes(app, { auditLogs: deps.auditLogs ?? createInMemoryAuditLogStore() });
   if (deps.ownershipTransferStore) {
     registerOwnershipTransferRoutes(app, deps.ownershipTransferStore);
+  }
+  if (deps.auth) {
+    registerBetterAuthRoutes(app, deps.auth);
+    if (deps.inviteService && deps.authorizeInviteCreate) {
+      registerInviteRoutes(app, {
+        auth: deps.auth,
+        service: deps.inviteService,
+        authorizeCreate: deps.authorizeInviteCreate,
+      });
+    }
+    if (deps.workspaceStore) {
+      registerWorkspaceRoutes(app, { auth: deps.auth, store: deps.workspaceStore });
+    }
   }
 };
