@@ -1,0 +1,50 @@
+{
+  "version": "1.0.0",
+  "lastVerified": "2026-08-18",
+  "activeWorkspaces": [
+    "apps/api",
+    "apps/pwa",
+    "apps/agent",
+    "apps/whatsapp-bridge"
+  ],
+  "apps": {
+    "api": {
+      "name": "pi-finance-api",
+      "framework": "Fastify",
+      "runtime": "Node.js (Hostinger VPS)"
+    },
+    "pwa": {
+      "name": "pwa",
+      "framework": "Next.js / React (Static Export / OpenNext)",
+      "runtime": "Cloudflare Pages"
+    },
+    "agent": {
+      "name": "pi-finance-agent",
+      "framework": "Cloudflare Workers / Agents SDK",
+      "runtime": "Cloudflare Workers / Durable Objects"
+    },
+    "bridge": {
+      "name": "@pi-financeiro/whatsapp-bridge",
+      "status": "transitional / staged retirement"
+    }
+  },
+  "counts": {
+    "apiRoutes": 95,
+    "databaseMigrations": 30,
+    "latestMigration": "V030__bridge_phone_identity.sql",
+    "capabilitiesTotal": 72,
+    "capabilitiesInApiMode": 51
+  },
+  "architecture": {
+    "sourceOfTruth": "Fastify PostgreSQL API (apps/api)",
+    "primaryClient": "PWA (apps/pwa)",
+    "assistantEngine": "Cloudflare Agent Worker (apps/agent)",
+    "canonicalPwaPath": "apps/pwa",
+    "deprecatedOrigin": "../pi-finance-web"
+  },
+  "production": {
+    "vpsProvider": "Hostinger VPS",
+    "edgeProvider": "Cloudflare",
+    "database": "PostgreSQL 16+"
+  }
+}
