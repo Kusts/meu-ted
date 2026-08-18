@@ -71,8 +71,13 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     // threads pool is reliable in this workspace (forks pool hangs under
-    // file-parallelism on this environment); keeps `pnpm test` runnable.
+    // file-parallelism on this environment). The default worker count
+    // (all CPUs) triggers "Failed to start threads worker" timeouts on this
+    // environment; capping maxWorkers keeps `pnpm test` runnable and stable
+    // (P0.5 benchmark A/B: config A = maxWorkers 2, fileParallelism true).
     pool: "threads",
+    maxWorkers: 2,
+    fileParallelism: true,
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}", "e2e/**/*.test.{ts,tsx}"],
     exclude: ["e2e/support/matrix.test.ts"],
