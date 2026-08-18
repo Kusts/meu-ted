@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { useUnsavedChanges } from "@/lib/unsaved-changes";
-
+import { recordAdoptionEvent } from "@/lib/api/adoption";
 const CACHE_PREFIX = "pi-finance";
 
 export function useSWCoordinator() {
@@ -30,6 +30,16 @@ function clearPiFinanceCaches() {
   });
 }
 
+export function consumeAdoptionMarker(
+  value: string,
+): { eventType: "notification_opened"; cleanPath: string } | undefined {
+  const url = new URL(value, "https://pi-finance.local");
+  if (url.searchParams.get("pwa_adoption") !== "notification_opened")
+    return undefined;
+  url.searchParams.delete("pwa_adoption");
+  const cleanPath = `${url.pathname}${url.search}${url.hash}`;
+  return { eventType: "notification_opened", cleanPath };
+}
 /**
  * Apply CLEAN_UPDATE to a waiting worker when the form is clean.
  * Returns true if a message was sent (caller should expect activation/reload).
@@ -59,7 +69,23 @@ export function SWCoordinator({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (bootRef.current) return;
     bootRef.current = true;
-    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    if (typeof window === "undefined" || !("serviceWorker" in navigator))
+      return;
+    const marker = consumeAdoptionMarker(window.location.href);
+    if (marker) {
+      void recordAdoptionEvent(marker.eventType);
+      window.history.replaceState(null, "", marker.cleanPath);
+    }
+    const onMessage = (
+      event: MessageEvent<{ type?: string; eventType?: string }>,
+    ) => {
+      if (event.data?.type === "ADOPTION_EVENT" && event.data.eventType) {
+        void recordAdoptionEvent(
+          event.data.eventType as Parameters<typeof recordAdoptionEvent>[0],
+        );
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
 
     void fetch("/pwa-control", { cache: "no-store" })
       .then((res) => res.json())
@@ -117,6 +143,7 @@ export function SWCoordinator({ children }: { children: ReactNode }) {
       });
 
     return () => {
+      navigator.serviceWorker.removeEventListener("message", onMessage);
       navigator.serviceWorker.removeEventListener(
         "controllerchange",
         onControllerChange,

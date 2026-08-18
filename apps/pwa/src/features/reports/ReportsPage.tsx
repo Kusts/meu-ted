@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import { useAppState } from "@/lib/state/app-state-context";
+import AdoptionMetrics from "./AdoptionMetrics";
 
 type Period = "month" | "last" | "quarter" | "year";
 
@@ -46,7 +47,16 @@ const CATEGORY_PALETTE = [
 ];
 
 export default function ReportsPage() {
-  const { accounts, transactions, categories, goals, debts, budgets, loading, error } = useAppState();
+  const {
+    accounts,
+    transactions,
+    categories,
+    goals,
+    debts,
+    budgets,
+    loading,
+    error,
+  } = useAppState();
   const [period, setPeriod] = useState<Period>("month");
 
   const periodMsgs: Record<Period, string> = {
@@ -86,10 +96,16 @@ export default function ReportsPage() {
   // ── Period subtitle (human-readable range) ──
   const periodSubtitle = useMemo(() => {
     if (period === "month") {
-      return periodMs.from.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+      return periodMs.from.toLocaleDateString("pt-BR", {
+        month: "long",
+        year: "numeric",
+      });
     }
     if (period === "last") {
-      return periodMs.from.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+      return periodMs.from.toLocaleDateString("pt-BR", {
+        month: "long",
+        year: "numeric",
+      });
     }
     if (period === "quarter") {
       const q = Math.floor(new Date().getMonth() / 3);
@@ -113,19 +129,25 @@ export default function ReportsPage() {
     .filter((t) => t.kind === "expense")
     .reduce((s, t) => s + t.amountCents, 0);
   const netCents = incomeCents - expenseCents;
-  const savingsRate =
-    incomeCents > 0 ? (netCents / incomeCents) * 100 : 0;
-  const avgTicket =
-    filtered.length > 0 ? expenseCents / filtered.length : 0;
+  const savingsRate = incomeCents > 0 ? (netCents / incomeCents) * 100 : 0;
+  const avgTicket = filtered.length > 0 ? expenseCents / filtered.length : 0;
 
   // ── Fluxo 6 meses (sempre mostra últimos 6 meses correntes) ──
   const monthlyFlow = useMemo(() => {
     const now = new Date();
-    const months: { key: string; label: string; income: number; expense: number }[] = [];
+    const months: {
+      key: string;
+      label: string;
+      income: number;
+      expense: number;
+    }[] = [];
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      const label = d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "").slice(0, 3);
+      const label = d
+        .toLocaleDateString("pt-BR", { month: "short" })
+        .replace(".", "")
+        .slice(0, 3);
       months.push({ key, label, income: 0, expense: 0 });
     }
     const map = new Map(months.map((m) => [m.key, m]));
@@ -247,7 +269,9 @@ export default function ReportsPage() {
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-3">
             <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-fill-medium border-t-primary" />
-            <span className="text-[13px] font-semibold text-text-muted">Carregando...</span>
+            <span className="text-[13px] font-semibold text-text-muted">
+              Carregando...
+            </span>
           </div>
         </div>
       </div>
@@ -259,6 +283,7 @@ export default function ReportsPage() {
       <StatusBar />
       <main className="flex flex-1 flex-col pb-[var(--tab-bar-height)]">
         <PageHeader title="Relatórios" />
+        <AdoptionMetrics />
 
         {error && (
           <div className="mx-5 mb-3 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger">
@@ -309,21 +334,27 @@ export default function ReportsPage() {
             </div>
             <div className="grid grid-cols-[1fr_1px_1fr_1px_1fr] items-center gap-2.5">
               <div>
-                <div className="mb-[2px] text-[10px] text-white/65">Receitas</div>
+                <div className="mb-[2px] text-[10px] text-white/65">
+                  Receitas
+                </div>
                 <div className="font-mono text-[15px] font-semibold text-[#7FE3B0]">
                   {formatBRL(incomeCents)}
                 </div>
               </div>
               <div className="h-[30px] w-px bg-white/20" />
               <div>
-                <div className="mb-[2px] text-[10px] text-white/65">Despesas</div>
+                <div className="mb-[2px] text-[10px] text-white/65">
+                  Despesas
+                </div>
                 <div className="font-mono text-[15px] font-semibold text-[#F9A8A2]">
                   {formatBRL(expenseCents)}
                 </div>
               </div>
               <div className="h-[30px] w-px bg-white/20" />
               <div>
-                <div className="mb-[2px] text-[10px] text-white/65">Poupado</div>
+                <div className="mb-[2px] text-[10px] text-white/65">
+                  Poupado
+                </div>
                 <div className="font-mono text-[15px] font-semibold">
                   {formatPct(savingsRate)}
                 </div>
@@ -442,7 +473,9 @@ export default function ReportsPage() {
                         className="h-2 w-2 flex-none rounded-sm"
                         style={{ background: c.color }}
                       />
-                      <span className="flex-1 text-text-secondary">{c.name}</span>
+                      <span className="flex-1 text-text-secondary">
+                        {c.name}
+                      </span>
                       <span className="font-mono text-[11px] font-semibold text-text-primary">
                         {formatBRL(c.amountCents)}
                       </span>
@@ -528,13 +561,7 @@ export default function ReportsPage() {
               style={{ display: "block", margin: "8px 0 4px" }}
             >
               <defs>
-                <linearGradient
-                  id="patG"
-                  x1="0"
-                  y1="0"
-                  x2="0"
-                  y2="1"
-                >
+                <linearGradient id="patG" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#0E8C5A" stopOpacity="0.3" />
                   <stop offset="100%" stopColor="#0E8C5A" stopOpacity="0" />
                 </linearGradient>

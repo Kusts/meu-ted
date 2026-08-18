@@ -131,4 +131,27 @@ describe("service worker runtime", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(respondWith).toHaveBeenCalled();
   });
+  it("shows a safe notification from a push payload", async () => {
+    const showNotification = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("registration", { showNotification });
+    const waitUntil = vi.fn(async (promise: Promise<unknown>) => promise);
+    handlers["push"]({ data: { json: () => ({ title: "Conta vence", body: "Amanhã", url: "/a-pagar" }) }, waitUntil });
+    await waitUntil.mock.calls[0][0];
+    expect(showNotification).toHaveBeenCalledWith("Conta vence", expect.objectContaining({ body: "Amanhã", data: { url: "/a-pagar" } }));
+  });
+
+  it("opens a safe notification URL when the user clicks", async () => {
+    const openWindow = vi.fn().mockResolvedValue(undefined);
+    const focus = vi.fn().mockResolvedValue(undefined);
+    const navigate = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("clients", { matchAll: vi.fn().mockResolvedValue([{ focus, navigate }]), openWindow });
+    const notification = { close: vi.fn(), data: { url: "/a-pagar" } };
+    const waitUntil = vi.fn(async (promise: Promise<unknown>) => promise);
+    handlers["notificationclick"]({ notification, waitUntil });
+    await waitUntil.mock.calls[0][0];
+    expect(notification.close).toHaveBeenCalled();
+    expect(focus).toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith("/a-pagar");
+    expect(openWindow).not.toHaveBeenCalled();
+  });
 });

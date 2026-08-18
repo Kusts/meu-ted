@@ -15,7 +15,26 @@ import { CacheFirst } from "serwist";
 // Service worker global (Serwist build injects into worker scope)
 interface SWGlobal {
   skipWaiting: () => void;
-  clients: { claim: () => Promise<void> };
+  registration: {
+    showNotification: (
+      title: string,
+      options?: NotificationOptions,
+    ) => Promise<void>;
+  };
+  clients: {
+    claim: () => Promise<void>;
+    matchAll: (options?: {
+      type?: string;
+      includeUncontrolled?: boolean;
+    }) => Promise<
+      Array<{
+        focus?: () => Promise<void>;
+        navigate?: (url: string) => Promise<unknown>;
+        postMessage?: (message: unknown) => void;
+      }>
+    >;
+    openWindow: (url: string) => Promise<unknown>;
+  };
   addEventListener: (type: string, listener: (event: SWEvent) => void) => void;
   __SW_MANIFEST?: Array<{ url: string; revision: string | null }>;
 }
@@ -23,7 +42,13 @@ interface SWEvent extends Event {
   request?: Request;
   respondWith?: (p: Promise<Response>) => void;
   waitUntil?: (p: Promise<unknown>) => void;
-  data?: { type?: string; action?: string } | null;
+  data?: {
+    type?: string;
+    action?: string;
+    eventType?: string;
+    json?: () => unknown;
+  } | null;
+  notification?: { close: () => void; data?: { url?: unknown } };
 }
 declare const self: SWGlobal;
 
@@ -100,6 +125,73 @@ self.addEventListener("activate", (event: SWEvent) => {
           .map((n: string) => caches.delete(n)),
       );
       await self.clients.claim();
+    })(),
+  );
+});
+
+const safeNotificationText = (value: unknown, fallback: string): string =>
+  typeof value === "string" && value.trim()
+    ? value.trim().slice(0, 160)
+    : fallback;
+
+const safeNotificationUrl = (value: unknown): string =>
+  typeof value === "string" && value.startsWith("/") && !value.startsWith("//")
+    ? value
+    : "/";
+
+function broadcastAdoptionEvent(eventType: string): Promise<void> {
+  if (typeof self.clients.matchAll !== "function") return Promise.resolve();
+  return self.clients
+    .matchAll({ type: "window", includeUncontrolled: true })
+    .then((windows) => {
+      windows[0]?.postMessage?.({ type: "ADOPTION_EVENT", eventType });
+    });
+}
+self.addEventListener("push", (event: SWEvent) => {
+  let payload: Record<string, unknown> = {};
+  try {
+    const parsed = event.data?.json?.();
+    if (parsed && typeof parsed === "object")
+      payload = parsed as Record<string, unknown>;
+  } catch {
+    // Malformed push payloads still receive a generic notification.
+  }
+  const title = safeNotificationText(payload.title, "Pi Financeiro");
+  const body = safeNotificationText(
+    payload.body,
+    "Você tem uma nova atualização.",
+  );
+  const url = safeNotificationUrl(payload.url);
+  event.waitUntil?.(
+    self.registration
+      .showNotification(title, {
+        body,
+        icon: "/icon-192.png",
+        badge: "/icon-192.png",
+        data: { url },
+      })
+      .then(() => broadcastAdoptionEvent("notification_delivered")),
+  );
+});
+
+self.addEventListener("notificationclick", (event: SWEvent) => {
+  const url = safeNotificationUrl(event.notification?.data?.url);
+  event.notification?.close();
+  event.waitUntil?.(
+    (async () => {
+      await broadcastAdoptionEvent("notification_opened");
+      const windows = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      const existing = windows[0];
+      if (existing?.focus) {
+        await existing.focus();
+        await existing.navigate?.(url);
+        return;
+      }
+      const markedUrl = `${url}${url.includes("?") ? "&" : "?"}pwa_adoption=notification_opened`;
+      await self.clients.openWindow(markedUrl);
     })(),
   );
 });

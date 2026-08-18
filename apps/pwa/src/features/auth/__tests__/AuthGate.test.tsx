@@ -8,16 +8,17 @@ import { ApiError } from "@/lib/api/client";
 const store: Record<string, string> = {};
 beforeEach(() => {
   Object.keys(store).forEach((k) => delete store[k]);
-  vi.spyOn(Storage.prototype, "getItem").mockImplementation(
+  vi.spyOn(window.localStorage, "getItem").mockImplementation(
     (k) => store[String(k)] ?? null,
   );
-  vi.spyOn(Storage.prototype, "setItem").mockImplementation((k, v) => {
+  vi.spyOn(window.localStorage, "setItem").mockImplementation((k, v) => {
     store[String(k)] = String(v);
   });
-  vi.spyOn(Storage.prototype, "removeItem").mockImplementation((k) => {
+  vi.spyOn(window.localStorage, "removeItem").mockImplementation((k) => {
     delete store[String(k)];
   });
 });
+
 
 // ─── crypto mock (subtle + getRandomValues) ────────────────────────────────
 beforeEach(() => {
@@ -38,12 +39,14 @@ beforeEach(() => {
 
 // ─── fetch mock ─────────────────────────────────────────────────────────────
 beforeEach(() => {
+  vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "http://localhost:3333");
   vi.spyOn(globalThis, "fetch").mockResolvedValue({
     ok: true,
     status: 200,
     json: async () => ({ deviceId: "d1", householdId: "h1" }),
   } as Response);
 });
+
 
 afterEach(() => {
   vi.restoreAllMocks();
