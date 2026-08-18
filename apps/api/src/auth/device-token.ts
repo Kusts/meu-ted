@@ -7,7 +7,7 @@ export type DeviceContext = { deviceId: string; householdId: string };
 export type DeviceTokenStore = {
   resolve(token: string | undefined): Promise<DeviceContext>;
   register(deviceName: string, householdId: string): Promise<{ token: string; deviceId: string; householdId: string }>;
-  revoke(token: string): Promise<void>;
+  revoke(token: string, householdId?: string): Promise<void>;
 };
 
 export const DEVICE_TOKEN_HEADER = 'x-device-token';
@@ -29,29 +29,46 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
       return ctx;
     },
     async register(deviceName, householdId) {
-      const tok = randomUUID(); const devId = randomUUID();
+      const tok = `${householdId}.${randomUUID()}`; const devId = randomUUID();
       tokens.set(tok, { deviceId: devId, householdId });
       return { token: tok, deviceId: devId, householdId };
     },
-    async revoke(token) { tokens.delete(token); },
+    async revoke(token, householdId) {
+      const existing = tokens.get(token);
+      if (householdId && existing && existing.householdId !== householdId) return;
+      tokens.delete(token);
+    },
   };
 };
 
 export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => ({
   async resolve(token) {
     if (!token || token.trim() === '') throw new AuthError('missing device token', 401, 'auth.missing_token');
+    const parts = token.split('.');
+    if (parts.length === 2 && parts[0]) {
+      const householdId = parts[0];
+      const res = await pool.query<{ device_id: string; household_id: string }>(
+        `SELECT device_id, household_id FROM device_tokens WHERE token = $1 AND household_id = $2 AND revoked_at IS NULL`, [token, householdId]);
+      if (res.rowCount === 0) throw new AuthError('invalid or revoked device token', 401, 'auth.invalid_token');
+      const row = res.rows[0]!;
+      return { deviceId: row.device_id, householdId: row.household_id };
+    }
     const res = await pool.query<{ device_id: string; household_id: string }>(
-      `SELECT device_id, household_id FROM device_tokens WHERE token = $1 AND revoked_at IS NULL`, [token]);
+      `SELECT device_id, household_id FROM device_tokens WHERE token = $1 AND household_id = household_id AND revoked_at IS NULL`, [token]);
     if (res.rowCount === 0) throw new AuthError('invalid or revoked device token', 401, 'auth.invalid_token');
     const row = res.rows[0]!;
     return { deviceId: row.device_id, householdId: row.household_id };
   },
   async register(deviceName, householdId) {
-    const tok = randomUUID(); const devId = randomUUID();
+    const tok = `${householdId}.${randomUUID()}`; const devId = randomUUID();
     await pool.query(`INSERT INTO device_tokens (token, device_id, household_id) VALUES ($1, $2, $3)`, [tok, devId, householdId]);
     return { token: tok, deviceId: devId, householdId };
   },
-  async revoke(token) {
-    await pool.query(`UPDATE device_tokens SET revoked_at = NOW() WHERE token = $1`, [token]);
+  async revoke(token, householdId) {
+    if (householdId) {
+      await pool.query(`UPDATE device_tokens SET revoked_at = NOW() WHERE token = $1 AND household_id = $2`, [token, householdId]);
+    } else {
+      await pool.query(`UPDATE device_tokens SET revoked_at = NOW() WHERE token = $1 AND household_id = household_id`, [token]);
+    }
   },
 });

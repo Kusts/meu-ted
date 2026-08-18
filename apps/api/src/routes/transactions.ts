@@ -8,10 +8,15 @@ export const registerTransactionRoutes = (
   app: FastifyInstance,
   opts: { store: ReadModelStore; resolveToken: AuthResolver },
 ): void => {
-  app.get('/transactions', async (req, reply) => {
+  const resolve = async (req: import('fastify').FastifyRequest) => {
+    if (req.authenticatedContext) return req.authenticatedContext;
     const token = req.headers[DEVICE_TOKEN_HEADER];
+    return opts.resolveToken(Array.isArray(token) ? token[0] : token);
+  };
+
+  app.get('/transactions', async (req, reply) => {
     let ctx;
-    try { ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token); }
+    try { ctx = await resolve(req); }
     catch (e) {
       const err = e as { statusCode?: number; code?: string; message?: string };
       return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.error', message: err.message ?? 'unauthorized' });

@@ -2,23 +2,24 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { OwnershipTransferStore } from './ownership-transfers-postgres.js';
 import { requireWorkspaceRole } from './workspace-access.js';
-import { requireAuthenticatedRequest } from './request-context.js';
 
 const params = z.object({ householdId: z.string().uuid(), transferId: z.string().uuid().optional() });
 const createBody = z.object({ toUserId: z.string().trim().min(1).max(200) });
 
 export const registerOwnershipTransferRoutes = (app: FastifyInstance, store: OwnershipTransferStore): void => {
   app.post('/workspaces/:householdId/ownership-transfers', async (request, reply) => {
-    const { authenticatedContext: context } = requireAuthenticatedRequest(request);
+    if (!request.authenticatedContext || !request.authenticatedContext.authUserId) {
+      return reply.code(401).send({ code: 'auth.session_required', message: 'human session required' });
+    }
+    const context = request.authenticatedContext;
     const parsedParams = params.safeParse(request.params);
     const parsedBody = createBody.safeParse(request.body ?? {});
-    if (!context.authUserId) return reply.code(401).send({ code: 'auth.session_required', message: 'human session required' });
     if (!parsedParams.success || !parsedBody.success) return reply.code(400).send({ code: 'validation.error' });
     try {
       requireWorkspaceRole(request, ['owner']);
       const transfer = await store.create({
         householdId: context.householdId,
-        fromAuthUserId: context.authUserId,
+        fromAuthUserId: context.authUserId!,
         toAuthUserId: parsedBody.data.toUserId,
       });
       return reply.code(201).send(transfer);
@@ -28,16 +29,18 @@ export const registerOwnershipTransferRoutes = (app: FastifyInstance, store: Own
   });
 
   app.post('/workspaces/:householdId/ownership-transfers/:transferId/accept', async (request, reply) => {
-    const { authenticatedContext: context } = requireAuthenticatedRequest(request);
+    if (!request.authenticatedContext || !request.authenticatedContext.authUserId) {
+      return reply.code(401).send({ code: 'auth.session_required', message: 'human session required' });
+    }
+    const context = request.authenticatedContext;
     const parsed = params.safeParse(request.params);
-    if (!context.authUserId) return reply.code(401).send({ code: 'auth.session_required', message: 'human session required' });
     if (!parsed.success || !parsed.data.transferId) return reply.code(400).send({ code: 'validation.error' });
     try {
       requireWorkspaceRole(request, ['owner', 'member']);
       const transfer = await store.accept({
         householdId: context.householdId,
         transferId: parsed.data.transferId,
-        destinationAuthUserId: context.authUserId,
+        destinationAuthUserId: context.authUserId!,
       });
       return reply.code(200).send(transfer);
     } catch (error) {

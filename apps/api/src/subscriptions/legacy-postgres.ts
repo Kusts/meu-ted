@@ -72,8 +72,8 @@ export const createLegacyPostgresSubscriptionStore = (pool: Pool): SubscriptionS
         );
         const res = await client.query<Row>(
           `SELECT id, household_id, name, amount_cents, cycle, day, payment_method, status, created_at, cancelled_at
-             FROM subscriptions WHERE id = $1`,
-          [id],
+             FROM subscriptions WHERE id = $1 AND household_id = $2`,
+          [id, householdId],
         );
         return mapSubscription(res.rows[0]!);
       });

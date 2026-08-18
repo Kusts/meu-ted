@@ -42,7 +42,8 @@ export type AuthenticatedRequest = FastifyRequest & {
 
 export const requireAuthenticatedRequest = (request: FastifyRequest): AuthenticatedRequest => {
   if (!request.authenticatedContext) {
-    throw new AuthError('Authentication required', 401, 'auth.unauthenticated');
+    throw new AuthError('Authentication context missing from request', 500, 'auth.context_missing');
   }
   return request as AuthenticatedRequest;
 };
+

@@ -15,12 +15,13 @@ const mapEvent = (r: Row): ShadowDivergenceEvent => ({
   capability: r["capability"] as string,
   outcome: r["outcome"] as ShadowDivergenceOutcome,
   requestHash: r["request_hash"] as string,
-  apiHash: (r["api_hash"] as string | null) ?? undefined,
-  legacyHash: (r["legacy_hash"] as string | null) ?? undefined,
+  apiHash: (r["api_hash"] as string | null) ?? null,
+  legacyHash: (r["legacy_hash"] as string | null) ?? null,
   durationMs: Number(r["duration_ms"] ?? 0),
-  error: (r["error"] as string | null) ?? undefined,
+  error: (r["error"] as string | null) ?? null,
   createdAt: (r["created_at"] instanceof Date ? r["created_at"] : new Date(r["created_at"] as string)).toISOString(),
 });
+
 
 export const createPostgresShadowDivergenceStore = (pool: Pool): ShadowDivergenceStore => {
   return {

@@ -76,13 +76,17 @@ export const createInMemoryPhoneWorkspaceStore = (seed?: {
       if (!normalized) {
         throw new PhoneResolutionError("auth.invalid_phone", "Telefone inválido", 400);
       }
-      bindings.set(normalized, {
+      const binding: UserPhoneBinding = {
         phone: normalized,
         userId: input.userId,
-        workspaceId: input.workspaceId,
         status: "active",
-      });
+      };
+      if (input.workspaceId !== undefined) {
+        binding.workspaceId = input.workspaceId;
+      }
+      bindings.set(normalized, binding);
     },
+
 
     async unbindPhone(phone: string): Promise<void> {
       const normalized = normalizePhone(phone);

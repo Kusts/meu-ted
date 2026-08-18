@@ -81,10 +81,10 @@ export const registerShadowObservabilityRoutes = (
       capability: parsed.data.capability,
       outcome: parsed.data.outcome,
       requestHash: parsed.data.requestHash,
-      apiHash: parsed.data.apiHash,
-      legacyHash: parsed.data.legacyHash,
+      apiHash: parsed.data.apiHash ?? null,
+      legacyHash: parsed.data.legacyHash ?? null,
       durationMs: parsed.data.durationMs,
-      error: parsed.data.error,
+      error: parsed.data.error ?? null,
     });
 
     return reply.code(201).send({
@@ -110,10 +110,10 @@ export const registerShadowObservabilityRoutes = (
       });
     }
 
-    const summaries = await options.shadowDivergence.getSummary(auth.householdId, {
-      from: parsed.data.from,
-      to: parsed.data.to,
-    });
+    const summaryOpts: { from?: string; to?: string } = {};
+    if (parsed.data.from) summaryOpts.from = parsed.data.from;
+    if (parsed.data.to) summaryOpts.to = parsed.data.to;
+    const summaries = await options.shadowDivergence.getSummary(auth.householdId, summaryOpts);
 
     return reply.code(200).send({
       success: true,
@@ -138,10 +138,11 @@ export const registerShadowObservabilityRoutes = (
       });
     }
 
-    const events = await options.shadowDivergence.listEvents(auth.householdId, {
-      capability: parsed.data.capability,
-      limit: parsed.data.limit,
-    });
+    const listOpts: { capability?: string; limit?: number } = {};
+    if (parsed.data.capability) listOpts.capability = parsed.data.capability;
+    if (parsed.data.limit !== undefined) listOpts.limit = parsed.data.limit;
+    const events = await options.shadowDivergence.listEvents(auth.householdId, listOpts);
+
 
     return reply.code(200).send({
       success: true,

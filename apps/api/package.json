@@ -9,8 +9,10 @@
     "lint": "tsc -p tsconfig.build.json --noEmit",
     "dev": "tsx watch src/server/index.ts",
     "start": "node --import tsx src/server/index.ts",
-    "test": "vitest run",
+    "test": "vitest run --exclude=\"tests/integration/**\"",
+    "test:all": "vitest run",
     "test:integration": "node ../../scripts/require-reminder-integration-env.mjs && vitest run tests/integration/postgres-reminder-dedupe.test.ts tests/integration/postgres-reminder-lock.test.ts",
+
     "test:integration:adoption": "node ../../scripts/require-adoption-integration-env.mjs && vitest run tests/integration/postgres-adoption.test.ts",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",

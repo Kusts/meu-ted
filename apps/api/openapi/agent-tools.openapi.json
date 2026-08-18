@@ -493,6 +493,7 @@
             "schema": {
               "type": "integer",
               "minimum": 1,
+              "maximum": 200,
               "default": 50
             }
           },
@@ -1964,6 +1965,11 @@
                     "minimum": 0,
                     "maximum": 59
                   },
+                  "scheduleWindowMinutes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1440
+                  },
                   "daysOfWeek": {
                     "type": "array",
                     "items": {
@@ -1976,6 +1982,11 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 90
+                  },
+                  "timezone": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
                   }
                 },
                 "required": [
@@ -2157,7 +2168,31 @@
             },
             "x-pi-context": true
           }
-        ]
+        ],
+        "responses": {
+          "200": {
+            "description": "Statuses refreshed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["updated", "updatedCount"],
+                  "properties": {
+                    "updated": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "updatedCount": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/payables/auto-create-from-templates": {
@@ -2196,7 +2231,31 @@
               "default": 30
             }
           }
-        ]
+        ],
+        "responses": {
+          "200": {
+            "description": "Due payables created from templates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["created", "createdCount"],
+                  "properties": {
+                    "created": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "createdCount": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/payables/from-template": {
@@ -2896,6 +2955,74 @@
           "idempotency": true
         },
         "parameters": []
+      }
+    },
+    "/insights/spending": {
+      "get": {
+        "operationId": "spending_insights",
+        "summary": "Compare spend history and income share",
+        "x-pi-tool": {
+          "name": "spending_insights",
+          "label": "spending_insights",
+          "description": "Compare spending vs history, detect anomalies and show % of income",
+          "method": "GET",
+          "path": "/insights/spending",
+          "idempotency": false,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "yearMonth",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}$"
+            }
+          },
+          {
+            "name": "insightType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["all", "comparison", "anomalies", "income-share"]
+            }
+          },
+          {
+            "name": "lookbackMonths",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Spending insights",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
       }
     }
   }

@@ -65,8 +65,9 @@ async createAccount(householdId, input) {
           existing.status === 'active' &&
           existing.name.toLowerCase() === input.name.toLowerCase(),
       );
-      if (duplicate) throw domainErrors.inUse('conta');
+      if (duplicate) throw domainErrors.inUse('Conta', 'nome duplicado');
       const acc: Account = {
+
         id: randomUUID(),
         householdId,
         name: input.name,
@@ -103,8 +104,9 @@ async createAccount(householdId, input) {
           existing.status === 'active' &&
           existing.name.toLowerCase() === input.name.toLowerCase(),
       );
-      if (duplicate) throw domainErrors.inUse('categoria');
+      if (duplicate) throw domainErrors.inUse('Categoria', 'nome duplicado');
       if (input.parentId) {
+
         const parent = state.categories.find(
           (c) => c.id === input.parentId && c.householdId === householdId && c.status === 'active',
         );

@@ -9,13 +9,12 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
 import { DomainError } from '../writes/errors.js';
-import type { IdempotencyStore } from '../writes/idempotency.js';
+import { requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
 import type { CardStore } from '../cards/store.js';
 import type { AuthResolver } from './auth.js';
 
-const IDEMPOTENCY_HEADER = 'idempotency-key';
-
 // ── Input schemas ────────────────────────────────────────────────
+
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
 
@@ -48,6 +47,11 @@ const recurringSchema = z.object({
   categoryId: z.string().uuid().optional(),
 });
 
+const recurringQuerySchema = z.object({
+  accountId: z.string().uuid().optional(),
+  status: z.enum(['active', 'paused', 'cancelled']).optional(),
+});
+
 const paySchema = z.object({
   amountCents: z.number().int().positive(),
   fromAccountId: z.string().uuid(),
@@ -73,9 +77,17 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional(),
 });
 
+export const cardPurchaseSchema = purchaseSchema;
+export const cardInstallmentsSchema = installmentsSchema;
+export const cardRecurringSchema = recurringSchema;
+export const cardPaySchema = paySchema;
+export const cardStatementQuerySchema = querySchema;
+export { createCardSchema, updateCardSchema, recurringQuerySchema };
+
 // ── Helpers ──────────────────────────────────────────────────────
 
 const resolveAuth = (resolveToken: AuthResolver) => async (req: FastifyRequest) => {
+  if (req.authenticatedContext) return req.authenticatedContext;
   const token = req.headers[DEVICE_TOKEN_HEADER];
   return resolveToken(Array.isArray(token) ? token[0] : token);
 };
@@ -91,18 +103,22 @@ const handleError = (err: unknown, reply: FastifyReply) => {
   throw err;
 };
 
-const idemKey = (req: FastifyRequest): string | undefined => {
-  const v = req.headers[IDEMPOTENCY_HEADER];
-  if (typeof v === 'string' && v.trim() !== '') return v.trim();
-  if (Array.isArray(v) && v[0]) return v[0].trim();
-  return undefined;
-};
-
 // ── Registration ─────────────────────────────────────────────────
+
+
+import { createPendingApproval } from '../approvals/guard.js';
+import type { ApprovalPolicy } from '../approvals/policy.js';
+import type { PendingOperationStore } from '../approvals/pending.js';
 
 export const registerCardRoutes = (
   app: FastifyInstance,
-  opts: { cardStore: CardStore; resolveToken: AuthResolver; idempotency: IdempotencyStore },
+  opts: {
+    cardStore: CardStore;
+    resolveToken: AuthResolver;
+    idempotency: IdempotencyStore;
+    approvalPolicy?: ApprovalPolicy;
+    pendingStore?: PendingOperationStore;
+  },
 ): void => {
   const resolve = resolveAuth(opts.resolveToken);
 
@@ -146,7 +162,20 @@ export const registerCardRoutes = (
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const parsed = purchaseSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    const key = idemKey(req);
+    const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
+    const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
+    if (opts.approvalPolicy && opts.pendingStore) {
+      const pending = await createPendingApproval(opts.approvalPolicy, opts.pendingStore, {
+        householdId: ctx.householdId,
+        requesterId: ctx.deviceId,
+        operation: 'card.create_purchase',
+        payload: parsed.data,
+        idempotencyKey: key ?? crypto.randomUUID(),
+        amountCents: parsed.data.amountCents,
+        destructive: false,
+      });
+      if (pending) return reply.code(pending.status).send(pending.body);
+    }
     const fn = async () => {
       const txs = await opts.cardStore.createCardPurchase(ctx.householdId, {
         accountId: parsed.data.accountId,
@@ -171,7 +200,8 @@ export const registerCardRoutes = (
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const parsed = installmentsSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    const key = idemKey(req);
+    const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
+    const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
     const fn = async () => {
       const txs = await opts.cardStore.createCardInstallments(ctx.householdId, {
         accountId: parsed.data.accountId,
@@ -190,12 +220,28 @@ export const registerCardRoutes = (
     } catch (e) { return handleError(e, reply); }
   });
 
-  // POST /cards/recurring — create recurring purchase
+  // GET /cards/recurring — list recurring purchases
+  app.get('/cards/recurring', async (req, reply) => {
+    let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const parsed = recurringQuerySchema.safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    try {
+      const filters = {
+        ...(parsed.data.accountId ? { accountId: parsed.data.accountId } : {}),
+        ...(parsed.data.status ? { status: parsed.data.status } : {}),
+      };
+      const items = await opts.cardStore.listRecurringPurchases(ctx.householdId, filters);
+      return reply.code(200).send({ items, total: items.length });
+    } catch (e) { return handleError(e, reply); }
+  });
+
+  // POST /cards/recurring — create recurring purchase on a credit card
   app.post('/cards/recurring', async (req, reply) => {
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const parsed = recurringSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    const key = idemKey(req);
+    const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
+    const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
     const fn = async () => {
       const r = await opts.cardStore.createRecurringPurchase(ctx.householdId, {
         accountId: parsed.data.accountId,
@@ -222,7 +268,8 @@ export const registerCardRoutes = (
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
     const parsed = paySchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    const key = idemKey(req);
+    const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
+    const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
     const fn = async () => {
       const s = await opts.cardStore.payStatement(ctx.householdId, params.data.id, parsed.data);
       return { status: 200 as const, body: s };

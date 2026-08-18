@@ -17,6 +17,7 @@ export const pendingIdentitySchema = z.object({
 export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { store: PendingOperationStore; resolveToken: AuthResolver; executor?: PendingOperationExecutor; undoService?: UndoService }): void => {
   const { store, resolveToken, executor, undoService } = opts;
   const resolve = async (req: import('fastify').FastifyRequest) => {
+    if (req.authenticatedContext) return req.authenticatedContext;
     const token = req.headers[DEVICE_TOKEN_HEADER];
     return resolveToken(Array.isArray(token) ? token[0] : token);
   };

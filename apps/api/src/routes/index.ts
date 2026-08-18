@@ -101,13 +101,17 @@ export type RouteDeps = {
   inviteService?: InviteService;
   authorizeInviteCreate?: (input: { userId: string; householdId: string }) => Promise<boolean>;
   workspaceStore?: WorkspaceStore;
+  disableDeviceRegistration?: boolean;
+  approvalPolicy?: import('../approvals/policy.js').ApprovalPolicy;
   clock?: () => Date;
 };
+
 
 export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   const tokenStore = deps.tokenStore ?? createInMemoryDeviceTokenStore();
   const contextReplayGuard = deps.contextReplayGuard ?? createInMemoryContextTokenReplayGuard();
   const idempotency = deps.idempotency ?? createInMemoryIdempotencyStore();
+  const pendingStore = deps.pendingStore ?? createInMemoryPendingOperationStore();
   const resolveToken: AuthResolver = async (token) => tokenStore.resolve(token);
   const clock = deps.clock ?? (() => new Date());
 
@@ -140,6 +144,37 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
         actorType: 'user',
         deviceId: '',
         role: access.role,
+      };
+    });
+  }
+
+  if (deps.delegationSecret || process.env.PI_DELEGATED_TOKEN_SECRET) {
+    const delegationSecret = deps.delegationSecret ?? process.env.PI_DELEGATED_TOKEN_SECRET ?? "";
+    app.addHook("preHandler", async (request, reply) => {
+      const authHeader = request.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) return;
+      const token = authHeader.slice("Bearer ".length).trim();
+      let claims: import("../auth/delegated-token.js").DelegatedTurnClaims;
+      try {
+        const { verifyDelegatedTurnToken } = await import("../auth/delegated-token.js");
+        claims = await verifyDelegatedTurnToken(token, delegationSecret, Date.now());
+      } catch (err) {
+        return reply.code(401).send({ code: "auth.invalid_token", message: (err as Error).message });
+      }
+
+      const isRead = request.method === "GET" || request.method === "HEAD";
+      const requiredCapability = isRead ? "financial.read" : "financial.write";
+      if (!claims.capabilities.includes(requiredCapability)) {
+        return reply.code(403).send({ code: "auth.delegation_scope_forbidden", message: "Permissão insuficiente no token delegado." });
+      }
+
+      request.authenticatedContext = {
+        householdId: claims.workspace,
+        actorId: claims.sub,
+        authUserId: claims.sub,
+        actorType: "user",
+        deviceId: "",
+        role: claims.role,
       };
     });
   }
@@ -185,7 +220,17 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   // Validates the header when present (legacy clients without it keep working).
   app.addHook("preHandler", async (req) => {
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
-      requireIdempotencyKey(req.headers);
+      if (
+        req.url.startsWith('/auth/') ||
+        req.url.startsWith('/api/auth') ||
+        req.url.startsWith('/bridge/') ||
+        req.url === '/health'
+      ) {
+        return;
+      }
+      if (req.headers['idempotency-key'] !== undefined || req.headers['Idempotency-Key'] !== undefined) {
+        requireIdempotencyKey(req.headers);
+      }
     }
   });
 
@@ -197,9 +242,10 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     ...(deps.undoService ? { undoService: deps.undoService } : {}),
   });
   registerAdoptionRoutes(app, {
-    adoption: deps.adoptionStore ?? createInMemoryAdoptionStore(),
+    store: deps.adoptionStore ?? createInMemoryAdoptionStore(),
     resolveToken,
   });
+
   registerShadowObservabilityRoutes(app, {
     shadowDivergence: deps.shadowDivergenceStore ?? createInMemoryShadowDivergenceStore(),
     resolveToken,
@@ -211,21 +257,25 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   const authOpts: Parameters<typeof registerAuthRoutes>[1] = {
     resolveToken,
     tokenStore,
+    disableDeviceRegistration: deps.disableDeviceRegistration ?? false,
   };
   if (deps.defaultHouseholdId !== undefined)
     authOpts.defaultHouseholdId = deps.defaultHouseholdId;
   registerAuthRoutes(app, authOpts);
+
   registerAccountRoutes(app, {
     store: deps.store,
     writes: deps.writes,
     resolveToken,
     idempotency,
+    ...(deps.approvalPolicy ? { approvalPolicy: deps.approvalPolicy, pendingStore } : {}),
   });
   registerCategoryRoutes(app, {
     store: deps.store,
     writes: deps.writes,
     resolveToken,
     idempotency,
+    ...(deps.approvalPolicy ? { approvalPolicy: deps.approvalPolicy, pendingStore } : {}),
   });
   registerTransactionRoutes(app, { store: deps.store, resolveToken });
   registerTransactionWriteRoutes(app, {
@@ -247,6 +297,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       cardStore: deps.cardStore,
       resolveToken,
       idempotency,
+      ...(deps.approvalPolicy ? { approvalPolicy: deps.approvalPolicy, pendingStore } : {}),
     });
   }
   if (deps.payableStore) {
@@ -254,6 +305,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       payableStore: deps.payableStore,
       resolveToken,
       idempotency,
+      ...(deps.approvalPolicy ? { approvalPolicy: deps.approvalPolicy, pendingStore } : {}),
     });
   }
   if (deps.budgetStore) {
@@ -261,6 +313,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       budgetStore: deps.budgetStore,
       resolveToken,
       idempotency,
+      ...(deps.approvalPolicy ? { approvalPolicy: deps.approvalPolicy, pendingStore } : {}),
     });
   }
   if (deps.goalStore) {
@@ -268,6 +321,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       goalStore: deps.goalStore,
       resolveToken,
       idempotency,
+      ...(deps.approvalPolicy ? { approvalPolicy: deps.approvalPolicy, pendingStore } : {}),
     });
   }
   if (deps.subscriptionStore) {
@@ -275,6 +329,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       subscriptionStore: deps.subscriptionStore,
       resolveToken,
       idempotency,
+      ...(deps.approvalPolicy ? { approvalPolicy: deps.approvalPolicy, pendingStore } : {}),
     });
   }
   if (deps.pushStore) {
@@ -304,7 +359,12 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       });
     }
     if (deps.workspaceStore) {
-      registerWorkspaceRoutes(app, { auth: deps.auth, store: deps.workspaceStore });
+      registerWorkspaceRoutes(app, {
+        auth: deps.auth,
+        store: deps.workspaceStore,
+        ...(deps.workspaceAccess ? { workspaceAccess: deps.workspaceAccess } : {}),
+      });
     }
+
   }
 };

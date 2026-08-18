@@ -50,7 +50,7 @@ export const createPostgresBudgetStore = (pool: Pool): BudgetStore => {
       const id = randomUUID();
       await query(`INSERT INTO budgets (id,household_id,category_id,name,amount_cents,period,start_date,alert_threshold) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [id, householdId, input.categoryId, input.name, input.amountCents, input.period, input.startDate, input.alertThreshold ?? 80]);
-      const rows = await query<Row>(`SELECT * FROM budgets WHERE id=$1`, [id]);
+      const rows = await query<Row>(`SELECT * FROM budgets WHERE id=$1 AND household_id=$2`, [id, householdId]);
       const r = rows[0]!;
       return { id, householdId, categoryId: input.categoryId, name: input.name, amountCents: input.amountCents, period: input.period, startDate: input.startDate, alertThreshold: input.alertThreshold ?? 80, rollover: false };
     },
@@ -58,9 +58,9 @@ export const createPostgresBudgetStore = (pool: Pool): BudgetStore => {
     async updateBudget(householdId, budgetId, patch) {
       const existing = await query<Row>(`SELECT * FROM budgets WHERE id=$1 AND household_id=$2`, [budgetId, householdId]);
       if (existing.length === 0) throw domainErrors.notFound('Orçamento');
-      if (patch.amountCents !== undefined) await query(`UPDATE budgets SET amount_cents=$1, updated_at=NOW() WHERE id=$2`, [patch.amountCents, budgetId]);
-      if (patch.alertThreshold !== undefined) await query(`UPDATE budgets SET alert_threshold=$1, updated_at=NOW() WHERE id=$2`, [patch.alertThreshold, budgetId]);
-      const rows = await query<Row>(`SELECT * FROM budgets WHERE id=$1`, [budgetId]);
+      if (patch.amountCents !== undefined) await query(`UPDATE budgets SET amount_cents=$1, updated_at=NOW() WHERE id=$2 AND household_id=$3`, [patch.amountCents, budgetId, householdId]);
+      if (patch.alertThreshold !== undefined) await query(`UPDATE budgets SET alert_threshold=$1, updated_at=NOW() WHERE id=$2 AND household_id=$3`, [patch.alertThreshold, budgetId, householdId]);
+      const rows = await query<Row>(`SELECT * FROM budgets WHERE id=$1 AND household_id=$2`, [budgetId, householdId]);
       const r = rows[0]!;
       return { id: r['id'] as string, householdId, categoryId: r['category_id'] as string, name: r['name'] as string, amountCents: Number(r['amount_cents']), period: r['period'] as Budget['period'], startDate: (r['start_date'] as Date).toISOString().slice(0,10), alertThreshold: Number(r['alert_threshold']), rollover: r['rollover'] as boolean };
     },

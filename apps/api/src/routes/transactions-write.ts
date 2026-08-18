@@ -16,6 +16,7 @@ export const registerTransactionWriteRoutes = (
   opts: { store: ReadModelStore; writes: WriteStore; resolveToken: AuthResolver; idempotency: IdempotencyStore },
 ): void => {
   const resolve = async (req: import('fastify').FastifyRequest) => {
+    if (req.authenticatedContext) return req.authenticatedContext;
     const token = req.headers[DEVICE_TOKEN_HEADER];
     return opts.resolveToken(Array.isArray(token) ? token[0] : token);
   };
@@ -29,15 +30,16 @@ export const registerTransactionWriteRoutes = (
   };
 
   const runIdempotent = async <T>(req: import('fastify').FastifyRequest, householdId: string, payload: unknown, producer: () => Promise<T>): Promise<T> => {
+    const raw = req.headers[IDEMPOTENCY_HEADER] ?? req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
+    if (raw === undefined) return producer();
     const key = requireIdempotencyKey(req.headers);
-    if (!key || !opts.idempotency) return producer();
+    if (!opts.idempotency) return producer();
     return (await opts.idempotency.lookupOrRecord(householdId, key, payload, producer)).response;
   };
   const idemKey = (req: import('fastify').FastifyRequest): string | undefined => {
-    const v = req.headers[IDEMPOTENCY_HEADER];
-    if (typeof v === 'string' && v.trim() !== '') return v.trim();
-    if (Array.isArray(v) && v[0]) return v[0].trim();
-    return undefined;
+    const raw = req.headers[IDEMPOTENCY_HEADER] ?? req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
+    if (raw === undefined) return undefined;
+    return requireIdempotencyKey(req.headers);
   };
 
   const postHandler = (path: string, schema: z.ZodTypeAny, producer: (ctx: { householdId: string }, input: any) => Promise<{ status: number; body: unknown }>) => {
@@ -48,7 +50,7 @@ export const registerTransactionWriteRoutes = (
       const key = idemKey(req);
       const fn = async () => producer(ctx, parsed.data);
       try {
-        const result = key ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, parsed.data, fn) : { response: await fn(), replayed: false };
+        const result = key && opts.idempotency ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, parsed.data, fn) : { response: await fn(), replayed: false };
         if (result.replayed) reply.header('Idempotent-Replayed', 'true');
         return reply.code(result.response.status).send(result.response.body);
       } catch (e) { return handleError(e, reply); }

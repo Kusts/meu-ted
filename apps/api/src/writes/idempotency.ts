@@ -1,18 +1,27 @@
 /**
- * Idempotency store. Simple, no overengineering.
+ * Idempotency store and validation contract.
  *
- * Keyed by (householdId, key). Records the first response and replays
- * it on subsequent calls with the same key, regardless of payload.
- * If the same key is replayed with a *different* payload, throws
- * idempotency.conflict (HTTP 409) — this is the conservative
- * behavior and is what most financial APIs do.
+ * Implements G2.2.4 (HTTP boundary validation) and G0.4.2 (composed SHA-256 identity).
  *
- * TTL: 24h. Expired entries are evicted lazily on access.
+ * Lifecycle:
+ * - Replay window: 7 days. Same key + same payload replays recorded response.
+ * - Conflict window: 7 to 90 days. Same key raises idempotency.conflict.
+ * - Eviction / Retention: > 90 days. Key expires and is removed.
  */
 
+import { createHash } from 'node:crypto';
 import { domainErrors } from './errors.js';
 
-const TTL_MS = 24 * 60 * 60 * 1000;
+export const IDEMPOTENCY_RETRY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+export const IDEMPOTENCY_RETENTION_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+
+export type IdempotencyRequest = {
+  workspaceId: string;
+  actorType: 'device' | 'user';
+  actorId: string;
+  operation: string;
+  key: string;
+};
 
 export type IdempotencyEntry<T> = {
   payloadHash: string;
@@ -21,24 +30,31 @@ export type IdempotencyEntry<T> = {
 };
 
 export type IdempotencyStore = {
-  /** Throws idempotency.conflict if same key+different payload. Returns cached response if any. */
   lookupOrRecord<T>(
     householdId: string,
     key: string,
     payload: unknown,
     producer: () => Promise<T>,
   ): Promise<{ response: T; replayed: boolean }>;
+  lookupOrRecord<T>(
+    request: IdempotencyRequest,
+    payload: unknown,
+    producer: () => Promise<T>,
+  ): Promise<{ response: T; replayed: boolean }>;
   clear(): void;
 };
 
-const hash = (payload: unknown): string => {
-  // Stable, fast, non-cryptographic. Sufficient for "same payload?" check.
-  const json = JSON.stringify(payload, Object.keys(payload as object).sort());
-  let h = 0;
-  for (let i = 0; i < json.length; i++) {
-    h = (h * 31 + json.charCodeAt(i)) | 0;
-  }
-  return String(h);
+export const buildIdempotencyKey = (req: IdempotencyRequest): string => {
+  const canonical = `${req.workspaceId}:${req.actorId}:${req.operation}:${req.key}`;
+  return createHash('sha256').update(canonical).digest('hex');
+};
+
+export const hashIdempotencyPayload = (payload: unknown, version = 1): string => {
+  const json = typeof payload === 'object' && payload !== null
+    ? JSON.stringify(payload, Object.keys(payload as object).sort())
+    : JSON.stringify(payload);
+  const raw = `v${version}:${json}`;
+  return createHash('sha256').update(raw).digest('hex');
 };
 
 export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
@@ -46,24 +62,49 @@ export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
 
   const evictExpired = (now: number): void => {
     for (const [k, v] of store.entries()) {
-      if (now - v.createdAt > TTL_MS) store.delete(k);
+      if (now - v.createdAt > IDEMPOTENCY_RETENTION_WINDOW_MS) {
+        store.delete(k);
+      }
     }
   };
 
   return {
-    async lookupOrRecord(householdId, key, payload, producer) {
-      const composite = `${householdId}::${key}`;
+    async lookupOrRecord(scopeOrHouseholdId: any, keyOrPayload: any, payloadOrProducer: any, maybeProducer?: any) {
+      let composite: string;
+      let payload: unknown;
+      let producer: () => Promise<any>;
+
+      if (typeof scopeOrHouseholdId === 'object' && scopeOrHouseholdId !== null) {
+        composite = buildIdempotencyKey(scopeOrHouseholdId);
+        payload = keyOrPayload;
+        producer = payloadOrProducer;
+      } else {
+        composite = `${scopeOrHouseholdId}::${keyOrPayload}`;
+        payload = payloadOrProducer;
+        producer = maybeProducer;
+      }
+
       const now = Date.now();
       evictExpired(now);
       const existing = store.get(composite);
+      const payloadHash = hashIdempotencyPayload(payload);
+
       if (existing) {
-        if (existing.payloadHash !== hash(payload)) {
+        const age = now - existing.createdAt;
+        if (age > IDEMPOTENCY_RETENTION_WINDOW_MS) {
+          store.delete(composite);
+        } else if (age > IDEMPOTENCY_RETRY_WINDOW_MS) {
           throw domainErrors.idempotencyConflict();
+        } else {
+          if (existing.payloadHash !== payloadHash) {
+            throw domainErrors.idempotencyConflict();
+          }
+          return { response: existing.response as never, replayed: true };
         }
-        return { response: existing.response as never, replayed: true };
       }
+
       const response = await producer();
-      store.set(composite, { payloadHash: hash(payload), response, createdAt: now });
+      store.set(composite, { payloadHash, response, createdAt: now });
       return { response, replayed: false };
     },
     clear() {
@@ -75,16 +116,24 @@ export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
 const IDEMPOTENCY_KEY_HEADER = 'idempotency-key';
 
 /**
- * Validates the idempotency-key header when present and returns its value.
- * Returns undefined when absent so legacy clients keep working. Throws a
- * validation error for an empty or oversized key.
+ * Validates the Idempotency-Key header.
+ * Throws validation.required when missing/blank.
+ * Throws validation.invalid when array/ambiguous or oversized (>255 chars).
  */
-export const requireIdempotencyKey = (headers: Record<string, unknown>): string | undefined => {
-  const raw = headers[IDEMPOTENCY_KEY_HEADER];
-  if (raw === undefined) return undefined;
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  const key = String(value ?? '').trim();
-  if (!key) throw domainErrors.invalid('idempotency-key', 'idempotency-key must not be empty');
-  if (key.length > 128) throw domainErrors.invalid('idempotency-key', 'idempotency-key is too long (max 128 chars)');
+export const requireIdempotencyKey = (headers: Record<string, unknown>): string => {
+  const raw = headers[IDEMPOTENCY_KEY_HEADER] ?? headers['Idempotency-Key'];
+  if (raw === undefined || raw === null) {
+    throw domainErrors.required('Idempotency-Key');
+  }
+  if (Array.isArray(raw)) {
+    throw domainErrors.invalid('Idempotency-Key', 'Multiple Idempotency-Key headers are ambiguous');
+  }
+  const key = String(raw).trim();
+  if (!key) {
+    throw domainErrors.invalid('Idempotency-Key', 'Idempotency-Key cannot be empty');
+  }
+  if (key.length > 255) {
+    throw domainErrors.invalid('Idempotency-Key', 'Idempotency-Key is too long (max 255 chars)');
+  }
   return key;
 };

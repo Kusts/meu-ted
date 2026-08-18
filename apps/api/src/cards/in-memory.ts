@@ -118,8 +118,8 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
     return s;
   };
 
-  const recalcTotal = (statementId: string): void => {
-    const stmt = statements.find(s => s.id === statementId);
+  const recalcTotal = (statementId: string, householdId: string): void => {
+    const stmt = statements.find(s => s.householdId === householdId && s.id === statementId);
     if (!stmt) return;
     const total = state.transactions
       .filter(t => (t as any).statementId === statementId && !state.deletedTransactions.has(t.id))
@@ -226,6 +226,10 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
 
     async createCardPurchase(householdId, input) {
       const card = findAccount(input.accountId, householdId);
+      if (input.categoryId) {
+        const cat = state.categories.find(c => c.id === input.categoryId && c.householdId === householdId);
+        if (!cat) throw domainErrors.notFound('Categoria');
+      }
       const stmt = findOrCreateStatement(input.accountId, householdId, input.date, card);
 
       const tx = opt<Transaction & { statementId: string }>(
@@ -242,13 +246,18 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
         } as any,
       );
       state.transactions.push(tx);
-      recalcTotal(stmt.id);
+      recalcTotal(stmt.id, householdId);
       return [tx];
     },
 
     async createCardInstallments(householdId, input) {
       const card = findAccount(input.accountId, householdId);
+      if (input.categoryId) {
+        const cat = state.categories.find(c => c.id === input.categoryId && c.householdId === householdId);
+        if (!cat) throw domainErrors.notFound('Categoria');
+      }
       const baseValue = Math.floor(input.totalAmountCents / input.installmentsTotal);
+
       const remainder = input.totalAmountCents - baseValue * input.installmentsTotal;
       const txs: Transaction[] = [];
       const date = new Date(input.purchaseDate + 'T00:00:00.000Z');
@@ -273,13 +282,25 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
         );
         state.transactions.push(tx);
         txs.push(tx);
-        recalcTotal(stmt.id);
+        recalcTotal(stmt.id, householdId);
       }
       return txs;
     },
+    async listRecurringPurchases(householdId, opts) {
+      return recurring.filter((item) =>
+        item.householdId === householdId &&
+        (opts?.accountId === undefined || item.accountId === opts.accountId) &&
+        (opts?.status === undefined || item.status === opts.status),
+      );
+    },
+
 
     async createRecurringPurchase(householdId, input) {
       findAccount(input.accountId, householdId);
+      if (input.categoryId) {
+        const cat = state.categories.find(c => c.id === input.categoryId && c.householdId === householdId);
+        if (!cat) throw domainErrors.notFound('Categoria');
+      }
       const r = opt<RecurringPurchase>(
         {
           id: randomUUID(), householdId, accountId: input.accountId,
@@ -311,7 +332,7 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
       s.status = computeStatus(s, todayISO());
 
       // Create payment transaction (transfer-like, from source to the card's "balance")
-      const card = state.accounts.find(a => a.id === s.accountId);
+      const card = state.accounts.find(a => a.householdId === householdId && a.id === s.accountId);
       if (card) card.balanceCents += input.amountCents;
 
       return s;
@@ -343,6 +364,10 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
     },
 
     async updatePurchase(householdId, purchaseId, input) {
+      if (input.categoryId) {
+        const cat = state.categories.find(c => c.id === input.categoryId && c.householdId === householdId);
+        if (!cat) throw domainErrors.notFound('Categoria');
+      }
       // In-memory: transactions store purchases linked by statement_id
       const tx = state.transactions.find(t => t.id === purchaseId && t.householdId === householdId && !state.deletedTransactions.has(t.id));
       if (tx) {
@@ -351,10 +376,10 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
         if (input.date !== undefined) tx.date = input.date;
         if (input.categoryId !== undefined) tx.categoryId = input.categoryId;
 
-        const stmt = statements.find(s => s.id === (tx as any).statementId);
+        const stmt = statements.find(s => s.householdId === householdId && s.id === (tx as any).statementId);
         if (stmt) {
-          recalcTotal(stmt.id);
-          const detail = statements.find(s => s.id === stmt.id)!;
+
+          recalcTotal(stmt.id, householdId);
           const purchases: StatementPurchase[] = state.transactions
             .filter(t2 => (t2 as any).statementId === stmt.id && !state.deletedTransactions.has(t2.id))
             .map(t2 => ({
@@ -365,7 +390,7 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
               categoryId: t2.categoryId,
               isRecurring: false,
             } as StatementPurchase));
-          return { ...detail, purchases };
+          return { ...stmt, purchases };
         }
       }
 

@@ -5,8 +5,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { runWriteStoreContract } from '../contract/write-store.contract.js';
 import { createPostgresWriteStore } from '../../src/writes/postgres.js';
-import { createPool } from '../../src/db/pool.js';
 import { runMigrations } from '../../src/read-models/sql/migrate.js';
+import { requireTestDatabase } from '../../src/db/db-guard.js';
 import type { Pool } from 'pg';
 
 const DB_URL = process.env.DATABASE_URL;
@@ -23,6 +23,7 @@ const runIfDbAvailable = (): void => {
   beforeAll(async () => {
     pool = createPool({ connectionString: DB_URL! });
     await runMigrations(pool);
+    await requireTestDatabase(pool, 'truncate');
     await pool.query(`TRUNCATE TABLE ${TEST_TABLES.join(', ')} RESTART IDENTITY CASCADE`);
   }, 30_000);
 
@@ -33,6 +34,7 @@ const runIfDbAvailable = (): void => {
   runWriteStoreContract({
     name: 'postgres',
     create: async () => {
+      await requireTestDatabase(pool, 'truncate');
       await pool.query(`TRUNCATE TABLE ${TEST_TABLES.join(', ')} RESTART IDENTITY CASCADE`);
       return {
         writes: createPostgresWriteStore({ pool }),

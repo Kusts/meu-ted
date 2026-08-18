@@ -50,16 +50,17 @@ export const createInMemoryPayableStore = (
   const templates = (state as any)._templates as PayableTemplate[];
   const notifications = (state as any)._notifications as NotificationConfig[];
 
-  const refreshStatus = (): void => {
+  const refreshStatus = (householdId?: string): void => {
       const today = todayISO(clock);
     for (const p of payables) {
+      if (householdId !== undefined && p.householdId !== householdId) continue;
       if (p.status === "pending" && p.dueDate < today) p.status = "overdue";
     }
   };
 
   return {
     async listPayables(householdId, filters) {
-      refreshStatus();
+      refreshStatus(householdId);
       let list = payables.filter((p) => p.householdId === householdId);
       if (filters?.status)
         list = list.filter((p) => p.status === filters.status);
@@ -108,8 +109,15 @@ export const createInMemoryPayableStore = (
         (x) => x.id === payableId && x.householdId === householdId,
       );
       if (!p) throw domainErrors.notFound("Conta a pagar");
+      if (p.status === "paid" || p.status === "cancelled") {
+        throw new DomainError(
+          "validation.invalid",
+          `Conta a pagar já está ${p.status === "paid" ? "paga" : "cancelada"}`,
+          409,
+        );
+      }
       p.status = "paid";
-      p.paidDate = input.paidDate ?? todayISO();
+      p.paidDate = input.paidDate ?? todayISO(clock);
       p.paidAmountCents = p.amountCents;
       if (p.type === "recurring" && p.frequency && !input.prepayMonths) {
         const nextDue = getNextDue(p.dueDate, p.frequency);
@@ -261,7 +269,17 @@ export const createInMemoryPayableStore = (
         ...(t.notes ? { notes: t.notes } : {}),
       });
     },
+
+    async createPayableWithTemplate(householdId, input) {
+      const t = await this.createTemplate(householdId, input.template);
+      return this.createPayable(householdId, {
+        ...input.payable,
+        ...(input.payable.type ? { type: input.payable.type } : { type: 'recurring' }),
+      });
+    },
+
     async autoCreateFromTemplates(householdId, daysAhead = 30) {
+
       const today = clock();
       today.setUTCHours(0, 0, 0, 0);
       const limit = new Date(today.getTime() + daysAhead * 86_400_000);
@@ -283,13 +301,13 @@ export const createInMemoryPayableStore = (
     },
 
     async refreshPayableStatus(householdId) {
-      refreshStatus();
+      refreshStatus(householdId);
       return payables.filter((item) => item.householdId === householdId);
     },
 
 
     async listReminders(householdId) {
-      refreshStatus();
+      refreshStatus(householdId);
       const today = todayISO(clock);
       return payables.filter(
         (p) =>

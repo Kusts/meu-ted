@@ -4,7 +4,8 @@ import { createInMemoryAuditLogStore, type AuditLogStore } from "../src/audit/st
 import type { OwnershipTransferStore } from "../src/auth/ownership-transfers-postgres.js";
 import type { BetterAuth } from "../src/auth/better-auth.js";
 import type { InviteService } from "../src/auth/invites.js";
-import type { WorkspaceStore } from "../src/auth/workspaces-http.js";
+import { createInMemoryWorkspaceStore, type WorkspaceStore } from "../src/auth/workspaces-http.js";
+
 import {
   createInMemoryReadModelStore,
   type ReadModelStore,
@@ -176,12 +177,38 @@ export const buildTestApp = (
       typeof (value as WorkspaceStore).create === "function" &&
       typeof (value as WorkspaceStore).listMembers === "function",
   );
+  const workspaceAccess = optional.find(
+    (value): value is import("../src/auth/workspace-access.js").WorkspaceAccessStore =>
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as { resolve?: unknown }).resolve === "function",
+  );
+  const customTokenStore = optional.find(
+    (value): value is DeviceTokenStore =>
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as DeviceTokenStore).resolve === "function" &&
+      typeof (value as DeviceTokenStore).register === "function" &&
+      typeof (value as DeviceTokenStore).revoke === "function",
+  );
+  const disableDeviceRegistration = optional.find(
+    (value): value is boolean => typeof value === "boolean",
+  ) ?? true;
+  const delegationSecret = optional.find(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+  const approvalPolicy = optional.find(
+    (value): value is import("../src/approvals/policy.js").ApprovalPolicy =>
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as { evaluate?: unknown }).evaluate === "function",
+  );
   const app = Fastify({ logger: false });
   registerCors(app);
   registerRoutes(app, {
     store,
     writes,
-    tokenStore: createTestTokenStore(),
+    tokenStore: customTokenStore ?? createTestTokenStore(),
     idempotency: createInMemoryIdempotencyStore(),
     cardStore,
     payableStore,
@@ -191,6 +218,9 @@ export const buildTestApp = (
     profileStore,
     pushStore,
     vapidPublicKey: "test-vapid-public-key",
+    disableDeviceRegistration,
+    ...(delegationSecret ? { delegationSecret } : {}),
+    ...(approvalPolicy ? { approvalPolicy } : {}),
     ...(pushDelivery ? { pushDelivery } : {}),
     ...(pendingStore ? { pendingStore } : {}),
     ...(adoptionStore ? { adoptionStore } : {}),
@@ -198,11 +228,13 @@ export const buildTestApp = (
     undoService,
     ...(ownershipTransferStore ? { ownershipTransferStore } : {}),
     ...(auth ? { auth } : {}),
+    ...(workspaceAccess ? { workspaceAccess } : {}),
     ...(inviteService ? { inviteService } : {}),
     ...(authorizeInviteCreate ? { authorizeInviteCreate } : {}),
-    ...(workspaceStore ? { workspaceStore } : {}),
+    ...(auth ? { workspaceStore: workspaceStore ?? createInMemoryWorkspaceStore() } : workspaceStore ? { workspaceStore } : {}),
     ...(clock ? { clock } : {}),
   });
+
   return { app, store, state };
 };
 

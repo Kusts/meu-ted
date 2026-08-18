@@ -5,9 +5,10 @@ import type { ReadModelStore } from '../read-models/store.js';
 import { buildDashboardSummary } from '../lib/dashboard.js';
 import type { AuthResolver } from './auth.js';
 
-const monthSummaryQuery = z.object({
+export const monthSummaryQuerySchema = z.object({
   yearMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
 });
+const monthSummaryQuery = monthSummaryQuerySchema;
 
 export const registerDashboardRoutes = (
   app: FastifyInstance,

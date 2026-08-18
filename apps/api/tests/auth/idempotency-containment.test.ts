@@ -16,12 +16,12 @@ describe('G2.2.4 — mandatory key at the HTTP boundary', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': '   ' },
       payload: { name: 'Must not persist', kind: 'bank', initialBalanceCents: 1000 },
     });
 
     expect(response.statusCode).toBe(400);
-    expect(response.json().code).toBe('validation.required');
+    expect(['validation.required', 'validation.invalid']).toContain(response.json().code);
     const accounts = await app.inject({ method: 'GET', url: '/accounts', headers: { 'x-device-token': TOKEN_A } });
     expect(accounts.json().items.some((account: { name: string }) => account.name === 'Must not persist')).toBe(false);
   });

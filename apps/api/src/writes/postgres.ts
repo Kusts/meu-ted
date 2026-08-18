@@ -246,9 +246,10 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
         await client.query(
           `UPDATE accounts
               SET balance_cents = GREATEST(0, balance_cents - $2)
-            WHERE id = $1`,
-          [input.accountId, input.amountCents],
+            WHERE id = $1 AND household_id = $3`,
+          [input.accountId, input.amountCents, householdId],
         );
+
         return mapTransaction(txRes.rows[0]!);
       });
     },
@@ -267,8 +268,8 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
           [householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId],
         );
         await client.query(
-          `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1`,
-          [input.accountId, input.amountCents],
+          `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
+          [input.accountId, input.amountCents, householdId],
         );
         return mapTransaction(txRes.rows[0]!);
       });
@@ -293,12 +294,12 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
         await client.query(
           `UPDATE accounts
               SET balance_cents = GREATEST(0, balance_cents - $2)
-            WHERE id = $1`,
-          [input.fromAccountId, input.amountCents],
+            WHERE id = $1 AND household_id = $3`,
+          [input.fromAccountId, input.amountCents, householdId],
         );
         await client.query(
-          `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1`,
-          [input.toAccountId, input.amountCents],
+          `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
+          [input.toAccountId, input.amountCents, householdId],
         );
         return mapTransaction(txRes.rows[0]!);
       });
@@ -347,26 +348,26 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
         if (patch.amountCents !== undefined) {
           const sign = tx.kind === 'expense' ? '+' : '-';
           await client.query(
-            `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1`,
-            [tx.accountId, tx.amountCents],
+            `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1 AND household_id = $3`,
+            [tx.accountId, tx.amountCents, householdId],
           );
           const newSign = tx.kind === 'expense' ? '-' : '+';
           await client.query(
-            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1`,
-            [tx.accountId, patch.amountCents],
+            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1 AND household_id = $3`,
+            [tx.accountId, patch.amountCents, householdId],
           );
         }
         if (patch.accountId !== undefined && patch.accountId !== tx.accountId) {
           // Revert on old, apply on new.
           const sign = tx.kind === 'expense' ? '+' : '-';
           await client.query(
-            `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1`,
-            [tx.accountId, tx.amountCents],
+            `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1 AND household_id = $3`,
+            [tx.accountId, tx.amountCents, householdId],
           );
           const newSign = tx.kind === 'expense' ? '-' : '+';
           await client.query(
-            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1`,
-            [patch.accountId, tx.amountCents],
+            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1 AND household_id = $3`,
+            [patch.accountId, tx.amountCents, householdId],
           );
         }
         const res = await client.query<Row>(
@@ -397,23 +398,23 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
         // Restore balance effect.
         if (tx.kind === 'expense') {
           await client.query(
-            `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1`,
-            [tx.accountId, tx.amountCents],
+            `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
+            [tx.accountId, tx.amountCents, householdId],
           );
         } else if (tx.kind === 'income') {
           await client.query(
-            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1`,
-            [tx.accountId, tx.amountCents],
+            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1 AND household_id = $3`,
+            [tx.accountId, tx.amountCents, householdId],
           );
         } else if (tx.kind === 'transfer') {
           await client.query(
-            `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1`,
-            [tx.accountId, tx.amountCents],
+            `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
+            [tx.accountId, tx.amountCents, householdId],
           );
           if (tx.transferToAccountId) {
             await client.query(
-              `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1`,
-              [tx.transferToAccountId, tx.amountCents],
+              `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1 AND household_id = $3`,
+              [tx.transferToAccountId, tx.amountCents, householdId],
             );
           }
         }
@@ -434,18 +435,59 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
 /**
  * Postgres idempotency store. TTL 24h, lazy eviction on lookup.
  */
-export const createPostgresIdempotencyStore = (opts: { pool: Pool }): import('./idempotency.js').IdempotencyStore => {
-  const { pool } = opts;
+export const createPostgresIdempotencyStore = (opts: { pool: Pool; legacy?: boolean }): import('./idempotency.js').IdempotencyStore => {
+  const { pool, legacy } = opts;
   const hash = (payload: unknown): string => {
-    const json = JSON.stringify(payload, Object.keys(payload as object).sort());
+    if (payload === undefined || payload === null) return '0';
+    const json = typeof payload === 'object'
+      ? JSON.stringify(payload, Object.keys(payload as object).sort())
+      : JSON.stringify(payload);
     let h = 0;
     for (let i = 0; i < json.length; i++) h = (h * 31 + json.charCodeAt(i)) | 0;
     return String(h);
   };
   return {
-    async lookupOrRecord(householdId, key, payload, producer) {
+    async lookupOrRecord(scopeOrHouseholdId: any, keyOrPayload: any, payloadOrProducer: any, maybeProducer?: any) {
+      let householdId: string;
+      let key: string;
+      let payload: unknown;
+      let producer: () => Promise<any>;
+      let operation: string | undefined;
+      let actorType: string | undefined;
+      let actorId: string | undefined;
+
+      if (typeof scopeOrHouseholdId === 'object' && scopeOrHouseholdId !== null) {
+        householdId = scopeOrHouseholdId.householdId ?? scopeOrHouseholdId.workspaceId;
+        key = scopeOrHouseholdId.key;
+        operation = scopeOrHouseholdId.operation;
+        actorType = scopeOrHouseholdId.actorType;
+        actorId = scopeOrHouseholdId.actorId;
+        payload = keyOrPayload;
+        producer = payloadOrProducer;
+      } else {
+        householdId = scopeOrHouseholdId;
+        key = keyOrPayload;
+        payload = payloadOrProducer;
+        producer = maybeProducer;
+      }
+
       const payloadHash = hash(payload);
       return withTransaction(pool, async (client) => {
+        if (legacy) {
+          await client.query(
+            `INSERT INTO operation_records (id, household_id, actor_type, actor_id, operation, idempotency_key, request_payload, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+            [randomUUID(), householdId, actorType ?? 'device', actorId ?? 'unknown', operation ?? 'write', key, JSON.stringify(payload)],
+          );
+          const response = await producer();
+          await client.query(
+            `INSERT INTO audit_logs (id, household_id, actor_type, actor_id, action, before_json, after_json, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+            [randomUUID(), householdId, actorType ?? 'device', actorId ?? 'unknown', operation ?? 'write', null, JSON.stringify(response)],
+          );
+          return { response, replayed: false };
+        }
+
         const existing = await client.query<{ payload_hash: string; response: unknown; created_at: Date }>(
           `SELECT payload_hash, response, created_at
              FROM idempotency_keys
@@ -478,3 +520,4 @@ export const createPostgresIdempotencyStore = (opts: { pool: Pool }): import('./
     },
   };
 };
+

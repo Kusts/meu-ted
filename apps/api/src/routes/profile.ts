@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
+import { requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
 import type { ProfileStore } from '../profile/store.js';
 import type { AuthResolver } from './auth.js';
 
@@ -16,7 +17,7 @@ const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
 export const registerProfileRoutes = (
   app: FastifyInstance,
-  opts: { resolveToken: AuthResolver; profileStore: ProfileStore },
+  opts: { resolveToken: AuthResolver; profileStore: ProfileStore; idempotency?: IdempotencyStore },
 ): void => {
   app.get('/profile', async (req, reply) => {
     const token = req.headers[DEVICE_TOKEN_HEADER];
@@ -53,13 +54,29 @@ export const registerProfileRoutes = (
       return reply.code(400).send({ code: 'validation.error', message: 'avatarColor must be #RRGGBB hex' });
     }
 
-    const profile = await opts.profileStore.upsert(ctx.householdId, {
-      name: data.name,
-      email: data.email,
-      phone: data.phone,
-      avatarColor: data.avatarColor,
-      greetingStyle: data.greetingStyle,
-    });
-    return reply.code(200).send({ profile });
+    const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
+    const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
+    const fn = async () => {
+      const profile = await opts.profileStore.upsert(ctx.householdId, {
+        name: data.name,
+        email: data.email,
+        phone: data.phone,
+        avatarColor: data.avatarColor,
+        greetingStyle: data.greetingStyle,
+      });
+      return { status: 200 as const, body: { profile } };
+    };
+
+    try {
+      const result = key && opts.idempotency
+        ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, data, fn)
+        : { response: await fn(), replayed: false };
+      if (result.replayed) reply.header('Idempotent-Replayed', 'true');
+      return reply.code(result.response.status).send(result.response.body);
+    } catch (e) {
+      const err = e as { statusCode?: number; code?: string; message?: string };
+      return reply.code(err.statusCode ?? 500).send({ code: err.code ?? 'server.error', message: err.message ?? 'server error' });
+    }
   });
 };
+

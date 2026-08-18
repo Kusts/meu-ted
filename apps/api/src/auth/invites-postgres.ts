@@ -65,8 +65,8 @@ export const createPostgresInviteStore = (pool: Pool): InviteStore => ({
   },
 
   async acceptInvite({ tokenHash, userId, userEmail, now }) {
-    return withTransaction(pool, async () => {
-      const inviteResult = await queryInTransaction<Row>(pool,
+    return withTransaction(pool, async (client) => {
+      const inviteResult = await client.query<Row>(
         `SELECT id, household_id, email_normalized, role, token_hash, expires_at, consumed_at, invited_by
            FROM invites
           WHERE token_hash = $1
@@ -78,7 +78,7 @@ export const createPostgresInviteStore = (pool: Pool): InviteStore => ({
       if (invite.acceptedAt) throw new InviteError('invite was already used', 'invite.already_used', 409);
       if (invite.expiresAt.getTime() <= now.getTime()) throw new InviteError('invite expired', 'invite.expired', 410);
 
-      const userResult = await queryInTransaction<Row>(pool,
+      const userResult = await client.query<Row>(
         `SELECT id, email, name, "createdAt" FROM "user" WHERE id = $1`,
         [userId],
       );
@@ -88,7 +88,7 @@ export const createPostgresInviteStore = (pool: Pool): InviteStore => ({
         throw new InviteError('authenticated email does not match invite', 'invite.email_mismatch', 403);
       }
 
-      const appUserResult = await queryInTransaction<Row>(pool,
+      const appUserResult = await client.query<Row>(
         `INSERT INTO users (auth_user_id, email, name, created_at)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (auth_user_id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name
@@ -96,14 +96,14 @@ export const createPostgresInviteStore = (pool: Pool): InviteStore => ({
         [userId, user['email'], user['name'], user['createdAt']],
       );
       const appUser = appUserResult.rows[0]!;
-      const membershipResult = await queryInTransaction<Row>(pool,
+      const membershipResult = await client.query<Row>(
         `INSERT INTO memberships (user_id, household_id, role)
          VALUES ($1, $2, $3)
          ON CONFLICT (user_id, household_id) DO UPDATE SET role = memberships.role
          RETURNING user_id, household_id, role`,
         [appUser['id'], invite.householdId, invite.role],
       );
-      await queryInTransaction(pool,
+      await client.query(
         `UPDATE invites SET consumed_at = $2 WHERE id = $1`,
         [invite.id, now],
       );

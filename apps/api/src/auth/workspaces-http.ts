@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Pool } from 'pg';
@@ -6,6 +7,8 @@ import { withTransaction, queryInTransaction } from '../db/pool.js';
 import './request-context.js';
 import type { ReconnectTokenStore } from './reconnect-tokens.js';
 import type { ReconnectSocketRegistry } from './reconnect-sockets.js';
+import type { WorkspaceAccessStore } from './workspace-access.js';
+
 
 type BetterAuth = ReturnType<typeof createBetterAuth>;
 export type WorkspaceKind = 'personal' | 'shared';
@@ -52,7 +55,14 @@ const workspaceBody = z.object({
   kind: z.enum(['personal', 'shared']).default('shared'),
 });
 
-export const registerWorkspaceRoutes = (app: FastifyInstance, opts: { auth: BetterAuth; store: WorkspaceStore; reconnectTokens?: ReconnectTokenStore; reconnectSockets?: ReconnectSocketRegistry }): void => {
+export const registerWorkspaceRoutes = (app: FastifyInstance, opts: {
+  auth: BetterAuth;
+  store: WorkspaceStore;
+  workspaceAccess?: WorkspaceAccessStore;
+  reconnectTokens?: ReconnectTokenStore;
+  reconnectSockets?: ReconnectSocketRegistry;
+}): void => {
+
   const session = async (request: FastifyRequest, reply: FastifyReply): Promise<{ userId: string; sessionId: string } | undefined> => {
     try {
       const context = await getBetterAuthSessionContext(opts.auth, new Headers(request.headers as Record<string, string>));
@@ -106,6 +116,13 @@ export const registerWorkspaceRoutes = (app: FastifyInstance, opts: { auth: Bett
     const authUserId = authSession.userId;
     const parsed = memberParams.safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    if (opts.workspaceAccess) {
+      const access = await opts.workspaceAccess.resolve(authUserId, parsed.data.householdId);
+      if (!access || access.role !== 'owner') {
+        return reply.code(403).send({ code: 'workspace.forbidden', message: 'only an owner can remove an active member' });
+      }
+    }
+
     try {
       await opts.store.removeMember({ authUserId, householdId: parsed.data.householdId, memberUserId: parsed.data.userId });
       const removedSessions = opts.reconnectTokens?.sessionsForUser(parsed.data.userId) ?? [];
@@ -116,6 +133,7 @@ export const registerWorkspaceRoutes = (app: FastifyInstance, opts: { auth: Bett
       return sendWorkspaceError(reply, error);
     }
   });
+
 
   app.post('/workspaces/:householdId/leave', async (request, reply) => {
     const authSession = await session(request, reply);
@@ -233,3 +251,36 @@ export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => ({
     });
   },
 });
+
+export const createInMemoryWorkspaceStore = (): WorkspaceStore => {
+  const workspaces: WorkspaceSummary[] = [];
+  const members: Array<{ householdId: string; member: WorkspaceMember }> = [];
+  return {
+    async list() {
+      return workspaces;
+    },
+    async create(input) {
+      const summary: WorkspaceSummary = {
+        id: randomUUID(),
+        name: input.name,
+        kind: input.kind,
+        role: 'owner',
+      };
+
+      workspaces.push(summary);
+      return summary;
+    },
+    async listMembers(input) {
+      return members.filter((m) => m.householdId === input.householdId).map((m) => m.member);
+    },
+    async removeMember(input) {
+      const idx = members.findIndex((m) => m.householdId === input.householdId && m.member.userId === input.memberUserId);
+      if (idx !== -1) members.splice(idx, 1);
+    },
+    async leave(input) {
+      const idx = members.findIndex((m) => m.householdId === input.householdId && m.member.userId === input.authUserId);
+      if (idx !== -1) members.splice(idx, 1);
+    },
+  };
+};
+
