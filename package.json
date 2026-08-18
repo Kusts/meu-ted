@@ -36,8 +36,10 @@
   "boundary:check": "node scripts/check-pwa-command-boundary.mjs",
   "docs:lint": "node scripts/lint-docs.mjs",
   "plans:check": "node scripts/check-active-plan-status.mjs",
-  "production:smoke:contract": "node --test scripts/production-smoke-contract.test.mjs"
+  "production:smoke:contract": "node --test scripts/production-smoke-contract.test.mjs",
+  "validate:final": "node scripts/run-final-validation.mjs"
   },
+
 
 
   "devDependencies": {
