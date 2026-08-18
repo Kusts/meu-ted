@@ -4,6 +4,8 @@
 // NO financial classification here. The Agent Pi interprets the message.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { createBridgeContextToken } from "./context-token.js";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Evolution GO Webhook Payload
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,7 +40,7 @@ export interface WebhookPayload {
 // Public interfaces (kept stable for server.ts and tests)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type WebhookStatus = 'forwarded' | 'ignored' | 'failed';
+export type WebhookStatus = "forwarded" | "ignored" | "failed";
 
 export interface ProcessedResult {
   status: WebhookStatus;
@@ -70,6 +72,8 @@ export interface SourceMessage {
 export interface SourceMessageStore {
   isProcessed(providerMessageId: string): boolean;
   markProcessed(msg: SourceMessage): void;
+  tryClaim?(providerMessageId: string): boolean | Promise<boolean>;
+
   saveError(providerMessageId: string, error: string): void;
 }
 
@@ -80,7 +84,7 @@ export interface ValidationResult {
 
 export interface ResponseSender {
   send(chatId: string, message: string): Promise<void>;
-  sendPresence?(chatId: string, state: 'composing' | 'paused'): Promise<void>;
+  sendPresence?(chatId: string, state: "composing" | "paused"): Promise<void>;
 }
 
 export interface PiClient {
@@ -92,22 +96,30 @@ export interface PiClient {
       chatId: string;
       providerMessageId: string;
       idempotencyKey?: string;
-    }
-  ): Promise<{ success: boolean; reason?: string; data?: { message?: string } }>;
+      contextToken?: string;
+    },
+  ): Promise<{
+    success: boolean;
+    reason?: string;
+    data?: { message?: string };
+  }>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Anti-spam: promotional noise filter
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PROMO_KEYWORD_RE = /\b(CUPOM|PROMO|OFERTA|DESCONTO|EXCLUSIVO|IMPERD[IÍ]VEL|REL[AÂ]MPAGO|CLIQUE AQUI|GANHE DINHEIRO|PROMOÇÃO)\b/i;
-const SHORT_URL_RE = /(?:bit\.ly|amzn\.to|tinyurl\.com|go\.to|cut\.ly|short\.to|buff\.ly)\b/i;
+const PROMO_KEYWORD_RE =
+  /\b(CUPOM|PROMO|OFERTA|DESCONTO|EXCLUSIVO|IMPERD[IÍ]VEL|REL[AÂ]MPAGO|CLIQUE AQUI|GANHE DINHEIRO|PROMOÇÃO)\b/i;
+const SHORT_URL_RE =
+  /(?:bit\.ly|amzn\.to|tinyurl\.com|go\.to|cut\.ly|short\.to|buff\.ly)\b/i;
 // Matches promotional emoji set (with u flag for proper Unicode scalar values)
 const PROMO_EMOJI_RE = /[🚨🎟️✅🎁🔥🎯🚀📢]/u;
 // Spending/action keywords: allow-list overrides promo detection.
 // "paguei com desconto" → "paguei" wins. "ganhei um desconto" → "ganhei" wins.
 // "desconto" alone is NOT a financial action (it's a promo noun) — handled by PROMO_KEYWORD_RE.
-const FINANCIAL_ACTION_RE = /\b(gastei|paguei|gastou|pagou|comprei|comprou|vendi|vendeu|economizei|economizar|poupei|poupar|investi|investiu|meta|juntar|boleto|pago|ganhei|transferi|transferiu|transferir|pix|recebi|recebeu|conta|fatura|despesa|receita|salario|salário)\b/i;
+const FINANCIAL_ACTION_RE =
+  /\b(gastei|paguei|gastou|pagou|comprei|comprou|vendi|vendeu|economizei|economizar|poupei|poupar|investi|investiu|meta|juntar|boleto|pago|ganhei|transferi|transferiu|transferir|pix|recebi|recebeu|conta|fatura|despesa|receita|salario|salário)\b/i;
 
 export function isLikelyPromotionalNoise(text: string): boolean {
   // Short URLs are always spam
@@ -118,7 +130,7 @@ export function isLikelyPromotionalNoise(text: string): boolean {
   if (PROMO_KEYWORD_RE.test(text)) return true;
   // Short emoji-only promo phrases like "✅ Madesa Kit" are spam
   if (PROMO_EMOJI_RE.test(text)) {
-    const stripped = text.replace(/\s/g, '');
+    const stripped = text.replace(/\s/g, "");
     if (stripped.length < 25) return true;
   }
   return false;
@@ -129,7 +141,7 @@ export function isLikelyPromotionalNoise(text: string): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function validateEventType(payload: WebhookPayload): ValidationResult {
-  if (payload.event !== 'Message') {
+  if (payload.event !== "Message") {
     return { valid: false, reason: `evento ignorado: ${payload.event}` };
   }
   return { valid: true };
@@ -137,32 +149,32 @@ export function validateEventType(payload: WebhookPayload): ValidationResult {
 
 export function validateInstanceToken(
   payload: WebhookPayload,
-  expectedToken: string
+  expectedToken: string,
 ): ValidationResult {
   if (!expectedToken) return { valid: true };
   if (payload.instanceToken !== expectedToken) {
-    return { valid: false, reason: 'instanceToken inválido' };
+    return { valid: false, reason: "instanceToken inválido" };
   }
   return { valid: true };
 }
 
 export function validateGroup(
   payload: WebhookPayload,
-  registry: UserRegistry
+  registry: UserRegistry,
 ): ValidationResult {
   if (!registry.isGroupAllowed(payload.data.Info.Chat)) {
-    return { valid: false, reason: 'grupo não permitido' };
+    return { valid: false, reason: "grupo não permitido" };
   }
   return { valid: true };
 }
 
 export function validateSender(
   payload: WebhookPayload,
-  registry: UserRegistry
+  registry: UserRegistry,
 ): ValidationResult {
   const phone = extractPhone(payload.data.Info.Sender);
   if (!phone || !registry.isPhoneRegistered(phone)) {
-    return { valid: false, reason: 'telefone não cadastrado' };
+    return { valid: false, reason: "telefone não cadastrado" };
   }
   return { valid: true };
 }
@@ -173,20 +185,20 @@ export function validateSender(
 
 export function extractPhone(remoteJid: string): string {
   return remoteJid
-    .replace(/@s\.whatsapp\.net$/, '')
-    .replace(/@g\.us$/, '')
-    .replace(/:\d+$/, '');
+    .replace(/@s\.whatsapp\.net$/, "")
+    .replace(/@g\.us$/, "")
+    .replace(/:\d+$/, "");
 }
 
 export function extractMessageText(payload: WebhookPayload): string {
   const msg = payload.data.Message;
-  if (!msg) return '';
+  if (!msg) return "";
   if (msg.conversation) return msg.conversation;
   if (msg.extendedTextMessage?.text) return msg.extendedTextMessage.text;
   if (msg.imageMessage?.caption) return msg.imageMessage.caption;
   if (msg.videoMessage?.caption) return msg.videoMessage.caption;
   if (msg.documentMessage?.title) return msg.documentMessage.title;
-  return '';
+  return "";
 }
 
 export function buildSourceMessage(payload: WebhookPayload): SourceMessage {
@@ -210,23 +222,23 @@ export function buildSourceMessage(payload: WebhookPayload): SourceMessage {
 
 export function buildBridgePrompt(
   source: SourceMessage,
-  householdId: string
+  householdId: string,
 ): string {
   const isoTimestamp = new Date(source.timestamp * 1000).toISOString();
   return [
-    '[WhatsApp Message]',
+    "[WhatsApp Message]",
     `householdId: ${householdId}`,
     `chatId: ${source.remoteJid}`,
     `senderPhone: ${source.senderPhone}`,
-    `pushName: ${source.pushName ?? ''}`,
+    `pushName: ${source.pushName ?? ""}`,
     `providerMessageId: ${source.providerMessageId}`,
     `timestamp: ${isoTimestamp}`,
     `# timestamp acima é a data padrão do gasto`,
     `source: whatsapp`,
-    '',
-    'User message:',
+    "",
+    "User message:",
     source.text,
-  ].join('\n');
+  ].join("\n");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -235,11 +247,14 @@ export function buildBridgePrompt(
 
 function firePresence(
   chatId: string,
-  state: 'composing' | 'paused',
-  sender: ResponseSender
+  state: "composing" | "paused",
+  sender: ResponseSender,
 ): void {
   const result = sender.sendPresence?.(chatId, state);
-  if (result?.catch) result.catch(() => {/* silencia erro de presence */});
+  if (result?.catch)
+    result.catch(() => {
+      /* silencia erro de presence */
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -261,82 +276,125 @@ export async function processWebhook(
   sourceStore: SourceMessageStore,
   piClient: PiClient,
   responseSender: ResponseSender,
-  allowDirectMessages = true
+  allowDirectMessages = true,
 ): Promise<ProcessedResult> {
   // 1) Only Message events
   const eventCheck = validateEventType(payload);
   if (!eventCheck.valid) {
-    return { status: 'ignored', reason: eventCheck.reason };
+    return { status: "ignored", reason: eventCheck.reason };
   }
 
   // 2) Token
   const tokenCheck = validateInstanceToken(payload, expectedInstanceToken);
   if (!tokenCheck.valid) {
-    return { status: 'failed', reason: tokenCheck.reason };
+    return { status: "failed", reason: tokenCheck.reason };
   }
 
   // 3) Skip own messages
   if (payload.data.Info.IsFromMe) {
-    return { status: 'ignored', reason: 'mensagem própria ignorada' };
+    return { status: "ignored", reason: "mensagem própria ignorada" };
   }
 
   // 4) Group (only for group chats)
   if (payload.data.Info.IsGroup) {
     const groupCheck = validateGroup(payload, userRegistry);
     if (!groupCheck.valid) {
-      return { status: 'failed', reason: groupCheck.reason };
+      return { status: "failed", reason: groupCheck.reason };
     }
   }
 
   // 4b) Block direct chats when group-only mode is active
   if (!payload.data.Info.IsGroup && !allowDirectMessages) {
-    return { status: 'ignored', reason: 'mensagem direta ignorada' };
+    return { status: "ignored", reason: "mensagem direta ignorada" };
   }
 
   // 5) Sender
   const senderCheck = validateSender(payload, userRegistry);
   if (!senderCheck.valid) {
-    return { status: 'failed', reason: senderCheck.reason };
+    return { status: "failed", reason: senderCheck.reason };
   }
 
   // 6) Build source message
   const sourceMsg = buildSourceMessage(payload);
 
   // 7) Idempotency by providerMessageId
-  if (sourceStore.isProcessed(sourceMsg.providerMessageId)) {
+  if (typeof sourceStore.tryClaim === "function") {
+    const claimed = await sourceStore.tryClaim(sourceMsg.providerMessageId);
+    if (!claimed) {
+      return {
+        status: "ignored",
+        sourceMessageId: sourceMsg.id,
+        reason: "mensagem duplicada",
+      };
+    }
+  } else if (sourceStore.isProcessed(sourceMsg.providerMessageId)) {
     return {
-      status: 'ignored',
+      status: "ignored",
       sourceMessageId: sourceMsg.id,
-      reason: 'mensagem duplicada',
+      reason: "mensagem duplicada",
     };
   }
 
   // 8) Empty text → ignore
   if (!sourceMsg.text.trim()) {
     sourceStore.markProcessed(sourceMsg);
-    return { status: 'ignored', sourceMessageId: sourceMsg.id, reason: 'texto vazio' };
+    return {
+      status: "ignored",
+      sourceMessageId: sourceMsg.id,
+      reason: "texto vazio",
+    };
   }
 
   // 9) Promotional noise → ignore before Pi call
   if (isLikelyPromotionalNoise(sourceMsg.text)) {
     sourceStore.markProcessed(sourceMsg);
-    return { status: 'ignored', sourceMessageId: sourceMsg.id, reason: 'texto promocional ignorado' };
+    return {
+      status: "ignored",
+      sourceMessageId: sourceMsg.id,
+      reason: "texto promocional ignorado",
+    };
   }
 
   // 9) Fire composing (non-blocking) and call Pi
-  firePresence(sourceMsg.remoteJid, 'composing', responseSender);
+  firePresence(sourceMsg.remoteJid, "composing", responseSender);
 
-  const groupHousehold = userRegistry.getHouseholdIdForGroup(sourceMsg.remoteJid);
-  const householdId = groupHousehold ?? process.env.DEFAULT_HOUSEHOLD_ID ?? 'default';
+  const groupHousehold = userRegistry.getHouseholdIdForGroup(
+    sourceMsg.remoteJid,
+  );
+  const householdId =
+    groupHousehold ?? process.env.DEFAULT_HOUSEHOLD_ID ?? "default";
   const prompt = buildBridgePrompt(sourceMsg, householdId);
+  const idempotencyKey = `whatsapp:${sourceMsg.providerMessageId}`;
+  const contextSecret = (process.env.PI_CONTEXT_TOKEN_SECRET ?? "").trim();
+  if (!contextSecret) {
+    return {
+      status: "failed",
+      reason: "context token secret is required",
+      sourceMessageId: sourceMsg.id,
+    };
+  }
 
   try {
+    const contextToken = await createBridgeContextToken(
+      {
+        channelActorId: sourceMsg.senderPhone,
+        workspaceId: householdId,
+        chatId: sourceMsg.remoteJid,
+        providerMessageId: sourceMsg.providerMessageId,
+        requestId: idempotencyKey,
+      },
+      contextSecret,
+    );
+
     const result = await piClient.send(prompt, sourceMsg.senderPhone, {
-      source: 'whatsapp',
+      source: "whatsapp",
       chatId: sourceMsg.remoteJid,
       providerMessageId: sourceMsg.providerMessageId,
-      idempotencyKey: `whatsapp:${sourceMsg.providerMessageId}`,
+      idempotencyKey,
+      contextToken,
     });
+
+
 
     if (result.success && result.data?.message) {
       const normalized = normalizeOutgoingMessage(result.data.message);
@@ -345,33 +403,42 @@ export async function processWebhook(
       } catch (err) {
         // Non-critical: Evolution GO may reject unregistered numbers in test/dev.
         // The message was forwarded to Pi successfully — log and continue.
-        console.warn('[webhook-handler] responseSender.send() failed (non-critical):', err instanceof Error ? err.message : String(err));
+        console.warn(
+          "[webhook-handler] responseSender.send() failed (non-critical):",
+          err instanceof Error ? err.message : String(err),
+        );
       }
       sourceStore.markProcessed(sourceMsg);
       return {
-        status: 'forwarded',
+        status: "forwarded",
         response: normalized,
         sourceMessageId: sourceMsg.id,
       };
     }
 
-    const reason = result.reason ?? 'erro';
+    const reason = result.reason ?? "erro";
     sourceMsg.errorReason = reason;
     sourceStore.saveError(sourceMsg.providerMessageId, reason);
     try {
-      await responseSender.send(sourceMsg.remoteJid, '⚠️ Tive um problema aqui. Pode tentar de novo em instantes?');
+      await responseSender.send(
+        sourceMsg.remoteJid,
+        "⚠️ Tive um problema aqui. Pode tentar de novo em instantes?",
+      );
     } catch (err) {
-      console.warn('[webhook-handler] fallback send() failed (non-critical):', err instanceof Error ? err.message : String(err));
+      console.warn(
+        "[webhook-handler] fallback send() failed (non-critical):",
+        err instanceof Error ? err.message : String(err),
+      );
     }
     sourceStore.markProcessed(sourceMsg);
-    return { status: 'failed', reason, sourceMessageId: sourceMsg.id };
+    return { status: "failed", reason, sourceMessageId: sourceMsg.id };
   } catch (err) {
-    const reason = err instanceof Error ? err.message : 'erro desconhecido';
-    console.error('[webhook-handler] EXCEPTION:', reason);
+    const reason = err instanceof Error ? err.message : "erro desconhecido";
+    console.error("[webhook-handler] EXCEPTION:", reason);
     sourceMsg.errorReason = reason;
     sourceStore.saveError(sourceMsg.providerMessageId, reason);
-    return { status: 'failed', reason, sourceMessageId: sourceMsg.id };
+    return { status: "failed", reason, sourceMessageId: sourceMsg.id };
   } finally {
-    firePresence(sourceMsg.remoteJid, 'paused', responseSender);
+    firePresence(sourceMsg.remoteJid, "paused", responseSender);
   }
 }

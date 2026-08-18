@@ -2,10 +2,14 @@
 // WhatsApp Bridge — server tests
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { createApp } from './server.js';
 import type { PiClient, UserRegistry, SourceMessageStore, ResponseSender } from './webhook-handler.js';
+
+beforeEach(() => {
+  process.env.PI_CONTEXT_TOKEN_SECRET = 'test-secret';
+});
 
 function makePi(): PiClient {
   return {

@@ -3,6 +3,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export { createPiClient, getAgentRuntime, getWriteMode } from './pi-client-factory.js';
+export { AgentRunner } from './agent-runner.js';
+export type { AgentRunnerOptions, AgentResponse, AgentMessageContext } from './agent-runner.js';
+export { ProcessManager } from './process-manager.js';
+export type { ProcessManagerOptions } from './process-manager.js';
 
 export type { PiClient } from './webhook-handler.js';
 
