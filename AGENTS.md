@@ -5,3 +5,5 @@
 - Backend de produção roda na Hostinger VPS, não no setup local Windows pm2/cloudflared.
 - Before assuming the live origin, inspect `../vps-hostinger/` for VPS access, deploy, restart, and service topology.
 - Local `pm2` / `cloudflared` processes podem existir para experimentos ou fluxos antigos, mas não são fonte de verdade de produção sem confirmação explícita.
+- Documentos canônicos de arquitetura residem em `docs/` (`PRODUCT.md`, `ARCHITECTURE-CURRENT.md`, `ARCHITECTURE-TARGET.md`, `ROADMAP.md`, `docs/adr/`).
+- Todas as mutações financeiras passam pela API autoritativa (`apps/api`) com controle estrito de workspace.
