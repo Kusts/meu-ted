@@ -4,7 +4,7 @@
  * Registers all financial assistant tools as Pi tools.
  * The Pi agent calls these tools to manage household finances via WhatsApp.
  *
- * Tools execute SQL directly against the Postgres database (DATABASE_URL).
+ * Tools call authenticated API adapters; no financial SQL runs in the Pi extension.
  * Bridge remains text-only: WhatsApp → prompt → Pi → tool → response → WhatsApp.
  *
  * Boundary: zero financial logic in Node. All decisions made by Pi agent via tools.
@@ -15,10 +15,8 @@ import type { AgentToolResult, ExtensionAPI, ToolDefinition } from "@earendil-wo
 // Read tools
 import { listAccountsTool } from "./tools/list_accounts.js";
 import { listCategoriesTool } from "./tools/list_categories.js";
-import { getBalanceTool } from "./tools/get_balance.js";
-import { getMonthSummaryTool } from "./tools/get_month_summary.js";
 import { listRecentTransactionsTool } from "./tools/list_recent_transactions.js";
-import { getPendingOperationTool } from "./tools/get_pending_operation.js";
+import { getPendingOperationTool } from "./generated/http-tools.js";
 import { auditLogsTool } from "./tools/audit_logs.js";
 
 // Write tools
@@ -33,8 +31,7 @@ import { updateCategoryTool } from "./tools/update_category.js";
 import { deactivateCategoryTool } from "./tools/deactivate_category.js";
 import { updateTransactionTool } from "./tools/update_transaction.js";
 import { deleteTransactionTool } from "./tools/delete_transaction.js";
-import { confirmPendingOperationTool } from "./tools/confirm_pending_operation.js";
-import { cancelPendingOperationTool } from "./tools/cancel_pending_operation.js";
+import { autoCreateFromTemplatesTool, confirmPendingOperationTool, cancelPendingOperationTool, getBalanceTool, getMonthSummaryTool, listRecurringPurchasesTool, refreshPayableStatusTool } from "./generated/http-tools.js";
 import { undoLastActionTool } from "./tools/undo_last_action.js";
 
 // Credit card tools
@@ -49,7 +46,7 @@ import { checkCardLimits } from "./tools/check_card_limits.js";
 import { refreshStatements } from "./tools/refresh_statements.js";
 
 // Recurring purchases
-import { createRecurringPurchase, postDueRecurring, listRecurringPurchases } from "./tools/create_recurring_purchase.js";
+import { createRecurringPurchase, postDueRecurring } from "./tools/create_recurring_purchase.js";
 
 // Spending analysis
 import { spendingInsights } from "./tools/spending_insights.js";
@@ -67,13 +64,11 @@ import {
   markAccountPaid,
   cancelAccountPayable,
   checkPayableReminders,
-  refreshPayableStatus,
 } from "./tools/accounts_payable.js";
 import {
   createPayableTemplate,
   createPayableFromTemplate,
   listPayableTemplates,
-  autoCreateFromTemplates,
 } from "./tools/payable_templates.js";
 import { paymentScore } from "./tools/payment_score.js";
 import { monthlyProjection } from "./tools/monthly_projection.js";
@@ -179,7 +174,7 @@ export default function (pi: ExtensionAPI) {
   // Recurring purchases
   registerTool(pi, createRecurringPurchase);
   registerTool(pi, postDueRecurring);
-  registerTool(pi, listRecurringPurchases);
+  registerTool(pi, listRecurringPurchasesTool);
 
   // Spending analysis
   registerTool(pi, spendingInsights);
@@ -200,13 +195,13 @@ export default function (pi: ExtensionAPI) {
   registerTool(pi, markAccountPaid);
   registerTool(pi, cancelAccountPayable);
   registerTool(pi, checkPayableReminders);
-  registerTool(pi, refreshPayableStatus);
+  registerTool(pi, refreshPayableStatusTool);
 
   // Accounts Payable Templates
   registerTool(pi, createPayableTemplate);
   registerTool(pi, createPayableFromTemplate);
   registerTool(pi, listPayableTemplates);
-  registerTool(pi, autoCreateFromTemplates);
+  registerTool(pi, autoCreateFromTemplatesTool);
 
   // Score & Analytics
   registerTool(pi, paymentScore);

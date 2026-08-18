@@ -498,6 +498,7 @@ const specs = [
         "schema": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 200,
           "default": 50
         }
       },
@@ -2081,6 +2082,17 @@ const specs = [
         }
       },
       {
+        "name": "scheduleWindowMinutes",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1440
+        }
+      },
+      {
         "name": "daysOfWeek",
         "in": "body",
         "required": false,
@@ -2103,6 +2115,17 @@ const specs = [
           "type": "integer",
           "minimum": 0,
           "maximum": 90
+        }
+      },
+      {
+        "name": "timezone",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
         }
       }
     ]
@@ -3015,6 +3038,64 @@ const specs = [
     "shadow": false,
     "result": null,
     "parameters": []
+  },
+  {
+    "name": "spending_insights",
+    "label": "spending_insights",
+    "description": "Compare spending vs history, detect anomalies and show % of income",
+    "method": "GET",
+    "path": "/insights/spending",
+    "idempotency": false,
+    "shadow": false,
+    "result": null,
+    "parameters": [
+      {
+        "name": "householdId",
+        "in": "query",
+        "required": true,
+        "context": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      {
+        "name": "yearMonth",
+        "in": "query",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}$"
+        }
+      },
+      {
+        "name": "insightType",
+        "in": "query",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "enum": [
+            "all",
+            "comparison",
+            "anomalies",
+            "income-share"
+          ]
+        }
+      },
+      {
+        "name": "lookbackMonths",
+        "in": "query",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        }
+      }
+    ]
   }
 ] as const;
 type ToolSpec = typeof specs[number];
@@ -3037,6 +3118,22 @@ function project(spec: ToolSpec, response: JsonObject): JsonObject {
     return [key, descriptor.equals === undefined ? value : value === descriptor.equals];
   })));
   return { success: true, ...response, [result.key]: mapped };
+}
+
+function extractIntentionId(params: ToolParams, ctx?: unknown): string | undefined {
+  if (typeof params.intentionId === "string" && params.intentionId.trim()) return params.intentionId.trim();
+  if (ctx && typeof ctx === "object" && "sessionManager" in ctx) {
+    const session = (ctx as { sessionManager?: { getBranch?: () => Array<{ message?: { content?: string } }> } }).sessionManager;
+    const branch = session?.getBranch?.();
+    if (Array.isArray(branch)) {
+      for (const item of branch) {
+        const text = typeof item?.message?.content === "string" ? item.message.content : "";
+        const match = text.match(/\[PI_INTENTION_ID=([^\]]+)\]/);
+        if (match?.[1]) return match[1].trim();
+      }
+    }
+  }
+  return undefined;
 }
 
 function createTool(spec: ToolSpec) {
@@ -3090,7 +3187,7 @@ function createTool(spec: ToolSpec) {
   }),
   "list_recent_transactions": Type.Object({
     "householdId": Type.String({"format":"uuid"}),
-    "limit": Type.Optional(Type.Integer({"minimum":1,"default":50})),
+    "limit": Type.Optional(Type.Integer({"minimum":1,"maximum":200,"default":50})),
     "offset": Type.Optional(Type.Integer({"minimum":0,"maximum":100000,"default":0})),
     "accountId": Type.Optional(Type.String({"format":"uuid"})),
     "startDate": Type.Optional(Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"})),
@@ -3264,8 +3361,10 @@ function createTool(spec: ToolSpec) {
     "enabled": Type.Boolean({}),
     "scheduleHour": Type.Optional(Type.Integer({"minimum":0,"maximum":23})),
     "scheduleMinute": Type.Optional(Type.Integer({"minimum":0,"maximum":59})),
+    "scheduleWindowMinutes": Type.Optional(Type.Integer({"minimum":1,"maximum":1440})),
     "daysOfWeek": Type.Optional(Type.Array(Type.Integer({"minimum":0,"maximum":6}))),
     "thresholdDays": Type.Optional(Type.Integer({"minimum":0,"maximum":90})),
+    "timezone": Type.Optional(Type.String({"minLength":1,"maxLength":64})),
   }),
   "list_notifications": Type.Object({
     "householdId": Type.Optional(Type.String({})),
@@ -3372,13 +3471,19 @@ function createTool(spec: ToolSpec) {
   "undo_last_action": Type.Object({
 
   }),
+  "spending_insights": Type.Object({
+    "householdId": Type.String({"format":"uuid"}),
+    "yearMonth": Type.Optional(Type.String({"pattern":"^\\d{4}-\\d{2}$"})),
+    "insightType": Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("comparison"), Type.Literal("anomalies"), Type.Literal("income-share")])),
+    "lookbackMonths": Type.Optional(Type.Integer({"minimum":1,"maximum":12})),
+  }),
   } as const;
   return {
     name: spec.name,
     label: spec.label,
     description: spec.description,
     parameters: properties[spec.name as keyof typeof properties],
-    async execute(toolCallIdOrParams: string | ToolParams, paramsOrSignal?: ToolParams | AbortSignal, _signal?: AbortSignal, onUpdate?: (update: { content: { type: "text"; text: string }[] }) => void) {
+    async execute(toolCallIdOrParams: string | ToolParams, paramsOrSignal?: ToolParams | AbortSignal, _signal?: AbortSignal, onUpdate?: (update: { content: { type: "text"; text: string }[] }) => void, ctx?: unknown) {
       const toolCallId = typeof toolCallIdOrParams === "string" ? toolCallIdOrParams : "generated-call";
       const params = (typeof toolCallIdOrParams === "string" ? paramsOrSignal : toolCallIdOrParams) as ToolParams;
       const disabled = capabilityDisabled(spec.name);
@@ -3393,7 +3498,7 @@ function createTool(spec: ToolSpec) {
       const headers = Object.fromEntries(spec.parameters
         .filter((parameter) => parameter.in === "header" && params[parameter.name] !== undefined)
         .map((parameter) => [parameter.name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`), params[parameter.name] as string | number]));
-      const intentionId = typeof params.intentionId === "string" && params.intentionId.trim() ? params.intentionId.trim() : undefined;
+      const intentionId = extractIntentionId(params, ctx);
       const idempotencyKey = spec.idempotency ? (intentionId ?? String(params.idempotencyKey ?? toolCallId)) : undefined;
       const response = await requestPiApiJson<JsonObject>(spec.method, resolvedPath, { query, body, headers, idempotencyKey });
       const projected = project(spec, response);
@@ -3455,3 +3560,4 @@ export const listStatementsTool = generatedHttpTools.find((tool) => tool.name ==
 export const getStatementDetailsTool = generatedHttpTools.find((tool) => tool.name === "get_statement_details")!;
 export const updateBudgetTool = generatedHttpTools.find((tool) => tool.name === "update_budget")!;
 export const undoLastActionTool = generatedHttpTools.find((tool) => tool.name === "undo_last_action")!;
+export const spendingInsightsTool = generatedHttpTools.find((tool) => tool.name === "spending_insights")!;

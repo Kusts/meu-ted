@@ -44,7 +44,7 @@ const addPathSpec = (routePath, method, operation, tool) => {
     method: method.toUpperCase(),
     path: routePath,
     idempotency: Boolean(tool.idempotency),
-    shadow: tool.shadow ?? method === 'get',
+    shadow: method.toLowerCase() === 'get' && Boolean(tool.shadow ?? true),
     result: tool.result ?? null,
     parameters: parameters.map((parameter) => ({ name: parameter.name, in: parameter.in, required: Boolean(parameter.required), context: Boolean(parameter['x-pi-context']), schema: parameter.schema })),
   });
@@ -124,6 +124,22 @@ function project(spec: ToolSpec, response: JsonObject): JsonObject {
   return { success: true, ...response, [result.key]: mapped };
 }
 
+function extractIntentionId(params: ToolParams, ctx?: unknown): string | undefined {
+  if (typeof params.intentionId === "string" && params.intentionId.trim()) return params.intentionId.trim();
+  if (ctx && typeof ctx === "object" && "sessionManager" in ctx) {
+    const session = (ctx as { sessionManager?: { getBranch?: () => Array<{ message?: { content?: string } }> } }).sessionManager;
+    const branch = session?.getBranch?.();
+    if (Array.isArray(branch)) {
+      for (const item of branch) {
+        const text = typeof item?.message?.content === "string" ? item.message.content : "";
+        const match = text.match(/\\[PI_INTENTION_ID=([^\\]]+)\\]/);
+        if (match?.[1]) return match[1].trim();
+      }
+    }
+  }
+  return undefined;
+}
+
 function createTool(spec: ToolSpec) {
   const properties = {
 ${specs.map((spec) => `  ${JSON.stringify(spec.name)}: Type.Object({\n${parameterEntries(spec)}\n  }),`).join('\n')}
@@ -133,7 +149,7 @@ ${specs.map((spec) => `  ${JSON.stringify(spec.name)}: Type.Object({\n${paramete
     label: spec.label,
     description: spec.description,
     parameters: properties[spec.name as keyof typeof properties],
-    async execute(toolCallIdOrParams: string | ToolParams, paramsOrSignal?: ToolParams | AbortSignal, _signal?: AbortSignal, onUpdate?: (update: { content: { type: "text"; text: string }[] }) => void) {
+    async execute(toolCallIdOrParams: string | ToolParams, paramsOrSignal?: ToolParams | AbortSignal, _signal?: AbortSignal, onUpdate?: (update: { content: { type: "text"; text: string }[] }) => void, ctx?: unknown) {
       const toolCallId = typeof toolCallIdOrParams === "string" ? toolCallIdOrParams : "generated-call";
       const params = (typeof toolCallIdOrParams === "string" ? paramsOrSignal : toolCallIdOrParams) as ToolParams;
       const disabled = capabilityDisabled(spec.name);
@@ -148,7 +164,7 @@ ${specs.map((spec) => `  ${JSON.stringify(spec.name)}: Type.Object({\n${paramete
       const headers = Object.fromEntries(spec.parameters
         .filter((parameter) => parameter.in === "header" && params[parameter.name] !== undefined)
         .map((parameter) => [parameter.name.replace(/[A-Z]/g, (letter) => \`-\${letter.toLowerCase()}\`), params[parameter.name] as string | number]));
-      const intentionId = typeof params.intentionId === "string" && params.intentionId.trim() ? params.intentionId.trim() : undefined;
+      const intentionId = extractIntentionId(params, ctx);
       const idempotencyKey = spec.idempotency ? (intentionId ?? String(params.idempotencyKey ?? toolCallId)) : undefined;
       const response = await requestPiApiJson<JsonObject>(spec.method, resolvedPath, { query, body, headers, idempotencyKey });
       const projected = project(spec, response);
