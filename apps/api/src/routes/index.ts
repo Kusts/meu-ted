@@ -34,7 +34,12 @@ import {
   createInMemoryShadowDivergenceStore,
   type ShadowDivergenceStore,
 } from "../observability/shadow-divergence.js";
+import {
+  createInMemoryPhoneWorkspaceStore,
+  type PhoneWorkspaceStore,
+} from "../auth/phone-workspace.js";
 import { registerShadowObservabilityRoutes } from "./shadow-observability.js";
+import { registerBridgeContextRoutes } from "./bridge-context.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerPendingOperationRoutes } from "./pending-operations.js";
 import { registerAccountRoutes } from "./accounts.js";
@@ -86,6 +91,8 @@ export type RouteDeps = {
   pushDelivery?: PushDelivery;
   adoptionStore?: AdoptionStore;
   shadowDivergenceStore?: ShadowDivergenceStore;
+  phoneWorkspaceStore?: PhoneWorkspaceStore;
+  delegationSecret?: string;
   vapidPublicKey?: string;
   auditLogs?: AuditLogStore;
   ownershipTransferStore?: OwnershipTransferStore;
@@ -196,6 +203,10 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   registerShadowObservabilityRoutes(app, {
     shadowDivergence: deps.shadowDivergenceStore ?? createInMemoryShadowDivergenceStore(),
     resolveToken,
+  });
+  registerBridgeContextRoutes(app, {
+    phoneWorkspace: deps.phoneWorkspaceStore ?? createInMemoryPhoneWorkspaceStore(),
+    delegationSecret: deps.delegationSecret ?? process.env.PI_DELEGATION_SECRET ?? "default-delegation-secret-for-tests",
   });
   const authOpts: Parameters<typeof registerAuthRoutes>[1] = {
     resolveToken,

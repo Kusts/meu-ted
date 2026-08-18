@@ -13,7 +13,7 @@ const fromBase64Url = (value: string): Uint8Array => new Uint8Array(Buffer.from(
 const encodeJson = (value: unknown): string => toBase64Url(encoder.encode(JSON.stringify(value)));
 const importKey = (secret: string) => crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
 
-export const createDelegatedTokenForTest = async (input: DelegatedTurnInput, secret: string, nowMs = Date.now()): Promise<string> => {
+export const createDelegatedTurnToken = async (input: DelegatedTurnInput, secret: string, nowMs = Date.now()): Promise<string> => {
   if (!secret) throw new Error('delegation secret is required');
   if (!input.actorId || !input.workspaceId || !input.requestId || !['owner', 'member'].includes(input.role) || input.capabilities.length === 0 || input.capabilities.some((capability) => typeof capability !== 'string' || capability.length === 0)) throw new Error('delegation claims are invalid');
   const iat = Math.floor(nowMs / 1_000);
@@ -22,6 +22,9 @@ export const createDelegatedTokenForTest = async (input: DelegatedTurnInput, sec
   const signature = await crypto.subtle.sign('HMAC', await importKey(secret), encoder.encode(`${header}.${payload}`));
   return `${header}.${payload}.${toBase64Url(new Uint8Array(signature))}`;
 };
+
+export const createDelegatedTokenForTest = createDelegatedTurnToken;
+
 
 export const verifyDelegatedTurnToken = async (token: string, secret: string, nowMs = Date.now()): Promise<DelegatedTurnClaims> => {
   try {
