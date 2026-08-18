@@ -2885,6 +2885,18 @@
           }
         }
       }
+    },
+    "/pending-operations/undo": {
+      "post": {
+        "operationId": "undo_last_action",
+        "summary": "Undo the last eligible action of the actor and workspace",
+        "x-pi-tool": {
+          "label": "Undo Last Action",
+          "shadow": false,
+          "idempotency": true
+        },
+        "parameters": []
+      }
     }
   }
 }

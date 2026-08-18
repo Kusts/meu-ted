@@ -3004,6 +3004,17 @@ const specs = [
         }
       }
     ]
+  },
+  {
+    "name": "undo_last_action",
+    "label": "Undo Last Action",
+    "description": "Undo the last eligible action of the actor and workspace",
+    "method": "POST",
+    "path": "/pending-operations/undo",
+    "idempotency": true,
+    "shadow": false,
+    "result": null,
+    "parameters": []
   }
 ] as const;
 type ToolSpec = typeof specs[number];
@@ -3358,6 +3369,9 @@ function createTool(spec: ToolSpec) {
     "amountCents": Type.Optional(Type.Integer({"minimum":1})),
     "alertThreshold": Type.Optional(Type.Integer({"minimum":1,"maximum":100})),
   }),
+  "undo_last_action": Type.Object({
+
+  }),
   } as const;
   return {
     name: spec.name,
@@ -3440,3 +3454,4 @@ export const payStatementTool = generatedHttpTools.find((tool) => tool.name === 
 export const listStatementsTool = generatedHttpTools.find((tool) => tool.name === "list_statements")!;
 export const getStatementDetailsTool = generatedHttpTools.find((tool) => tool.name === "get_statement_details")!;
 export const updateBudgetTool = generatedHttpTools.find((tool) => tool.name === "update_budget")!;
+export const undoLastActionTool = generatedHttpTools.find((tool) => tool.name === "undo_last_action")!;

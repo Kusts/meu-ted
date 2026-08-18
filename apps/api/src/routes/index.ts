@@ -65,6 +65,7 @@ export type RouteDeps = {
   idempotency?: IdempotencyStore;
   pendingStore?: PendingOperationStore;
   pendingExecutor?: PendingOperationExecutor;
+  undoService?: import('../approvals/undo.js').UndoService;
   defaultHouseholdId?: string;
   cardStore?: CardStore;
   payableStore?: PayableStore;
@@ -132,6 +133,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     store: deps.pendingStore ?? createInMemoryPendingOperationStore(),
     resolveToken,
     ...(deps.pendingExecutor ? { executor: deps.pendingExecutor } : {}),
+    ...(deps.undoService ? { undoService: deps.undoService } : {}),
   });
   registerAdoptionRoutes(app, {
     store: deps.adoptionStore ?? createInMemoryAdoptionStore(),

@@ -28,6 +28,7 @@ import { createInMemoryPushSubscriptionStore } from "../src/push/store.js";
 import type { PushDelivery } from "../src/push/delivery.js";
 import type { AdoptionStore } from "../src/observability/adoption.js";
 import type { PendingOperationStore } from "../src/approvals/pending.js";
+import { createUndoService } from "../src/approvals/undo.js";
 export type TestAppOptions = {
   clock?: () => Date;
 };
@@ -135,12 +136,13 @@ export const buildTestApp = (
   const auditStore =
     auditLogsSeed !== undefined
       ? createInMemoryAuditLogStore(auditLogsSeed)
-      : optional.find(
+      : (optional.find(
           (value): value is AuditLogStore =>
             typeof value === "object" &&
             value !== null &&
             typeof (value as AuditLogStore).listAuditLogs === "function",
-        );
+        ) ?? createInMemoryAuditLogStore());
+  const undoService = createUndoService({ auditLogs: auditStore, writes });
   const ownershipTransferStore = optional.find(
     (value): value is OwnershipTransferStore =>
       typeof value === "object" &&
@@ -192,7 +194,8 @@ export const buildTestApp = (
     ...(pushDelivery ? { pushDelivery } : {}),
     ...(pendingStore ? { pendingStore } : {}),
     ...(adoptionStore ? { adoptionStore } : {}),
-    ...(auditStore ? { auditLogs: auditStore } : {}),
+    auditLogs: auditStore,
+    undoService,
     ...(ownershipTransferStore ? { ownershipTransferStore } : {}),
     ...(auth ? { auth } : {}),
     ...(inviteService ? { inviteService } : {}),
