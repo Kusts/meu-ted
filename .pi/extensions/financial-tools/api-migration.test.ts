@@ -328,5 +328,25 @@ describe("API migration flags", () => {
       assert.doesNotMatch(source, /from ["']pg["']|new pg\.Pool|\.query\(|\bSELECT\s+.+\s+FROM\b|\bINSERT\s+INTO\b|\bUPDATE\s+\w+\s+SET\b|\bDELETE\s+FROM\b/i, file);
     }
   });
+
+  it("freezes write tools with runtime.write_frozen when FINANCE_RUNTIME_STAGE is frozen or agent_owner", async () => {
+    const { isWriteFrozen } = await import("./tools/capability-flags.js");
+    const { checkToolExecutionPolicy } = await import("./tools/api-tool-helpers.js");
+
+    assert.equal(isWriteFrozen({ FINANCE_RUNTIME_STAGE: "frozen" }), true);
+    assert.equal(isWriteFrozen({ FINANCE_RUNTIME_STAGE: "agent_owner" }), true);
+    assert.equal(isWriteFrozen({ FINANCE_RUNTIME_STAGE: "agent_owner_pi_read_fallback" }), true);
+    assert.equal(isWriteFrozen({ FINANCE_RUNTIME_STAGE: "pi_owner" }), false);
+
+    // Read tool allowed in frozen stage
+    const readCheck = checkToolExecutionPolicy("list_accounts", "read", { FINANCE_RUNTIME_STAGE: "frozen" });
+    assert.equal(readCheck, null);
+
+    // Write tool blocked with runtime.write_frozen
+    const writeCheck = checkToolExecutionPolicy("create_expense", "write", { FINANCE_RUNTIME_STAGE: "frozen" });
+    assert.deepEqual(writeCheck, { success: false, reason: "runtime.write_frozen" });
+  });
 });
+
+
 

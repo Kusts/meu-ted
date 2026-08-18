@@ -30,3 +30,9 @@ export const getCapabilityMode = (
   if (["off", "disabled", "false", "0"].includes(raw)) return "disabled";
   throw new Error(`Invalid feature flag ${flagName(capability)}=${raw}; use api or off`);
 };
+
+export const isWriteFrozen = (env: Env = process.env): boolean => {
+  const stage = (env.FINANCE_RUNTIME_STAGE ?? env.PI_RUNTIME_STAGE ?? "").trim().toLowerCase();
+  return ["agent_owner", "agent_owner_pi_read_fallback", "frozen"].includes(stage);
+};
+
