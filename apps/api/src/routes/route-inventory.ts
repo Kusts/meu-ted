@@ -85,6 +85,7 @@ export const ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
   { id: 'adoption-events-create', method: 'POST', path: '/observability/adoption-events', auth: 'workspace', ownership: 'membership' },
   { id: 'adoption-funnel-get', method: 'GET', path: '/observability/adoption-funnel', auth: 'workspace', ownership: 'membership' },
   { id: 'insights-quick', method: 'GET', path: '/insights/quick', auth: 'workspace', ownership: 'membership' },
+  { id: 'insights-spending', method: 'GET', path: '/insights/spending', auth: 'workspace', ownership: 'membership' },
   { id: 'profile-get', method: 'GET', path: '/profile', auth: 'workspace', ownership: 'membership' },
   { id: 'push-vapid-public-key', method: 'GET', path: '/push/vapid-public-key', auth: 'workspace', ownership: 'membership' },
   { id: 'push-subscriptions-create', method: 'POST', path: '/push/subscriptions', auth: 'workspace', ownership: 'membership' },
@@ -101,6 +102,9 @@ export const ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
   { id: 'transfers-create', method: 'POST', path: '/transfers', auth: 'workspace', ownership: 'membership' },
   { id: 'transactions-update', method: 'PATCH', path: '/transactions/:id', auth: 'workspace', ownership: 'membership' },
   { id: 'transactions-delete', method: 'DELETE', path: '/transactions/:id', auth: 'workspace', ownership: 'membership' },
+  { id: 'shadow-divergence-record', method: 'POST', path: '/observability/shadow-divergence', auth: 'workspace', ownership: 'membership' },
+  { id: 'shadow-divergence-summary', method: 'GET', path: '/observability/shadow-divergence/summary', auth: 'workspace', ownership: 'membership' },
+  { id: 'shadow-divergence-events', method: 'GET', path: '/observability/shadow-divergence/events', auth: 'workspace', ownership: 'membership' },
   { id: 'health', method: 'GET', path: '/health', auth: 'public', ownership: 'none' },
 ] as const;
 
@@ -114,7 +118,9 @@ export const ROUTE_COVERAGE_IDS = [
   'categories-update', 'categories-deactivate', 'dashboard-summary', 'dashboard-month-summary', 'goals-list', 'goals-create',
   'goals-contribute', 'goals-cancel', 'goals-update', 'payables-list', 'payables-create', 'payables-pay', 'payables-unpay',
   'payables-update', 'payables-cancel', 'payables-templates-list', 'payables-templates-create', 'payables-from-template', 'payables-auto-create-from-templates', 'payables-refresh-status',
-  'payables-reminders', 'notifications-list', 'pending-operations-list', 'pending-operations-details-dual', 'pending-operations-details', 'pending-operations-approve-dual', 'pending-operations-approve', 'pending-operations-reject-dual', 'pending-operations-reject', 'notifications-create', 'adoption-events-create', 'adoption-funnel-get', 'insights-quick', 'profile-get',
+  'payables-reminders', 'notifications-list', 'pending-operations-list', 'pending-operations-details-dual', 'pending-operations-details', 'pending-operations-approve-dual', 'pending-operations-approve', 'pending-operations-reject-dual', 'pending-operations-reject', 'pending-operations-undo', 'notifications-create', 'adoption-events-create', 'adoption-funnel-get', 'insights-quick', 'insights-spending', 'profile-get',
   'profile-update', 'push-vapid-public-key', 'push-subscriptions-create', 'push-notifications-send', 'push-subscriptions-delete', 'subscriptions-list', 'subscriptions-create', 'subscriptions-cancel', 'subscriptions-update', 'transactions-list',
-  'transactions-expense-create', 'transactions-income-create', 'transfers-create', 'transactions-update', 'transactions-delete', 'health',
+  'transactions-expense-create', 'transactions-income-create', 'transfers-create', 'transactions-update', 'transactions-delete',
+  'shadow-divergence-record', 'shadow-divergence-summary', 'shadow-divergence-events', 'health',
 ] as const;
+

@@ -30,6 +30,11 @@ import {
   createInMemoryAdoptionStore,
   type AdoptionStore,
 } from "../observability/adoption.js";
+import {
+  createInMemoryShadowDivergenceStore,
+  type ShadowDivergenceStore,
+} from "../observability/shadow-divergence.js";
+import { registerShadowObservabilityRoutes } from "./shadow-observability.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerPendingOperationRoutes } from "./pending-operations.js";
 import { registerAccountRoutes } from "./accounts.js";
@@ -58,6 +63,9 @@ import type { BetterAuth } from "../auth/better-auth.js";
 import type { InviteService } from "../auth/invites.js";
 import type { WorkspaceStore } from "../auth/workspaces-http.js";
 
+import type { WorkspaceAccessStore } from "../auth/workspace-access.js";
+import { getBetterAuthSessionContext } from "../auth/better-auth.js";
+
 export type RouteDeps = {
   store: ReadModelStore;
   writes: WriteStore;
@@ -77,10 +85,12 @@ export type RouteDeps = {
   pushStore?: PushSubscriptionStore;
   pushDelivery?: PushDelivery;
   adoptionStore?: AdoptionStore;
+  shadowDivergenceStore?: ShadowDivergenceStore;
   vapidPublicKey?: string;
   auditLogs?: AuditLogStore;
   ownershipTransferStore?: OwnershipTransferStore;
   auth?: BetterAuth;
+  workspaceAccess?: WorkspaceAccessStore;
   inviteService?: InviteService;
   authorizeInviteCreate?: (input: { userId: string; householdId: string }) => Promise<boolean>;
   workspaceStore?: WorkspaceStore;
@@ -93,6 +103,40 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   const idempotency = deps.idempotency ?? createInMemoryIdempotencyStore();
   const resolveToken: AuthResolver = async (token) => tokenStore.resolve(token);
   const clock = deps.clock ?? (() => new Date());
+
+  if (deps.auth && deps.workspaceAccess) {
+    const auth = deps.auth;
+    const workspaceAccess = deps.workspaceAccess;
+    app.addHook("preHandler", async (request, reply) => {
+      const workspaceIdHeader = request.headers['x-workspace-id'];
+      const workspaceId = Array.isArray(workspaceIdHeader) ? workspaceIdHeader[0] : workspaceIdHeader;
+      if (!workspaceId) return;
+
+      const headers = new Headers();
+      for (const [key, val] of Object.entries(request.headers)) {
+        if (val !== undefined) headers.set(key, Array.isArray(val) ? val.join(', ') : val);
+      }
+      const session = await getBetterAuthSessionContext(auth, headers);
+      if (!session) return;
+
+      const access = await workspaceAccess.resolve(session.userId, workspaceId);
+      if (!access) {
+        return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Acesso ao workspace proibido.' });
+      }
+
+      request.betterAuthContext = session;
+      request.workspaceAccess = access;
+      request.authenticatedContext = {
+        householdId: access.householdId,
+        actorId: access.userId,
+        authUserId: session.userId,
+        actorType: 'user',
+        deviceId: '',
+        role: access.role,
+      };
+    });
+  }
+
   app.addHook("preHandler", async (request) => {
     const rawHeader = request.headers[CONTEXT_TOKEN_HEADER];
     if (rawHeader === undefined) return;
@@ -146,7 +190,11 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     ...(deps.undoService ? { undoService: deps.undoService } : {}),
   });
   registerAdoptionRoutes(app, {
-    store: deps.adoptionStore ?? createInMemoryAdoptionStore(),
+    adoption: deps.adoptionStore ?? createInMemoryAdoptionStore(),
+    resolveToken,
+  });
+  registerShadowObservabilityRoutes(app, {
+    shadowDivergence: deps.shadowDivergenceStore ?? createInMemoryShadowDivergenceStore(),
     resolveToken,
   });
   const authOpts: Parameters<typeof registerAuthRoutes>[1] = {
@@ -228,7 +276,10 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       ...(deps.adoptionStore ? { adoption: deps.adoptionStore } : {}),
     });
   }
-  registerAuditRoutes(app, { auditLogs: deps.auditLogs ?? createInMemoryAuditLogStore() });
+  registerAuditRoutes(app, {
+    auditLogs: deps.auditLogs ?? createInMemoryAuditLogStore(),
+    resolveToken,
+  });
   if (deps.ownershipTransferStore) {
     registerOwnershipTransferRoutes(app, deps.ownershipTransferStore);
   }
