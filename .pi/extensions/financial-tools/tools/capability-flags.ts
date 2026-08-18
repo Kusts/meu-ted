@@ -18,6 +18,8 @@ export const migratedApiCapabilities = new Set([
   "configure_notification", "list_notifications",
 ]);
 
+export const ALL_CAPABILITIES: readonly CapabilityName[] = Array.from(migratedApiCapabilities);
+
 export const getCapabilityMode = (
   capability: CapabilityName,
   env: Env = process.env,
