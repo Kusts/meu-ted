@@ -10,6 +10,7 @@ import { type WriteStore } from "../writes/store.js";
 import {
   type IdempotencyStore,
   createInMemoryIdempotencyStore,
+  requireIdempotencyKey,
 } from "../writes/idempotency.js";
 import type { AuthResolver } from "./auth.js";
 import type { ContextTokenReplayGuard } from "../auth/context-token-replay.js";
@@ -128,6 +129,15 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     request.contextToken = contextToken;
     request.contextClaims = claims;
   });
+
+  // G2.2.4 — centralized idempotency-key validation for mutating methods.
+  // Validates the header when present (legacy clients without it keep working).
+  app.addHook("preHandler", async (req) => {
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      requireIdempotencyKey(req.headers);
+    }
+  });
+
   app.get("/health", async () => ({ status: "ok" }));
   registerPendingOperationRoutes(app, {
     store: deps.pendingStore ?? createInMemoryPendingOperationStore(),
@@ -150,11 +160,13 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     store: deps.store,
     writes: deps.writes,
     resolveToken,
+    idempotency,
   });
   registerCategoryRoutes(app, {
     store: deps.store,
     writes: deps.writes,
     resolveToken,
+    idempotency,
   });
   registerTransactionRoutes(app, { store: deps.store, resolveToken });
   registerTransactionWriteRoutes(app, {

@@ -71,3 +71,20 @@ export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
     },
   };
 };
+
+const IDEMPOTENCY_KEY_HEADER = 'idempotency-key';
+
+/**
+ * Validates the idempotency-key header when present and returns its value.
+ * Returns undefined when absent so legacy clients keep working. Throws a
+ * validation error for an empty or oversized key.
+ */
+export const requireIdempotencyKey = (headers: Record<string, unknown>): string | undefined => {
+  const raw = headers[IDEMPOTENCY_KEY_HEADER];
+  if (raw === undefined) return undefined;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  const key = String(value ?? '').trim();
+  if (!key) throw domainErrors.invalid('idempotency-key', 'idempotency-key must not be empty');
+  if (key.length > 128) throw domainErrors.invalid('idempotency-key', 'idempotency-key is too long (max 128 chars)');
+  return key;
+};

@@ -58,7 +58,14 @@ export const createInMemoryWriteStore = (state: InMemoryState): WriteStore => {
   };
 
   return {
-    async createAccount(householdId, input) {
+async createAccount(householdId, input) {
+      const duplicate = state.accounts.some(
+        (existing) =>
+          existing.householdId === householdId &&
+          existing.status === 'active' &&
+          existing.name.toLowerCase() === input.name.toLowerCase(),
+      );
+      if (duplicate) throw domainErrors.inUse('conta');
       const acc: Account = {
         id: randomUUID(),
         householdId,
@@ -90,6 +97,13 @@ export const createInMemoryWriteStore = (state: InMemoryState): WriteStore => {
     },
 
     async createCategory(householdId, input) {
+      const duplicate = state.categories.some(
+        (existing) =>
+          existing.householdId === householdId &&
+          existing.status === 'active' &&
+          existing.name.toLowerCase() === input.name.toLowerCase(),
+      );
+      if (duplicate) throw domainErrors.inUse('categoria');
       if (input.parentId) {
         const parent = state.categories.find(
           (c) => c.id === input.parentId && c.householdId === householdId && c.status === 'active',
