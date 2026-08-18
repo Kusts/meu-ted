@@ -9,6 +9,8 @@ export { ProcessManager } from './process-manager.js';
 export type { ProcessManagerOptions } from './process-manager.js';
 export { AgentClient } from './agent-client.js';
 export type { AgentClientOptions, AgentTurnResponse } from './agent-client.js';
+export { RuntimeOwnershipRouter, parseRuntimeStage } from './runtime-ownership.js';
+export type { RuntimeStage, RuntimeConfig } from './runtime-ownership.js';
 
 export type { PiClient } from './webhook-handler.js';
 
