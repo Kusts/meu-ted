@@ -39,6 +39,10 @@ export function getPiRpcModel(): string {
   return process.env.PI_RPC_MODEL ?? 'MiniMax-M2.7:off';
 }
 
+export function getPiContextEnv(contextToken: string | undefined): Record<string, string> {
+  return contextToken ? { PI_CONTEXT_TOKEN: contextToken } : {};
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Fake Pi Client (used when runtime is 'disabled')
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,15 +118,21 @@ class PiBridgeAdapter implements WarmablePiClient {
   private started = false;
   private readonly projectRoot: string;
 
-  constructor(_householdId: string) {
-    this.projectRoot = PiBridgeAdapter.resolveProjectRoot();
-    this.client = new RpcClient({
+  private createRpcClient(contextToken?: string): RpcClient {
+    const env = getPiContextEnv(contextToken);
+    return new RpcClient({
       cwd: this.projectRoot,
       cliPath: resolvePiAgentCli(),
       args: ['--no-session'],
       provider: getPiRpcProvider(),
       model: getPiRpcModel(),
+      ...(Object.keys(env).length > 0 ? { env } : {}),
     });
+  }
+
+  constructor(_householdId: string) {
+    this.projectRoot = PiBridgeAdapter.resolveProjectRoot();
+    this.client = this.createRpcClient();
   }
 
   private static resolveProjectRoot(): string {
@@ -158,15 +168,20 @@ class PiBridgeAdapter implements WarmablePiClient {
   async send(
     message: string,
     _senderPhone: string,
-    _context: { source: string; chatId: string; providerMessageId: string; idempotencyKey?: string },
+    _context: { source: string; chatId: string; providerMessageId: string; idempotencyKey?: string; contextToken?: string },
   ): Promise<SendResult> {
+    const requestClient = _context.contextToken
+      ? this.createRpcClient(_context.contextToken)
+      : this.client;
+    const scopedRequest = requestClient !== this.client;
     console.log('[PiBridge] send() timeoutMs:', getPiTimeoutMs(), '| projectRoot:', this.projectRoot);
     try {
-      await this.ensureStarted();
+      if (scopedRequest) await requestClient.start();
+      else await this.ensureStarted();
 
       const timeoutMs = getPiTimeoutMs();
       console.log('[PiBridge] calling client.promptAndWait() with timeout', timeoutMs, 'ms');
-      const events = await this.client.promptAndWait(message, undefined, timeoutMs);
+      const events = await requestClient.promptAndWait(message, undefined, timeoutMs);
       console.log('[PiBridge] promptAndWait returned', events.length, 'events');
 
       let extractedText: string | null = null;
@@ -187,17 +202,23 @@ class PiBridgeAdapter implements WarmablePiClient {
         return { success: true, data: { message: extractedText } };
       }
 
-      const lastText = await this.client.getLastAssistantText();
+      const lastText = await requestClient.getLastAssistantText();
       if (lastText !== null && lastText.trim()) {
         return { success: true, data: { message: lastText } };
       }
 
-      console.error('[PiBridge] No text extracted from events. Stderr:', this.client.getStderr());
+      console.error('[PiBridge] No text extracted from events. Stderr:', requestClient.getStderr());
       return { success: false, reason: 'Pi agent did not produce a text response' };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'erro desconhecido';
-      console.error('[PiBridge] Exception:', errorMessage, '| Stderr:', this.client.getStderr());
+      console.error('[PiBridge] Exception:', errorMessage, '| Stderr:', requestClient.getStderr());
       return { success: false, reason: errorMessage };
+    } finally {
+      if (scopedRequest) {
+        await requestClient.stop().catch((stopError) => {
+          console.warn('[PiBridge] scoped client stop failed:', stopError instanceof Error ? stopError.message : String(stopError));
+        });
+      }
     }
   }
 

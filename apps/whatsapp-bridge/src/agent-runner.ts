@@ -36,7 +36,11 @@ export class AgentRunner extends EventEmitter {
     timer: NodeJS.Timeout;
   }>();
   private nextMessageId = 1;
-  private readonly options: Required<Omit<AgentRunnerOptions, "spawnFn">> & { spawnFn: typeof spawn };
+  private readonly options: Required<Omit<AgentRunnerOptions, "spawnFn">> & {
+    spawnFn: (command: string, args: string[], options: any) => ChildProcess;
+  };
+
+
 
   constructor(options: AgentRunnerOptions = {}) {
     super();
