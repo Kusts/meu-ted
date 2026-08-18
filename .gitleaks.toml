@@ -1,0 +1,9 @@
+title = "Pi Financeiro Gitleaks policy"
+
+[allowlist]
+description = "Historical test-only fixtures deleted during the recovery refactor; they contain deterministic non-secret identifiers, not credentials."
+paths = [
+  '''^apps/whatsapp-bridge/src/bridge-full-coverage\.test\.ts$''',
+  '''^packages/tools/src/tools-contract\.test\.ts$''',
+  '''^packages/idempotency/src/idempotency\.test\.ts$''',
+]
