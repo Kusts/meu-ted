@@ -34,8 +34,12 @@
   "write-policy:check": "node scripts/check-write-policy.mjs",
   "governance:check": "node scripts/check-decision-governance.mjs",
   "boundary:check": "node scripts/check-pwa-command-boundary.mjs",
+  "docs:lint": "node scripts/lint-docs.mjs",
+  "plans:check": "node scripts/check-active-plan-status.mjs",
   "production:smoke:contract": "node --test scripts/production-smoke-contract.test.mjs"
   },
+
+
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "3.2.6",

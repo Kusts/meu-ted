@@ -1,0 +1,186 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── API ──────────────────────────────────────────────────────────────
+  api:
+    name: API — lint + typecheck + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: volta-cli/action@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter pi-finance-api lint
+      - run: pnpm --filter pi-finance-api typecheck
+      - run: pnpm --filter pi-finance-api test
+      - run: pnpm --filter pi-finance-api build
+
+  # ─── Bridge ───────────────────────────────────────────────────────────
+  bridge:
+    name: Bridge — lint + typecheck + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: volta-cli/action@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @pi-financeiro/whatsapp-bridge lint
+      - run: pnpm --filter @pi-financeiro/whatsapp-bridge typecheck
+      - run: pnpm --filter @pi-financeiro/whatsapp-bridge test
+      - run: pnpm --filter @pi-financeiro/whatsapp-bridge build
+
+  # ─── PWA ──────────────────────────────────────────────────────────────
+  pwa:
+    name: PWA — lint + typecheck + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: volta-cli/action@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter pwa typecheck
+      - run: pnpm --filter pwa lint
+      - run: pnpm --filter pwa test
+      - run: pnpm --filter pwa build
+
+  # ─── Postgres integration ────────────────────────────────────────────
+  postgres:
+    name: Postgres — integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: pi_financeiro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: volta-cli/action@v4
+      - run: pnpm install --frozen-lockfile
+      - name: Create disposable database marker
+        run: |
+          PGPASSWORD=test psql -h localhost -U test -d pi_financeiro_test \
+            -c "CREATE TABLE IF NOT EXISTS _test_marker (marker_value TEXT NOT NULL); TRUNCATE _test_marker; INSERT INTO _test_marker(marker_value) VALUES ('ci-test-marker-00000000-0000-0000-0000-000000000001');"
+      - run: pnpm --filter pi-finance-api test:integration
+        env:
+          DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
+          DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001
+
+  # ─── Docker image builds ─────────────────────────────────────────────
+  docker:
+    name: Docker — API + Pi bridge images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image
+        run: docker build -f apps/api/Dockerfile -t pi-finance-api:ci .
+      - name: Build Pi bridge image
+        run: docker build -f docker/pi-stack/Dockerfile -t pi-finance-pi-stack:ci .
+
+  # ─── Capability inventory gate ────────────────────────────────────────
+  capabilities:
+    name: Capability inventory — 72 registered tools classified
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: volta-cli/action@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm capabilities:check
+      - run: node --test scripts/check-tool-capability-inventory.test.mjs
+      - run: pnpm --dir .pi/extensions/financial-tools test
+      - run: pnpm --dir .pi/extensions/financial-tools typecheck
+
+  # ─── Write/mutator policy gate ───────────────────────────────────────
+  write-policy:
+    name: Write policy — every mutator has a policy row
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: volta-cli/action@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm write-policy:check
+      - run: node --test scripts/check-write-policy.test.mjs
+
+  # ─── Governance gate ─────────────────────────────────────────────────
+  governance:
+    name: Governance — ADR decision gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: volta-cli/action@v4
+      - run: pnpm install --frozen-lockfile
+      - run: |
+          if [ -n "$GITHUB_BASE_SHA" ]; then
+            pnpm governance:check -- --base "$GITHUB_BASE_SHA"
+          else
+            pnpm governance:check
+          fi
+      - run: node --test scripts/check-decision-governance.test.mjs
+
+  # ─── Security gates ───────────────────────────────────────────────────
+  security:
+    name: Security — secrets + dependencies + containers
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: volta-cli/action@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm security:secrets
+      - run: pnpm security:deps
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image for scan
+        run: docker build -f apps/api/Dockerfile -t pi-finance-api:ci .
+      - name: Build Pi bridge image for scan
+        run: docker build -f docker/pi-stack/Dockerfile -t pi-finance-pi-stack:ci .
+      - run: pnpm security:containers
+
+  # ─── Documentation gate ──────────────────────────────────────────────
+  docs:
+    name: Documentation — lint + facts + plans
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: volta-cli/action@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm docs:lint
+      - run: pnpm plans:check
+      - run: node --test scripts/lint-docs.test.mjs scripts/check-active-plan-status.test.mjs scripts/canonical-docs-contract.test.mjs scripts/documentation-facts-contract.test.mjs
+
+  # ─── Global gate ──────────────────────────────────────────────────────
+  gate:
+    name: Gate — all checks
+    needs: [api, bridge, pwa, postgres, docker, capabilities, write-policy, governance, security, docs]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "All CI checks passed."
+
