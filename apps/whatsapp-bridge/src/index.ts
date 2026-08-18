@@ -7,6 +7,8 @@ export { AgentRunner } from './agent-runner.js';
 export type { AgentRunnerOptions, AgentResponse, AgentMessageContext } from './agent-runner.js';
 export { ProcessManager } from './process-manager.js';
 export type { ProcessManagerOptions } from './process-manager.js';
+export { AgentClient } from './agent-client.js';
+export type { AgentClientOptions, AgentTurnResponse } from './agent-client.js';
 
 export type { PiClient } from './webhook-handler.js';
 
