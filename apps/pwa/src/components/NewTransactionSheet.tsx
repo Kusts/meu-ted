@@ -24,10 +24,24 @@ interface NewTransactionSheetProps {
   accounts: Account[];
   categories: Category[];
   onSave: (data: SaveData) => void | Promise<void>;
-  onAddCategory?: (input: { name: string; kind: "expense" | "income"; parentId?: string }) => void;
-  onAddAccount?: (input: { name: string; kind: "bank" | "cash" | "credit_card"; initialBalanceCents: number }) => void;
-  onAddCard?: (input: { name: string; creditLimitCents: number; closingDay: number; dueDay: number }) => void;
+  onAddCategory?: (input: {
+    name: string;
+    kind: "expense" | "income";
+    parentId?: string;
+  }) => void;
+  onAddAccount?: (input: {
+    name: string;
+    kind: "bank" | "cash" | "credit_card";
+    initialBalanceCents: number;
+  }) => void;
+  onAddCard?: (input: {
+    name: string;
+    creditLimitCents: number;
+    closingDay: number;
+    dueDay: number;
+  }) => void;
   initialTab?: SheetTab;
+  initialDescription?: string;
 }
 
 function formatInputBRL(value: string): string {
@@ -96,11 +110,12 @@ export default function NewTransactionSheet({
   onAddAccount,
   onAddCard,
   initialTab = "expense",
+  initialDescription = "",
 }: NewTransactionSheetProps) {
   const { markDirty, markClean } = useFormDirtySafe();
   const [tab, setTab] = useState<SheetTab>(initialTab);
   const [amountDisplay, setAmountDisplay] = useState("");
-  const [description, setDescription] = useState("");
+  const [description, setDescription] = useState(initialDescription);
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [categoryId, setCategoryId] = useState("");
   const [accountId, setAccountId] = useState("");
@@ -155,24 +170,40 @@ export default function NewTransactionSheet({
   const calFirstDow = new Date(calYear, calMonth, 1).getDay();
   const calFirstShifted = calFirstDow === 0 ? 6 : calFirstDow - 1;
   const calCells: { day: number; isToday: boolean; isSelected: boolean }[] = [];
-  for (let i = 0; i < calFirstShifted; i++) calCells.push({ day: 0, isToday: false, isSelected: false });
+  for (let i = 0; i < calFirstShifted; i++)
+    calCells.push({ day: 0, isToday: false, isSelected: false });
   for (let d = 1; d <= calDaysInMonth; d++) {
     const iso = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    calCells.push({ day: d, isToday: iso === today.toISOString().slice(0, 10), isSelected: iso === date });
+    calCells.push({
+      day: d,
+      isToday: iso === today.toISOString().slice(0, 10),
+      isSelected: iso === date,
+    });
   }
-  const calLabel = new Date(calYear, calMonth).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  const calLabel = new Date(calYear, calMonth).toLocaleDateString("pt-BR", {
+    month: "long",
+    year: "numeric",
+  });
 
   function selectCalDay(d: number) {
-    setDate(`${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
+    setDate(
+      `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`,
+    );
     setCalOpen(false);
   }
 
   function prevCalMonth() {
-    if (calMonth === 0) { setCalMonth(11); setCalYear(calYear - 1); } else setCalMonth(calMonth - 1);
+    if (calMonth === 0) {
+      setCalMonth(11);
+      setCalYear(calYear - 1);
+    } else setCalMonth(calMonth - 1);
   }
 
   function nextCalMonth() {
-    if (calMonth === 11) { setCalMonth(0); setCalYear(calYear + 1); } else setCalMonth(calMonth + 1);
+    if (calMonth === 11) {
+      setCalMonth(0);
+      setCalYear(calYear + 1);
+    } else setCalMonth(calMonth + 1);
   }
 
   const amountCents = parseBRLToCents(amountDisplay);
@@ -187,7 +218,8 @@ export default function NewTransactionSheet({
     setAmountDisplay(formatInputBRL(raw));
   }
 
-  const categoryKind: "expense" | "income" = tab === "income" ? "income" : "expense";
+  const categoryKind: "expense" | "income" =
+    tab === "income" ? "income" : "expense";
 
   function handleSaveCategory() {
     if (!newName.trim() || !onAddCategory) return;
@@ -198,7 +230,11 @@ export default function NewTransactionSheet({
 
   function handleSaveSubcategory() {
     if (!newName.trim() || !onAddCategory || !categoryId) return;
-    onAddCategory({ name: newName.trim(), kind: categoryKind, parentId: categoryId });
+    onAddCategory({
+      name: newName.trim(),
+      kind: categoryKind,
+      parentId: categoryId,
+    });
     setNewName("");
     setAddingSubcategory(false);
   }
@@ -206,7 +242,11 @@ export default function NewTransactionSheet({
   function handleSaveAccount() {
     if (!newName.trim() || !onAddAccount) return;
     const balance = parseInt(newInitialBalance.replace(/\D/g, "") || "0", 10);
-    onAddAccount({ name: newName.trim(), kind: "bank", initialBalanceCents: balance });
+    onAddAccount({
+      name: newName.trim(),
+      kind: "bank",
+      initialBalanceCents: balance,
+    });
     setNewName("");
     setNewInitialBalance("");
     setAddingAccount(false);
@@ -231,7 +271,8 @@ export default function NewTransactionSheet({
     let data: SaveData;
     if (isTransfer) {
       // Reject missing or same origin/destination before hitting the API.
-      if (!fromAccountId || !toAccountId || fromAccountId === toAccountId) return;
+      if (!fromAccountId || !toAccountId || fromAccountId === toAccountId)
+        return;
       data = {
         kind: "transfer",
         amountCents,
@@ -302,9 +343,13 @@ export default function NewTransactionSheet({
 
       {/* Valor */}
       <fieldset>
-        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Valor</label>
+        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          Valor
+        </label>
         <div className="relative">
-          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[20px] font-semibold text-text-muted">R$</span>
+          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[20px] font-semibold text-text-muted">
+            R$
+          </span>
           <input
             type="text"
             inputMode="numeric"
@@ -318,39 +363,86 @@ export default function NewTransactionSheet({
 
       {/* Data (custom calendar toggle) */}
       <div>
-        <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-text-muted">Data</div>
+        <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          Data
+        </div>
         <button
           type="button"
           onClick={() => setCalOpen(!calOpen)}
           className="flex w-full items-center justify-between rounded-[13px] bg-surface px-3.5 py-3 text-left transition-colors"
-          style={{ border: `1.5px solid ${calOpen ? "var(--color-primary)" : "var(--color-border)"}` }}
+          style={{
+            border: `1.5px solid ${calOpen ? "var(--color-primary)" : "var(--color-border)"}`,
+          }}
         >
           <span className="text-[14px] text-text-primary">{dateLabel}</span>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#98A29A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" />
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#98A29A"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="3" y="4" width="18" height="18" rx="2" />
+            <path d="M16 2v4M8 2v4M3 10h18" />
           </svg>
         </button>
         {calOpen && (
           <div className="mt-1.5 rounded-[13px] border border-border bg-surface p-3">
             <div className="mb-2.5 flex items-center justify-between">
-              <button onClick={prevCalMonth} type="button" className="rounded-[7px] px-2.5 py-1 text-[18px] text-text-secondary hover:bg-fill-light">‹</button>
-              <span className="text-[13px] font-bold text-text-primary">{calLabel}</span>
-              <button onClick={nextCalMonth} type="button" className="rounded-[7px] px-2.5 py-1 text-[18px] text-text-secondary hover:bg-fill-light">›</button>
+              <button
+                onClick={prevCalMonth}
+                type="button"
+                className="rounded-[7px] px-2.5 py-1 text-[18px] text-text-secondary hover:bg-fill-light"
+              >
+                ‹
+              </button>
+              <span className="text-[13px] font-bold text-text-primary">
+                {calLabel}
+              </span>
+              <button
+                onClick={nextCalMonth}
+                type="button"
+                className="rounded-[7px] px-2.5 py-1 text-[18px] text-text-secondary hover:bg-fill-light"
+              >
+                ›
+              </button>
             </div>
             <div className="grid grid-cols-7 gap-0.5 text-center">
-              {["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"].map((d, i) => (
-                <span key={d} className={`text-[9px] font-semibold ${i >= 5 ? "text-danger" : "text-text-muted"}`}>{d}</span>
+              {["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map((d, i) => (
+                <span
+                  key={d}
+                  className={`text-[9px] font-semibold ${i >= 5 ? "text-danger" : "text-text-muted"}`}
+                >
+                  {d}
+                </span>
               ))}
             </div>
             <div className="grid grid-cols-7 gap-0.5">
               {calCells.map((c, i) => (
-                <button key={i} type="button" disabled={c.day === 0} onClick={() => c.day > 0 && selectCalDay(c.day)}
+                <button
+                  key={i}
+                  type="button"
+                  disabled={c.day === 0}
+                  onClick={() => c.day > 0 && selectCalDay(c.day)}
                   className="min-h-[29px] rounded-[7px] text-center font-mono text-[12px] font-semibold transition-colors"
                   style={{
-                    background: c.isSelected ? "var(--color-primary)" : c.isToday ? "var(--color-fill-light)" : "transparent",
-                    color: c.isSelected ? "#fff" : c.isToday ? "var(--color-primary)" : "var(--color-text-primary)",
+                    background: c.isSelected
+                      ? "var(--color-primary)"
+                      : c.isToday
+                        ? "var(--color-fill-light)"
+                        : "transparent",
+                    color: c.isSelected
+                      ? "#fff"
+                      : c.isToday
+                        ? "var(--color-primary)"
+                        : "var(--color-text-primary)",
                   }}
-                >{c.day > 0 ? c.day : ""}</button>
+                >
+                  {c.day > 0 ? c.day : ""}
+                </button>
               ))}
             </div>
           </div>
@@ -359,7 +451,9 @@ export default function NewTransactionSheet({
 
       {/* Descrição */}
       <fieldset>
-        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Descrição</label>
+        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          Descrição
+        </label>
         <input
           type="text"
           value={description}
@@ -373,13 +467,26 @@ export default function NewTransactionSheet({
       {!isTransfer && (
         <div>
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Categoria</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+              Categoria
+            </span>
             <button
               type="button"
-              onClick={() => { setAddingCategory(true); setAddingSubcategory(false); }}
+              onClick={() => {
+                setAddingCategory(true);
+                setAddingSubcategory(false);
+              }}
               className="flex items-center gap-1 text-[11px] font-bold text-primary"
             >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round">
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.8"
+                strokeLinecap="round"
+              >
                 <path d="M12 5v14M5 12h14" />
               </svg>
               Nova
@@ -391,7 +498,10 @@ export default function NewTransactionSheet({
             <div className="mb-2">
               <InlineForm
                 onSave={handleSaveCategory}
-                onCancel={() => { setAddingCategory(false); setNewName(""); }}
+                onCancel={() => {
+                  setAddingCategory(false);
+                  setNewName("");
+                }}
                 saveLabel="Salvar categoria"
                 fields={
                   <input
@@ -414,15 +524,21 @@ export default function NewTransactionSheet({
                 <button
                   key={cat.id}
                   type="button"
-                  onClick={() => setCategoryId(cat.id === categoryId ? "" : cat.id)}
+                  onClick={() =>
+                    setCategoryId(cat.id === categoryId ? "" : cat.id)
+                  }
                   className={`flex flex-col items-center gap-1 rounded-[12px] p-2 transition-colors ${
-                    selected ? "bg-primary/10 ring-1 ring-primary" : "hover:bg-fill-light"
+                    selected
+                      ? "bg-primary/10 ring-1 ring-primary"
+                      : "hover:bg-fill-light"
                   }`}
                 >
                   <span className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] bg-fill-light">
                     <CategoryBadge name={cat.name} size={16} />
                   </span>
-                  <span className={`text-center text-[9.5px] font-semibold leading-tight ${selected ? "text-primary" : "text-text-secondary"}`}>
+                  <span
+                    className={`text-center text-[9.5px] font-semibold leading-tight ${selected ? "text-primary" : "text-text-secondary"}`}
+                  >
                     {cat.name}
                   </span>
                 </button>
@@ -433,75 +549,105 @@ export default function NewTransactionSheet({
       )}
 
       {/* Subcategorias (using parentId) */}
-      {!isTransfer && (subcategories.length > 0 || (categoryId && onAddCategory)) && (
-        <div>
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-              {subcategories.length > 0 ? "Subcategoria" : "Adicionar subcategoria"}
-            </span>
-            {onAddCategory && categoryId && (
-              <button
-                type="button"
-                onClick={() => { setAddingSubcategory(true); setAddingCategory(false); }}
-                className="flex items-center gap-1 text-[11px] font-bold text-primary"
-              >
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round">
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
-                Nova subcat.
-              </button>
+      {!isTransfer &&
+        (subcategories.length > 0 || (categoryId && onAddCategory)) && (
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                {subcategories.length > 0
+                  ? "Subcategoria"
+                  : "Adicionar subcategoria"}
+              </span>
+              {onAddCategory && categoryId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingSubcategory(true);
+                    setAddingCategory(false);
+                  }}
+                  className="flex items-center gap-1 text-[11px] font-bold text-primary"
+                >
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.8"
+                    strokeLinecap="round"
+                  >
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                  Nova subcat.
+                </button>
+              )}
+            </div>
+
+            {/* Inline new subcategory form */}
+            {addingSubcategory && (
+              <div className="mb-2">
+                <InlineForm
+                  onSave={handleSaveSubcategory}
+                  onCancel={() => {
+                    setAddingSubcategory(false);
+                    setNewName("");
+                  }}
+                  saveLabel="Salvar subcategoria"
+                  fields={
+                    <input
+                      type="text"
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      placeholder="Nome da subcategoria"
+                      className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
+                      autoFocus
+                    />
+                  }
+                />
+              </div>
+            )}
+
+            {subcategories.length > 0 && (
+              <div className="flex gap-1.5 overflow-x-auto">
+                {subcategories.map((sub) => (
+                  <button
+                    key={sub.id}
+                    type="button"
+                    className="flex items-center gap-1 flex-none rounded-[100px] border border-border-strong bg-fill-light px-3 py-1.5 text-[11px] font-semibold text-text-secondary"
+                  >
+                    <CategoryBadge name={sub.name} size={12} />
+                    {sub.name}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
-
-          {/* Inline new subcategory form */}
-          {addingSubcategory && (
-            <div className="mb-2">
-              <InlineForm
-                onSave={handleSaveSubcategory}
-                onCancel={() => { setAddingSubcategory(false); setNewName(""); }}
-                saveLabel="Salvar subcategoria"
-                fields={
-                  <input
-                    type="text"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    placeholder="Nome da subcategoria"
-                    className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
-                    autoFocus
-                  />
-                }
-              />
-            </div>
-          )}
-
-          {subcategories.length > 0 && (
-            <div className="flex gap-1.5 overflow-x-auto">
-              {subcategories.map((sub) => (
-                <button
-                  key={sub.id}
-                  type="button"
-                  className="flex items-center gap-1 flex-none rounded-[100px] border border-border-strong bg-fill-light px-3 py-1.5 text-[11px] font-semibold text-text-secondary"
-                >
-                  <CategoryBadge name={sub.name} size={12} />
-                  {sub.name}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+        )}
 
       {/* Account picker for expense/income */}
       {!isTransfer && (
         <div>
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Conta</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+              Conta
+            </span>
             <button
               type="button"
-              onClick={() => { setAddingAccount(true); setAddingCard(false); }}
+              onClick={() => {
+                setAddingAccount(true);
+                setAddingCard(false);
+              }}
               className="flex items-center gap-1 text-[11px] font-bold text-primary"
             >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round">
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.8"
+                strokeLinecap="round"
+              >
                 <path d="M12 5v14M5 12h14" />
               </svg>
               Nova
@@ -513,7 +659,11 @@ export default function NewTransactionSheet({
             <div className="mb-2">
               <InlineForm
                 onSave={handleSaveAccount}
-                onCancel={() => { setAddingAccount(false); setNewName(""); setNewInitialBalance(""); }}
+                onCancel={() => {
+                  setAddingAccount(false);
+                  setNewName("");
+                  setNewInitialBalance("");
+                }}
                 saveLabel="Salvar conta"
                 fields={
                   <>
@@ -548,12 +698,19 @@ export default function NewTransactionSheet({
                 <button
                   key={acc.id}
                   type="button"
-                  onClick={() => setAccountId(acc.id === accountId ? "" : acc.id)}
+                  onClick={() =>
+                    setAccountId(acc.id === accountId ? "" : acc.id)
+                  }
                   className={`flex items-center gap-2 rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${
-                    selected ? "bg-primary text-white" : "bg-fill-light text-text-secondary"
+                    selected
+                      ? "bg-primary text-white"
+                      : "bg-fill-light text-text-secondary"
                   }`}
                 >
-                  <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] font-mono text-[8px] font-bold" style={{ background: color, color: "#fff" }}>
+                  <span
+                    className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] font-mono text-[8px] font-bold"
+                    style={{ background: color, color: "#fff" }}
+                  >
                     {short}
                   </span>
                   {acc.name}
@@ -568,13 +725,26 @@ export default function NewTransactionSheet({
       {isExpense && creditCards.length > 0 && (
         <div>
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Cartão</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+              Cartão
+            </span>
             <button
               type="button"
-              onClick={() => { setAddingCard(true); setAddingAccount(false); }}
+              onClick={() => {
+                setAddingCard(true);
+                setAddingAccount(false);
+              }}
               className="flex items-center gap-1 text-[11px] font-bold text-primary"
             >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round">
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.8"
+                strokeLinecap="round"
+              >
                 <path d="M12 5v14M5 12h14" />
               </svg>
               Novo
@@ -586,7 +756,11 @@ export default function NewTransactionSheet({
             <div className="mb-2">
               <InlineForm
                 onSave={handleSaveCard}
-                onCancel={() => { setAddingCard(false); setNewName(""); setNewCreditLimit(""); }}
+                onCancel={() => {
+                  setAddingCard(false);
+                  setNewName("");
+                  setNewCreditLimit("");
+                }}
                 saveLabel="Salvar cartão"
                 fields={
                   <>
@@ -643,10 +817,15 @@ export default function NewTransactionSheet({
                   type="button"
                   onClick={() => setCardId(card.id === cardId ? "" : card.id)}
                   className={`flex items-center gap-2 rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${
-                    selected ? "bg-primary text-white" : "bg-fill-light text-text-secondary"
+                    selected
+                      ? "bg-primary text-white"
+                      : "bg-fill-light text-text-secondary"
                   }`}
                 >
-                  <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] font-mono text-[8px] font-bold" style={{ background: color, color: "#fff" }}>
+                  <span
+                    className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] font-mono text-[8px] font-bold"
+                    style={{ background: color, color: "#fff" }}
+                  >
                     {short}
                   </span>
                   {card.name}
@@ -661,21 +840,27 @@ export default function NewTransactionSheet({
       {isExpense && (
         <fieldset>
           <div className="mb-1.5 flex items-center justify-between">
-            <label className="text-[11px] font-bold uppercase tracking-wide text-text-muted">Parcelar</label>
+            <label className="text-[11px] font-bold uppercase tracking-wide text-text-muted">
+              Parcelar
+            </label>
             <button
               type="button"
               onClick={() => setInstallmentsEnabled(!installmentsEnabled)}
               className={`flex h-[24px] w-[40px] flex-none items-center rounded-full p-[2px] transition-colors ${installmentsEnabled ? "bg-primary" : "bg-fill-strong"}`}
               aria-label="Alternar parcelamento"
             >
-              <span className={`block h-5 w-5 transform rounded-full bg-surface transition-transform ${installmentsEnabled ? "translate-x-[16px]" : "translate-x-0"}`} />
+              <span
+                className={`block h-5 w-5 transform rounded-full bg-surface transition-transform ${installmentsEnabled ? "translate-x-[16px]" : "translate-x-0"}`}
+              />
             </button>
           </div>
           {installmentsEnabled && (
             <div className="rounded-[13px] border border-border bg-fill-light px-3.5 py-3">
               <div className="mb-2 flex items-center justify-between text-[12px] text-text-secondary">
                 <span>Número de parcelas</span>
-                <span className="font-mono font-bold text-text-primary">{installmentsCount}x</span>
+                <span className="font-mono font-bold text-text-primary">
+                  {installmentsCount}x
+                </span>
               </div>
               <div className="mb-2.5 flex flex-wrap gap-1.5">
                 {[2, 3, 6, 10, 12].map((n) => (
@@ -684,7 +869,9 @@ export default function NewTransactionSheet({
                     type="button"
                     onClick={() => setInstallmentsCount(n)}
                     className={`rounded-[100px] px-3 py-1.5 text-[11px] font-bold transition-colors ${
-                      installmentsCount === n ? "bg-primary text-white" : "bg-surface text-text-secondary"
+                      installmentsCount === n
+                        ? "bg-primary text-white"
+                        : "bg-surface text-text-secondary"
                     }`}
                   >
                     {n}x
@@ -698,7 +885,11 @@ export default function NewTransactionSheet({
                   inputMode="numeric"
                   min={2}
                   max={48}
-                  value={[2, 3, 6, 10, 12].includes(installmentsCount) ? "" : installmentsCount}
+                  value={
+                    [2, 3, 6, 10, 12].includes(installmentsCount)
+                      ? ""
+                      : installmentsCount
+                  }
                   onChange={(e) => {
                     const n = parseInt(e.target.value, 10);
                     if (n >= 2 && n <= 48) setInstallmentsCount(n);
@@ -712,11 +903,15 @@ export default function NewTransactionSheet({
                 <div className="mt-2.5 border-t border-border pt-2.5 text-[12px]">
                   <div className="flex items-center justify-between">
                     <span className="text-text-muted">Cada parcela</span>
-                    <span className="font-mono font-bold text-text-primary">{installmentsCount}x {formatBRL(installmentCents)}</span>
+                    <span className="font-mono font-bold text-text-primary">
+                      {installmentsCount}x {formatBRL(installmentCents)}
+                    </span>
                   </div>
                   <div className="mt-1 flex items-center justify-between text-[10px]">
                     <span className="text-text-muted">Total parcelado</span>
-                    <span className="font-mono text-text-secondary">{formatBRL(amountCents)}</span>
+                    <span className="font-mono text-text-secondary">
+                      {formatBRL(amountCents)}
+                    </span>
                   </div>
                 </div>
               )}
@@ -730,13 +925,25 @@ export default function NewTransactionSheet({
         <>
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Origem (saída)</span>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                Origem (saída)
+              </span>
               <button
                 type="button"
-                onClick={() => { setAddingAccount(true); }}
+                onClick={() => {
+                  setAddingAccount(true);
+                }}
                 className="flex items-center gap-1 text-[11px] font-bold text-primary"
               >
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round">
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.8"
+                  strokeLinecap="round"
+                >
                   <path d="M12 5v14M5 12h14" />
                 </svg>
                 Nova
@@ -747,12 +954,30 @@ export default function NewTransactionSheet({
               <div className="mb-2">
                 <InlineForm
                   onSave={handleSaveAccount}
-                  onCancel={() => { setAddingAccount(false); setNewName(""); setNewInitialBalance(""); }}
+                  onCancel={() => {
+                    setAddingAccount(false);
+                    setNewName("");
+                    setNewInitialBalance("");
+                  }}
                   saveLabel="Salvar conta"
                   fields={
                     <>
-                      <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nome da conta" className="mb-2 w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary" autoFocus />
-                      <input type="text" inputMode="numeric" value={newInitialBalance} onChange={(e) => setNewInitialBalance(e.target.value)} placeholder="Saldo inicial (R$)" className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary" />
+                      <input
+                        type="text"
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        placeholder="Nome da conta"
+                        className="mb-2 w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
+                        autoFocus
+                      />
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={newInitialBalance}
+                        onChange={(e) => setNewInitialBalance(e.target.value)}
+                        placeholder="Saldo inicial (R$)"
+                        className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
+                      />
                     </>
                   }
                 />
@@ -765,10 +990,20 @@ export default function NewTransactionSheet({
                 const color = acc.color ?? "#4A5568";
                 const short = acc.name.slice(0, 2).toUpperCase();
                 return (
-                  <button key={acc.id} type="button" onClick={() => setFromAccountId(acc.id === fromAccountId ? "" : acc.id)}
+                  <button
+                    key={acc.id}
+                    type="button"
+                    onClick={() =>
+                      setFromAccountId(acc.id === fromAccountId ? "" : acc.id)
+                    }
                     className={`flex items-center gap-2 rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${selected ? "bg-primary text-white" : "bg-fill-light text-text-secondary"}`}
                   >
-                    <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] font-mono text-[8px] font-bold" style={{ background: color, color: "#fff" }}>{short}</span>
+                    <span
+                      className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] font-mono text-[8px] font-bold"
+                      style={{ background: color, color: "#fff" }}
+                    >
+                      {short}
+                    </span>
                     {acc.name}
                   </button>
                 );
@@ -778,7 +1013,9 @@ export default function NewTransactionSheet({
 
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Destino (entrada)</span>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                Destino (entrada)
+              </span>
             </div>
             <div className="flex flex-wrap gap-[7px]">
               {filteredAccounts.map((acc) => {
@@ -786,10 +1023,20 @@ export default function NewTransactionSheet({
                 const color = acc.color ?? "#4A5568";
                 const short = acc.name.slice(0, 2).toUpperCase();
                 return (
-                  <button key={acc.id} type="button" onClick={() => setToAccountId(acc.id === toAccountId ? "" : acc.id)}
+                  <button
+                    key={acc.id}
+                    type="button"
+                    onClick={() =>
+                      setToAccountId(acc.id === toAccountId ? "" : acc.id)
+                    }
                     className={`flex items-center gap-2 rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${selected ? "bg-primary text-white" : "bg-fill-light text-text-secondary"}`}
                   >
-                    <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] font-mono text-[8px] font-bold" style={{ background: color, color: "#fff" }}>{short}</span>
+                    <span
+                      className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] font-mono text-[8px] font-bold"
+                      style={{ background: color, color: "#fff" }}
+                    >
+                      {short}
+                    </span>
                     {acc.name}
                   </button>
                 );
@@ -805,7 +1052,11 @@ export default function NewTransactionSheet({
         disabled={amountCents <= 0}
         className="w-full rounded-[14px] bg-primary py-4 text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
       >
-        {isTransfer ? "Transferir" : installmentsEnabled ? `Salvar em ${installmentsCount}x` : "Salvar"}
+        {isTransfer
+          ? "Transferir"
+          : installmentsEnabled
+            ? `Salvar em ${installmentsCount}x`
+            : "Salvar"}
       </button>
     </div>
   );

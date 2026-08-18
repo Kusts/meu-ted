@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useLayoutEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import BottomNav from "@/components/BottomNav";
 import BottomSheet from "@/components/BottomSheet";
@@ -11,9 +11,23 @@ import type { SaveData } from "@/components/NewTransactionSheet";
 import { useAppState } from "@/lib/state/app-state-context";
 import { useSheet } from "@/lib/sheet-context";
 import { useUnsavedChangesSafe } from "@/lib/unsaved-changes";
+import { recordAdoptionEvent } from "@/lib/api/adoption";
 
 interface AppShellProps {
   children: ReactNode;
+}
+
+export type OpenTransactionDetail = {
+  kind: "expense" | "income" | "transfer";
+  description?: string;
+  flowId?: string;
+};
+
+export function parseOpenTransactionEvent(
+  event: Event,
+): OpenTransactionDetail | undefined {
+  const detail = (event as CustomEvent<OpenTransactionDetail>).detail;
+  return detail?.kind ? detail : undefined;
 }
 
 let _txCounter = 100;
@@ -33,6 +47,8 @@ export default function AppShell({ children }: AppShellProps) {
   const [preselectedKind, setPreselectedKind] = useState<
     "expense" | "income" | "transfer"
   >("expense");
+  const [initialDescription, setInitialDescription] = useState("");
+  const [captureFlowId, setCaptureFlowId] = useState<string | undefined>();
   const {
     accounts,
     categories,
@@ -57,11 +73,17 @@ export default function AppShell({ children }: AppShellProps) {
     sheetKind ?? preselectedKind;
 
   // Listen for fallback event from pages that don't have context access
-  useEffect(() => {
+  useLayoutEffect(() => {
     function handler(e: Event) {
-      const detail = (e as CustomEvent<{ kind: "expense" | "income" | "transfer" }>).detail;
-      if (detail?.kind) {
+      const detail = parseOpenTransactionEvent(e);
+      if (detail) {
         setPreselectedKind(detail.kind);
+        setInitialDescription(detail.description ?? "");
+        setCaptureFlowId(detail.flowId);
+        if (detail.flowId)
+          void recordAdoptionEvent("capture_started", {
+            flowId: detail.flowId,
+          });
         setSheetMode("preselected");
         setSheetOpen(true);
       }
@@ -83,11 +105,15 @@ export default function AppShell({ children }: AppShellProps) {
 
   function openSheetLocal(mode: "new" | "more") {
     setSheetMode(mode);
+    setInitialDescription("");
+    setCaptureFlowId(undefined);
     setSheetOpen(true);
   }
 
   function closeSheetLocal() {
     setSheetOpen(false);
+    setInitialDescription("");
+    setCaptureFlowId(undefined);
     closeSheet();
     setDiscardOpen(false);
     setPendingNav(null);
@@ -101,7 +127,10 @@ export default function AppShell({ children }: AppShellProps) {
 
   /** Close sheet, but confirm first when the form has unsaved edits. */
   function requestCloseSheet() {
-    if (isDirty && (effectiveSheetMode === "new" || effectiveSheetMode === "preselected")) {
+    if (
+      isDirty &&
+      (effectiveSheetMode === "new" || effectiveSheetMode === "preselected")
+    ) {
       setPendingNav(null);
       setDiscardOpen(true);
       return;
@@ -111,7 +140,11 @@ export default function AppShell({ children }: AppShellProps) {
 
   function handleNavClick(item: NavItem) {
     // Navigating away while the tx sheet is dirty also needs confirm.
-    if (isDirty && effectiveSheetOpen && (effectiveSheetMode === "new" || effectiveSheetMode === "preselected")) {
+    if (
+      isDirty &&
+      effectiveSheetOpen &&
+      (effectiveSheetMode === "new" || effectiveSheetMode === "preselected")
+    ) {
       setPendingNav(item);
       setDiscardOpen(true);
       return;
@@ -136,7 +169,11 @@ export default function AppShell({ children }: AppShellProps) {
           fromAccountId: data.fromAccountId ?? "",
           toAccountId: data.toAccountId ?? "",
         });
-      } else if (data.installmentsTotal && data.installmentsTotal > 1 && data.accountId) {
+      } else if (
+        data.installmentsTotal &&
+        data.installmentsTotal > 1 &&
+        data.accountId
+      ) {
         await createInstallments({
           accountId: data.accountId,
           description: data.description,
@@ -156,6 +193,10 @@ export default function AppShell({ children }: AppShellProps) {
           accountId: data.accountId ?? "",
         });
       }
+      if (captureFlowId)
+        void recordAdoptionEvent("capture_completed", {
+          flowId: captureFlowId,
+        });
       closeSheetLocal();
     } catch (e) {
       // Keep sheet open so draft inputs survive API validation errors (422).
@@ -193,7 +234,8 @@ export default function AppShell({ children }: AppShellProps) {
               : "Mais"
         }
       >
-        {effectiveSheetMode === "new" || effectiveSheetMode === "preselected" ? (
+        {effectiveSheetMode === "new" ||
+        effectiveSheetMode === "preselected" ? (
           <NewTransactionSheet
             key={effectivePreselectedKind}
             accounts={accounts}
@@ -203,18 +245,170 @@ export default function AppShell({ children }: AppShellProps) {
             onAddAccount={addAccount}
             onAddCard={addCard}
             initialTab={effectivePreselectedKind}
+            initialDescription={initialDescription}
           />
         ) : (
           <div className="grid grid-cols-3 gap-[11px]">
             {[
-              { label: "Patrimônio", tint: "#E7F3EC", color: "#0E8C5A", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg> },
-              { label: "Contas", tint: "#EAF0EC", color: "#2FA56F", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg> },
-              { label: "Cartões", tint: "#EEE9F7", color: "#820AD1", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="5" width="20" height="14" rx="2.5" /><path d="M2 10h20" /></svg> },
-              { label: "Assinaturas", tint: "#E8EFF7", color: "#3E6FB0", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="M2 10h20" /><path d="M8 16h4" /></svg> },
-              { label: "Orçamentos", tint: "#E7F3EC", color: "#0E8C5A", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 3v9h9" /></svg> },
-              { label: "Metas & Dívidas", tint: "#FBF1E3", color: "#B8791F", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" /></svg> },
-              { label: "Categorias", tint: "#EAF0EC", color: "#2FA56F", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M7.5 3h9L21 9l-9 12L3 9z" /><path d="M3 9h18" /></svg> },
-              { label: "Relatórios", tint: "#E8EFF7", color: "#3E6FB0", icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18" /><path d="M7 14l4-4 3 3 5-6" /></svg> },
+              {
+                label: "Patrimônio",
+                tint: "#E7F3EC",
+                color: "#0E8C5A",
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                  </svg>
+                ),
+              },
+              {
+                label: "Contas",
+                tint: "#EAF0EC",
+                color: "#2FA56F",
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                  </svg>
+                ),
+              },
+              {
+                label: "Cartões",
+                tint: "#EEE9F7",
+                color: "#820AD1",
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="2" y="5" width="20" height="14" rx="2.5" />
+                    <path d="M2 10h20" />
+                  </svg>
+                ),
+              },
+              {
+                label: "Assinaturas",
+                tint: "#E8EFF7",
+                color: "#3E6FB0",
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="2" y="4" width="20" height="16" rx="2" />
+                    <path d="M2 10h20" />
+                    <path d="M8 16h4" />
+                  </svg>
+                ),
+              },
+              {
+                label: "Orçamentos",
+                tint: "#E7F3EC",
+                color: "#0E8C5A",
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 3v9h9" />
+                  </svg>
+                ),
+              },
+              {
+                label: "Metas & Dívidas",
+                tint: "#FBF1E3",
+                color: "#B8791F",
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M3 3v18h18" />
+                    <path d="m19 9-5 5-4-4-3 3" />
+                  </svg>
+                ),
+              },
+              {
+                label: "Categorias",
+                tint: "#EAF0EC",
+                color: "#2FA56F",
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M7.5 3h9L21 9l-9 12L3 9z" />
+                    <path d="M3 9h18" />
+                  </svg>
+                ),
+              },
+              {
+                label: "Relatórios",
+                tint: "#E8EFF7",
+                color: "#3E6FB0",
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M3 3v18h18" />
+                    <path d="M7 14l4-4 3 3 5-6" />
+                  </svg>
+                ),
+              },
             ].map((item) => (
               <button
                 key={item.label}
