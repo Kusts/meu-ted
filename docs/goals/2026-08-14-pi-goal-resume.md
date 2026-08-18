@@ -31,21 +31,23 @@
 
 Execute somente um item por vez e mantenha a ordem abaixo. Antes de cada ativação, crie/retome o task contract correspondente no `pi-tasks`.
 
-### Item 01 — [G6.1.3] Share Target, manifest shortcuts e atalho iOS para captura rápida
+### Item 01 — [G6.1.3] Share Target, manifest shortcuts e atalho iOS para captura rápida ✅ CONCLUÍDO (commit `924bd37`)
 
 - **ID legado:** `20260729142146-cfc8bs`
 - **Contrato legado:** compartilhar do Android/iOS abre PWA no formulário de despesa.
-- **Comando /goal:**
+- **Status (2026-08-18):** ENTREGUE. Rota `/capture`, `share_target` e shortcut "Novo gasto" no manifesto, bridge client-side (kind=expense + prefill da descrição + normalização via `history.replaceState`), evento `pwa:open-tx` no AppShell.
+- **Comando /goal (histórico):**
 
 ```text
 /goal [G6.1.3] Share Target, manifest shortcuts e atalho iOS para captura rápida. Concluído somente quando: compartilhar do Android/iOS abre PWA no formulário de despesa. Registre no transcript os comandos executados, exit codes e outputs completos que provem o contrato.
 ```
 
-### Item 02 — [G6.1.4] Medir entrega, abertura, uso do chat e tempo de captura (métricas de adoção)
+### Item 02 — [G6.1.4] Medir entrega, abertura, uso do chat e tempo de captura (métricas de adoção) ✅ CONCLUÍDO (commits `924bd37`+`41bce95`+`753e7a7`)
 
 - **ID legado:** `20260729142146-v48v20`
 - **Contrato legado:** dashboard de métricas operacionais; funnel de notificação.
-- **Comando /goal:**
+- **Status (2026-08-18):** ENTREGUE. API: `POST /observability/adoption-events` + `GET /observability/adoption-funnel` (workspace-scoped, schema zod validado, store Postgres/in-memory em `apps/api/src/observability/adoption.ts`); PWA: `recordAdoptionEvent` (capture_started/completed, notification_opened, chat_used), dashboard `AdoptionMetrics.tsx` em Reports, instrumentação em `sw-coordinator.tsx`/`ProfilePage`. Testes verdes (adoption.test.ts API 5×, AdoptionMetrics.test.tsx PWA).
+- **Comando /goal (histórico):**
 
 ```text
 /goal [G6.1.4] Medir entrega, abertura, uso do chat e tempo de captura (métricas de adoção). Concluído somente quando: dashboard de métricas operacionais; funnel de notificação. Registre no transcript os comandos executados, exit codes e outputs completos que provem o contrato.

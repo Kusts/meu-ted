@@ -39,6 +39,14 @@ curl --fail --silent --show-error https://pi-finance-pwa.walissonead.workers.dev
 
 `/pwa-control` must return JSON with `"enabled":true`.
 
+## Production smoke (post-deploy, read-only)
+
+Run the manual GitHub Actions workflow `production-smoke.yml` against the target production URL or run locally:
+
+```bash
+E2E_PRODUCTION_SMOKE=1 E2E_PRODUCTION_URL=https://pi-finance-pwa.walissonead.workers.dev pnpm --dir apps/pwa e2e:production-smoke
+```
+
 ## Rollback — explicit confirmation required
 
 Version `817a9ac0-6f64-455d-b811-471e0bcb96a6` was healthy before this runbook. Verify it remains the intended rollback target with `wrangler versions list` before use.
@@ -48,4 +56,4 @@ SHA="$(git rev-parse --short=12 HEAD)"
 pnpm --dir apps/pwa exec wrangler rollback 817a9ac0-6f64-455d-b811-471e0bcb96a6 --name pi-finance-pwa --message "rollback git:${SHA}"
 ```
 
-Re-run public health checks after rollback.
+Re-run public health checks and the same read-only production smoke workflow after rollback.

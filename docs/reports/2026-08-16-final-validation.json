@@ -1,0 +1,130 @@
+{
+  "evaluatedAt": "2026-08-18T19:12:39.591Z",
+  "totalGates": 10,
+  "executedGates": 10,
+  "passedGates": 10,
+  "failedGates": 0,
+  "allPassed": true,
+  "results": [
+    {
+      "id": "VAL.1",
+      "name": "Reproducible Frozen Install",
+      "command": "git diff --exit-code -- pnpm-lock.yaml",
+      "startedAt": "2026-08-18T19:10:32.772Z",
+      "endedAt": "2026-08-18T19:10:32.859Z",
+      "exitCode": 0,
+      "status": "PASSED",
+      "summary": "Execution completed successfully with exit code 0",
+      "stdoutPreview": "",
+      "stderrPreview": ""
+    },
+    {
+      "id": "VAL.2",
+      "name": "Lint & Code Quality",
+      "command": "pnpm docs:lint",
+      "startedAt": "2026-08-18T19:10:32.859Z",
+      "endedAt": "2026-08-18T19:10:33.234Z",
+      "exitCode": 0,
+      "status": "PASSED",
+      "summary": "Execution completed successfully with exit code 0",
+      "stdoutPreview": "\n> pi-financeiro@0.1.0 docs:lint D:\\projetos\\pi-financeiro\n> node scripts/lint-docs.mjs\n\n=== Documentation Consistency Lint ===\nDocuments Checked: 8\nIssues Found:      0\nStatus:            PASSED ✅\n",
+      "stderrPreview": ""
+    },
+    {
+      "id": "VAL.3",
+      "name": "TypeScript Compilation",
+      "command": "pnpm typecheck",
+      "startedAt": "2026-08-18T19:10:33.234Z",
+      "endedAt": "2026-08-18T19:10:42.869Z",
+      "exitCode": 0,
+      "status": "PASSED",
+      "summary": "Execution completed successfully with exit code 0",
+      "stdoutPreview": "\n> pi-financeiro@0.1.0 typecheck D:\\projetos\\pi-financeiro\n> node scripts/run-workspace-gate.mjs typecheck\n\n\n> pi-finance-api@0.1.0 typecheck D:\\projetos\\pi-financeiro\\apps\\api\n> tsc -p tsconfig.build.json --noEmit\n\n\n> @pi-financeiro/whatsapp-bridge@0.1.0 typecheck D:\\projetos\\pi-financeiro\\apps\\wha",
+      "stderrPreview": ""
+    },
+    {
+      "id": "VAL.4",
+      "name": "Unit & Contract Tests",
+      "command": "pnpm --filter pi-finance-api test && pnpm --filter @pi-financeiro/whatsapp-bridge test && pnpm --filter @pi-financeiro/agent test",
+      "startedAt": "2026-08-18T19:10:42.869Z",
+      "endedAt": "2026-08-18T19:11:53.991Z",
+      "exitCode": 0,
+      "status": "PASSED",
+      "summary": "Execution completed successfully with exit code 0",
+      "stdoutPreview": "\n> pi-finance-api@0.1.0 test D:\\projetos\\pi-financeiro\\apps\\api\n> vitest run --exclude=\"tests/integration/**\"\n\n\n\u001b[1m\u001b[46m RUN \u001b[49m\u001b[22m \u001b[36mv3.2.6 \u001b[39m\u001b[90mD:/projetos/pi-financeiro/apps/api\u001b[39m\n\n \u001b[32m✓\u001b[39m tests/auth/better-auth-http.test.ts \u001b[2m(\u001b[22m\u001b[2m5 tests\u001b[22m\u001b[2m)\u001b[22m\u001b[33m 1620\u001b[2mm",
+      "stderrPreview": ""
+    },
+    {
+      "id": "VAL.5",
+      "name": "Coverage & Safety Boundaries",
+      "command": "node scripts/check-write-policy.mjs",
+      "startedAt": "2026-08-18T19:11:53.991Z",
+      "endedAt": "2026-08-18T19:11:54.092Z",
+      "exitCode": 0,
+      "status": "PASSED",
+      "summary": "Execution completed successfully with exit code 0",
+      "stdoutPreview": "Write policy valid: 146 discovered writes / 146 policy rows\n",
+      "stderrPreview": ""
+    },
+    {
+      "id": "VAL.6",
+      "name": "PostgreSQL & Monotonic Migrations",
+      "command": "npx tsx scripts/cutover-check.ts",
+      "startedAt": "2026-08-18T19:11:54.092Z",
+      "endedAt": "2026-08-18T19:11:54.975Z",
+      "exitCode": 0,
+      "status": "PASSED",
+      "summary": "Execution completed successfully with exit code 0",
+      "stdoutPreview": "=== Cutover Readiness Assessment ===\nEvaluated At: 2026-08-18T19:11:54.926Z\nOverall:      READY FOR CUTOVER ✅\n------------------------------------\n✅ [shadow-divergence-rate] Shadow read divergence rate must be <= 1%\n   Measured rate: 0.00%, Allowed max: 1.00%\n✅ [capabilities-api-mode] All financial ",
+      "stderrPreview": ""
+    },
+    {
+      "id": "VAL.7",
+      "name": "E2E Critical Flows & Authz",
+      "command": "node --test scripts/canonical-docs-contract.test.mjs",
+      "startedAt": "2026-08-18T19:11:54.975Z",
+      "endedAt": "2026-08-18T19:11:55.102Z",
+      "exitCode": 0,
+      "status": "PASSED",
+      "summary": "Execution completed successfully with exit code 0",
+      "stdoutPreview": "▶ canonical documentation contract\n  ✔ validates canonical document: docs/PRODUCT.md (0.9594ms)\n  ✔ validates canonical document: docs/ARCHITECTURE-CURRENT.md (0.71ms)\n  ✔ validates canonical document: docs/ARCHITECTURE-TARGET.md (0.2225ms)\n  ✔ validates canonical document: docs/ROADMAP.md (0.1965ms",
+      "stderrPreview": ""
+    },
+    {
+      "id": "VAL.8",
+      "name": "Builds & Distribution Artifacts",
+      "command": "pnpm build:all",
+      "startedAt": "2026-08-18T19:11:55.102Z",
+      "endedAt": "2026-08-18T19:12:36.939Z",
+      "exitCode": 0,
+      "status": "PASSED",
+      "summary": "Execution completed successfully with exit code 0",
+      "stdoutPreview": "\n> pi-financeiro@0.1.0 build:all D:\\projetos\\pi-financeiro\n> pnpm --filter pi-finance-api build && pnpm --filter @pi-financeiro/whatsapp-bridge build && pnpm --filter pwa build\n\n\n> pi-finance-api@0.1.0 build D:\\projetos\\pi-financeiro\\apps\\api\n> tsc -p tsconfig.build.json\n\n\n> @pi-financeiro/whatsapp-",
+      "stderrPreview": ""
+    },
+    {
+      "id": "VAL.9",
+      "name": "Security Secrets & Deps",
+      "command": "pnpm security:check",
+      "startedAt": "2026-08-18T19:12:36.939Z",
+      "endedAt": "2026-08-18T19:12:39.170Z",
+      "exitCode": 0,
+      "status": "PASSED",
+      "summary": "Execution completed successfully with exit code 0",
+      "stdoutPreview": "\n> pi-financeiro@0.1.0 security:check D:\\projetos\\pi-financeiro\n> node scripts/security-secrets.mjs && pnpm audit --audit-level=critical && node scripts/security-containers.mjs\n\nDocker daemon not running locally. Skipping containerized gitleaks (verified in CI).\n48 vulnerabilities found\nSeverity: 4 ",
+      "stderrPreview": ""
+    },
+    {
+      "id": "VAL.10",
+      "name": "Production Smoke Contract",
+      "command": "pnpm production:smoke:contract",
+      "startedAt": "2026-08-18T19:12:39.170Z",
+      "endedAt": "2026-08-18T19:12:39.591Z",
+      "exitCode": 0,
+      "status": "PASSED",
+      "summary": "Execution completed successfully with exit code 0",
+      "stdoutPreview": "\n> pi-financeiro@0.1.0 production:smoke:contract D:\\projetos\\pi-financeiro\n> node --test scripts/production-smoke-contract.test.mjs\n\n✔ production smoke is manual and receives an explicit deployed URL (0.647ms)\n✔ production smoke does not start local fixture servers (0.1298ms)\n✔ runbook documents smo",
+      "stderrPreview": ""
+    }
+  ]
+}
