@@ -1,0 +1,81 @@
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { createBetterAuth } from './better-auth.js';
+import { getBetterAuthSessionContext } from './better-auth.js';
+import type { ReconnectTokenStore } from './reconnect-tokens.js';
+import type { ReconnectSocketRegistry } from './reconnect-sockets.js';
+import { z } from 'zod';
+
+type BetterAuth = ReturnType<typeof createBetterAuth>;
+
+const reconnectInput = z.object({ token: z.string().trim().min(1) });
+
+export const registerBetterAuthRoutes = (app: FastifyInstance, auth: BetterAuth, reconnectTokens?: ReconnectTokenStore, reconnectSockets?: ReconnectSocketRegistry): void => {
+  app.post('/auth/reconnect', async (request, reply) => {
+    if (isUntrustedMutation(request, auth)) return reply.code(403).send({ code: 'auth.invalid_origin', message: 'Invalid origin' });
+    if (!reconnectTokens) return reply.code(503).send({ code: 'auth.reconnect_unavailable', message: 'reconnect tokens are unavailable' });
+    const parsed = reconnectInput.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'auth.invalid_reconnect_token', message: 'valid reconnect token required' });
+    const sessionId = reconnectTokens.resolve(parsed.data.token);
+    if (!sessionId) return reply.code(401).send({ code: 'auth.invalid_reconnect_token', message: 'invalid or expired reconnect token' });
+    return reply.send({ sessionId });
+  });
+
+  app.post('/auth/reconnect-token', async (request, reply) => {
+    if (isUntrustedMutation(request, auth)) return reply.code(403).send({ code: 'auth.invalid_origin', message: 'Invalid origin' });
+    const context = await getBetterAuthSessionContext(auth, new Headers(request.headers as Record<string, string>));
+    if (!context) return reply.code(401).send({ code: 'auth.missing_session', message: 'authenticated session required' });
+    if (!reconnectTokens) return reply.code(503).send({ code: 'auth.reconnect_unavailable', message: 'reconnect tokens are unavailable' });
+    const expiresInSeconds = 300;
+    return reply.send({ token: reconnectTokens.issue(context.sessionId, expiresInSeconds * 1000, context.userId), expiresInSeconds });
+  });
+
+  app.all('/auth/*', async (request, reply) => {
+    if (isUntrustedMutation(request, auth)) {
+      return reply.code(403).send({ code: 'auth.invalid_origin', message: 'Invalid origin' });
+    }
+    const isSignOut = request.method === 'POST' && request.url.split('?')[0] === '/auth/sign-out';
+    const session = isSignOut && reconnectTokens
+      ? await getBetterAuthSessionContext(auth, new Headers(request.headers as Record<string, string>))
+      : undefined;
+    const response = await auth.handler(toWebRequest(request, auth.options.baseURL));
+    if (isSignOut && session && reconnectTokens) {
+      reconnectTokens.invalidateSession(session.sessionId);
+      reconnectSockets?.closeSession(session.sessionId, 'session signed out');
+    }
+    return sendWebResponse(reply, response);
+  });
+};
+
+const isUntrustedMutation = (request: FastifyRequest, auth: BetterAuth): boolean => {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) return false;
+  const origin = request.headers.origin;
+  if (!origin || typeof auth.options.trustedOrigins !== 'object' || !Array.isArray(auth.options.trustedOrigins)) return false;
+  return !auth.options.trustedOrigins.includes(origin);
+};
+
+const toWebRequest = (request: FastifyRequest, baseURL: string): Request => {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+  }
+  const hasBody = !['GET', 'HEAD'].includes(request.method) && request.body !== undefined;
+  return new Request(new URL(request.url, baseURL), {
+    method: request.method,
+    headers,
+    ...(hasBody ? { body: JSON.stringify(request.body) } : {}),
+  });
+};
+
+const sendWebResponse = async (reply: FastifyReply, response: Response) => {
+  const setCookies = response.headers.getSetCookie?.() ?? [];
+  response.headers.forEach((value, name) => {
+    if (name !== 'set-cookie') reply.header(name, value);
+  });
+  if (setCookies.length > 0) reply.header('set-cookie', setCookies);
+  if (response.status === 204) return reply.code(response.status).send();
+
+  const text = await response.text();
+  const contentType = response.headers.get('content-type') ?? '';
+  const body = contentType.includes('application/json') && text !== '' ? JSON.parse(text) : text;
+  return reply.code(response.status).send(body);
+};
