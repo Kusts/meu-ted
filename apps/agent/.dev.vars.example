@@ -1,0 +1,5 @@
+# Shared with the API. Use a different random value per environment.
+AGENT_DELEGATION_SECRET=replace-with-at-least-32-random-characters
+# Optional safety tuning; defaults are 10000 tokens/day and 20 requests/minute per actor.
+AGENT_DAILY_TOKEN_BUDGET=10000
+AGENT_RATE_LIMIT_MAX_REQUESTS=20
