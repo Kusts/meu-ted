@@ -314,6 +314,7 @@ describe('processWebhook', () => {
     pi = makePi();
     sender = makeSender();
     reg = makeRegistry();
+    process.env.PI_CONTEXT_TOKEN_SECRET = 'test-context-secret';
   });
 
   it('ignores event that is not Message (status=ignored)', async () => {
@@ -331,6 +332,20 @@ describe('processWebhook', () => {
     const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
     expect(res.status).toBe('failed');
     expect(res.reason).toMatch(/token/i);
+  });
+
+  it('fails closed without a context token secret', async () => {
+    const previous = process.env.PI_CONTEXT_TOKEN_SECRET;
+    delete process.env.PI_CONTEXT_TOKEN_SECRET;
+    try {
+      const res = await processWebhook(payload(), 'good-token', reg, store, pi, sender);
+      expect(res.status).toBe('failed');
+      expect(res.reason).toMatch(/secret/i);
+      expect(pi.send).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.PI_CONTEXT_TOKEN_SECRET;
+      else process.env.PI_CONTEXT_TOKEN_SECRET = previous;
+    }
   });
 
   it('ignores own messages (status=ignored)', async () => {
@@ -468,7 +483,8 @@ describe('processWebhook', () => {
     }
   });
 
-  it('forwards common message to Pi with the documented prompt', async () => {
+  it('forwards common message to Pi with the documented prompt and bound context token', async () => {
+    process.env.PI_CONTEXT_TOKEN_SECRET = 'webhook-test-secret';
     const p = payload({ text: 'oi tudo bem?' });
     const res = await processWebhook(p, 'good-token', reg, store, pi, sender);
     expect(res.status).toBe('forwarded');
@@ -481,6 +497,16 @@ describe('processWebhook', () => {
       providerMessageId: '3EB0_ABC',
     });
     expect(call.context.idempotencyKey).toBe('whatsapp:3EB0_ABC');
+    const tokenPayload = JSON.parse(Buffer.from(call.context.contextToken!.split('.')[1]!, 'base64url').toString('utf8')) as Record<string, unknown>;
+    expect(tokenPayload).toMatchObject({
+      sub: '5511999999999',
+      workspace: process.env.DEFAULT_HOUSEHOLD_ID ?? 'default',
+      chatId: '5511999999999@s.whatsapp.net',
+      providerMessageId: '3EB0_ABC',
+      requestId: 'whatsapp:3EB0_ABC',
+    });
+    expect(Number(tokenPayload.exp)).toBeGreaterThan(Number(tokenPayload.iat));
+    delete process.env.PI_CONTEXT_TOKEN_SECRET;
     // documented prompt format
     expect(call.message).toMatch(/^\[WhatsApp Message\]/);
     expect(call.message).toContain('chatId: 5511999999999@s.whatsapp.net');
