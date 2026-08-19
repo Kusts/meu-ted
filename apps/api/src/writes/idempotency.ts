@@ -57,6 +57,18 @@ export const hashIdempotencyPayload = (payload: unknown, version = 1): string =>
   return createHash('sha256').update(raw).digest('hex');
 };
 
+export const createIdempotencyRequest = (
+  identity: { householdId: string; deviceId?: string },
+  operation: string,
+  key: string,
+): IdempotencyRequest => ({
+  workspaceId: identity.householdId,
+  actorType: 'device',
+  actorId: identity.deviceId ?? 'device',
+  operation,
+  key,
+});
+
 export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
   const store = new Map<string, IdempotencyEntry<unknown>>();
 

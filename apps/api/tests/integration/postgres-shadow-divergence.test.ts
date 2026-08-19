@@ -30,9 +30,14 @@ describe("Postgres shadow divergence integration", () => {
       const workspaceId = randomUUID();
 
       // Create dummy household if needed by foreign key
+      // Create owner user and dummy household if needed by foreign key
       await pool.query(
-        `INSERT INTO households (id, name) VALUES ($1, 'Shadow Test Workspace') ON CONFLICT DO NOTHING`,
+        `INSERT INTO users (id, email, name, status) VALUES ($1, 'shadow-owner@example.test', 'Shadow Owner', 'active') ON CONFLICT DO NOTHING`,
         [workspaceId],
+      );
+      await pool.query(
+        `INSERT INTO households (id, name, kind, owner_user_id) VALUES ($1, 'Shadow Test Workspace', 'shared', $2) ON CONFLICT DO NOTHING`,
+        [workspaceId, workspaceId],
       );
 
       try {
@@ -82,8 +87,12 @@ describe("Postgres shadow divergence integration", () => {
         expect(events).toHaveLength(3);
         expect(events[0]?.workspaceId).toBe(workspaceId);
       } finally {
+        // Shared workspaces must retain >=1 owner, so fixture teardown
+        // downgrades to replica to neutralise the owner-guard trigger.
+        await pool.query(`SET session_replication_role = replica`);
         await pool.query(`DELETE FROM shadow_divergence_events WHERE workspace_id = $1`, [workspaceId]);
         await pool.query(`DELETE FROM households WHERE id = $1`, [workspaceId]);
+        await pool.query(`SET session_replication_role = origin`);
       }
     },
   );
