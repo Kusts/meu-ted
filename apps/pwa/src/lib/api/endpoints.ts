@@ -16,6 +16,7 @@ import type {
   StatementDetail,
   Profile,
   QuickInsight,
+  DashboardSummary,
 } from "@/lib/state/types";
 import { apiFetch } from "./client";
 
@@ -41,11 +42,17 @@ export async function fetchCategories(): Promise<Category[]> {
 }
 
 export async function fetchTransactions(
-  params?: { limit?: number; offset?: number; kind?: string }
-): Promise<{ items: Transaction[]; total: number }> {
+  params?: { limit?: number; offset?: number; page?: number; kind?: string }
+): Promise<{ items: Transaction[]; total: number; limit?: number; offset?: number; page?: number }> {
   const q = new URLSearchParams();
   if (params?.limit) q.set("limit", String(params.limit));
-  if (params?.offset) q.set("offset", String(params.offset));
+  if (params?.offset !== undefined) {
+    q.set("offset", String(params.offset));
+  } else if (params?.page !== undefined) {
+    const limit = params.limit ?? 50;
+    q.set("offset", String((params.page - 1) * limit));
+    q.set("page", String(params.page));
+  }
   if (params?.kind) q.set("kind", params.kind);
   const qs = q.toString();
   return apiFetch(`/transactions${qs ? `?${qs}` : ""}`);
@@ -467,5 +474,11 @@ export async function patchProfile(input: {
 export async function fetchQuickInsights(): Promise<QuickInsight[]> {
   const res = await apiFetch<{ items: QuickInsight[] }>("/insights/quick");
   return res.items;
+}
+
+// ─── Dashboard Summary ───────────────────────────────────
+
+export async function fetchDashboardSummary(): Promise<DashboardSummary> {
+  return apiFetch<DashboardSummary>("/dashboard/summary");
 }
 

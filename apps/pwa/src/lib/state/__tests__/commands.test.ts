@@ -241,5 +241,24 @@ describe("PWA State Mutators — commands.ts", () => {
       expect(cleanup).toHaveBeenCalledOnce();
       expect(apiSpy).toHaveBeenCalledTimes(2);
     });
+
+    it("3.4 passes idempotencyKey to endpoints when provided", async () => {
+      const mockCreated = { id: "tx-idem", description: "Idempotent Write" };
+      const apiSpy = vi.spyOn(endpoints, "createExpenseTransaction").mockResolvedValue(mockCreated as never);
+      const commands = createCommands(makeContext(true));
+
+      const input = {
+        description: "Idempotent Write",
+        amountCents: 5000,
+        date: "2026-08-19",
+        categoryId: "c1",
+        accountId: "a1",
+        idempotencyKey: "idem-key-12345",
+      };
+
+      const res = await commands.createExpenseTransaction(input);
+      expect(res).toEqual(mockCreated);
+      expect(apiSpy).toHaveBeenCalledWith(input);
+    });
   });
 });

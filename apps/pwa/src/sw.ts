@@ -11,6 +11,13 @@
 
 import { installSerwist } from "@serwist/sw";
 import { CacheFirst } from "serwist";
+import { z } from "zod";
+
+export const pwaControlSchema = z.object({
+  type: z.string().optional(),
+  action: z.string().optional(),
+  enabled: z.boolean().optional(),
+}).passthrough();
 
 // Service worker global (Serwist build injects into worker scope)
 interface SWGlobal {

@@ -289,5 +289,28 @@ describe("PWA Sync Engine — sync-engine.ts", () => {
       expect(saveResolved).toBe(true);
       expect(dispatched[dispatched.length - 1].type).toBe("BOOTSTRAP_COMPLETE");
     });
+
+    it("3.4 syncTransactionsPage fetches paginated transactions and dispatches DOMAIN_LIVE", async () => {
+      const dispatched: AppStateAction[] = [];
+      const dispatch = (a: AppStateAction) => { dispatched.push(a); };
+      const txs = [{ id: "tx-page-1", description: "Test", amountCents: 1000, date: "2026-08-19", kind: "expense" as const, categoryId: "c1", accountId: "a1" }];
+
+      const spy = vi.spyOn(endpoints, "fetchTransactions").mockResolvedValue({
+        items: txs,
+        total: 100,
+        page: 2,
+        limit: 25,
+      });
+
+      const { syncTransactionsPage } = await import("../sync-engine");
+      const result = await syncTransactionsPage("token-1", { page: 2, limit: 25 }, dispatch);
+
+      expect(result.page).toBe(2);
+      expect(result.limit).toBe(25);
+      expect(result.total).toBe(100);
+      expect(result.items).toEqual(txs);
+      expect(spy).toHaveBeenCalledWith({ page: 2, limit: 25 });
+      expect(dispatched.some((a) => a.type === "DOMAIN_LIVE" && a.domain === "transactions")).toBe(true);
+    });
   });
 });

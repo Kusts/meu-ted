@@ -7,8 +7,19 @@
  * All env reads happen at call-time, allowing tests to use vi.stubEnv.
  */
 
-import type { ZodType } from "zod";
+import { z, type ZodType } from "zod";
 import { closeAllSockets } from "@/lib/auth/socket-registry";
+
+export const responseSchema = z
+  .object({
+    ok: z.boolean().optional(),
+    data: z.unknown().optional(),
+    error: z.unknown().optional(),
+  })
+  .refine(
+    (obj) => obj.ok !== undefined || obj.data !== undefined || obj.error !== undefined,
+    { message: "Invalid API response envelope" },
+  );
 
 const PRODUCTION_PWA_HOST = "pi-finance-pwa.walissonead.workers.dev";
 const PRODUCTION_API_BASE_URL = "https://api.synkroo.com.br";

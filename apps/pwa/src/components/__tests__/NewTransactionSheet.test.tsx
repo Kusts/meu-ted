@@ -416,5 +416,59 @@ describe("NewTransactionSheet", () => {
       await user.click(screen.getByRole("button", { name: "Cancelar" }));
       expect(screen.queryByPlaceholderText("Nome da categoria")).not.toBeInTheDocument();
     });
+
+    it("subcategory selection: clicking a subcategory sets subcategoryId in onSave", async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      render(
+        <NewTransactionSheet
+          accounts={accounts}
+          categories={categoriesWithSubs}
+          onSave={onSave}
+        />,
+      );
+
+      // Select parent category (Alimentação)
+      await user.click(screen.getByText("Alimentação"));
+      // Subcategories should be visible
+      expect(screen.getByText("Mercado")).toBeInTheDocument();
+      // Click subcategory
+      await user.click(screen.getByText("Mercado"));
+
+      const valorInput = screen.getByPlaceholderText(/0,00/);
+      await user.type(valorInput, "7500");
+      const descInput = screen.getByPlaceholderText(/aluguel|descrição/i);
+      await user.type(descInput, "Compras da semana");
+      await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+
+      expect(onSave).toHaveBeenCalledTimes(1);
+      const saved = onSave.mock.calls[0]![0];
+      expect(saved.categoryId).toBe("sub1");
+      expect(saved.subcategoryId).toBe("sub1");
+    });
+
+    it("subcategory draft prefill: initializes with selected subcategory", async () => {
+      const user = userEvent.setup();
+      const onSave = vi.fn();
+      render(
+        <NewTransactionSheet
+          accounts={accounts}
+          categories={categoriesWithSubs}
+          onSave={onSave}
+          initialSubcategoryId="sub2"
+          initialDescription="Jantar"
+        />,
+      );
+
+      const valorInput = screen.getByPlaceholderText(/0,00/);
+      await user.type(valorInput, "12000");
+      await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+
+      expect(onSave).toHaveBeenCalledTimes(1);
+      const saved = onSave.mock.calls[0]![0];
+      expect(saved.categoryId).toBe("sub2");
+      expect(saved.subcategoryId).toBe("sub2");
+      expect(saved.description).toBe("Jantar");
+    });
   });
 });

@@ -14,6 +14,7 @@ export interface SaveData {
   description: string;
   date: string;
   categoryId?: string;
+  subcategoryId?: string;
   accountId?: string;
   fromAccountId?: string;
   toAccountId?: string;
@@ -42,6 +43,8 @@ interface NewTransactionSheetProps {
   }) => void;
   initialTab?: SheetTab;
   initialDescription?: string;
+  initialCategoryId?: string;
+  initialSubcategoryId?: string;
 }
 
 function formatInputBRL(value: string): string {
@@ -111,13 +114,26 @@ export default function NewTransactionSheet({
   onAddCard,
   initialTab = "expense",
   initialDescription = "",
+  initialCategoryId = "",
+  initialSubcategoryId = "",
 }: NewTransactionSheetProps) {
   const { markDirty, markClean } = useFormDirtySafe();
   const [tab, setTab] = useState<SheetTab>(initialTab);
   const [amountDisplay, setAmountDisplay] = useState("");
   const [description, setDescription] = useState(initialDescription);
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [categoryId, setCategoryId] = useState("");
+  const [subcategoryId, setSubcategoryId] = useState(() => {
+    if (initialSubcategoryId) return initialSubcategoryId;
+    return "";
+  });
+  const [categoryId, setCategoryId] = useState(() => {
+    if (initialCategoryId) return initialCategoryId;
+    if (initialSubcategoryId) {
+      const parent = categories.find((c) => c.id === initialSubcategoryId)?.parentId;
+      if (parent) return parent;
+    }
+    return "";
+  });
   const [accountId, setAccountId] = useState("");
   const [cardId, setCardId] = useState("");
   const [fromAccountId, setFromAccountId] = useState("");
@@ -287,7 +303,8 @@ export default function NewTransactionSheet({
         amountCents,
         description,
         date,
-        categoryId,
+        categoryId: subcategoryId || categoryId,
+        subcategoryId: subcategoryId || undefined,
         accountId: cardId || accountId,
       };
       if (installmentsEnabled && installmentsCount > 1) {
@@ -322,6 +339,7 @@ export default function NewTransactionSheet({
               // amount/description silently carrying over).
               setTab(t.key);
               setCategoryId("");
+              setSubcategoryId("");
               setAccountId("");
               setCardId("");
               setFromAccountId("");
@@ -524,9 +542,15 @@ export default function NewTransactionSheet({
                 <button
                   key={cat.id}
                   type="button"
-                  onClick={() =>
-                    setCategoryId(cat.id === categoryId ? "" : cat.id)
-                  }
+                  onClick={() => {
+                    if (cat.id === categoryId) {
+                      setCategoryId("");
+                      setSubcategoryId("");
+                    } else {
+                      setCategoryId(cat.id);
+                      setSubcategoryId("");
+                    }
+                  }}
                   className={`flex flex-col items-center gap-1 rounded-[12px] p-2 transition-colors ${
                     selected
                       ? "bg-primary/10 ring-1 ring-primary"
@@ -609,16 +633,26 @@ export default function NewTransactionSheet({
 
             {subcategories.length > 0 && (
               <div className="flex gap-1.5 overflow-x-auto">
-                {subcategories.map((sub) => (
-                  <button
-                    key={sub.id}
-                    type="button"
-                    className="flex items-center gap-1 flex-none rounded-[100px] border border-border-strong bg-fill-light px-3 py-1.5 text-[11px] font-semibold text-text-secondary"
-                  >
-                    <CategoryBadge name={sub.name} size={12} />
-                    {sub.name}
-                  </button>
-                ))}
+                {subcategories.map((sub) => {
+                  const isSelected = subcategoryId === sub.id;
+                  return (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      onClick={() =>
+                        setSubcategoryId(sub.id === subcategoryId ? "" : sub.id)
+                      }
+                      className={`flex items-center gap-1 flex-none rounded-[100px] border px-3 py-1.5 text-[11px] font-semibold transition-colors ${
+                        isSelected
+                          ? "border-primary bg-primary/10 text-primary font-bold"
+                          : "border-border-strong bg-fill-light text-text-secondary"
+                      }`}
+                    >
+                      <CategoryBadge name={sub.name} size={12} />
+                      {sub.name}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

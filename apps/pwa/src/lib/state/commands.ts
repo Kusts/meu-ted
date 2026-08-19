@@ -50,6 +50,7 @@ export interface TransactionCreateInput {
   date: string;
   categoryId: string;
   accountId: string;
+  idempotencyKey?: string;
 }
 
 export interface TransactionUpdateInput {
@@ -58,6 +59,7 @@ export interface TransactionUpdateInput {
   amountCents?: number;
   accountId?: string;
   categoryId?: string;
+  idempotencyKey?: string;
 }
 
 export interface TransferInput {
@@ -66,6 +68,7 @@ export interface TransferInput {
   date: string;
   fromAccountId: string;
   toAccountId: string;
+  idempotencyKey?: string;
 }
 
 export interface PayableInput {
@@ -74,6 +77,7 @@ export interface PayableInput {
   amountCents: number;
   dueDate: string;
   categoryId?: string;
+  idempotencyKey?: string;
 }
 
 export interface PayableUpdateInput {
@@ -82,6 +86,7 @@ export interface PayableUpdateInput {
   dueDate?: string;
   accountId?: string;
   categoryId?: string;
+  idempotencyKey?: string;
 }
 
 export interface BudgetInput {
@@ -90,11 +95,13 @@ export interface BudgetInput {
   amountCents: number;
   period: "monthly" | "quarterly" | "yearly";
   startDate: string;
+  idempotencyKey?: string;
 }
 
 export interface BudgetUpdateInput {
   amountCents?: number;
   alertThreshold?: number;
+  idempotencyKey?: string;
 }
 
 export interface GoalInput {
@@ -102,24 +109,28 @@ export interface GoalInput {
   goalType: "savings" | "purchase" | "debt_payoff" | "emergency_fund";
   targetAmountCents: number;
   startDate: string;
+  idempotencyKey?: string;
 }
 
 export interface GoalUpdateInput {
   name?: string;
   targetAmountCents?: number;
   targetDate?: string;
+  idempotencyKey?: string;
 }
 
 export interface AccountInput {
   name: string;
   kind: "bank" | "cash" | "credit_card";
   initialBalanceCents: number;
+  idempotencyKey?: string;
 }
 
 export interface CategoryInput {
   name: string;
   kind: "expense" | "income";
   parentId?: string;
+  idempotencyKey?: string;
 }
 
 export interface CardInput {
@@ -127,6 +138,7 @@ export interface CardInput {
   creditLimitCents: number;
   closingDay: number;
   dueDay: number;
+  idempotencyKey?: string;
 }
 
 export interface CardUpdateInput {
@@ -134,6 +146,7 @@ export interface CardUpdateInput {
   creditLimitCents?: number;
   closingDay?: number;
   dueDay?: number;
+  idempotencyKey?: string;
 }
 
 export interface SubscriptionInput {
@@ -142,6 +155,7 @@ export interface SubscriptionInput {
   cycle: "monthly" | "yearly" | "weekly";
   day: number;
   paymentMethod: string;
+  idempotencyKey?: string;
 }
 
 export interface SubscriptionUpdateInput {
@@ -150,11 +164,13 @@ export interface SubscriptionUpdateInput {
   cycle?: "monthly" | "yearly" | "weekly";
   day?: number;
   paymentMethod?: string;
+  idempotencyKey?: string;
 }
 
 export interface PayStatementInput {
   amountCents: number;
   fromAccountId: string;
+  idempotencyKey?: string;
 }
 
 export interface InstallmentsInput {
@@ -164,6 +180,7 @@ export interface InstallmentsInput {
   purchaseDate: string;
   installmentsTotal: number;
   categoryId?: string;
+  idempotencyKey?: string;
 }
 
 export interface ProfileInput {
@@ -172,6 +189,7 @@ export interface ProfileInput {
   phone?: string;
   avatarColor?: string;
   greetingStyle?: "auto" | "minimal" | "verbose";
+  idempotencyKey?: string;
 }
 
 /**

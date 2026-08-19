@@ -10,9 +10,14 @@ import * as endpoints from "@/lib/api/endpoints";
 import { ApiError } from "@/lib/api/client";
 import { type DomainKey, type AppStateAction, ESSENTIAL_DOMAIN_KEYS } from "./state-reducer";
 import { saveSnapshotDomain } from "./snapshot-store";
-import type { Account } from "./types";
+import type { Account, Transaction } from "./types";
 
 type Dispatch = (action: AppStateAction) => void;
+
+export interface PaginationOptions {
+  page?: number;
+  limit?: number;
+}
 
 /** Preloaded snapshot data, keyed by domain. Passed when booting from offline cache. */
 export type SnapshotPreload = Partial<Record<DomainKey, { data: unknown; syncedAt: string }>>;
@@ -149,4 +154,32 @@ export async function runBootstrap(
   await Promise.all(savePromises);
 
   dispatch({ type: "BOOTSTRAP_COMPLETE" });
+}
+
+/**
+ * Synchronizes a paginated slice of transactions.
+ */
+export async function syncTransactionsPage(
+  token: string,
+  options: PaginationOptions = { page: 1, limit: 50 },
+  dispatch?: Dispatch,
+): Promise<{ items: Transaction[]; total: number; page: number; limit: number }> {
+  const page = options.page ?? 1;
+  const limit = options.limit ?? 50;
+  const res = await endpoints.fetchTransactions({ page, limit });
+  if (dispatch) {
+    dispatch({
+      type: "DOMAIN_LIVE",
+      domain: "transactions",
+      data: res.items,
+      syncedAt: new Date().toISOString(),
+    });
+    void saveSnapshotDomain(token, "transactions", res.items);
+  }
+  return {
+    items: res.items,
+    total: res.total,
+    page,
+    limit,
+  };
 }

@@ -165,3 +165,42 @@ export interface Profile {
   greetingStyle: "auto" | "minimal" | "verbose";
   updatedAt: string;
 }
+
+// ── Dashboard Summary (Server-owned Aggregates) ─────────────────────
+
+export interface DashboardSummary {
+  householdId: string;
+  generatedAt: string;
+  totalBalanceCents: number;
+  monthIncomeCents: number;
+  monthExpenseCents: number;
+  monthNetCents: number;
+  cashFlowLast30DaysCents: number;
+  topExpenses: Array<{
+    transactionId: string;
+    description: string;
+    amountCents: number;
+    date: string;
+    categoryName?: string;
+  }>;
+  topExpenseCategories: Array<{
+    categoryId?: string;
+    categoryName: string;
+    totalCents: number;
+  }>;
+  topIncomeCategories: Array<{
+    categoryId?: string;
+    categoryName: string;
+    totalCents: number;
+  }>;
+  monthOverMonth: {
+    incomeChangePercent: number | null;
+    expenseChangePercent: number | null;
+    netChangeCents: number;
+  };
+  alerts: Array<{
+    id: string;
+    message: string;
+    severity: "info" | "warn" | "good";
+  }>;
+}

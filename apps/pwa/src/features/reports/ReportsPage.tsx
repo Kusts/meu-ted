@@ -247,6 +247,44 @@ export default function ReportsPage() {
     totalCardSpent -
     totalDebtRemaining;
 
+  // ── Evolução patrimonial real (últimos 6 meses) ──
+  const netWorthTrend = useMemo(() => {
+    const months: { label: string; yearMonth: string; flowCents: number }[] = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+      const ym = d.toISOString().slice(0, 7);
+      const rawMonth = d.toLocaleDateString("pt-BR", { month: "short", timeZone: "UTC" }).replace(".", "");
+      const label = rawMonth.charAt(0).toUpperCase() + rawMonth.slice(1);
+      const mTx = transactions.filter((t) => t.date.startsWith(ym));
+      const income = mTx.filter((t) => t.kind === "income").reduce((s, t) => s + t.amountCents, 0);
+      const expense = mTx.filter((t) => t.kind === "expense").reduce((s, t) => s + t.amountCents, 0);
+      months.push({ label, yearMonth: ym, flowCents: income - expense });
+    }
+
+    let running = netWorth;
+    const historyValues: number[] = [running];
+    for (let i = months.length - 1; i >= 1; i--) {
+      running -= months[i].flowCents;
+      historyValues.unshift(running);
+    }
+
+    const min = Math.min(...historyValues);
+    const max = Math.max(...historyValues);
+    const range = max === min ? 1 : max - min;
+
+    const points = historyValues.map((v, idx) => {
+      const x = Math.round((idx / (historyValues.length - 1)) * 300);
+      const y = Math.round(78 - ((v - min) / range) * 64);
+      return { x, y, value: v };
+    });
+
+    const pathLine = points.map((p, idx) => `${idx === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
+    const pathArea = `${pathLine} L300,96 L0,96 Z`;
+
+    return { months, points, pathLine, pathArea };
+  }, [transactions, netWorth]);
+
   // Conic gradient for donut (CSS)
   const donutBg = useMemo(() => {
     if (donutCategories.length === 0) return "#F1F3EF";
@@ -550,7 +588,7 @@ export default function ReportsPage() {
                 <div className="font-mono text-[15px] font-semibold text-primary">
                   {formatBRL(netWorth)}
                 </div>
-                <div className="text-[10px] text-primary">↑ vs jan</div>
+                <div className="text-[10px] text-primary">Patrimônio atual</div>
               </div>
             </div>
             <svg
@@ -567,37 +605,32 @@ export default function ReportsPage() {
                 </linearGradient>
               </defs>
               <path
-                d="M0,72 C20,68 40,64 70,58 C100,52 120,46 150,38 C180,30 210,22 240,16 C265,11 285,8 300,6 L300,96 L0,96 Z"
+                d={netWorthTrend.pathArea}
                 fill="url(#patG)"
               />
               <path
-                d="M0,72 C20,68 40,64 70,58 C100,52 120,46 150,38 C180,30 210,22 240,16 C265,11 285,8 300,6"
+                d={netWorthTrend.pathLine}
                 fill="none"
                 stroke="#0E8C5A"
                 strokeWidth="2.5"
                 strokeLinecap="round"
               />
-              <circle cx="0" cy="72" r="3.5" fill="#0E8C5A" />
-              <circle cx="60" cy="58" r="3.5" fill="#0E8C5A" />
-              <circle cx="120" cy="46" r="3.5" fill="#0E8C5A" />
-              <circle cx="180" cy="32" r="3.5" fill="#0E8C5A" />
-              <circle cx="240" cy="16" r="3.5" fill="#0E8C5A" />
-              <circle
-                cx="300"
-                cy="6"
-                r="4.5"
-                fill="#fff"
-                stroke="#0E8C5A"
-                strokeWidth="2.5"
-              />
+              {netWorthTrend.points.map((p, idx) => (
+                <circle
+                  key={idx}
+                  cx={p.x}
+                  cy={p.y}
+                  r={idx === netWorthTrend.points.length - 1 ? 4.5 : 3.5}
+                  fill={idx === netWorthTrend.points.length - 1 ? "#fff" : "#0E8C5A"}
+                  stroke="#0E8C5A"
+                  strokeWidth={idx === netWorthTrend.points.length - 1 ? 2.5 : 0}
+                />
+              ))}
             </svg>
             <div className="flex justify-between text-[10px] text-text-muted">
-              <span>Jan</span>
-              <span>Fev</span>
-              <span>Mar</span>
-              <span>Abr</span>
-              <span>Mai</span>
-              <span>Jun</span>
+              {netWorthTrend.months.map((m, idx) => (
+                <span key={idx}>{m.label}</span>
+              ))}
             </div>
           </div>
 
