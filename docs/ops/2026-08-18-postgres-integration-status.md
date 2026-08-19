@@ -90,3 +90,21 @@ Também corrigido nesta sessão: `scripts/security-secrets.mjs` travava indefini
 com o Docker up (o gitleaks nativo 8.30.1 e o bind-mount do container penduram no
 Windows varrendo a árvore grande). Agora skipa localmente em win32 (CI Linux é a
 autoridade), preservando o VAL.9 do travamento.
+
+## Atualização 2026-08-19 (sessão Orca agy)
+
+- **BUG REAL CORRIGIDO (commit 0cae822):** `V023__pending_operations.sql` não garantia a
+  coluna `chat_id` quando a tabela é criada do zero num banco novo, mas
+  `src/approvals/pending.ts` (commit 753e7a7) faz `INSERT ... chat_id` — quebrava
+  undo/aprovação (`column "chat_id" does not exist`). Adicionado
+  `ADD COLUMN IF NOT EXISTS chat_id TEXT`; validado `postgres-undo` 3/3 em banco limpo.
+- **Dívida de design ARQUIVADA com skip justificado (0.4.1 + G2.2.5):**
+  `postgres-idempotency-containment` → `describeIfDb.skip`; `postgres-unit-of-work`
+  → 3 `it.skip` (runtime canônico `template_id`, `paidTransactionId` não retornado,
+  schema LEGACY do teste superado). Preserva os 8 testes verdes de UoW.
+- **Achado de infra de teste (não alterado, fora de escopo):** `LEGACY_SAFE_PREFIXES`
+  no `migrate.ts` lista V015/V020-V026 como legacy-safe, mas estas migrações
+  referenciam tabelas/constraints modernos — quando testes rodam `runMigrations`
+  sobre schema legado, ocorre `constraint already exists` / `relation does not exist`.
+  Migrações V001-V030 são saudáveis em sequência pura (validado psql). Estes 2
+  arquivos permanecem no skip gated por pré-requisito, como no diagnóstico original.

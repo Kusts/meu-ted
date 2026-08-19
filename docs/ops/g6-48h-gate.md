@@ -24,10 +24,12 @@
 |---|---|---|
 | `https://api.synkroo.com.br/health` | GET | `{"status":"ok"}` → 200 OK |
 | `https://pi-finance-pwa.walissonead.workers.dev/pwa-control` | GET | `{"version":"3.3.0","enabled":true}` → 200 OK |
-| `https://synkroo-ia-agent.walissonead.workers.dev/health` | GET | `ia-agent up` → 200 OK (worker deployado é versão pré-backfill do runtime; health do schema v1 requer redeploy) |
+| `https://synkroo-ia-agent.walissonead.workers.dev/health` | GET | `ia-agent up` → 200 OK — **worker do projeto Synkroo** (`D:/projetos/synkroo/wrangler.toml`), NÃO é o agent do pi-financeiro. Não é evidência válida do Agent deste projeto | 
 | `https://api.synkroo.com.br/dashboard/month-summary?yearMonth=2026-08` | GET sem auth | 401 (serviço vivo, auth exigido) |
 
-Sem alertas críticos; PWA e Agent atrás de Cloudflare Access (302 para não autenticados = esperado e saudável). Nota: redeploy do Agent worker pendente para expor `/health/agent` com schema V1 (ver runbook `pwa-cloudflare-release.md`).
+Sem alertas críticos; PWA atrás de Cloudflare Access (302 para não autenticados = esperado e saudável).
+
+> ⚠️ **Correção 2026-08-19T14:20Z:** o "Agent Health 200 OK" registrado nos checkpoints T+0h–T+12h apontava para `synkroo-ia-agent`, que é o worker do projeto **Synkroo**, não do pi-financeiro. O Agent worker deste projeto (`pi-finance-agent` em `apps/agent/wrangler.jsonc`) **não existe na conta Cloudflare** (wrangler: code 10007) e o token OAuth local é read-only — **não há evidência de Agent health próprio**. Checkpoints de Agent Health devem ser reavaliados: o Gate G6 trata da independência do WhatsApp (PWA/API), e o Agent Worker é parte do runtime alvo; sem deploy verificado, marcar Agent Health como `N/A (não deployado)` nos próximos checkpoints.
 
 ## Completion Gate Criteria
 
