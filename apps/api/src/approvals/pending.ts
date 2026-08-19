@@ -91,8 +91,19 @@ export const createPostgresPendingOperationStore = (pool: Pool): PendingOperatio
         "UPDATE pending_operations SET status = 'approved', approved_at = NOW() WHERE id = $1 AND workspace_id = $2 AND requester_id = $3 AND status = 'pending' AND expires_at > NOW() RETURNING *",
         [id, householdId, actorId],
       );
-      if (!result.rows[0]) throw domainErrors.approvalNotPending();
-      const approved = mapPending(result.rows[0]);
+      let row: PendingRow | undefined = result.rows[0];
+      if (!row) {
+        // Lost the conditional-claim race: re-read under the same transaction.
+        // If a concurrent approve settled this operation as approved for the
+        // same requester, treat this call as a canonical replay (no side
+        // effect, no executor invocation). Otherwise the operation is not
+        // approvable anymore.
+        const settled = await read(client, id, householdId);
+        if (settled.requesterId !== actorId) throw domainErrors.approvalRequesterOnly();
+        if (settled.status === 'approved') return settled;
+        throw domainErrors.approvalNotPending();
+      }
+      const approved = mapPending(row);
       if (!execute) return approved;
       return { ...approved, execution: await execute(approved) };
     });
