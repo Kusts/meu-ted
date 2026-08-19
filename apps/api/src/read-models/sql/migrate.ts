@@ -22,8 +22,12 @@ type MigrationManifestEntry = {
   checksum: string;
 };
 
-// These migrations are additive or explicitly upgrade legacy tables. The
-// legacy deployment must receive the same ledger entries as canonical DBs.
+// Migrations safe to apply on the legacy pi_financeiro schema (DB_SCHEMA=legacy).
+// V003 = device_tokens/idempotency; V008 = additive feature tables; V009 = parent_id
+// and subscriptions; V010/V011 = profiles; V012 = accounts_payable paid_transaction_id.
+// The canonical V001/V002/V004-V007 and modern workspace/auth migrations V013-V030
+// are skipped in legacy mode because they assume canonical schema or rely on modern
+// tables (Better Auth, workspaces, ownership transfers).
 const LEGACY_SAFE_PREFIXES = [
   "V003",
   "V008",
@@ -31,20 +35,6 @@ const LEGACY_SAFE_PREFIXES = [
   "V010",
   "V011",
   "V012",
-  "V013",
-  "V014",
-  "V015",
-  "V016",
-  "V017",
-  "V018",
-  "V019",
-  "V020",
-  "V021",
-  "V022",
-  "V023",
-  "V024",
-  "V025",
-  "V026",
 ];
 
 export const migrationChecksum = (sql: string): string =>

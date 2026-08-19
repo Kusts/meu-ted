@@ -18,6 +18,6 @@ describe('shared workspace invariants', () => {
   });
 
   it('is included in the migration manifest', () => {
-    expect(expectedMigrationManifest(true).map(({ version }) => version)).toContain(22);
+    expect(expectedMigrationManifest().map(({ version }) => version)).toContain(22);
   });
 });

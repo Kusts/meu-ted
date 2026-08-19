@@ -19,6 +19,6 @@ describe('personal workspace invariants', () => {
   });
 
   it('is included in the migration manifest', () => {
-    expect(expectedMigrationManifest(true).map(({ version }) => version)).toContain(21);
+    expect(expectedMigrationManifest().map(({ version }) => version)).toContain(21);
   });
 });

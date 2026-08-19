@@ -17,7 +17,7 @@ describe('identity and household workspace migration', () => {
     expect(migration).toMatch(/CHECK\s*\(kind\s+IN\s*\('personal',\s*'shared'\)\)/);
   });
 
-  it('is included in the legacy migration manifest', () => {
-    expect(expectedMigrationManifest(true).map(({ version }) => version)).toContain(20);
+  it('is included in the canonical migration manifest', () => {
+    expect(expectedMigrationManifest().map(({ version }) => version)).toContain(20);
   });
 });

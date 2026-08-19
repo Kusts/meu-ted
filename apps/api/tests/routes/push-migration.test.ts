@@ -4,19 +4,13 @@ import { describe, expect, it } from "vitest";
 import { expectedMigrationManifest } from "../../src/read-models/sql/migrate.js";
 
 describe("Web Push migration", () => {
-  it("includes V024 and V025 in canonical and legacy manifests", () => {
+  it("includes V024 and V025 in canonical manifest", () => {
     expect(expectedMigrationManifest().map(({ version }) => version)).toContain(
       24,
     );
     expect(expectedMigrationManifest().map(({ version }) => version)).toContain(
       25,
     );
-    expect(
-      expectedMigrationManifest(true).map(({ version }) => version),
-    ).toContain(24);
-    expect(
-      expectedMigrationManifest(true).map(({ version }) => version),
-    ).toContain(25);
   });
 
   it("stores subscriptions with workspace and actor scope", () => {

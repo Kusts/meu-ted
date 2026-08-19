@@ -38,7 +38,7 @@ describe('Better Auth persistence migration', () => {
     expect(casingMigration).toContain('expires_at TO "expiresAt"');
   });
 
-  it('includes Better Auth and invite migrations in the legacy manifest', () => {
-    expect(expectedMigrationManifest(true).map(({ version }) => version)).toEqual(expect.arrayContaining([17, 18, 19]));
+  it('includes Better Auth and invite migrations in the canonical manifest', () => {
+    expect(expectedMigrationManifest().map(({ version }) => version)).toEqual(expect.arrayContaining([17, 18, 19]));
   });
 });
