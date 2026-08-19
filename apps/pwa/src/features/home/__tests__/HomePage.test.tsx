@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import HomePage from "../HomePage";
 import * as appStateModule from "@/lib/state/app-state-context";
 import type { AppState } from "@/lib/state/app-state-context";
-import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
+import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals, mockDashboardSummary } from "@/lib/state/mock-data";
 
 const mockRouter = { push: vi.fn(), refresh: vi.fn() };
 
@@ -17,7 +17,15 @@ function defaultState(): AppState {
     transactions: [...ALL_MOCK_TRANSACTIONS], payables: [...mockPayables],
     budgets: [...mockBudgets], goals: [...mockGoals],
     debts: [], subscriptions: [], loading: false, error: null,
-    addTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(),
+    dashboardSummary: mockDashboardSummary,
+    saveProfile: vi.fn(), refreshProfile: vi.fn(), refreshDashboardSummary: vi.fn(),
+    profile: null,
+    addTransaction: vi.fn(), updateTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(),
+    cancelPayable: vi.fn(), updatePayable: vi.fn(), undoPayablePayment: vi.fn(), createPayable: vi.fn(),
+    createBudget: vi.fn(), updateBudget: vi.fn(), createGoal: vi.fn(), contributeToGoal: vi.fn(),
+    cancelGoal: vi.fn(), updateGoal: vi.fn(),
+    deactivateAccount: vi.fn(), updateCategory: vi.fn(), deactivateCategory: vi.fn(),
+    refreshSubscriptions: vi.fn(),
     cardStatements: [], writeError: null, clearWriteError: vi.fn(),
     sync: {
       accounts: { source: "mock", syncedAt: null },
@@ -30,8 +38,8 @@ function defaultState(): AppState {
       cardStatements: { source: "mock", syncedAt: null },
     },
     readOnly: false,
-    addAccount: vi.fn(), addCategory: vi.fn(), addCard: vi.fn(), updateCard: vi.fn(),
-    addSubscription: vi.fn(), cancelSubscription: vi.fn(),
+    addAccount: vi.fn(), updateAccount: vi.fn(), addCategory: vi.fn(), addCard: vi.fn(), updateCard: vi.fn(),
+    addSubscription: vi.fn(), cancelSubscription: vi.fn(), updateSubscription: vi.fn(),
     createTransfer: vi.fn(), payStatement: vi.fn(), createInstallments: vi.fn(),
   };
 }
@@ -1070,6 +1078,85 @@ describe("HomePage", () => {
         // Must NOT list all 3 names with join
         expect(body).not.toMatch(/Alimentação.*Transporte.*Moradia.*perto do limite/i);
       });
+    });
+  });
+
+  describe("Server-owned dashboard summary gate (G5.2.9)", () => {
+    it("renders server-owned monetary aggregates when dashboardSummary is provided by the server", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...defaultState(),
+        // Local accounts/transactions have completely different values
+        accounts: [{ id: "acc1", name: "Nubank", balanceCents: 1000, kind: "checking" }],
+        transactions: [
+          { id: "tx1", description: "A", amountCents: 2000, date: "2026-06-01", kind: "income", categoryId: "cat1", accountId: "acc1" },
+          { id: "tx2", description: "B", amountCents: 500, date: "2026-06-01", kind: "expense", categoryId: "cat1", accountId: "acc1" },
+        ],
+        dashboardSummary: {
+          householdId: "h1",
+          generatedAt: "2026-06-20T12:00:00Z",
+          totalBalanceCents: 1234500, // R$ 12.345,00
+          monthIncomeCents: 987600,   // R$ 9.876,00
+          monthExpenseCents: 432100,  // R$ 4.321,00
+          monthNetCents: 555500,      // R$ 5.555,00
+          cashFlowLast30DaysCents: 555500,
+          topExpenses: [],
+          topExpenseCategories: [],
+          topIncomeCategories: [],
+          monthOverMonth: {
+            incomeChangePercent: null,
+            expenseChangePercent: null,
+            netChangeCents: 0,
+          },
+          alerts: [],
+        },
+      } as AppState);
+
+      render(<HomePage />);
+
+      // Hero must render the server-provided aggregates, NOT the local calculations (which would be R$ 10,00, R$ 20,00, R$ 5,00, R$ 15,00)
+      expect(screen.getByText("R$ 12.345,00")).toBeInTheDocument();
+      expect(screen.getByText("R$ 9.876,00")).toBeInTheDocument();
+      expect(screen.getAllByText("R$ 4.321,00").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText("R$ 5.555,00")).toBeInTheDocument();
+    });
+
+    it("does NOT render fabricated monetary aggregates when serverSummary is missing (gate false)", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...defaultState(),
+        // Local accounts and transactions exist, but server summary is null
+        accounts: [{ id: "acc1", name: "Nubank", balanceCents: 154320, kind: "checking" }],
+        transactions: [
+          { id: "tx1", description: "Salario", amountCents: 500000, date: "2026-06-01", kind: "income", categoryId: "cat1", accountId: "acc1" },
+        ],
+        dashboardSummary: null,
+      } as AppState);
+
+      render(<HomePage />);
+
+      // Totals must NOT be fabricated from local transactions/accounts; placeholder "—" is rendered instead
+      const dashes = screen.getAllByText("—");
+      expect(dashes.length).toBeGreaterThanOrEqual(4);
+
+      // Locally computed sums like R$ 1.543,20 for saldo or R$ 5.000,00 for income must NOT appear in the summary areas
+      expect(screen.queryByText("R$ 5.000,00")).not.toBeInTheDocument();
+    });
+
+    it("aggregateFromSnapshot returns null for partial snapshots", async () => {
+      const { aggregateFromSnapshot } = await import("@/features/dashboard-summary-gate");
+      expect(aggregateFromSnapshot({ syncedAt: null, txCount: 5 })).toBeNull();
+      expect(aggregateFromSnapshot({ syncedAt: "2026-06-20", txCount: 10 })).toBeNull();
+    });
+
+    it("triggers refreshDashboardSummary when dashboardSummary is not yet loaded", () => {
+      const refreshSpy = vi.fn();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...defaultState(),
+        dashboardSummary: null,
+        refreshDashboardSummary: refreshSpy,
+      } as AppState);
+
+      render(<HomePage />);
+      expect(refreshSpy).toHaveBeenCalled();
     });
   });
 });

@@ -7,6 +7,7 @@ import type {
   Goal,
   Debt,
   Subscription,
+  DashboardSummary,
 } from "./types";
 
 export const mockAccounts: Account[] = [
@@ -403,3 +404,40 @@ export const mockSubscriptions: Subscription[] = [
     status: "cancelled",
   },
 ];
+
+export const mockDashboardSummary: DashboardSummary = {
+  householdId: "h-mock",
+  generatedAt: "2026-06-20T12:00:00.000Z",
+  totalBalanceCents: 207210,
+  monthIncomeCents: 685000,
+  monthExpenseCents: 281960,
+  monthNetCents: 403040,
+  cashFlowLast30DaysCents: 403040,
+  topExpenses: [
+    {
+      transactionId: "tx4",
+      description: "Aluguel",
+      amountCents: 180000,
+      date: "2026-06-01",
+      categoryName: "Moradia",
+    },
+  ],
+  topExpenseCategories: [
+    { categoryId: "cat3", categoryName: "Moradia", totalCents: 214990 },
+    { categoryId: "cat1", categoryName: "Alimentação", totalCents: 28750 },
+    { categoryId: "cat4", categoryName: "Saúde", totalCents: 8900 },
+    { categoryId: "cat6", categoryName: "Outros", totalCents: 27430 },
+    { categoryId: "cat2", categoryName: "Transporte", totalCents: 1890 },
+  ],
+  topIncomeCategories: [
+    { categoryId: "cat5", categoryName: "Salário", totalCents: 570000 },
+    { categoryId: "cat6", categoryName: "Freelas", totalCents: 115000 },
+  ],
+  monthOverMonth: {
+    incomeChangePercent: null,
+    expenseChangePercent: null,
+    netChangeCents: 0,
+  },
+  alerts: [],
+};
+
