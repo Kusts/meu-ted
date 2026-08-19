@@ -11,7 +11,7 @@
 - **Objetivo:** [G6.1.2] Reminder server-side com timezone, lock, dedupe e observabilidade
 - **Status final no GLLA:** `paused`
 - **Status P0.7 (2026-08-17):** `blocked` — fail-closed guard verificado (`pnpm --dir apps/api test:integration` sai 1 sem env, zero skip); integração PostgreSQL real não executada (sem Postgres descartável: Docker down, 5432 livre, `DATABASE_URL_TEST`/`DB_TEST_MARKER` unset). Conclusão de G6.1.2 exige a integração (2 arquivos/3 testes sem skip); permanece bloqueado até haver evidência. Ver `docs/superpowers/goal-runs/G6.1.2.md`.
-- **Contrato legado:** scheduler envia notificações com timezone; sem duplicatas.
+- **Status (2026-08-18, loop 632842db):** `blocked` **CONFIRMADO — ambiente ausente**: `docker ps` falha (pipe do daemon Docker Desktop não encontrado); `DATABASE_URL_TEST`/`DB_TEST_MARKER` seguem unset. A infraestrutura de integração (postgres-reminder-dedupe, postgres-reminder-lock, postgres-adoption) **já está commitada e fail-closed** (753e7a7/ec702c0), aguardando apenas Postgres descartável para rodar sem skip. Env-guards `require-reminder-integration-env.mjs`/`require-adoption-integration-env.mjs` versionados.
 - **Atualizado em:** `2026-08-13T14:57:36.447Z`
 - **Telemetria:** 4 turns, 23 file writes, 342 bash calls
 - **Tokens registrados:** 590,855
