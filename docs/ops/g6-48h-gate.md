@@ -15,7 +15,7 @@
 | T+1h | 2026-08-18T18:15:55.044Z | 200 OK | 200 OK | 200 OK | 0 | PASS ✅ |
 | T+6h | 2026-08-18T23:15:55.044Z | 200 OK | 200 OK | 200 OK | 0 | PASS ✅ |
 | T+12h | 2026-08-19T05:15:55.044Z | 200 OK | 200 OK | 200 OK | 0 | PASS ✅ |
-| T+24h | — | — | — | — | 0 | PENDING |
+| T+24h | 2026-08-19T17:15:55.044Z | 200 OK | 302→Access OK | 200 OK | 0 | PASS ✅ |
 | T+36h | — | — | — | — | 0 | PENDING |
 | T+48h (Final) | — | — | — | — | 0 | PENDING |
 ## Verificação independente (2026-08-19T13:15Z, sessão Cloudflare Access autenticada)
@@ -36,3 +36,8 @@ Sem alertas críticos; PWA atrás de Cloudflare Access (302 para não autenticad
 - Exactly 48 elapsed hours without critical alerts
 - 100% of financial user operations performed via PWA / Agent API
 - Zero WhatsApp bridge errors or background restarts
+
+## Deploy fase 0 (2026-08-19T19:25Z)
+- **PWA (Cloudflare):** versão `7beffaca` ativa (build OpenNext com itens 28/29/2); root 302 = Cloudflare Access OK. Deploy via `wrangler deploy`.
+- **API (VPS):** imagem `pi-finance-api:fase0-20260819` (build a partir de staging `app-staging-fase0`, Dockerfile standalone de produção, lockfile isolado de `apps/api`); container healthy; health externo 200; boot `legacyMigrations: []` (Item 3 sem mudança de schema — V003/V008-V024 já aplicadas). Rollback: `docker compose up -d` com tag `better-auth-20260811` + compose `.bak-before-fase0-20260819`.
+- **Observação pré-existente (não regressão):** `push reminder job` falha a cada 60s com `53300 too many connections` — as ~99 conexões idle do database `evogo_auth` (container `evolution-go`, IP 172.16.1.3, Up 13 dias) monopolizam o `max_connections=100` do Postgres compartilhado. O job/limite de pool já existiam antes (imagem 11/08). API principal e health não afetados.
