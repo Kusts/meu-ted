@@ -191,7 +191,7 @@ describe("Fixture API protocol", () => {
     const res = await request(server, "GET", "/__e2e/health");
     expect(res.headers["access-control-allow-origin"]).toBe("http://127.0.0.1:3000");
     expect(res.headers["access-control-allow-methods"]).toBe("GET,POST,PATCH,DELETE,OPTIONS");
-    expect(res.headers["access-control-allow-headers"]).toBe("content-type,authorization,x-e2e-test-id,x-device-token");
+    expect(res.headers["access-control-allow-headers"]).toBe("content-type,authorization,x-e2e-test-id,x-device-token,x-workspace-id,idempotency-key");
   });
 
   it("OPTIONS preflight returns 204 with proper CORS headers", async () => {

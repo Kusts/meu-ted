@@ -8,6 +8,7 @@
  */
 
 import type { ZodType } from "zod";
+import { closeAllSockets } from "@/lib/auth/socket-registry";
 
 const PRODUCTION_PWA_HOST = "pi-finance-pwa.walissonead.workers.dev";
 const PRODUCTION_API_BASE_URL = "https://api.synkroo.com.br";
@@ -92,6 +93,7 @@ export async function apiFetch<T>(
   if (res.status === 401) {
     let body: Record<string, unknown> = {};
     try { body = await res.json(); } catch { /* noop */ }
+    closeAllSockets("session expired");
     throw new ApiError(
       401,
       (body.code as string) ?? "auth.error",
