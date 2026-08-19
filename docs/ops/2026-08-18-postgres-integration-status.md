@@ -73,3 +73,20 @@ Tratar os 5 testes restantes como **histórias de implementação** (não defeit
   existente via V013–V016); precisa do design owner para `effect_ref`/`entityType`.
 - G2.2.5 → decidir se o runtime legado deve manter compat com `template_id` ou se os
   testes devem migrar para o schema atual.
+
+## Achados de segurança expostos pelo Docker up (VAL.9)
+
+Com o daemon do Docker de volta, `scripts/security-containers.mjs` (trivy) passou a
+escanear as imagens do `docker/pi-stack` e revelou vulnerabilidade real de produção:
+
+- **`fast-uri@3.1.2` → CVE-2026-18446 (HIGH)** — host confusion; fix em `>=3.1.5`.
+  Transitivo (fastify/ajv). Adicionar override `"fast-uri": ">=3.1.5"` no
+  `package.json > pnpm.overrides` (padrão já usado para vite/postcss/qs/tmp/uuid).
+  **Blocker:** `pnpm install --lockfile-only` pende no registry local (resolve ~600+
+  pacotes em >90s, não termina). Aplicar o override em CI (registry rápido) ou com
+  network estável, depois rodar `pnpm audit` e `security-containers` até 0 HIGH/CLRIT.
+
+Também corrigido nesta sessão: `scripts/security-secrets.mjs` travava indefinidamente
+com o Docker up (o gitleaks nativo 8.30.1 e o bind-mount do container penduram no
+Windows varrendo a árvore grande). Agora skipa localmente em win32 (CI Linux é a
+autoridade), preservando o VAL.9 do travamento.

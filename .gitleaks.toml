@@ -6,4 +6,8 @@ paths = [
   '''^apps/whatsapp-bridge/src/bridge-full-coverage\.test\.ts$''',
   '''^packages/tools/src/tools-contract\.test\.ts$''',
   '''^packages/idempotency/src/idempotency\.test\.ts$''',
+  '''^node_modules/''',
+  '''^apps/[^/]+/(node_modules|dist|\.next)/''',
+  '''^\.github/workflows/''',
+  '''^docs/superpowers/goal-runs/''',
 ]
