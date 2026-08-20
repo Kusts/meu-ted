@@ -40,6 +40,7 @@ import {
   createPostgresIdempotencyStore,
   createPostgresWriteStore,
 } from "../writes/postgres.js";
+import { createBetterAuth } from "../auth/better-auth.js";
 import { registerCors } from "./cors.js";
 
 const start = async (): Promise<void> => {
@@ -50,6 +51,13 @@ const start = async (): Promise<void> => {
 
   if (cfg.databaseUrl) {
     const pool = createPool({ connectionString: cfg.databaseUrl });
+    const auth = createBetterAuth({
+      pool,
+      secret: cfg.betterAuthSecret,
+      baseURL: cfg.betterAuthUrl,
+      trustedOrigins: cfg.trustedOrigins,
+      disableSignUp: cfg.disableSignUp,
+    });
 
     if (process.env.DB_SCHEMA === "legacy") {
       app.log.info("using legacy pi_financeiro schema adapters");
@@ -123,6 +131,8 @@ const start = async (): Promise<void> => {
         subscriptionStore,
         profileStore,
         pushStore,
+        auth,
+        disableDeviceRegistration: cfg.disableDeviceRegistration,
         ...(vapid?.publicKey ? { vapidPublicKey: vapid.publicKey } : {}),
         ...(pushDelivery ? { pushDelivery } : {}),
       });
@@ -199,15 +209,27 @@ const start = async (): Promise<void> => {
         profileStore,
         pushStore,
         adoptionStore,
+        auth,
+        disableDeviceRegistration: cfg.disableDeviceRegistration,
         ...(vapid?.publicKey ? { vapidPublicKey: vapid.publicKey } : {}),
         ...(pushDelivery ? { pushDelivery } : {}),
       });
     }
     app.addHook("onClose", async () => {
+      await auth.close();
       await pool.end();
     });
   } else {
     app.log.info("using in-memory stores (no DATABASE_URL)");
+    const { memoryAdapter } = await import("better-auth/adapters/memory");
+    const auth = createBetterAuth({
+      database: memoryAdapter({ user: [], session: [], account: [], verification: [] }),
+      secret: cfg.betterAuthSecret,
+      baseURL: cfg.betterAuthUrl,
+      trustedOrigins: cfg.trustedOrigins,
+      disableSignUp: cfg.disableSignUp,
+      transaction: false,
+    });
     const { state, writes } = createInMemoryStores();
     const store = createInMemoryReadModelStoreFromState(state);
     const tokenStore = createInMemoryDeviceTokenStore();
@@ -237,8 +259,13 @@ const start = async (): Promise<void> => {
       subscriptionStore,
       profileStore,
       pushStore,
+      auth,
+      disableDeviceRegistration: cfg.disableDeviceRegistration,
       ...(vapid?.publicKey ? { vapidPublicKey: vapid.publicKey } : {}),
       ...(pushDelivery ? { pushDelivery } : {}),
+    });
+    app.addHook("onClose", async () => {
+      await auth.close();
     });
   }
 

@@ -1,4 +1,5 @@
 import { betterAuth, type BetterAuthOptions } from 'better-auth';
+import { admin } from 'better-auth/plugins';
 import { Kysely, PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
 
@@ -66,6 +67,9 @@ export const createBetterAuth = (config: BetterAuthConfig) => {
       enabled: true,
       disableSignUp: config.disableSignUp ?? true,
     },
+    plugins: [
+      admin(),
+    ],
     session: {
       expiresIn: config.sessionExpiresIn ?? 60 * 60 * 24 * 30,
       updateAge: 60 * 60 * 24,

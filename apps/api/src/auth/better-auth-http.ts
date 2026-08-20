@@ -29,6 +29,18 @@ export const registerBetterAuthRoutes = (app: FastifyInstance, auth: BetterAuth,
     return reply.send({ token: reconnectTokens.issue(context.sessionId, expiresInSeconds * 1000, context.userId), expiresInSeconds });
   });
 
+  app.get('/auth/session', async (request, reply) => {
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(request.headers)) {
+      if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(', ') : String(value));
+    }
+    const session = await auth.api.getSession({ headers });
+    if (!session) {
+      return reply.code(401).send({ code: 'auth.missing_session', message: 'authenticated session required' });
+    }
+    return reply.code(200).send({ user: session.user, session: session.session });
+  });
+
   app.all('/auth/*', async (request, reply) => {
     if (isUntrustedMutation(request, auth)) {
       return reply.code(403).send({ code: 'auth.invalid_origin', message: 'Invalid origin' });
