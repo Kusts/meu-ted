@@ -155,7 +155,7 @@ test("[PROF-04] tap notification opens item / target state", async ({ page }) =>
   await page.getByRole("button", { name: "Notificações" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("Notificações")).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Notificações" })).toBeVisible();
 
   const item = dialog.getByTestId("notification-item").first();
   await expect(item).toBeVisible();

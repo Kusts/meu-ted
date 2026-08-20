@@ -230,12 +230,17 @@ test("[UI-06] stale error dismiss button → no retry", async ({ page }) => {
   const dismiss = banner.getByRole("button", { name: "Dispensar aviso" });
   await expect(dismiss).toBeVisible();
 
-  const getsBefore = (await getJournal(id)).filter((e) => e.method === "GET").length;
+  // Count only the poisoned resource GETs — bootstrap GETs (dashboard/summary,
+  // insights/quick, profile, auth) are legitimate background telemetry and may
+  // land at any time; dismiss must not trigger retries of the 503 resources.
+  const resourceGets = (j: Awaited<ReturnType<typeof getJournal>>) =>
+    j.filter((e) => e.method === "GET" && ["/transactions", "/accounts", "/categories"].some((p) => (e.path ?? "").includes(p))).length;
+  const getsBefore = resourceGets(await getJournal(id));
   await dismiss.click();
   await expect(banner).toHaveCount(0);
 
   // Dismiss must not trigger retry GETs
-  const getsAfter = (await getJournal(id)).filter((e) => e.method === "GET").length;
+  const getsAfter = resourceGets(await getJournal(id));
   expect(getsAfter).toBe(getsBefore);
   assertNoUndeclaredFailures(guard);
 });

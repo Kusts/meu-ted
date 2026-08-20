@@ -94,7 +94,7 @@ test("[HOME-02] tap notification bell opens notification sheet", async ({ page }
   await page.getByRole("button", { name: "Notificações" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("Notificações")).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Notificações" })).toBeVisible();
   await expect(dialog.getByText("Alertas do Pi")).toBeVisible();
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);

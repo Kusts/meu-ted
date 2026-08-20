@@ -7,6 +7,11 @@ const NEXT_PORT = 3001;
 const PWA_ROOT = path.resolve(__dirname, "..");
 const PWA_APP_DIR = PWA_ROOT;
 
+const PRODUCTION_SMOKE = process.env.E2E_PRODUCTION_SMOKE === "1";
+if (PRODUCTION_SMOKE && !process.env.E2E_PRODUCTION_URL) {
+  throw new Error("E2E_PRODUCTION_URL is required when E2E_PRODUCTION_SMOKE is enabled");
+}
+
 export default defineConfig({
   testDir: ".",
   testMatch: "specs/**/*.spec.ts",
@@ -33,7 +38,7 @@ export default defineConfig({
         serviceWorkers: "block",
       },
       testMatch: "specs/**/*.spec.ts",
-      testIgnore: "**/pwa-runtime.spec.ts",
+      testIgnore: ["**/pwa-runtime.spec.ts", "**/push-runtime.spec.ts"],
     },
     {
       name: "functional-desktop",
@@ -42,7 +47,7 @@ export default defineConfig({
         serviceWorkers: "block",
       },
       testMatch: "specs/**/*.spec.ts",
-      testIgnore: "**/pwa-runtime.spec.ts",
+      testIgnore: ["**/pwa-runtime.spec.ts", "**/push-runtime.spec.ts"],
     },
     {
       name: "pwa-runtime",
@@ -52,6 +57,18 @@ export default defineConfig({
         baseURL: `http://127.0.0.1:${HARNESS_PORT}`,
       },
       testMatch: "**/pwa-runtime.spec.ts",
+      fullyParallel: false,
+      timeout: 60000,
+    },
+    {
+      name: "push-runtime",
+      use: {
+        viewport: { width: 390, height: 844 },
+        serviceWorkers: "allow",
+        baseURL: `http://127.0.0.1:${HARNESS_PORT}`,
+        headless: false,
+      },
+      testMatch: "**/push-runtime.spec.ts",
       fullyParallel: false,
       timeout: 60000,
     },
@@ -67,23 +84,25 @@ export default defineConfig({
     },
   ],
 
-  webServer: [
+  webServer: PRODUCTION_SMOKE ? undefined : [
     {
       command: `pnpm exec tsx e2e/fixture-api/server.ts --port ${FIXTURE_PORT}`,
       port: FIXTURE_PORT,
       cwd: PWA_ROOT,
       reuseExistingServer: !process.env.CI,
-      timeout: 15000,
+      timeout: 90000,
     },
     {
-      // Next.js production server on 3001 (harness proxies 3000 → 3001)
-      command: `pnpm exec next start --port ${NEXT_PORT}`,
+      // Next standalone server on 3001 (harness proxies 3000 → 3001).
+      command: `node e2e/standalone-server.mjs`,
       port: NEXT_PORT,
       cwd: PWA_APP_DIR,
       reuseExistingServer: !process.env.CI,
-      timeout: 30000,
+      timeout: 90000,
       env: {
         ...process.env,
+        PORT: String(NEXT_PORT),
+        HOSTNAME: "127.0.0.1",
         NEXT_PUBLIC_PI_FINANCE_API_BASE_URL: `http://127.0.0.1:${FIXTURE_PORT}`,
       },
     },
@@ -93,7 +112,7 @@ export default defineConfig({
       port: HARNESS_PORT,
       cwd: PWA_ROOT,
       reuseExistingServer: !process.env.CI,
-      timeout: 15000,
+      timeout: 90000,
     },
   ],
 });

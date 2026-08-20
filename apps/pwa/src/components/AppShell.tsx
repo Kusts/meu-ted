@@ -58,6 +58,7 @@ export default function AppShell({ children }: AppShellProps) {
     addCategory,
     addCard,
     createInstallments,
+    readOnly,
   } = useAppState();
   const { sheetKind, closeSheet } = useSheet();
   const { isDirty } = useUnsavedChangesSafe();
@@ -197,7 +198,11 @@ export default function AppShell({ children }: AppShellProps) {
         void recordAdoptionEvent("capture_completed", {
           flowId: captureFlowId,
         });
-      closeSheetLocal();
+      // In read-only mode the write guard rejected the action and set the
+      // "Backend indisponível — modo somente leitura." message, but returned
+      // without throwing; keep the sheet open so the human sees the message
+      // and their draft (never silently close on a blocked write).
+      if (!readOnly) closeSheetLocal();
     } catch (e) {
       // Keep sheet open so draft inputs survive API validation errors (422).
       // Rethrow so the sheet keeps form dirty (markClean is skipped).

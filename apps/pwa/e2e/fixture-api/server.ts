@@ -24,8 +24,8 @@ import { StoreManager, SEEDS, generateId, type JournalEntry, type ScenarioRule }
 
 const ALLOWED_ORIGIN = "http://127.0.0.1:3000";
 const ALLOWED_METHODS = "GET,POST,PATCH,DELETE,OPTIONS";
-const ALLOWED_HEADERS = "content-type,authorization,x-e2e-test-id,x-device-token";
-
+const ALLOWED_HEADERS = "content-type,authorization,x-e2e-test-id,x-device-token,x-workspace-id,idempotency-key";
+const E2E_VAPID_PUBLIC_KEY = "BP0vRqqie7zJbfocGhxpZlPf02CVjWkO20vRTtjsXkPaRmarPZtNuNI0h8ias5AbmMDaaVLIgnkHBwMp8MmPQ2s";
 const stores = new StoreManager();
 
 // ── CLI port parsing (supports both --port 4010 and --port=4010) ────────────
@@ -303,11 +303,34 @@ async function handleFixtureRequest(
     return;
   }
 
+  // ── Web Push (real-browser fixture boundary) ───────────────────────────────
+  if (pathname === "/push/vapid-public-key" && method === "GET") {
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, { publicKey: E2E_VAPID_PUBLIC_KEY });
+    return;
+  }
+  if (pathname === "/push/subscriptions" && method === "POST") {
+    const endpoint = typeof body?.endpoint === "string" ? body.endpoint : "https://push.example.test/invalid";
+    journalPush(testId, method, pathname, body, 201);
+    sendJson(res, 201, { id: "push-subscription-e2e", endpoint, active: true, updatedAt: "2026-07-17T12:00:00.000Z" });
+    return;
+  }
+  if (pathname === "/push/subscriptions" && method === "DELETE") {
+    journalPush(testId, method, pathname, body, 204);
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   // ── Accounts ──────────────────────────────────────────────────────────────
 
   if (pathname === "/accounts" && method === "GET") {
+    const accountsWithBalance = store.seed.accounts.map((a) => ({
+      ...a,
+      balanceCents: a.balanceCents ?? a.initialBalanceCents ?? 0,
+    }));
     journalPush(testId, method, pathname, body, 200);
-    sendJson(res, 200, listResponse(store.seed.accounts) as unknown as Record<string, unknown>);
+    sendJson(res, 200, listResponse(accountsWithBalance) as unknown as Record<string, unknown>);
     return;
   }
 
@@ -318,6 +341,7 @@ async function handleFixtureRequest(
       name: (body?.name as string) ?? "New Account",
       kind: ((body?.kind as string) ?? "bank") as "bank" | "cash" | "credit_card",
       initialBalanceCents: (body?.initialBalanceCents as number) ?? 0,
+      balanceCents: (body?.balanceCents as number) ?? (body?.initialBalanceCents as number) ?? 0,
     };
     store.seed.accounts.push(newAcc);
     journalPush(testId, method, pathname, body, 200);
@@ -514,12 +538,21 @@ async function handleFixtureRequest(
 
   if (pathname === "/cards/accounts" && method === "GET") {
     journalPush(testId, method, pathname, body, 200);
-    const items = store.seed.cardAccounts.map((c) => ({
-      ...c,
-      kind: "credit_card" as const,
-      balanceCents: 0,
-      status: "active",
-    }));
+    const items = store.seed.cardAccounts.map((c) => {
+      const stmts = (store.seed.cardStatements ?? []).filter((s) => s.accountId === c.id);
+      const openOrNewest = stmts.find((s) => s.status === "open") ?? stmts[0];
+      const spentCents = c.currentSpendCents ?? openOrNewest?.totalCents ?? 0;
+      return {
+        ...c,
+        kind: "credit_card" as const,
+        balanceCents: 0,
+        status: "active",
+        spentCents,
+        pct: (spentCents / (c.creditLimitCents || 1)) * 100,
+        purchases: openOrNewest?.purchases ?? [],
+        currentStmtId: openOrNewest?.id,
+      };
+    });
     sendJson(res, 200, listResponse(items) as unknown as Record<string, unknown>);
     return;
   }
@@ -865,6 +898,79 @@ async function handleFixtureRequest(
   if (pathname === "/insights/quick" && method === "GET") {
     journalPush(testId, method, pathname, body, 200);
     sendJson(res, 200, { items: store.seed.quickInsights } as Record<string, unknown>);
+    return;
+  }
+
+  // ── Dashboard summary ──────────────────────────────────────────────────────
+
+  if (pathname === "/dashboard/summary" && method === "GET") {
+    const accounts = store.seed.accounts ?? [];
+    const txs = store.seed.transactions ?? [];
+    const totalBalanceCents = accounts.reduce((sum, a) => sum + (a.initialBalanceCents ?? 0), 0);
+    const monthExpenseCents = txs.reduce((sum, t) => (t.kind === "expense" ? sum + t.amountCents : sum), 0);
+    const monthIncomeCents = txs.reduce((sum, t) => (t.kind === "income" ? sum + t.amountCents : sum), 0);
+    const toCategoryLabel = (categoryId: string | undefined): string => {
+      const cat = store.seed.categories?.find((c) => c.id === categoryId);
+      return cat?.name ?? categoryId ?? "";
+    };
+    const summary = {
+      householdId: store.seed.householdId ?? "e2e-household-001",
+      generatedAt: new Date().toISOString(),
+      totalBalanceCents,
+      monthIncomeCents,
+      monthExpenseCents,
+      monthNetCents: monthIncomeCents - monthExpenseCents,
+      cashFlowLast30DaysCents: 0,
+      topExpenses: txs
+        .filter((t) => t.kind === "expense")
+        .slice(0, 5)
+        .map((t) => ({
+          transactionId: t.id,
+          description: t.description,
+          amountCents: t.amountCents,
+          date: t.date,
+          categoryName: toCategoryLabel(t.categoryId),
+        })),
+      topExpenseCategories: [],
+      topIncomeCategories: [],
+      monthOverMonth: {
+        incomeChangePercent: null,
+        expenseChangePercent: null,
+        netChangeCents: 0,
+      },
+      alerts: [],
+    };
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, summary as unknown as Record<string, unknown>);
+    return;
+  }
+
+  // ── Observability / adoption ───────────────────────────────────────────────
+
+  if (pathname === "/observability/adoption-funnel" && method === "GET") {
+    const funnel = {
+      from: "2026-06-01",
+      to: "2026-07-31",
+      delivered: 4,
+      opened: 2,
+      chatUsed: 1,
+      capturesStarted: 1,
+      capturesCompleted: 0,
+      openRate: 0.5,
+      chatRate: 0.25,
+      captureStartRate: 0.25,
+      captureCompletionRate: 0,
+      captureDurationMedianMs: null,
+      captureDurationP95Ms: null,
+    };
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, funnel as unknown as Record<string, unknown>);
+    return;
+  }
+
+  if (pathname === "/observability/adoption-events" && method === "POST") {
+    journalPush(testId, method, pathname, body, 201);
+    sendJson(res, 201, { ok: true });
     return;
   }
 

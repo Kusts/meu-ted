@@ -107,7 +107,14 @@ pnpm exec playwright test \
   --project=pwa-runtime \
   --workers=1 --retries=0 || RESULT=1
 popd >/dev/null
-
+# ── Run push runtime E2E with real Service Worker + browser Permission API ─────
+echo "[run-ci] push runtime E2E..."
+pushd "$PWA" >/dev/null
+pnpm exec playwright test \
+  --config=e2e/playwright.config.ts \
+  --project=push-runtime \
+  --workers=1 --retries=0 || RESULT=1
+popd >/dev/null
 # ── Run desktop E2E (representative only) ───────────────────────────────────
 echo "[run-ci] desktop E2E..."
 pushd "$PWA" >/dev/null
