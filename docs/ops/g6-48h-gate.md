@@ -16,7 +16,7 @@
 | T+6h | 2026-08-18T23:15:55.044Z | 200 OK | 200 OK | 200 OK | 0 | PASS ✅ |
 | T+12h | 2026-08-19T05:15:55.044Z | 200 OK | 200 OK | 200 OK | 0 | PASS ✅ |
 | T+24h | 2026-08-19T17:15:55.044Z | 200 OK | 302→Access OK | 200 OK | 0 | PASS ✅ |
-| T+36h | — | — | — | — | 0 | PENDING |
+| T+36h | 2026-08-20T05:15:55.044Z | 200 OK | 302→Access OK | 200 OK | 0 | PASS | 
 | T+48h (Final) | — | — | — | — | 0 | PENDING |
 ## Verificação independente (2026-08-19T13:15Z, sessão Cloudflare Access autenticada)
 
