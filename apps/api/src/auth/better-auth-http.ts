@@ -42,6 +42,16 @@ export const registerBetterAuthRoutes = (app: FastifyInstance, auth: BetterAuth,
   });
 
   app.all('/auth/*', async (request, reply) => {
+    if (request.method === 'OPTIONS') {
+      // CORS preflight must be answered with 204 before reaching the
+      // better-auth handler (which returns 404 for OPTIONS, breaking the
+      // browser preflight flow for /auth/sign-in/email and friends).
+      reply.header('Access-Control-Allow-Origin', request.headers.origin ?? '*');
+      reply.header('Access-Control-Allow-Credentials', 'true');
+      reply.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+      reply.header('Access-Control-Allow-Headers', 'Content-Type, X-Device-Token, Idempotency-Key, Accept, Authorization');
+      return reply.code(204).send();
+    }
     if (isUntrustedMutation(request, auth)) {
       return reply.code(403).send({ code: 'auth.invalid_origin', message: 'Invalid origin' });
     }
