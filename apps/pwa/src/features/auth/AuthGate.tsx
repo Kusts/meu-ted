@@ -6,7 +6,7 @@ import { apiGet, apiPost, ApiError } from "@/lib/api/client";
 import { clearSensitiveSession } from "@/lib/session";
 import { SessionProvider } from "@/lib/auth/session-context";
 
-type AuthState = "loading" | "register" | "unlocked";
+type AuthState = "loading" | "login" | "unlocked";
 
 interface Props {
   children: React.ReactNode;
@@ -20,7 +20,7 @@ export function AuthGate({ children }: Props) {
     const init = async () => {
       const token = getToken();
       if (!token) {
-        setState("register");
+        setState("login");
         return;
       }
 
@@ -33,8 +33,8 @@ export function AuthGate({ children }: Props) {
             clearV1Snapshot: true,
             clearProfile: true,
           });
-          setError("Sessão antiga expirada. Registre o dispositivo novamente.");
-          setState("register");
+          setError("Sessão antiga expirada. Faça login novamente.");
+          setState("login");
           return;
         }
       }
@@ -44,14 +44,19 @@ export function AuthGate({ children }: Props) {
     init();
   }, []);
 
-  const handleRegister = useCallback(async (deviceName: string) => {
+  const handleLogin = useCallback(async (credentials: { email: string; password: string }) => {
     setError("");
     try {
+      // 1. Sign in via Better-Auth endpoint
+      await apiPost<{ user: unknown; session: unknown }>("/auth/sign-in/email", null, credentials);
+
+      // 2. Register/obtain device token subordinated to the authenticated session
       const res = await apiPost<{
         token: string;
         deviceId: string;
         householdId: string;
-      }>("/auth/devices/register", null, { deviceName });
+      }>("/auth/devices/register", null, { deviceName: "PWA Web Device" });
+
       await clearSensitiveSession({
         clearToken: true,
         clearV1Snapshot: true,
@@ -60,21 +65,27 @@ export function AuthGate({ children }: Props) {
       setToken(res.token);
       setState("unlocked");
     } catch (e: unknown) {
-      setError(
-        e instanceof ApiError ? e.message : "Falha ao registrar dispositivo.",
-      );
+      if (e instanceof ApiError) {
+        if (e.status === 401 || e.status === 400) {
+          setError("E-mail ou senha incorretos.");
+        } else {
+          setError(e.message || "Falha na autenticação.");
+        }
+      } else {
+        setError("Falha ao realizar login.");
+      }
     }
   }, []);
 
   const expireSession = useCallback(async (message?: string) => {
-    // Async: cleanup (including IndexedDB v2) completes BEFORE UI state transition.
+    // Async: cleanup completes BEFORE UI state transition.
     await clearSensitiveSession({
       clearToken: true,
       clearV1Snapshot: true,
       clearProfile: true,
     });
-    setError(message ?? "Sessão expirada. Registre o dispositivo novamente.");
-    setState("register");
+    setError(message ?? "Sessão expirada. Faça login novamente.");
+    setState("login");
   }, []);
 
   if (state === "unlocked")
@@ -88,8 +99,8 @@ export function AuthGate({ children }: Props) {
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-bg p-6">
-      {state === "register" && (
-        <RegisterDevice onSubmit={handleRegister} error={error} />
+      {state === "login" && (
+        <LoginForm onSubmit={handleLogin} error={error} />
       )}
     </main>
   );
@@ -97,40 +108,84 @@ export function AuthGate({ children }: Props) {
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
 
-function RegisterDevice({
+function LoginForm({
   onSubmit,
   error,
 }: {
-  onSubmit: (name: string) => void;
+  onSubmit: (credentials: { email: string; password: string }) => Promise<void> | void;
   error: string;
 }) {
-  const [name, setName] = useState("Meu dispositivo");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !password.trim() || submitting) return;
+    setSubmitting(true);
+    try {
+      await onSubmit({ email: email.trim(), password: password.trim() });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
-    <div className="w-full max-w-sm space-y-6">
+    <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-6">
       <div className="text-center space-y-2">
         <h1 className="text-2xl font-bold text-text-primary">Pi Financeiro</h1>
         <p className="text-sm text-text-secondary">
-          Registre seu dispositivo.
+          Acesse com seu e-mail e senha.
         </p>
       </div>
-      <input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="Nome do dispositivo"
-        autoFocus
-        className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-text-primary"
-      />
+
+      <div className="space-y-4">
+        <div>
+          <label htmlFor="email" className="block text-xs font-medium text-text-secondary mb-1">
+            E-mail
+          </label>
+          <input
+            id="email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="seu.email@exemplo.com"
+            autoComplete="email"
+            autoFocus
+            required
+            className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-text-primary outline-none focus:border-primary"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="password" className="block text-xs font-medium text-text-secondary mb-1">
+            Senha
+          </label>
+          <input
+            id="password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+            autoComplete="current-password"
+            required
+            className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-text-primary outline-none focus:border-primary"
+          />
+        </div>
+      </div>
+
       {error && (
-        <p className="text-center text-sm text-danger">{error}</p>
+        <p className="text-center text-sm text-danger" role="alert">{error}</p>
       )}
+
       <button
-        onClick={() => onSubmit(name.trim())}
-        disabled={!name.trim()}
+        type="submit"
+        disabled={!email.trim() || !password.trim() || submitting}
         className="w-full rounded-xl bg-primary py-3 font-semibold text-white transition active:scale-[0.98] disabled:opacity-50"
       >
-        Registrar
+        {submitting ? "Entrando…" : "Entrar"}
       </button>
-    </div>
+    </form>
   );
 }
 

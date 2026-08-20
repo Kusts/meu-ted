@@ -53,19 +53,21 @@ afterEach(() => {
 });
 
 describe("AuthGate", () => {
-  it("shows register screen when no token", async () => {
+  it("shows login screen when no token exists", async () => {
     render(
       <AuthGate>
         <div data-testid="app">App Content</div>
       </AuthGate>,
     );
-    // Wait for loading → register transition
-    const input = await screen.findByPlaceholderText(
-      /Nome do dispositivo/,
+    // Wait for loading → login transition
+    const emailInput = await screen.findByPlaceholderText(
+      /seu\.email@exemplo\.com/,
       {},
       { timeout: 3000 },
     );
-    expect(input).toBeInTheDocument();
+    expect(emailInput).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/••••••••/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Entrar/i })).toBeInTheDocument();
   });
 
   it("shows app content when token exists and is valid", async () => {
@@ -81,7 +83,7 @@ describe("AuthGate", () => {
     expect(app).toBeInTheDocument();
   });
 
-  it("shows register with expired msg when token returns 401", async () => {
+  it("shows login screen with expired msg when token returns 401", async () => {
     store["pi-finance:token"] = "expired-token";
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: false,
@@ -102,7 +104,7 @@ describe("AuthGate", () => {
     );
     expect(txt).toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText(/Nome do dispositivo/),
+      screen.getByPlaceholderText(/seu\.email@exemplo\.com/),
     ).toBeInTheDocument();
   });
 });
@@ -119,50 +121,85 @@ function SessionProbe() {
   );
 }
 
-describe("AuthGate register + session flows (coverage)", () => {
-  it("registers device and shows app on submit", async () => {
+describe("AuthGate login + session flows", () => {
+  it("logs in with email/password, registers device token, and shows app on submit", async () => {
+    vi.mocked(fetch)
+      // 1. POST /auth/sign-in/email
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { email: "walis@example.com" } }),
+      } as Response)
+      // 2. POST /auth/devices/register
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ token: "new-device-token", deviceId: "d1", householdId: "h1" }),
+      } as Response);
+
     render(
       <AuthGate>
         <div data-testid="app">App Content</div>
       </AuthGate>,
     );
-    const input = await screen.findByPlaceholderText(/Nome do dispositivo/, {}, { timeout: 3000 });
-    fireEvent.change(input, { target: { value: "Meu Celular" } });
-    fireEvent.click(screen.getByText("Registrar"));
+
+    const emailInput = await screen.findByPlaceholderText(/seu\.email@exemplo\.com/, {}, { timeout: 3000 });
+    const passInput = screen.getByPlaceholderText(/••••••••/);
+
+    fireEvent.change(emailInput, { target: { value: "walis@example.com" } });
+    fireEvent.change(passInput, { target: { value: "password123!" } });
+    fireEvent.click(screen.getByRole("button", { name: /Entrar/i }));
+
     const app = await screen.findByTestId("app", {}, { timeout: 3000 });
     expect(app).toBeInTheDocument();
-    expect(globalThis.fetch).toHaveBeenCalled();
+    expect(store["pi-finance:token"]).toBe("new-device-token");
   });
 
-  it("shows default error when registration fails (network)", async () => {
+  it("shows error when login fails with 401 (invalid credentials)", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ code: "auth.invalid_credentials", message: "Invalid password" }),
+    } as Response);
+
+    render(
+      <AuthGate>
+        <div data-testid="app">App Content</div>
+      </AuthGate>,
+    );
+
+    const emailInput = await screen.findByPlaceholderText(/seu\.email@exemplo\.com/, {}, { timeout: 3000 });
+    const passInput = screen.getByPlaceholderText(/••••••••/);
+
+    fireEvent.change(emailInput, { target: { value: "walis@example.com" } });
+    fireEvent.change(passInput, { target: { value: "wrongPass" } });
+    fireEvent.click(screen.getByRole("button", { name: /Entrar/i }));
+
+    const err = await screen.findByText(/E-mail ou senha incorretos/i, {}, { timeout: 3000 });
+    expect(err).toBeInTheDocument();
+  });
+
+  it("shows default error when login fails (network)", async () => {
     vi.mocked(fetch).mockRejectedValueOnce(new Error("network down"));
+
     render(
       <AuthGate>
         <div data-testid="app">App Content</div>
       </AuthGate>,
     );
-    const input = await screen.findByPlaceholderText(/Nome do dispositivo/, {}, { timeout: 3000 });
-    fireEvent.change(input, { target: { value: "Meu Celular" } });
-    fireEvent.click(screen.getByText("Registrar"));
-    const err = await screen.findByText(/Falha ao registrar dispositivo/i, {}, { timeout: 3000 });
+
+    const emailInput = await screen.findByPlaceholderText(/seu\.email@exemplo\.com/, {}, { timeout: 3000 });
+    const passInput = screen.getByPlaceholderText(/••••••••/);
+
+    fireEvent.change(emailInput, { target: { value: "walis@example.com" } });
+    fireEvent.change(passInput, { target: { value: "password123!" } });
+    fireEvent.click(screen.getByRole("button", { name: /Entrar/i }));
+
+    const err = await screen.findByText(/Falha ao realizar login/i, {}, { timeout: 3000 });
     expect(err).toBeInTheDocument();
   });
 
-  it("shows ApiError message when registration fails with ApiError", async () => {
-    vi.mocked(fetch).mockRejectedValueOnce(new ApiError(500, "auth.boom", "boom message"));
-    render(
-      <AuthGate>
-        <div data-testid="app">App Content</div>
-      </AuthGate>,
-    );
-    const input = await screen.findByPlaceholderText(/Nome do dispositivo/, {}, { timeout: 3000 });
-    fireEvent.change(input, { target: { value: "Meu Celular" } });
-    fireEvent.click(screen.getByText("Registrar"));
-    const err = await screen.findByText("boom message", {}, { timeout: 3000 });
-    expect(err).toBeInTheDocument();
-  });
-
-  it("expires session via context and returns to register screen", async () => {
+  it("expires session via context and returns to login screen", async () => {
     store["pi-finance:token"] = "valid-token";
     render(
       <AuthGate>
@@ -172,6 +209,6 @@ describe("AuthGate register + session flows (coverage)", () => {
     expect(await screen.findByTestId("app", {}, { timeout: 3000 })).toBeInTheDocument();
     fireEvent.click(screen.getByText("Expire"));
     expect(await screen.findByText(/Sessão expirada pelo teste/i, {}, { timeout: 3000 })).toBeInTheDocument();
-    expect(await screen.findByPlaceholderText(/Nome do dispositivo/, {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText(/seu\.email@exemplo\.com/, {}, { timeout: 3000 })).toBeInTheDocument();
   });
 });
