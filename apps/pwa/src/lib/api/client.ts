@@ -98,6 +98,11 @@ export async function apiFetch<T>(
 
   const res = await fetch(`${baseUrl() ?? ""}${path}`, {
     ...rest,
+    // Better-Auth sets a SameSite=None session cookie; the auth endpoints
+    // (/auth/sign-in, /auth/devices/register) require it to identify the
+    // logged-in session. Without credentials:'include' the cookie never goes
+    // cross-origin and register stays blocked (403) even after a valid login.
+    credentials: "include",
     headers: requestHeaders,
   });
 
