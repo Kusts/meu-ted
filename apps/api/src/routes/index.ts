@@ -60,10 +60,11 @@ import { registerAuditRoutes } from "./audit.js";
 import { registerOwnershipTransferRoutes } from "../auth/ownership-transfers-http.js";
 import type { AuditLogStore } from "../audit/store.js";
 import { createInMemoryAuditLogStore } from "../audit/store.js";
-import type { OwnershipTransferStore } from "../auth/ownership-transfers-postgres.js";
 import { registerBetterAuthRoutes } from "../auth/better-auth-http.js";
 import { registerInviteRoutes } from "../auth/invites-http.js";
 import { registerWorkspaceRoutes } from "../auth/workspaces-http.js";
+import { registerAdminInviteRoutes } from "./admin-invites.js";
+import { createConsoleAdminInviteDelivery, type AdminInviteDelivery } from "../auth/admin-invite-service.js";
 import type { BetterAuth } from "../auth/better-auth.js";
 import type { InviteService } from "../auth/invites.js";
 import type { WorkspaceStore } from "../auth/workspaces-http.js";
@@ -101,6 +102,8 @@ export type RouteDeps = {
   inviteService?: InviteService;
   authorizeInviteCreate?: (input: { userId: string; householdId: string }) => Promise<boolean>;
   workspaceStore?: WorkspaceStore;
+  adminEmails?: string[];
+  adminInviteDelivery?: AdminInviteDelivery;
   disableDeviceRegistration?: boolean;
   approvalPolicy?: import('../approvals/policy.js').ApprovalPolicy;
   clock?: () => Date;
@@ -353,6 +356,13 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   }
   if (deps.auth) {
     registerBetterAuthRoutes(app, deps.auth);
+    const adminEmails = deps.adminEmails ?? ['walissonead@gmail.com'];
+    const adminDelivery = deps.adminInviteDelivery ?? createConsoleAdminInviteDelivery();
+    registerAdminInviteRoutes(app, {
+      auth: deps.auth,
+      adminEmails,
+      delivery: adminDelivery,
+    });
     if (deps.inviteService && deps.authorizeInviteCreate) {
       registerInviteRoutes(app, {
         auth: deps.auth,
