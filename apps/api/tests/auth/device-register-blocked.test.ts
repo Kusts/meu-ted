@@ -62,15 +62,8 @@ describe('0.1.3 — self-revocation only', () => {
   beforeEach(() => { app = buildTestApp().app; });
 
   it('revoke own token returns 200 when authenticated with same token', async () => {
-    // First register a token (while registration is open for test)
-    const reg = await app.inject({
-      method: 'POST',
-      url: '/auth/devices/register',
-      headers: { 'content-type': 'application/json' },
-      payload: { deviceName: 'Self Revoke Test' },
-    });
     // Skip if registration already blocked — use pre-existing token
-    const token = reg.statusCode === 201 ? reg.json().token : TOKEN_A;
+    const token = TOKEN_A;
 
     const rev = await app.inject({
       method: 'POST',
@@ -96,3 +89,95 @@ describe('0.1.3 — self-revocation only', () => {
     expect(res.statusCode).toBe(401);
   });
 });
+
+describe('0.1.4 — Session-subordinated device token issuance & data protection', () => {
+  it('data endpoints (/accounts, /dashboard/summary) return 401 without auth', async () => {
+    const { app } = buildTestApp();
+    const resAccounts = await app.inject({ method: 'GET', url: '/accounts' });
+    expect(resAccounts.statusCode).toBe(401);
+
+    const resDashboard = await app.inject({ method: 'GET', url: '/dashboard/summary' });
+    expect(resDashboard.statusCode).toBe(401);
+  });
+
+  it('allows device registration when caller has a valid Better-Auth session', async () => {
+    const { memoryAdapter } = await import('better-auth/adapters/memory');
+    const { createBetterAuth } = await import('../../src/auth/better-auth.js');
+    const auth = createBetterAuth({
+      database: memoryAdapter({ user: [], session: [], account: [], verification: [] }),
+      disableSignUp: false,
+      transaction: false,
+      secret: 'test-secret-that-is-at-least-32-characters',
+      baseURL: 'http://localhost:3001',
+      trustedOrigins: ['http://localhost:3000'],
+    });
+
+    const { app } = buildTestApp({}, auth, true);
+
+    // 1. Sign up / authenticate user via better-auth
+    const signUp = await auth.api.signUpEmail({
+      body: { email: 'user@example.com', password: 'securePassword123!', name: 'Valid User' },
+      headers: new Headers({ origin: 'http://localhost:3000' }),
+      asResponse: true,
+    });
+    const cookieHeader = signUp.headers.get('set-cookie') ?? '';
+
+    // 2. Register device with session cookie
+    const regRes = await app.inject({
+      method: 'POST',
+      url: '/auth/devices/register',
+      headers: {
+        'content-type': 'application/json',
+        cookie: cookieHeader,
+      },
+      payload: { deviceName: 'Authorized iPhone' },
+    });
+
+    expect(regRes.statusCode).toBe(201);
+    const body = regRes.json();
+    expect(body.token).toBeDefined();
+    expect(body.deviceId).toBeDefined();
+    expect(body.householdId).toBeDefined();
+
+    // 3. The obtained device-token can read data
+    const dataRes = await app.inject({
+      method: 'GET',
+      url: '/accounts',
+      headers: { 'x-device-token': body.token },
+    });
+    expect(dataRes.statusCode).toBe(200);
+
+    await auth.close();
+  });
+
+  it('rejects device registration when session is invalid or expired', async () => {
+    const { memoryAdapter } = await import('better-auth/adapters/memory');
+    const { createBetterAuth } = await import('../../src/auth/better-auth.js');
+    const auth = createBetterAuth({
+      database: memoryAdapter({ user: [], session: [], account: [], verification: [] }),
+      disableSignUp: false,
+      transaction: false,
+      secret: 'test-secret-that-is-at-least-32-characters',
+      baseURL: 'http://localhost:3001',
+      trustedOrigins: ['http://localhost:3000'],
+    });
+
+    const { app } = buildTestApp({}, auth, true);
+
+    const regRes = await app.inject({
+      method: 'POST',
+      url: '/auth/devices/register',
+      headers: {
+        'content-type': 'application/json',
+        cookie: 'better-auth.session_token=invalid_or_expired_token',
+      },
+      payload: { deviceName: 'Unauthorized Device' },
+    });
+
+    expect(regRes.statusCode).toBe(403);
+    expect(regRes.json().code).toBe('auth.registration_disabled');
+
+    await auth.close();
+  });
+});
+

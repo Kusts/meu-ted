@@ -258,6 +258,8 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     resolveToken,
     tokenStore,
     disableDeviceRegistration: deps.disableDeviceRegistration ?? false,
+    ...(deps.auth ? { auth: deps.auth } : {}),
+    ...(deps.workspaceAccess ? { workspaceAccess: deps.workspaceAccess } : {}),
   };
   if (deps.defaultHouseholdId !== undefined)
     authOpts.defaultHouseholdId = deps.defaultHouseholdId;

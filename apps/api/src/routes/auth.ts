@@ -2,6 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { DEVICE_TOKEN_HEADER, type DeviceTokenStore } from '../auth/device-token.js';
 import { requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
+import type { BetterAuth } from '../auth/better-auth.js';
+import { getBetterAuthSessionContext } from '../auth/better-auth.js';
+import type { WorkspaceAccessStore } from '../auth/workspace-access.js';
 
 export type AuthResolver = (token: string | undefined) => Promise<{ deviceId: string; householdId: string }>;
 
@@ -19,6 +22,8 @@ export const registerAuthRoutes = (
     tokenStore: DeviceTokenStore;
     defaultHouseholdId?: string;
     disableDeviceRegistration?: boolean;
+    auth?: BetterAuth;
+    workspaceAccess?: WorkspaceAccessStore;
   },
 ): void => {
   app.get('/auth/devices/me', async (req, reply) => {
@@ -33,13 +38,45 @@ export const registerAuthRoutes = (
   });
 
   app.post('/auth/devices/register', async (req, reply) => {
-    if (opts.disableDeviceRegistration === true) {
+    let sessionHouseholdId: string | undefined;
+    let isAuthenticated = false;
+
+    if (opts.auth) {
+      const headers = new Headers();
+      for (const [key, val] of Object.entries(req.headers)) {
+        if (val !== undefined) headers.set(key, Array.isArray(val) ? val.join(', ') : String(val));
+      }
+      try {
+        const session = await getBetterAuthSessionContext(opts.auth, headers);
+        if (session) {
+          isAuthenticated = true;
+          if (opts.workspaceAccess) {
+            const workspaceIdHeader = req.headers['x-workspace-id'];
+            const wsId = Array.isArray(workspaceIdHeader) ? workspaceIdHeader[0] : workspaceIdHeader;
+            if (wsId) {
+              const access = await opts.workspaceAccess.resolve(session.userId, wsId);
+              if (access) sessionHouseholdId = access.householdId;
+            }
+          }
+          if (!sessionHouseholdId) {
+            const { DEMO_HOUSEHOLD_ID } = await import('../read-models/demo-data.js');
+            sessionHouseholdId = opts.defaultHouseholdId ?? DEMO_HOUSEHOLD_ID;
+          }
+        }
+      } catch {
+        // Session resolution failed, treat as anonymous
+      }
+    }
+
+    if (opts.disableDeviceRegistration === true && !isAuthenticated) {
       return reply.code(403).send({ code: 'auth.registration_disabled', message: 'Registro de dispositivos desabilitado.' });
     }
 
     const body = req.body as Record<string, unknown> | undefined;
     if (!body || !('deviceName' in body) || Object.keys(body).length === 0) {
-      return reply.code(403).send({ code: 'auth.registration_disabled', message: 'Registro de dispositivos desabilitado.' });
+      if (opts.disableDeviceRegistration === true && !isAuthenticated) {
+        return reply.code(403).send({ code: 'auth.registration_disabled', message: 'Registro de dispositivos desabilitado.' });
+      }
     }
 
     const parsed = registerInput.safeParse(req.body ?? {});
@@ -47,7 +84,7 @@ export const registerAuthRoutes = (
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     try {
       const { DEMO_HOUSEHOLD_ID } = await import('../read-models/demo-data.js');
-      const householdId = opts.defaultHouseholdId ?? DEMO_HOUSEHOLD_ID;
+      const householdId = sessionHouseholdId ?? opts.defaultHouseholdId ?? DEMO_HOUSEHOLD_ID;
       const result = await opts.tokenStore.register(parsed.data.deviceName, householdId);
       return reply.code(201).send(result);
     } catch (e) {
