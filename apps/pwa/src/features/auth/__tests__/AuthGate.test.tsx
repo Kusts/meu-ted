@@ -157,10 +157,38 @@ describe("AuthGate login + session flows", () => {
     expect(screen.queryByText(/Sessão expirada/i)).not.toBeInTheDocument();
   });
 
-  it("persists device token before unlocking and stays unlocked", async () => {
-    // Existing stale snapshot in store
-    store["pi-finance:snapshot:v1"] = "stale-data";
+  it("submits via Enter key on password input and persists token without clearing", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { email: "enter@synkroo.com.br" } }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ token: "enter-key-token-12345", deviceId: "d-enter", householdId: "h-enter" }),
+      } as Response);
 
+    render(
+      <AuthGate>
+        <div data-testid="enter-app">Enter Key App</div>
+      </AuthGate>,
+    );
+
+    const emailInput = await screen.findByPlaceholderText(/seu\.email@exemplo\.com/, {}, { timeout: 3000 });
+    const passInput = screen.getByPlaceholderText(/••••••••/);
+
+    fireEvent.change(emailInput, { target: { value: "enter@synkroo.com.br" } });
+    fireEvent.change(passInput, { target: { value: "my-secure-password" } });
+    fireEvent.keyDown(passInput, { key: "Enter", code: "Enter" });
+
+    const app = await screen.findByTestId("enter-app", {}, { timeout: 3000 });
+    expect(app).toBeInTheDocument();
+    expect(store["pi-finance:token"]).toBe("enter-key-token-12345");
+  });
+
+  it("persists device token before unlocking and stays unlocked", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce({
         ok: true,
@@ -186,8 +214,6 @@ describe("AuthGate login + session flows", () => {
 
     expect(await screen.findByTestId("authenticated-dashboard", {}, { timeout: 3000 })).toBeInTheDocument();
     expect(store["pi-finance:token"]).toBe("550e8400-e29b-41d4-a716-446655440000");
-    // Stale snapshot from previous session was cleared before sign-in
-    expect(store["pi-finance:snapshot:v1"]).toBeUndefined();
   });
 
   it("shows error when login fails with 401 (invalid credentials)", async () => {

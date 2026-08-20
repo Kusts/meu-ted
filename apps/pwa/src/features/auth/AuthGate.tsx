@@ -55,17 +55,10 @@ export function AuthGate({ children }: Props) {
   const handleLogin = useCallback(async (credentials: { email: string; password: string }) => {
     setError("");
     try {
-      // 1. Clear any stale session data before starting fresh login
-      await clearSensitiveSession({
-        clearToken: true,
-        clearV1Snapshot: true,
-        clearProfile: true,
-      });
-
-      // 2. Sign in via Better-Auth endpoint
+      // 1. Sign in via Better-Auth endpoint
       await apiPost<{ user: unknown; session: unknown }>("/auth/sign-in/email", null, credentials);
 
-      // 3. Register/obtain device token subordinated to the authenticated session
+      // 2. Register/obtain device token subordinated to the authenticated session
       const res = await apiPost<{
         token: string;
         deviceId: string;
@@ -76,10 +69,15 @@ export function AuthGate({ children }: Props) {
         throw new Error("Token de dispositivo não retornado pelo servidor.");
       }
 
-      // 4. Persist the new device token synchronously into token-store / localStorage
+      // 3. Persist the new device token synchronously into token-store / localStorage
       setToken(res.token);
+      try {
+        localStorage.setItem("pi-finance:token", res.token);
+      } catch {
+        /* noop */
+      }
 
-      // 5. Unlock the gate
+      // 4. Unlock the gate
       setState("unlocked");
     } catch (e: unknown) {
       if (e instanceof ApiError) {
@@ -139,8 +137,11 @@ function LoginForm({
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent | React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (!email.trim() || !password.trim() || submitting) return;
     setSubmitting(true);
     try {
@@ -153,7 +154,13 @@ function LoginForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-6">
+    <form
+      action="#"
+      method="post"
+      onSubmit={handleSubmit}
+      noValidate
+      className="w-full max-w-sm space-y-6"
+    >
       <div className="text-center space-y-2">
         <h1 className="text-2xl font-bold text-text-primary">Pi Financeiro</h1>
         <p className="text-sm text-text-secondary">
@@ -171,11 +178,19 @@ function LoginForm({
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                void handleSubmit(e);
+              }
+            }}
             placeholder="seu.email@exemplo.com"
             autoComplete="email"
             autoFocus
             required
-            className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-text-primary outline-none focus:border-primary"
+            disabled={submitting}
+            className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-text-primary outline-none focus:border-primary disabled:opacity-50"
           />
         </div>
 
@@ -188,10 +203,18 @@ function LoginForm({
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                void handleSubmit(e);
+              }
+            }}
             placeholder="••••••••"
             autoComplete="current-password"
             required
-            className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-text-primary outline-none focus:border-primary"
+            disabled={submitting}
+            className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm text-text-primary outline-none focus:border-primary disabled:opacity-50"
           />
         </div>
       </div>
@@ -203,6 +226,11 @@ function LoginForm({
       <button
         type="submit"
         disabled={!email.trim() || !password.trim() || submitting}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void handleSubmit(e);
+        }}
         className="w-full rounded-xl bg-primary py-3 font-semibold text-white transition active:scale-[0.98] disabled:opacity-50"
       >
         {submitting ? "Entrando…" : "Entrar"}
