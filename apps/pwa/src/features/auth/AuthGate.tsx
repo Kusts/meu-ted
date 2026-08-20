@@ -17,16 +17,20 @@ export function AuthGate({ children }: Props) {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+
     const init = async () => {
       const token = getToken();
       if (!token) {
-        setState("login");
+        if (!cancelled) setState("login");
         return;
       }
 
       try {
         await apiGet<unknown>("/auth/devices/me", token);
+        if (!cancelled) setState("unlocked");
       } catch (e) {
+        if (cancelled) return;
         if (e instanceof ApiError && e.status === 401) {
           await clearSensitiveSession({
             clearToken: true,
@@ -37,32 +41,45 @@ export function AuthGate({ children }: Props) {
           setState("login");
           return;
         }
+        // If network error during verification but token is stored, unlock to allow offline capabilities
+        setState("unlocked");
       }
-
-      setState("unlocked");
     };
     init();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleLogin = useCallback(async (credentials: { email: string; password: string }) => {
     setError("");
     try {
-      // 1. Sign in via Better-Auth endpoint
+      // 1. Clear any stale session data before starting fresh login
+      await clearSensitiveSession({
+        clearToken: true,
+        clearV1Snapshot: true,
+        clearProfile: true,
+      });
+
+      // 2. Sign in via Better-Auth endpoint
       await apiPost<{ user: unknown; session: unknown }>("/auth/sign-in/email", null, credentials);
 
-      // 2. Register/obtain device token subordinated to the authenticated session
+      // 3. Register/obtain device token subordinated to the authenticated session
       const res = await apiPost<{
         token: string;
         deviceId: string;
         householdId: string;
       }>("/auth/devices/register", null, { deviceName: "PWA Web Device" });
 
-      await clearSensitiveSession({
-        clearToken: true,
-        clearV1Snapshot: true,
-        clearProfile: true,
-      });
+      if (!res?.token) {
+        throw new Error("Token de dispositivo não retornado pelo servidor.");
+      }
+
+      // 4. Persist the new device token synchronously into token-store / localStorage
       setToken(res.token);
+
+      // 5. Unlock the gate
       setState("unlocked");
     } catch (e: unknown) {
       if (e instanceof ApiError) {
@@ -71,9 +88,12 @@ export function AuthGate({ children }: Props) {
         } else {
           setError(e.message || "Falha na autenticação.");
         }
+      } else if (e instanceof Error) {
+        setError(e.message || "Falha ao realizar login.");
       } else {
         setError("Falha ao realizar login.");
       }
+      throw e;
     }
   }, []);
 
@@ -125,6 +145,8 @@ function LoginForm({
     setSubmitting(true);
     try {
       await onSubmit({ email: email.trim(), password: password.trim() });
+    } catch {
+      // Errors handled in AuthGate state
     } finally {
       setSubmitting(false);
     }

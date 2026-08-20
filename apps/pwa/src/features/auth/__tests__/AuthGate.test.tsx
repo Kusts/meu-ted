@@ -153,6 +153,41 @@ describe("AuthGate login + session flows", () => {
     const app = await screen.findByTestId("app", {}, { timeout: 3000 });
     expect(app).toBeInTheDocument();
     expect(store["pi-finance:token"]).toBe("new-device-token");
+    // Ensure it doesn't revert to login screen with expired message
+    expect(screen.queryByText(/Sessão expirada/i)).not.toBeInTheDocument();
+  });
+
+  it("persists device token before unlocking and stays unlocked", async () => {
+    // Existing stale snapshot in store
+    store["pi-finance:snapshot:v1"] = "stale-data";
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { email: "admin@synkroo.com.br" } }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ token: "550e8400-e29b-41d4-a716-446655440000", deviceId: "d2", householdId: "h2" }),
+      } as Response);
+
+    render(
+      <AuthGate>
+        <div data-testid="authenticated-dashboard">Dashboard Loaded</div>
+      </AuthGate>,
+    );
+
+    const emailInput = await screen.findByPlaceholderText(/seu\.email@exemplo\.com/, {}, { timeout: 3000 });
+    fireEvent.change(emailInput, { target: { value: "admin@synkroo.com.br" } });
+    fireEvent.change(screen.getByPlaceholderText(/••••••••/), { target: { value: "secret123" } });
+    fireEvent.click(screen.getByRole("button", { name: /Entrar/i }));
+
+    expect(await screen.findByTestId("authenticated-dashboard", {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(store["pi-finance:token"]).toBe("550e8400-e29b-41d4-a716-446655440000");
+    // Stale snapshot from previous session was cleared before sign-in
+    expect(store["pi-finance:snapshot:v1"]).toBeUndefined();
   });
 
   it("shows error when login fails with 401 (invalid credentials)", async () => {
@@ -177,6 +212,7 @@ describe("AuthGate login + session flows", () => {
 
     const err = await screen.findByText(/E-mail ou senha incorretos/i, {}, { timeout: 3000 });
     expect(err).toBeInTheDocument();
+    expect(store["pi-finance:token"]).toBeUndefined();
   });
 
   it("shows default error when login fails (network)", async () => {
@@ -195,8 +231,9 @@ describe("AuthGate login + session flows", () => {
     fireEvent.change(passInput, { target: { value: "password123!" } });
     fireEvent.click(screen.getByRole("button", { name: /Entrar/i }));
 
-    const err = await screen.findByText(/Falha ao realizar login/i, {}, { timeout: 3000 });
+    const err = await screen.findByText(/network down/i, {}, { timeout: 3000 });
     expect(err).toBeInTheDocument();
+    expect(store["pi-finance:token"]).toBeUndefined();
   });
 
   it("expires session via context and returns to login screen", async () => {
@@ -210,5 +247,6 @@ describe("AuthGate login + session flows", () => {
     fireEvent.click(screen.getByText("Expire"));
     expect(await screen.findByText(/Sessão expirada pelo teste/i, {}, { timeout: 3000 })).toBeInTheDocument();
     expect(await screen.findByPlaceholderText(/seu\.email@exemplo\.com/, {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(store["pi-finance:token"]).toBeUndefined();
   });
 });
