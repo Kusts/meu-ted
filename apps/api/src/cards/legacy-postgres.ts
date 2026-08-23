@@ -254,7 +254,7 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
                 cp.installments_total, cp.installment_number${includeCatId}
            FROM card_purchases cp
            LEFT JOIN categories c ON cp.category_id = c.id AND c.household_id = $2
-          WHERE cp.statement_id = $1 AND cp.household_id = $2
+          WHERE cp.statement_id = $1 AND cp.household_id = $2 AND cp.deleted_at IS NULL
           ORDER BY cp.date ASC, cp.created_at ASC`,
         [statementId, householdId],
       );
@@ -339,17 +339,17 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
         const statementId = await findOrCreateStatement(householdId, input.accountId, cycle, closing, due, client);
 
         const purchaseId = randomUUID();
-        await client.query(
-          `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, installments_total, installment_number, is_recurring, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, NOW(), NOW())`,
-          [purchaseId, householdId, input.accountId, statementId, input.description, input.amountCents, input.date, input.categoryId ?? null, input.installmentsTotal ?? null, input.installmentNumber ?? null],
-        );
-
         const txId = randomUUID();
         await client.query(
           `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, is_credit_card_purchase, statement_id, installments_total, installment_number)
            VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, true, $8, $9, $10)`,
           [txId, householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId ?? null, statementId, input.installmentsTotal ?? null, input.installmentNumber ?? null],
+        );
+
+        await client.query(
+          `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, installments_total, installment_number, is_recurring, transaction_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, NOW(), NOW())`,
+          [purchaseId, householdId, input.accountId, statementId, input.description, input.amountCents, input.date, input.categoryId ?? null, input.installmentsTotal ?? null, input.installmentNumber ?? null, txId],
         );
 
         await recalcStatement(statementId, householdId, client);
@@ -395,17 +395,17 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
           touchedStatements.add(statementId);
 
           const purchaseId = randomUUID();
-          await client.query(
-            `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, installments_total, installment_number, is_recurring, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, NOW(), NOW())`,
-            [purchaseId, householdId, input.accountId, statementId, input.description, amount, dateStr, input.categoryId ?? null, input.installmentsTotal, i + 1],
-          );
-
           const txId = randomUUID();
           await client.query(
             `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, is_credit_card_purchase, statement_id, installments_total, installment_number)
              VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, true, $8, $9, $10)`,
             [txId, householdId, input.description, amount, dateStr, input.accountId, input.categoryId ?? null, statementId, input.installmentsTotal, i + 1],
+          );
+
+          await client.query(
+            `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, installments_total, installment_number, is_recurring, transaction_id, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, NOW(), NOW())`,
+            [purchaseId, householdId, input.accountId, statementId, input.description, amount, dateStr, input.categoryId ?? null, input.installmentsTotal, i + 1, txId],
           );
 
           txs.push(
@@ -625,6 +625,66 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
 
           // Fetch and return updated detail
           return (await this.getStatementDetail(householdId, stmtId))!;
+        }
+
+        throw domainErrors.notFound('Compra');
+      });
+    },
+
+    async cancelPurchase(householdId, purchaseId) {
+      return withTransaction(pool, async (client) => {
+        // Idempotência: se já soft-deletado, retornar
+        const alreadyCp = await client.query<Row>(`SELECT id FROM card_purchases WHERE id = $1 AND household_id = $2 AND deleted_at IS NOT NULL`, [purchaseId, householdId]);
+        if ((alreadyCp.rowCount ?? 0) > 0) return;
+        const alreadyTx = await client.query<Row>(`SELECT id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NOT NULL`, [purchaseId, householdId]);
+        if ((alreadyTx.rowCount ?? 0) > 0) return;
+
+        // Tentar card_purchases com transaction_id explícito
+        const cpRow = await client.query<Row>(`SELECT id, statement_id, amount_cents, date, transaction_id FROM card_purchases WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]);
+        if ((cpRow.rowCount ?? 0) > 0) {
+          const cp = cpRow.rows[0]!;
+          const stmtId = cp['statement_id'] as string;
+          const stmtRes = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [stmtId, householdId]);
+          if ((stmtRes.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
+          const stmt = mapStatement(stmtRes.rows[0]!);
+          if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
+          const txId = cp['transaction_id'] as string | null;
+          if (txId) {
+            await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
+            await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [txId, householdId]);
+          } else {
+            // Legado sem vínculo: buscar transação candidata única
+            const candidates = await client.query<Row>(
+              `SELECT id FROM transactions WHERE household_id = $1 AND statement_id = $2 AND amount_cents = $3 AND date = $4 AND deleted_at IS NULL`,
+              [householdId, stmtId, cp['amount_cents'], (cp['date'] instanceof Date ? (cp['date'] as Date).toISOString().slice(0,10) : String(cp['date']).slice(0,10))],
+            );
+            if (candidates.rows.length !== 1) throw domainErrors.conflict('Compra legada sem vínculo único: intervenção manual necessária.');
+            await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
+            await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [candidates.rows[0]!['id'], householdId]);
+          }
+          const totalResult = await client.query<Row>(`SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [stmtId, householdId]);
+          const total = Number(totalResult.rows[0]!['total']);
+          const newStatus = computeStatus({ ...stmt, totalCents: total }, todayISO());
+          await client.query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`, [total, newStatus, stmtId, householdId]);
+          return;
+        }
+
+        // Tentar transactions diretamente (compra criada apenas como transação)
+        const txRow = await client.query<Row>(`SELECT id, statement_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]);
+        if ((txRow.rowCount ?? 0) > 0) {
+          const stmtId = txRow.rows[0]!['statement_id'] as string | null;
+          if (!stmtId) throw domainErrors.notFound('Compra');
+          const stmtRes = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [stmtId, householdId]);
+          if ((stmtRes.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
+          const stmt = mapStatement(stmtRes.rows[0]!);
+          if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
+          await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
+          await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE transaction_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]).catch(() => {});
+          const totalResult = await client.query<Row>(`SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [stmtId, householdId]);
+          const total = Number(totalResult.rows[0]!['total']);
+          const newStatus = computeStatus({ ...stmt, totalCents: total }, todayISO());
+          await client.query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`, [total, newStatus, stmtId, householdId]);
+          return;
         }
 
         throw domainErrors.notFound('Compra');

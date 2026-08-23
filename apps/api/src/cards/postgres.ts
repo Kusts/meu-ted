@@ -281,6 +281,14 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
            VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, $8, $9, $10)`,
           [txId, householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId ?? null, statementId, input.installmentsTotal ?? null, input.installmentNumber ?? null],
         );
+        // Dual-write to card_purchases for auditável vínculo (best-effort após V033)
+        try {
+          await client.query(
+            `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, installments_total, installment_number, transaction_id, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())`,
+            [householdId, input.accountId, statementId, input.description, input.amountCents, input.date, input.categoryId ?? null, input.installmentsTotal ?? null, input.installmentNumber ?? null, txId],
+          );
+        } catch {}
 
         // Recalculate statement total
         const totalResult = await client.query<Row>(
@@ -362,6 +370,13 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
              VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, $8, $9, $10)`,
             [txId, householdId, input.description, amount, dateStr, input.accountId, input.categoryId ?? null, statementId, input.installmentsTotal, i + 1],
           );
+          try {
+            await client.query(
+              `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, installments_total, installment_number, transaction_id, created_at, updated_at)
+               VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())`,
+              [householdId, input.accountId, statementId, input.description, amount, dateStr, input.categoryId ?? null, input.installmentsTotal, i + 1, txId],
+            );
+          } catch {}
 
           const totalResult = await client.query<Row>(
             `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`,
@@ -538,6 +553,43 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
         }
 
         throw domainErrors.notFound('Compra');
+      });
+    },
+
+    async cancelPurchase(householdId, purchaseId) {
+      return withTransaction(pool, async (client) => {
+        // Idempotência: se já deletado, retorna
+        const already = await client.query<Row>(
+          `SELECT id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NOT NULL`,
+          [purchaseId, householdId],
+        );
+        if ((already.rowCount ?? 0) > 0) return;
+
+        const txExists = await client.query<Row>(
+          `SELECT id, statement_id, amount_cents, date FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          [purchaseId, householdId],
+        );
+        if ((txExists.rowCount ?? 0) === 0) {
+          throw domainErrors.notFound('Compra');
+        }
+        const stmtId = txExists.rows[0]!['statement_id'] as string | null;
+        if (!stmtId) throw domainErrors.notFound('Compra');
+        const stmtRow = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [stmtId, householdId]);
+        if ((stmtRow.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
+        const stmt = mapStatement(stmtRow.rows[0]!);
+        if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
+
+        await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
+        // Se existir card_purchases vinculado, também soft-deletar
+        await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE transaction_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]).catch(() => {});
+
+        const totalResult = await client.query<Row>(
+          `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          [stmtId, householdId],
+        );
+        const total = Number(totalResult.rows[0]!['total']);
+        const newStatus = computeStatus({ ...stmt, totalCents: total }, todayISO());
+        await client.query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`, [total, newStatus, stmtId, householdId]);
       });
     },
 

@@ -13,6 +13,7 @@ import {
   budgetTrendsTool as generatedBudgetTrends,
   updateBudgetTool as generatedUpdateBudget,
 } from "../generated/http-tools.js";
+import { Type } from "typebox";
 import { capabilityDisabled } from "./api-tool-helpers.js";
 
 export const createGoal = Object.assign(generatedCreateGoal, { name: "create_goal" });
@@ -36,13 +37,13 @@ export const checkBudgetsTool = checkBudgets;
 export const refreshGoalsTool = {
   name: "refresh_goals",
   description: "Recompute achieved/failed goal status",
-  parameters: {},
+  parameters: Type.Object({}),
   execute: async () => capabilityDisabled("refresh_goals") ?? { success: false, reason: "refresh_goals route not implemented" },
 };
 
 export const suggestBudgetAdjustmentTool = {
   name: "suggest_budget_adjustment",
   description: "Suggest a budget from historical spend",
-  parameters: {},
+  parameters: Type.Object({}),
   execute: async () => capabilityDisabled("suggest_budget_adjustment") ?? { success: false, reason: "suggest_budget_adjustment route not implemented" },
 };

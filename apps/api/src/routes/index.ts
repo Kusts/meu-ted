@@ -58,6 +58,7 @@ import { registerPushRoutes } from "./push.js";
 import { registerAdoptionRoutes } from "./adoption.js";
 import { registerAuditRoutes } from "./audit.js";
 import { registerOwnershipTransferRoutes } from "../auth/ownership-transfers-http.js";
+import type { OwnershipTransferStore } from "../auth/ownership-transfers-postgres.js";
 import type { AuditLogStore } from "../audit/store.js";
 import { createInMemoryAuditLogStore } from "../audit/store.js";
 import { registerBetterAuthRoutes } from "../auth/better-auth-http.js";

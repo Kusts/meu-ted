@@ -812,3 +812,84 @@ describe('GET /cards/statements/:id (detail)', () => {
     expect(detail.purchases[0].description).toBe('Compra com statement_id');
   });
 });
+
+describe('DELETE /cards/purchases/:id', () => {
+  it('cancels an active purchase, removes it from statement and is idempotent', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const create = await app.inject({
+      method: 'POST',
+      url: '/cards/purchases',
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { accountId: CARD_A1.id, description: 'Compra cancelável', amountCents: 123_45, date: '2026-08-20', categoryId: CATEGORY_FOOD_A.id },
+    });
+    expect(create.statusCode).toBe(201);
+    const purchaseId = create.json().items[0].id;
+    const stmtId = (await app.inject({ method: 'GET', url: `/cards/statements?accountId=${CARD_A1.id}`, headers: auth(TOKEN_A) })).json().items[0].id;
+
+    const first = await app.inject({ method: 'DELETE', url: `/cards/purchases/${purchaseId}`, headers: auth(TOKEN_A) });
+    expect(first.statusCode).toBe(204);
+    const detail = await app.inject({ method: 'GET', url: `/cards/statements/${stmtId}`, headers: auth(TOKEN_A) });
+    expect(detail.json().purchases).toHaveLength(0);
+    expect(detail.json().totalCents).toBe(0);
+
+    const second = await app.inject({ method: 'DELETE', url: `/cards/purchases/${purchaseId}`, headers: auth(TOKEN_A) });
+    expect(second.statusCode).toBe(204);
+  });
+
+  it('returns 404 when cancelling a purchase from another household', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const create = await app.inject({
+      method: 'POST',
+      url: '/cards/purchases',
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { accountId: CARD_A1.id, description: 'Compra A', amountCents: 50_00, date: '2026-06-10', categoryId: CATEGORY_FOOD_A.id },
+    });
+    const purchaseId = create.json().items[0].id;
+    const res = await app.inject({ method: 'DELETE', url: `/cards/purchases/${purchaseId}`, headers: auth(TOKEN_B) });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 409 when invoice is not open', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const create = await app.inject({
+      method: 'POST',
+      url: '/cards/purchases',
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { accountId: CARD_A1.id, description: 'Compra paga', amountCents: 100_00, date: '2026-08-20', categoryId: CATEGORY_FOOD_A.id },
+    });
+    const purchaseId = create.json().items[0].id;
+    const stmtId = (await app.inject({ method: 'GET', url: `/cards/statements?accountId=${CARD_A1.id}`, headers: auth(TOKEN_A) })).json().items[0].id;
+    // Pay statement to close it
+    const pay = await app.inject({
+      method: 'POST',
+      url: `/cards/statements/${stmtId}/pay`,
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { amountCents: 100_00, fromAccountId: ACCOUNT_A1.id },
+    });
+    expect(pay.statusCode).toBe(200);
+    const del = await app.inject({ method: 'DELETE', url: `/cards/purchases/${purchaseId}`, headers: auth(TOKEN_A) });
+    expect(del.statusCode).toBe(409);
+  });
+
+  it('hides canceled purchases from statement detail', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const c1 = await app.inject({
+      method: 'POST',
+      url: '/cards/purchases',
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { accountId: CARD_A1.id, description: 'Manter', amountCents: 70_00, date: '2026-08-20', categoryId: CATEGORY_FOOD_A.id },
+    });
+    const c2 = await app.inject({
+      method: 'POST',
+      url: '/cards/purchases',
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      payload: { accountId: CARD_A1.id, description: 'Cancelar', amountCents: 30_00, date: '2026-08-20', categoryId: CATEGORY_FOOD_A.id },
+    });
+    const cancelId = c2.json().items[0].id;
+    await app.inject({ method: 'DELETE', url: `/cards/purchases/${cancelId}`, headers: auth(TOKEN_A) });
+    const stmtId = (await app.inject({ method: 'GET', url: `/cards/statements?accountId=${CARD_A1.id}`, headers: auth(TOKEN_A) })).json().items[0].id;
+    const detail = await app.inject({ method: 'GET', url: `/cards/statements/${stmtId}`, headers: auth(TOKEN_A) });
+    expect(detail.json().purchases.map((p: any) => p.description)).toEqual(['Manter']);
+    expect(detail.json().totalCents).toBe(70_00);
+  });
+});

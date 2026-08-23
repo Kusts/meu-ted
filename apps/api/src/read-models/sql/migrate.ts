@@ -24,8 +24,10 @@ type MigrationManifestEntry = {
 
 // Migrations safe to apply on the legacy pi_financeiro schema (DB_SCHEMA=legacy).
 // V003 = device_tokens/idempotency; V008 = additive feature tables; V009 = parent_id
-// and subscriptions; V010/V011 = profiles; V012 = accounts_payable paid_transaction_id.
-// The canonical V001/V002/V004-V007 and modern workspace/auth migrations V013-V030
+// and subscriptions; V010/V011 = profiles; V012 = accounts_payable paid_transaction_id;
+// V032 = legacy card_purchases household_id/updated_at and accounts updated_at.
+// V033 = card_purchases transaction_id/deleted_at and FK to transactions.
+// The canonical V001/V002/V004-V007 and modern workspace/auth migrations V013-V031
 // are skipped in legacy mode because they assume canonical schema or rely on modern
 // tables (Better Auth, workspaces, ownership transfers).
 const LEGACY_SAFE_PREFIXES = [
@@ -35,6 +37,8 @@ const LEGACY_SAFE_PREFIXES = [
   "V010",
   "V011",
   "V012",
+  "V032",
+  "V033",
 ];
 
 export const migrationChecksum = (sql: string): string =>

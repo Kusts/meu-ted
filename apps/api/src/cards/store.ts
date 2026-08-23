@@ -87,4 +87,7 @@ export type CardStore = {
     date?: string;
     categoryId?: string;
   }): Promise<StatementDetail>;
+
+  /** Cancel a purchase on an open statement (auditável via soft-delete). Idempotente. */
+  cancelPurchase(householdId: string, purchaseId: string): Promise<void>;
 };

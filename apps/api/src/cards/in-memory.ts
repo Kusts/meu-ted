@@ -396,5 +396,50 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
 
       throw domainErrors.notFound('Compra');
     },
+
+    async cancelPurchase(householdId, purchaseId) {
+      // Idempotência: se já deletado, considerar sucesso.
+      const deletedTx = state.transactions.find(t => t.id === purchaseId && t.householdId === householdId);
+      if (deletedTx && state.deletedTransactions.has(purchaseId)) return;
+      const cpDeleted = (state as any)._deletedCardPurchases as Set<string> | undefined;
+      if (cpDeleted?.has(purchaseId)) return;
+
+      // Tentar encontrar transação ativa
+      const tx = state.transactions.find(t => t.id === purchaseId && t.householdId === householdId && !state.deletedTransactions.has(t.id));
+      if (tx) {
+        const stmt = statements.find(s => s.householdId === householdId && s.id === (tx as any).statementId);
+        if (!stmt) throw domainErrors.notFound('Compra');
+        if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
+        state.deletedTransactions.add(tx.id);
+        // Também remover de cardPurchases legado se existir duplicata
+        const idx = cardPurchases.findIndex(cp => cp.id === purchaseId);
+        if (idx >= 0) cardPurchases.splice(idx, 1);
+        recalcTotal(stmt.id, householdId);
+        return;
+      }
+
+      // Tentar card_purchases legado
+      const cpIndex = cardPurchases.findIndex(cp => cp.id === purchaseId);
+      if (cpIndex >= 0) {
+        const cp = cardPurchases[cpIndex]!;
+        const stmt = statements.find(s => s.id === cp.statementId && s.householdId === householdId);
+        if (!stmt) throw domainErrors.notFound('Compra');
+        if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
+        // Simular vínculo legado: verificar transações compatíveis (mesma fatura, valor, data)
+        // Se houver ambiguidade, falhar sem mutação.
+        const candidates = state.transactions.filter(t => !state.deletedTransactions.has(t.id) && t.householdId === householdId && (t as any).statementId === stmt.id && t.amountCents === cp.amountCents && t.date === cp.date);
+        if (candidates.length !== 1) throw domainErrors.conflict('Compra legada sem vínculo único: intervenção manual necessária.');
+        // Cancelar ambos
+        if (!(state as any)._deletedCardPurchases) (state as any)._deletedCardPurchases = new Set<string>();
+        (state as any)._deletedCardPurchases.add(purchaseId);
+        cardPurchases.splice(cpIndex, 1);
+        state.deletedTransactions.add(candidates[0]!.id);
+        recalcTotal(stmt.id, householdId);
+        return;
+      }
+
+      // Se não encontrado no household, lançar 404
+      throw domainErrors.notFound('Compra');
+    },
   };
 };

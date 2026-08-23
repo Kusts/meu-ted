@@ -323,4 +323,15 @@ export const registerCardRoutes = (
       return reply.code(200).send(detail);
     } catch (e) { return handleError(e, reply); }
   });
+
+  // DELETE /cards/purchases/:id — cancel a purchase on an open statement (auditável)
+  app.delete('/cards/purchases/:id', async (req, reply) => {
+    let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
+    try {
+      await opts.cardStore.cancelPurchase(ctx.householdId, params.data.id);
+      return reply.code(204).send();
+    } catch (e) { return handleError(e, reply); }
+  });
 };

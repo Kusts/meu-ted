@@ -6,6 +6,7 @@ import {
   createRecurringPurchaseTool as generatedCreate,
   listRecurringPurchasesTool as generatedList,
 } from "../generated/http-tools.js";
+import { Type } from "typebox";
 import { capabilityDisabled } from "./api-tool-helpers.js";
 
 export const createRecurringPurchase = Object.assign(generatedCreate, { name: "create_recurring_purchase" });
@@ -17,6 +18,9 @@ export const listRecurringPurchasesTool = listRecurringPurchases;
 export const postDueRecurring = {
   name: "post_due_recurring",
   description: "Post recurring purchases due today",
-  parameters: {},
+  parameters: Type.Object({
+    householdId: Type.Optional(Type.String()),
+    date: Type.Optional(Type.String()),
+  }),
   execute: async () => capabilityDisabled("post_due_recurring") ?? { success: false, reason: "post_due_recurring route not implemented" },
 };

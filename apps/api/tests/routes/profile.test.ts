@@ -1,4 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import Fastify from 'fastify';
+import { registerProfileRoutes } from '../../src/routes/profile.js';
+import { createInMemoryProfileStore } from '../../src/profile/in-memory.js';
+import { AuthError } from '../../src/auth/device-token.js';
 import { buildTestApp, TOKEN_A, TOKEN_B } from '../test-app.js';
 
 describe('GET /profile', () => {
@@ -149,5 +153,101 @@ describe('PATCH /profile', () => {
       payload: { name: 'X' },
     });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('Error handling in /profile', () => {
+  it('returns 500 when resolveToken throws an infrastructure error without statusCode (e.g. pg error 53300) on GET', async () => {
+    const app = Fastify();
+    registerProfileRoutes(app, {
+      resolveToken: async () => {
+        const err = new Error('sorry, too many clients already');
+        (err as unknown as { code: string }).code = '53300';
+        throw err;
+      },
+      profileStore: createInMemoryProfileStore(),
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/profile',
+      headers: { 'x-device-token': 'any-token' },
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect(res.json()).toMatchObject({
+      code: '53300',
+      message: 'sorry, too many clients already',
+    });
+  });
+
+  it('returns 500 when resolveToken throws an infrastructure error without statusCode on PATCH', async () => {
+    const app = Fastify();
+    registerProfileRoutes(app, {
+      resolveToken: async () => {
+        const err = new Error('sorry, too many clients already');
+        (err as unknown as { code: string }).code = '53300';
+        throw err;
+      },
+      profileStore: createInMemoryProfileStore(),
+    });
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/profile',
+      headers: { 'x-device-token': 'any-token', 'content-type': 'application/json' },
+      payload: { name: 'Marina' },
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect(res.json()).toMatchObject({
+      code: '53300',
+      message: 'sorry, too many clients already',
+    });
+  });
+
+  it('preserves 401 when resolveToken throws AuthError with statusCode 401 on GET', async () => {
+    const app = Fastify();
+    registerProfileRoutes(app, {
+      resolveToken: async () => {
+        throw new AuthError('invalid or revoked device token', 401, 'auth.invalid_token');
+      },
+      profileStore: createInMemoryProfileStore(),
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/profile',
+      headers: { 'x-device-token': 'invalid-token' },
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({
+      code: 'auth.invalid_token',
+      message: 'invalid or revoked device token',
+    });
+  });
+
+  it('preserves 401 when resolveToken throws AuthError with statusCode 401 on PATCH', async () => {
+    const app = Fastify();
+    registerProfileRoutes(app, {
+      resolveToken: async () => {
+        throw new AuthError('invalid or revoked device token', 401, 'auth.invalid_token');
+      },
+      profileStore: createInMemoryProfileStore(),
+    });
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/profile',
+      headers: { 'x-device-token': 'invalid-token', 'content-type': 'application/json' },
+      payload: { name: 'Marina' },
+    });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({
+      code: 'auth.invalid_token',
+      message: 'invalid or revoked device token',
+    });
   });
 });

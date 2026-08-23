@@ -11,6 +11,7 @@ export type DomainErrorCode =
   | "not_found"
   | "household_mismatch"
   | "in_use"
+  | "conflict"
   | "idempotency.conflict"
   | "unsupported"
   | "approval.not_found"
@@ -59,6 +60,8 @@ export const domainErrors = {
     ),
   inUse: (entity: string, what: string): DomainError =>
     new DomainError("in_use", messages.inUse(entity, what), 409),
+  conflict: (message: string): DomainError =>
+    new DomainError("conflict", message, 409),
   idempotencyConflict: (): DomainError =>
     new DomainError(
       "idempotency.conflict",

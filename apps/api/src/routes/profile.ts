@@ -26,7 +26,11 @@ export const registerProfileRoutes = (
       ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token);
     } catch (e) {
       const err = e as { statusCode?: number; code?: string; message?: string };
-      return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.error', message: err.message ?? 'unauthorized' });
+      const status = err.statusCode ?? 500;
+      return reply.code(status).send({
+        code: err.code ?? (status >= 500 ? 'server.error' : 'auth.error'),
+        message: err.message ?? (status >= 500 ? 'server error' : 'unauthorized'),
+      });
     }
     const existing = await opts.profileStore.get(ctx.householdId);
     return reply.code(200).send({ profile: existing });
@@ -39,7 +43,11 @@ export const registerProfileRoutes = (
       ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token);
     } catch (e) {
       const err = e as { statusCode?: number; code?: string; message?: string };
-      return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.error', message: err.message ?? 'unauthorized' });
+      const status = err.statusCode ?? 500;
+      return reply.code(status).send({
+        code: err.code ?? (status >= 500 ? 'server.error' : 'auth.error'),
+        message: err.message ?? (status >= 500 ? 'server error' : 'unauthorized'),
+      });
     }
 
     const parsed = patchInput.safeParse(req.body ?? {});
