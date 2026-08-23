@@ -1,4 +1,4 @@
-export type CapabilityName = string;
+﻿export type CapabilityName = string;
 export type CapabilityMode = "api" | "disabled";
 
 type Env = Record<string, string | undefined>;

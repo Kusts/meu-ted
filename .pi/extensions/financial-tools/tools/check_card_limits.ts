@@ -1,12 +1,12 @@
-/**
- * check_card_limits — Check credit card limit usage
+﻿/**
+ * check_card_limits â€” Check credit card limit usage
  *
  * Returns usage status for all credit cards in a household.
  * Warns at 80%+ usage, alerts at 100%+.
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Pool } from "pg";
 import {
   getAllLimitStatuses,
@@ -29,7 +29,7 @@ const schema = Type.Object({
 
 export const checkCardLimits: ToolDefinition = {
   name: "check_card_limits",
-  description: "Verifica uso do limite dos cartões de crédito. Alerta quando uso > 80% ou > 100%.",
+  description: "Verifica uso do limite dos cartÃµes de crÃ©dito. Alerta quando uso > 80% ou > 100%.",
   parameters: schema,
   execute: async (params: Params) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -48,7 +48,7 @@ export const checkCardLimits: ToolDefinition = {
         return {
           success: true,
           statuses: [],
-          message: "Nenhum cartão de crédito encontrado",
+          message: "Nenhum cartÃ£o de crÃ©dito encontrado",
         };
       }
 
@@ -61,19 +61,19 @@ export const checkCardLimits: ToolDefinition = {
       // Format each
       const formatted = statuses.map(formatLimitStatus);
 
-      let summary = `📊 Limite de ${statuses.length} cartão(ões):\n\n`;
+      let summary = `ðŸ“Š Limite de ${statuses.length} cartÃ£o(Ãµes):\n\n`;
       summary += formatted.join("\n\n");
 
       if (hasAlerts) {
         const alerts: string[] = [];
         if (overLimit.length > 0) {
-          alerts.push(`🚨 ${overLimit.length} cartão(ões) ACIMA do limite`);
+          alerts.push(`ðŸš¨ ${overLimit.length} cartÃ£o(Ãµes) ACIMA do limite`);
         }
         if (warning.length > 0) {
-          alerts.push(`🔴 ${warning.length} cartão(ões) com uso > 90%`);
+          alerts.push(`ðŸ”´ ${warning.length} cartÃ£o(Ãµes) com uso > 90%`);
         }
         if (caution.length > 0) {
-          alerts.push(`⚠️ ${caution.length} cartão(ões) com uso > 80%`);
+          alerts.push(`âš ï¸ ${caution.length} cartÃ£o(Ãµes) com uso > 80%`);
         }
         summary = alerts.join("\n") + "\n\n" + summary;
       }

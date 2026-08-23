@@ -18,6 +18,10 @@ declare module 'pi-coding-agent' {
 }
 
 declare module '@earendil-works/pi-coding-agent' {
+  export interface AgentToolResult {
+    content?: Array<{ type: string; text?: string; [key: string]: unknown }>;
+    [key: string]: unknown;
+  }
   export interface ToolDefinition {
     name: string;
     label?: string;

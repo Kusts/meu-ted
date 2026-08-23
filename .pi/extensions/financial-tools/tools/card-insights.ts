@@ -1,5 +1,5 @@
-/**
- * card-insights — Generate insights for credit card usage
+﻿/**
+ * card-insights â€” Generate insights for credit card usage
  *
  * - Compare statement month vs previous month (% change, absolute change)
  * - Top categories per card
@@ -220,28 +220,28 @@ export async function getTotalOverdue(pool: Pool, householdId: string): Promise<
 export function formatInsights(insights: CardInsight[]): string {
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
   const lines: string[] = [];
-  lines.push(`📊 Comparação mês a mês:`);
+  lines.push(`ðŸ“Š ComparaÃ§Ã£o mÃªs a mÃªs:`);
   for (const i of insights) {
-    const arrow = i.change.absoluteCents > 0 ? "📈" : i.change.absoluteCents < 0 ? "📉" : "➡️";
-    const pctStr = i.change.percent !== null ? ` (${i.change.percent > 0 ? "+" : ""}${i.change.percent}%)` : " (sem histórico)";
+    const arrow = i.change.absoluteCents > 0 ? "ðŸ“ˆ" : i.change.absoluteCents < 0 ? "ðŸ“‰" : "âž¡ï¸";
+    const pctStr = i.change.percent !== null ? ` (${i.change.percent > 0 ? "+" : ""}${i.change.percent}%)` : " (sem histÃ³rico)";
     lines.push(`\n  ${arrow} ${i.cardName}`);
     lines.push(`     ${i.currentMonth.cycle}: ${fmt(i.currentMonth.totalCents)} (${i.currentMonth.purchaseCount} compras)`);
     lines.push(`     ${i.previousMonth.cycle}: ${fmt(i.previousMonth.totalCents)} (${i.previousMonth.purchaseCount} compras)`);
-    lines.push(`     Variação: ${i.change.absoluteCents > 0 ? "+" : ""}${fmt(i.change.absoluteCents)}${pctStr}`);
+    lines.push(`     VariaÃ§Ã£o: ${i.change.absoluteCents > 0 ? "+" : ""}${fmt(i.change.absoluteCents)}${pctStr}`);
   }
   return lines.join("\n");
 }
 
 export function formatTopCategories(insights: CategoryInsight[]): string {
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
-  const lines: string[] = [`🏷️ Top categorias por cartão:`];
+  const lines: string[] = [`ðŸ·ï¸ Top categorias por cartÃ£o:`];
   let currentCard = "";
   for (const i of insights) {
     if (i.cardName !== currentCard) {
       lines.push(`\n  ${i.cardName}:`);
       currentCard = i.cardName;
     }
-    lines.push(`     • ${i.category}: ${fmt(i.totalCents)} (${i.purchaseCount}x)`);
+    lines.push(`     â€¢ ${i.category}: ${fmt(i.totalCents)} (${i.purchaseCount}x)`);
   }
   return lines.join("\n");
 }

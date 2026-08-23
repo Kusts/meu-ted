@@ -1,6 +1,11 @@
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const images = ['pi-finance-api:ci', 'pi-finance-pi-stack:ci'];
+const repoPath = process.cwd();
+const hasIgnore = fs.existsSync(path.join(repoPath, '.trivyignore'));
+
 const commonArgs = [
   'run',
   '--rm',
@@ -8,6 +13,8 @@ const commonArgs = [
   'trivy-cache:/root/.cache/trivy',
   '-v',
   '/var/run/docker.sock:/var/run/docker.sock',
+  '-v',
+  `${repoPath}:/repo:ro`,
   'aquasec/trivy:0.58.1',
   'image',
   '--exit-code',
@@ -15,6 +22,7 @@ const commonArgs = [
   '--severity',
   'HIGH,CRITICAL',
   '--ignore-unfixed',
+  ...(hasIgnore ? ['--ignorefile', '/repo/.trivyignore'] : []),
 ];
 
 const checkDocker = spawnSync('docker', ['info'], { stdio: 'ignore', shell: false });

@@ -1,17 +1,17 @@
-/**
- * refresh_statements — Periodic statement status refresh
+﻿/**
+ * refresh_statements â€” Periodic statement status refresh
  *
  * Should be called:
  * - At the start of each TED session (user says oi, etc.)
  * - After any purchase/payment
  * - On a daily cron
  *
- * Returns any status changes (open → closed → overdue, etc.)
+ * Returns any status changes (open â†’ closed â†’ overdue, etc.)
  * and a list of statements closing soon (proactive).
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Pool } from "pg";
 import {
   refreshAllStatements,
@@ -32,7 +32,7 @@ const schema = Type.Object({
 export const refreshStatements: ToolDefinition = {
   name: "refresh_statements",
   description:
-    "Atualiza status de todas as faturas (open→closed, closed→overdue, etc). Retorna mudanças e faturas próximas de fechar.",
+    "Atualiza status de todas as faturas (openâ†’closed, closedâ†’overdue, etc). Retorna mudanÃ§as e faturas prÃ³ximas de fechar.",
   parameters: schema,
   execute: async (params: Params) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -50,9 +50,9 @@ export const refreshStatements: ToolDefinition = {
 
       let extra = "";
       if (closingSoon.length > 0) {
-        extra = "\n\n📅 Fechando em breve:\n";
+        extra = "\n\nðŸ“… Fechando em breve:\n";
         for (const s of closingSoon) {
-          extra += `  • ${s.accountName} ${s.cycle}: fecha em ${s.daysUntilClose} dia(s) — R$ ${(s.totalCents / 100).toFixed(2)}\n`;
+          extra += `  â€¢ ${s.accountName} ${s.cycle}: fecha em ${s.daysUntilClose} dia(s) â€” R$ ${(s.totalCents / 100).toFixed(2)}\n`;
         }
       }
 

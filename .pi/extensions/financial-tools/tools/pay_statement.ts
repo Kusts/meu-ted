@@ -1,6 +1,6 @@
-/**
- * pay_statement — Pi tool facade
- * Delegates to generated authenticated HTTP adapter (OpenAPI → API).
+﻿/**
+ * pay_statement â€” Pi tool facade
+ * Delegates to generated authenticated HTTP adapter (OpenAPI â†’ API).
  */
 import { payStatementTool as generated } from "../generated/http-tools.js";
 

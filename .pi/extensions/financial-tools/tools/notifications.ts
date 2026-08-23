@@ -1,26 +1,26 @@
-/**
- * notifications — Motor de notificações proativas
+﻿/**
+ * notifications â€” Motor de notificaÃ§Ãµes proativas
  *
- * Tipos de notificação:
+ * Tipos de notificaÃ§Ã£o:
  * - overdue_reminder: conta vencida
  * - due_today_reminder: vence hoje
  * - upcoming_reminder: vence em N dias
- * - daily_summary: resumo diário
+ * - daily_summary: resumo diÃ¡rio
  * - weekly_summary: resumo semanal (segunda-feira)
- * - card_closing_soon: fatura de cartão fechando
- * - limit_alert: limite do cartão
+ * - card_closing_soon: fatura de cartÃ£o fechando
+ * - limit_alert: limite do cartÃ£o
  *
  * Cada tipo tem:
  * - enabled: on/off
  * - schedule_hour/minute: hora do dia
  * - days_of_week: [1..7] (1=domingo)
- * - threshold_*: parâmetros específicos
- * - last_sent_at: controle de idempotência
+ * - threshold_*: parÃ¢metros especÃ­ficos
+ * - last_sent_at: controle de idempotÃªncia
  *
- * Função principal: processNotifications()
+ * FunÃ§Ã£o principal: processNotifications()
  * - Verifica hora atual
- * - Para cada configuração enabled, verifica se deve enviar
- * - Idempotente: não envia se já enviou hoje (ou nesta hora)
+ * - Para cada configuraÃ§Ã£o enabled, verifica se deve enviar
+ * - Idempotente: nÃ£o envia se jÃ¡ enviou hoje (ou nesta hora)
  */
 
 import type { Pool } from "pg";
@@ -97,7 +97,7 @@ export function shouldSendNotification(
     return { shouldSend: false, reason: "disabled" };
   }
 
-  // Idempotência: já enviou hoje?
+  // IdempotÃªncia: jÃ¡ enviou hoje?
   if (setting.last_sent_at) {
     const last = new Date(setting.last_sent_at);
     if (isSameDay(last, now)) {
@@ -105,14 +105,14 @@ export function shouldSendNotification(
     }
   }
 
-  // Verificar horário
+  // Verificar horÃ¡rio
   if (setting.schedule_hour !== null) {
     const currentHour = now.getHours();
     const currentMinute = now.getMinutes();
     if (currentHour !== setting.schedule_hour) {
       return { shouldSend: false, reason: "wrong_hour" };
     }
-    // Tolerância de 5 minutos após o horário
+    // TolerÃ¢ncia de 5 minutos apÃ³s o horÃ¡rio
     const minutesDiff = (currentHour * 60 + currentMinute) - (setting.schedule_hour * 60 + setting.schedule_minute);
     if (minutesDiff < 0 || minutesDiff > 5) {
       return { shouldSend: false, reason: "wrong_time_window" };
@@ -144,7 +144,7 @@ export async function buildOverdueNotification(
   householdId: string,
   thresholdDays: number = 0  // 0 = qualquer vencida
 ): Promise<NotificationMessage | null> {
-  const result = await pool.query<{ rows: any[] }>(
+  const result = await pool.query<any>(
     `(${payableDueRowsSql}
        AND status = 'overdue'
        AND due_date <= (CURRENT_DATE - $2 * INTERVAL '1 day'))
@@ -159,7 +159,7 @@ export async function buildOverdueNotification(
   if (result.rows.length === 0) return null;
 
   const totalCents = result.rows.reduce((s, r) => s + parseInt(r.amount_cents, 10), 0);
-  const message = `🚨 ${result.rows.length} CONTA(S) VENCIDA(S) — total ${fmt(totalCents)}`;
+  const message = `ðŸš¨ ${result.rows.length} CONTA(S) VENCIDA(S) â€” total ${fmt(totalCents)}`;
   return {
     type: "overdue_reminder",
     title: "Contas vencidas",
@@ -185,7 +185,7 @@ export async function buildDueTodayNotification(
   pool: Pool,
   householdId: string
 ): Promise<NotificationMessage | null> {
-  const result = await pool.query<{ rows: any[] }>(
+  const result = await pool.query<any>(
     `(${payableDueRowsSql}
        AND status = 'pending'
        AND due_date = CURRENT_DATE)
@@ -202,7 +202,7 @@ export async function buildDueTodayNotification(
   return {
     type: "due_today_reminder",
     title: "Vencem hoje",
-    message: `🔥 ${result.rows.length} conta(s) vence(m) HOJE — total ${fmt(totalCents)}`,
+    message: `ðŸ”¥ ${result.rows.length} conta(s) vence(m) HOJE â€” total ${fmt(totalCents)}`,
     severity: "warning",
     payload: {
       accounts: result.rows.map((r) => ({
@@ -217,14 +217,14 @@ export async function buildDueTodayNotification(
 }
 
 /**
- * Get accounts due in N days (excluding today — that's due_today_reminder).
+ * Get accounts due in N days (excluding today â€” that's due_today_reminder).
  */
 export async function buildUpcomingNotification(
   pool: Pool,
   householdId: string,
   thresholdDays: number
 ): Promise<NotificationMessage | null> {
-  const result = await pool.query<{ rows: any[] }>(
+  const result = await pool.query<any>(
     `SELECT *, (due::date - CURRENT_DATE)::int as days_until
      FROM (
        (${payableDueRowsSql}
@@ -243,8 +243,8 @@ export async function buildUpcomingNotification(
   const totalCents = result.rows.reduce((s, r) => s + parseInt(r.amount_cents, 10), 0);
   return {
     type: "upcoming_reminder",
-    title: `Vencem nos próximos ${thresholdDays} dias`,
-    message: `📅 ${result.rows.length} conta(s) nos próximos ${thresholdDays} dia(s) — total ${fmt(totalCents)}`,
+    title: `Vencem nos prÃ³ximos ${thresholdDays} dias`,
+    message: `ðŸ“… ${result.rows.length} conta(s) nos prÃ³ximos ${thresholdDays} dia(s) â€” total ${fmt(totalCents)}`,
     severity: "info",
     payload: {
       accounts: result.rows.map((r) => ({
@@ -268,7 +268,7 @@ export async function buildDailySummary(
   householdId: string
 ): Promise<NotificationMessage> {
   // Get totals for today
-  const todayStats = await pool.query<{ rows: Array<{ income: string; expense: string }> }>(
+  const todayStats = await pool.query<{ income: string; expense: string }>(
     `SELECT
        COALESCE(SUM(CASE WHEN kind = 'income' THEN amount_cents ELSE 0 END), 0) as income,
        COALESCE(SUM(CASE WHEN kind = 'expense' THEN amount_cents ELSE 0 END), 0) as expense
@@ -282,7 +282,7 @@ export async function buildDailySummary(
   const expenseCents = parseInt(todayStats.rows[0]?.expense || "0", 10);
 
   // Get accounts to pay soon
-  const upcoming = await pool.query<{ rows: Array<{ count: string; total: string }> }>(
+  const upcoming = await pool.query<{ count: string; total: string }>(
     `SELECT COUNT(*) as count, COALESCE(SUM(amount_cents), 0) as total
      FROM (
        (${payableDueRowsSql}
@@ -298,7 +298,7 @@ export async function buildDailySummary(
   const upcomingTotal = parseInt(upcoming.rows[0]?.total || "0", 10);
 
   // Get account balance
-  const balance = await pool.query<{ rows: Array<{ total: string }> }>(
+  const balance = await pool.query<{ total: string }>(
     `SELECT COALESCE(SUM(initial_balance_cents), 0) +
        COALESCE((SELECT SUM(CASE WHEN kind = 'income' THEN amount_cents ELSE -amount_cents END)
                  FROM transactions WHERE household_id = $1 AND deleted_at IS NULL), 0) as total
@@ -309,11 +309,11 @@ export async function buildDailySummary(
 
   return {
     type: "daily_summary",
-    title: "Resumo diário",
-    message: `📊 Bom dia! Saldo: ${fmt(balanceCents)}\n` +
-             `💰 Receitas hoje: ${fmt(incomeCents)}\n` +
-             `💸 Despesas hoje: ${fmt(expenseCents)}\n` +
-             `📅 ${upcomingCount} conta(s) a pagar nos próximos 7 dias: ${fmt(upcomingTotal)}`,
+    title: "Resumo diÃ¡rio",
+    message: `ðŸ“Š Bom dia! Saldo: ${fmt(balanceCents)}\n` +
+             `ðŸ’° Receitas hoje: ${fmt(incomeCents)}\n` +
+             `ðŸ’¸ Despesas hoje: ${fmt(expenseCents)}\n` +
+             `ðŸ“… ${upcomingCount} conta(s) a pagar nos prÃ³ximos 7 dias: ${fmt(upcomingTotal)}`,
     severity: "info",
     payload: {
       balanceCents,
@@ -333,7 +333,7 @@ export async function buildWeeklySummary(
   householdId: string
 ): Promise<NotificationMessage> {
   // Get totals for this week
-  const weekStats = await pool.query<{ rows: Array<{ income: string; expense: string }> }>(
+  const weekStats = await pool.query<{ income: string; expense: string }>(
     `SELECT
        COALESCE(SUM(CASE WHEN kind = 'income' THEN amount_cents ELSE 0 END), 0) as income,
        COALESCE(SUM(CASE WHEN kind = 'expense' THEN amount_cents ELSE 0 END), 0) as expense
@@ -348,7 +348,7 @@ export async function buildWeeklySummary(
   const expenseCents = parseInt(weekStats.rows[0]?.expense || "0", 10);
 
   // Get accounts to pay this week
-  const upcoming = await pool.query<{ rows: Array<{ count: string; total: string }> }>(
+  const upcoming = await pool.query<{ count: string; total: string }>(
     `SELECT COUNT(*) as count, COALESCE(SUM(amount_cents), 0) as total
      FROM (
        (${payableDueRowsSql}
@@ -366,11 +366,11 @@ export async function buildWeeklySummary(
   return {
     type: "weekly_summary",
     title: "Resumo semanal",
-    message: `📅 **Semana ${getWeekOfYear()}:**\n` +
-             `💰 Receitas: ${fmt(incomeCents)}\n` +
-             `💸 Despesas: ${fmt(expenseCents)}\n` +
-             `📊 Saldo: ${fmt(incomeCents - expenseCents)}\n` +
-             `📌 ${upcomingCount} conta(s) a pagar: ${fmt(upcomingTotal)}`,
+    message: `ðŸ“… **Semana ${getWeekOfYear()}:**\n` +
+             `ðŸ’° Receitas: ${fmt(incomeCents)}\n` +
+             `ðŸ’¸ Despesas: ${fmt(expenseCents)}\n` +
+             `ðŸ“Š Saldo: ${fmt(incomeCents - expenseCents)}\n` +
+             `ðŸ“Œ ${upcomingCount} conta(s) a pagar: ${fmt(upcomingTotal)}`,
     severity: "info",
     payload: {
       weekIncomeCents: incomeCents,
@@ -440,7 +440,7 @@ export async function logNotification(
   message: NotificationMessage,
   source: string = "auto"
 ): Promise<string> {
-  const result = await pool.query<{ rows: Array<{ id: string }> }>(
+  const result = await pool.query<{ id: string }>(
     `INSERT INTO notification_log
      (household_id, chat_id, notification_type, title, message, payload, source)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -463,7 +463,7 @@ export async function processPendingNotifications(
   pool: Pool,
   now: Date = new Date()
 ): Promise<Array<{ setting: NotificationSetting; notification: NotificationMessage }>> {
-  const settings = await pool.query<{ rows: NotificationSetting[] }>(
+  const settings = await pool.query<NotificationSetting>(
     `SELECT * FROM notification_settings WHERE enabled = true`
   );
 
@@ -489,15 +489,15 @@ export async function processPendingNotifications(
  * Ex: 3 contas vencidas + 1 resumo + 1 vencem hoje = 1 mensagem
  *
  * Output format:
- *   📨 [3] [13:45] Você tem 3 notificações:
- *   🚨 2 vencida(s) — R$ 250,00
- *   🔥 1 vence hoje — R$ 100,00
+ *   ðŸ“¨ [3] [13:45] VocÃª tem 3 notificaÃ§Ãµes:
+ *   ðŸš¨ 2 vencida(s) â€” R$ 250,00
+ *   ðŸ”¥ 1 vence hoje â€” R$ 100,00
  *
- * Lógica de agrupamento:
+ * LÃ³gica de agrupamento:
  * - Agrupa por chat_id
- * - Mantém a ordem de severidade (urgent > warning > info)
+ * - MantÃ©m a ordem de severidade (urgent > warning > info)
  * - Respeita grouping_max_items
- * - Mantém contexto (cada item mostra: emoji, contagem, total)
+ * - MantÃ©m contexto (cada item mostra: emoji, contagem, total)
  */
 export interface GroupedNotification {
   chatId: string;
@@ -538,7 +538,7 @@ export function groupNotifications(
     const maxItems = chatItems[0]?.setting.grouping_max_items ?? 5;
     const truncate = chatItems.length > maxItems;
 
-    // Agrupa por tipo (caso tenha múltiplos do mesmo tipo)
+    // Agrupa por tipo (caso tenha mÃºltiplos do mesmo tipo)
     const byType = new Map<NotificationType, { count: number; cents: number; first: NotificationMessage }>();
     for (const item of chatItems) {
       const key = item.notification.type;
@@ -552,7 +552,7 @@ export function groupNotifications(
       if (typeof cents === "number") group.cents += cents;
     }
 
-    // Constrói items ordenados por severidade
+    // ConstrÃ³i items ordenados por severidade
     const groupedItems = Array.from(byType.entries()).map(([type, group]) => {
       const first = group.first;
       let totalLabel = "";
@@ -562,7 +562,7 @@ export function groupNotifications(
         const accs = (first.payload as any)?.accounts || [];
         totalLabel = `R$ ${(group.cents / 100).toFixed(2)}`;
         details = accs.slice(0, 3).map((a: any) =>
-          `   • ${a.description}: ${fmt(a.amountCents)}`
+          `   â€¢ ${a.description}: ${fmt(a.amountCents)}`
         ).join("\n");
         if (accs.length > 3) {
           details += `\n   ... +${accs.length - 3} mais`;
@@ -571,13 +571,13 @@ export function groupNotifications(
         totalLabel = `R$ ${(group.cents / 100).toFixed(2)}`;
         const accs = (first.payload as any)?.accounts || [];
         details = accs.slice(0, 3).map((a: any) =>
-          `   • ${a.description}: ${fmt(a.amountCents)}`
+          `   â€¢ ${a.description}: ${fmt(a.amountCents)}`
         ).join("\n");
       } else if (type === "upcoming_reminder") {
         totalLabel = `R$ ${(group.cents / 100).toFixed(2)}`;
         const accs = (first.payload as any)?.accounts || [];
         details = accs.slice(0, 3).map((a: any) =>
-          `   • ${a.description}: ${fmt(a.amountCents)} (${a.daysUntil}d)`
+          `   â€¢ ${a.description}: ${fmt(a.amountCents)} (${a.daysUntil}d)`
         ).join("\n");
       } else {
         // daily_summary, weekly_summary, etc
@@ -613,24 +613,24 @@ export function groupNotifications(
 
     // Monta a mensagem
     const lines: string[] = [];
-    lines.push(`📨 Você tem ${groupedItems.length} lembrete(s):`);
+    lines.push(`ðŸ“¨ VocÃª tem ${groupedItems.length} lembrete(s):`);
     lines.push("");
 
     for (const item of groupedItems) {
-      const icon = item.severity === "urgent" ? "🚨"
-        : item.severity === "alert" ? "🔴"
-        : item.severity === "warning" ? "🔥"
-        : "📅";
+      const icon = item.severity === "urgent" ? "ðŸš¨"
+        : item.severity === "alert" ? "ðŸ”´"
+        : item.severity === "warning" ? "ðŸ”¥"
+        : "ðŸ“…";
       const typeLabel: Record<NotificationType, string> = {
         overdue_reminder: "vencida(s)",
         due_today_reminder: "vence(m) hoje",
-        upcoming_reminder: "próxima(s)",
-        daily_summary: "resumo diário",
+        upcoming_reminder: "prÃ³xima(s)",
+        daily_summary: "resumo diÃ¡rio",
         weekly_summary: "resumo semanal",
         card_closing_soon: "fatura fechando",
         limit_alert: "limite",
       };
-      lines.push(`${icon} ${item.count} ${typeLabel[item.type] || item.type} — ${item.totalLabel}`);
+      lines.push(`${icon} ${item.count} ${typeLabel[item.type] || item.type} â€” ${item.totalLabel}`);
       if (item.details) {
         lines.push(item.details);
       }

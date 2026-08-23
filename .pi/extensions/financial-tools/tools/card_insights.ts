@@ -1,5 +1,5 @@
-/**
- * card_insights — Generate insights for credit card usage
+﻿/**
+ * card_insights â€” Generate insights for credit card usage
  *
  * - month-over-month comparison
  * - top categories per card
@@ -8,7 +8,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Pool } from "pg";
 import {
   getMonthOverMonthInsights,
@@ -41,7 +41,7 @@ const schema = Type.Object({
 
 export const cardInsights: ToolDefinition = {
   name: "card_insights",
-  description: "Gera insights sobre uso de cartão de crédito: comparação mês a mês, top categorias, etc.",
+  description: "Gera insights sobre uso de cartÃ£o de crÃ©dito: comparaÃ§Ã£o mÃªs a mÃªs, top categorias, etc.",
   parameters: schema,
   execute: async (params: Params) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -59,7 +59,7 @@ export const cardInsights: ToolDefinition = {
         if (overdue.count > 0) {
           result.warnings = result.warnings || [];
           result.warnings.push(
-            `⚠️ ${overdue.count} fatura(s) atrasada(s) totalizando R$ ${(overdue.totalCents / 100).toFixed(2)}`
+            `âš ï¸ ${overdue.count} fatura(s) atrasada(s) totalizando R$ ${(overdue.totalCents / 100).toFixed(2)}`
           );
         }
       }
@@ -87,7 +87,7 @@ export const cardInsights: ToolDefinition = {
         result.cardVsOther = cvp;
         result.messages = result.messages || [];
         result.messages.push(
-          `💳 vs 💵: Cartão R$ ${(cvp.cardTotalCents / 100).toFixed(2)} (${cvp.cardPercent}%) | Outros R$ ${(cvp.otherTotalCents / 100).toFixed(2)}`
+          `ðŸ’³ vs ðŸ’µ: CartÃ£o R$ ${(cvp.cardTotalCents / 100).toFixed(2)} (${cvp.cardPercent}%) | Outros R$ ${(cvp.otherTotalCents / 100).toFixed(2)}`
         );
       }
 

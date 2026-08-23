@@ -1,6 +1,6 @@
-/**
- * list_categories — Pi tool facade
- * Delegates to the generated authenticated HTTP adapter (OpenAPI → API).
+﻿/**
+ * list_categories â€” Pi tool facade
+ * Delegates to the generated authenticated HTTP adapter (OpenAPI â†’ API).
  */
 import { listCategoriesTool as generated } from "../generated/http-tools.js";
 

@@ -1,8 +1,8 @@
 /**
- * transfer-parser — Helper para extrair campos estruturados de transferências
+ * transfer-parser â€” Helper para extrair campos estruturados de transferÃªncias
  *
- * Detecta automaticamente o método (PIX, TED, DOC, TRANSFER, CASH) e extrai
- * o nome do destinatário a partir da descrição livre.
+ * Detecta automaticamente o mÃ©todo (PIX, TED, DOC, TRANSFER, CASH) e extrai
+ * o nome do destinatÃ¡rio a partir da descriÃ§Ã£o livre.
  */
 
 export type TransferMethod = "PIX" | "TED" | "DOC" | "TRANSFER" | "CASH";
@@ -10,19 +10,19 @@ export type TransferMethod = "PIX" | "TED" | "DOC" | "TRANSFER" | "CASH";
 const METHOD_PATTERNS: Array<{ method: TransferMethod; patterns: RegExp[] }> = [
   {
     method: "PIX",
-    patterns: [/\bpix\b/i, /\bchave\s*pix\b/i, /\bpix\s*-\s*/i, /\binst(?:ant[eê]neo)?\b/i],
+    patterns: [/\bpix\b/i, /\bchave\s*pix\b/i, /\bpix\s*-\s*/i, /\binst(?:ant[eÃª]neo)?\b/i],
   },
   {
     method: "TED",
-    patterns: [/\bted\b/i, /\btransfer[eê]ncia\s*eletrônica\b/i],
+    patterns: [/\bted\b/i, /\btransfer[eÃª]ncia\s*eletrÃ´nica\b/i],
   },
   {
     method: "DOC",
-    patterns: [/\bdoc\b/i, /\bdocumento\s*de\s*cr[eé]dito\b/i],
+    patterns: [/\bdoc\b/i, /\bdocumento\s*de\s*cr[eÃ©]dito\b/i],
   },
   {
     method: "CASH",
-    patterns: [/\bdinheiro\b/i, /\bespécie\b/i, /\bcaixa\b/i, /\bem\s*m[ãa]o\b/i],
+    patterns: [/\bdinheiro\b/i, /\bespÃ©cie\b/i, /\bcaixa\b/i, /\bem\s*m[Ã£a]o\b/i],
   },
 ];
 
@@ -69,10 +69,10 @@ export function resolveMethod(
 /**
  * Extracts a recipient name from a free-form description.
  * Tries multiple patterns:
- *   "PIX João Silva - almoço"        → "João Silva"
- *   "TED Aluguel Imobiliária XYZ"    → "Imobiliária XYZ" (after keyword removal)
- *   "DOC Fornecedor ABC Ltda"        → "Fornecedor ABC Ltda"
- *   "Transferência Nubank → Itaú"     → null (between own accounts)
+ *   "PIX JoÃ£o Silva - almoÃ§o"        â†’ "JoÃ£o Silva"
+ *   "TED Aluguel ImobiliÃ¡ria XYZ"    â†’ "ImobiliÃ¡ria XYZ" (after keyword removal)
+ *   "DOC Fornecedor ABC Ltda"        â†’ "Fornecedor ABC Ltda"
+ *   "TransferÃªncia Nubank â†’ ItaÃº"     â†’ null (between own accounts)
  */
 export function extractRecipientName(description: string): string | null {
   const text = description.trim();
@@ -80,11 +80,11 @@ export function extractRecipientName(description: string): string | null {
   // Common patterns
   const patterns: RegExp[] = [
     // "PIX/TED/DOC/Transfer [Recipient Name] - motivo" (capture before dash)
-    /^(?:PIX|TED|DOC|TRANSFER(?:ÊNCIA|ENCIA)?|DINHEIRO|CAIXA)\s+([A-ZÀ-Úa-zà-úÀ-ÿ][^-–—]+)/i,
+    /^(?:PIX|TED|DOC|TRANSFER(?:ÊNCIA|ENCIA)?|DINHEIRO|CAIXA)\s+([A-Za-z\u00C0-\u00FF][^-–—]+)/i,
     // "PIX/TED/DOC X - Recipient" (capture after dash, more specific)
-    /^(?:PIX|TED|DOC|TRANSFER(?:ÊNCIA|ENCIA)?|DINHEIRO|CAIXA)\s+[A-ZÀ-Úa-zà-úÀ-ÿ]+\s*[-–—]\s*(.+)$/i,
+    /^(?:PIX|TED|DOC|TRANSFER(?:ÊNCIA|ENCIA)?|DINHEIRO|CAIXA)\s+[A-Za-z\u00C0-\u00FF]+\s*[-–—]\s*(.+)$/i,
     // "[Recipient Name] - motivo" (no method keyword)
-    /^([A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Úa-zà-úÀ-ÿ0-9&]+){0,4})\s*[-–—]\s*.+$/,
+    /^([A-Z\u00C0-\u00DF][a-z\u00E0-\u00FF]+(?:\s+[A-Za-z\u00C0-\u00FF0-9&]+){0,4})\s*[-–—]\s*.+$/,
   ];
 
   for (const pattern of patterns) {
@@ -94,10 +94,10 @@ export function extractRecipientName(description: string): string | null {
       // Strip leading "para", "pra", "a" (common prefix)
       candidate = candidate.replace(/^(para|pra|à|a)\s+/i, "");
       // Filter out generic words that are likely not recipient names
-      const STOPWORDS = ["aluguel", "conta", "compra", "pagamento", "salário", "salario", "nubank", "itau", "itaú", "carteira", "bradesco", "santander", "caixa", "banco", "para", "pra"];
+      const STOPWORDS = ["aluguel", "conta", "compra", "pagamento", "salÃ¡rio", "salario", "nubank", "itau", "itaÃº", "carteira", "bradesco", "santander", "caixa", "banco", "para", "pra"];
       const words = candidate.toLowerCase().split(/\s+/);
       const hasStopword = STOPWORDS.some((s) => words.includes(s));
-      const isInternalPattern = /^(nubank|itau|itaú|bradesco|santander|caixa|banco)\s+(para|pra|->|→)/i.test(candidate);
+      const isInternalPattern = /^(nubank|itau|itaÃº|bradesco|santander|caixa|banco)\s+(para|pra|->|â†’)/i.test(candidate);
       if (hasStopword && (words.length <= 3 || isInternalPattern)) {
         continue;
       }
@@ -137,15 +137,15 @@ export function formatDocument(doc: string): string {
 /**
  * Check if a transfer is a "third-party" transfer (between own accounts = false).
  * A third-party transfer is one where the recipient is not one of the household's own accounts.
- * This function is a hint — actual determination requires looking up the recipient account
+ * This function is a hint â€” actual determination requires looking up the recipient account
  * in the household. The tool should call this with the recipient_name and known own accounts.
  */
 export function isLikelyThirdParty(description: string, recipientName: string | null): boolean {
   if (!recipientName) return false;
   // Common own-account names that are NOT third parties
   const ownAccountKeywords = [
-    "carteira", "conta corrente", "poupança", "poupanca", "investimento",
-    "nubank", "itaú", "itau", "bradesco", "santander", "caixa", "banco do brasil",
+    "carteira", "conta corrente", "poupanÃ§a", "poupanca", "investimento",
+    "nubank", "itaÃº", "itau", "bradesco", "santander", "caixa", "banco do brasil",
   ];
   const lower = recipientName.toLowerCase();
   return !ownAccountKeywords.some((k) => lower.includes(k));
@@ -163,7 +163,7 @@ export function formatTransferSummary(
 ): string {
   const amount = `R$ ${(amountCents / 100).toFixed(2)}`;
   if (recipientName) {
-    return `${method} ${amount} para ${recipientName} (${fromAccountName} → ${toAccountName})`;
+    return `${method} ${amount} para ${recipientName} (${fromAccountName} â†’ ${toAccountName})`;
   }
-  return `${method} ${amount} (${fromAccountName} → ${toAccountName})`;
+  return `${method} ${amount} (${fromAccountName} â†’ ${toAccountName})`;
 }

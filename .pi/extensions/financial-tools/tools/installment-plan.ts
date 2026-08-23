@@ -1,9 +1,9 @@
-/**
- * installment-plan — Unified installment handling (card + out-of-card)
+﻿/**
+ * installment-plan â€” Unified installment handling (card + out-of-card)
  *
  * Two types of installment plans:
  * - "credit_card": tied to a card purchase, installments go to card statements
- * - "out_of_card": direct installments from a debit account (boleto, carnê, financing)
+ * - "out_of_card": direct installments from a debit account (boleto, carnÃª, financing)
  *
  * For out-of-card, can have interest:
  *   - Price table: PMT = PV * (i * (1+i)^n) / ((1+i)^n - 1)
@@ -211,23 +211,23 @@ export function buildPlanSummary(
 export function formatPlanSummary(summary: PlanSummary): string {
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
   const lines: string[] = [];
-  lines.push(`📋 ${summary.plan.description} — ${summary.plan.installmentsCount}x de ${fmt(summary.monthlyPaymentCents)}`);
-  lines.push(`   Tipo: ${summary.plan.type === "credit_card" ? "Cartão de crédito" : "Fora do cartão (boleto/carnê)"}`);
+  lines.push(`ðŸ“‹ ${summary.plan.description} â€” ${summary.plan.installmentsCount}x de ${fmt(summary.monthlyPaymentCents)}`);
+  lines.push(`   Tipo: ${summary.plan.type === "credit_card" ? "CartÃ£o de crÃ©dito" : "Fora do cartÃ£o (boleto/carnÃª)"}`);
   lines.push(`   Conta: ${summary.plan.accountId.slice(0, 8)}...`);
   lines.push(`   Valor: ${fmt(summary.plan.totalAmountCents)}${summary.totalInterestCents > 0 ? ` + ${fmt(summary.totalInterestCents)} juros = ${fmt(summary.totalWithInterestCents)}` : ""}`);
   if (summary.crossesYear) {
-    lines.push(`   ⚠️ Cruza ano: ${summary.years.join(" → ")}`);
+    lines.push(`   âš ï¸ Cruza ano: ${summary.years.join(" â†’ ")}`);
   }
   lines.push(`   Meses: ${summary.months.join(", ")}`);
   if (summary.schedule.length <= 12) {
     lines.push(`   Cronograma:`);
     for (const s of summary.schedule) {
       const interestStr = s.interestCents > 0 ? ` (juros: ${fmt(s.interestCents)})` : "";
-      lines.push(`     ${String(s.number).padStart(2, "0")}/${summary.plan.installmentsCount} — ${s.dueDate} — ${fmt(s.amountCents)}${interestStr}`);
+      lines.push(`     ${String(s.number).padStart(2, "0")}/${summary.plan.installmentsCount} â€” ${s.dueDate} â€” ${fmt(s.amountCents)}${interestStr}`);
     }
   } else {
     lines.push(`   Primeira: ${summary.schedule[0].dueDate} (${fmt(summary.schedule[0].amountCents)})`);
-    lines.push(`   Última: ${summary.schedule[summary.schedule.length - 1].dueDate} (${fmt(summary.schedule[summary.schedule.length - 1].amountCents)})`);
+    lines.push(`   Ãšltima: ${summary.schedule[summary.schedule.length - 1].dueDate} (${fmt(summary.schedule[summary.schedule.length - 1].amountCents)})`);
   }
   return lines.join("\n");
 }

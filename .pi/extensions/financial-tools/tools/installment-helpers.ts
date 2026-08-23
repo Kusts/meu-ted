@@ -1,5 +1,5 @@
-/**
- * installment-helpers — Cross-month installment handling
+﻿/**
+ * installment-helpers â€” Cross-month installment handling
  *
  * An installment of N months starting in month M will have its last installment in M+N-1.
  * If the last installment's statement would close in a year different from the first,
@@ -148,12 +148,12 @@ export function formatInstallments(installments: Installment[]): string {
   const years = getInstallmentYears(installments);
   const crossesYear = years.length > 1;
   const lines: string[] = [];
-  lines.push(`🔢 ${installments.length}x de ${fmt(installments[0].amountCents)} (total ${fmt(installments.reduce((s, i) => s + i.amountCents, 0))})`);
+  lines.push(`ðŸ”¢ ${installments.length}x de ${fmt(installments[0].amountCents)} (total ${fmt(installments.reduce((s, i) => s + i.amountCents, 0))})`);
   if (crossesYear) {
-    lines.push(`  ⚠️ Cruza ano: ${years.join(" → ")}`);
+    lines.push(`  âš ï¸ Cruza ano: ${years.join(" â†’ ")}`);
   }
   for (const inst of installments) {
-    lines.push(`  ${String(inst.number).padStart(2, "0")}/${installments.length} — fatura ${inst.statementCycle} (fecha ${inst.closingDate}, vence ${inst.dueDate}) — ${fmt(inst.amountCents)}`);
+    lines.push(`  ${String(inst.number).padStart(2, "0")}/${installments.length} â€” fatura ${inst.statementCycle} (fecha ${inst.closingDate}, vence ${inst.dueDate}) â€” ${fmt(inst.amountCents)}`);
   }
   return lines.join("\n");
 }

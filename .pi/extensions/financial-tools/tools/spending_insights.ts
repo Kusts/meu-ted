@@ -1,6 +1,6 @@
-/**
- * spending_insights — Pi tool facade
- * Delegates to the generated authenticated HTTP adapter (OpenAPI → API).
+﻿/**
+ * spending_insights â€” Pi tool facade
+ * Delegates to the generated authenticated HTTP adapter (OpenAPI â†’ API).
  */
 import { spendingInsightsTool as generated } from "../generated/http-tools.js";
 

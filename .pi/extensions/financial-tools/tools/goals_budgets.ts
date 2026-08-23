@@ -1,6 +1,6 @@
-/**
- * goals_budgets — Pi tools facade for goals and budgets
- * Delegates to generated authenticated HTTP adapters (OpenAPI → API).
+﻿/**
+ * goals_budgets â€” Pi tools facade for goals and budgets
+ * Delegates to generated authenticated HTTP adapters (OpenAPI â†’ API).
  */
 import {
   createGoalTool as generatedCreateGoal,

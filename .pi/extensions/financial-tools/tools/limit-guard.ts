@@ -1,5 +1,5 @@
-/**
- * limit-guard — Credit card limit usage detection
+﻿/**
+ * limit-guard â€” Credit card limit usage detection
  *
  * - Checks current usage (sum of open + closed unpaid statements) vs limit
  * - Warns when usage > 80% (caution) or > 100% (over limit)
@@ -35,12 +35,12 @@ export async function getLimitStatus(
   accountId: string,
   today: string
 ): Promise<LimitStatus | null> {
-  const accResult = await pool.query<{ rows: Array<{
+  const accResult = await pool.query<{
     id: string;
     name: string;
     is_credit_card: boolean;
     credit_limit_cents: string | null;
-  }> }>(
+  }>(
     `SELECT id, name, is_credit_card, credit_limit_cents
      FROM accounts WHERE id = $1 AND deleted_at IS NULL`,
     [accountId]
@@ -50,13 +50,13 @@ export async function getLimitStatus(
   const limit = parseInt(acc.credit_limit_cents || "0", 10);
 
   // Get all non-paid, non-cancelled statements
-  const stmtResult = await pool.query<{ rows: Array<{
+  const stmtResult = await pool.query<{
     id: string;
     cycle_year_month: string;
     due_date: string;
     total_cents: string;
     paid_cents: string;
-  }> }>(
+  }>(
     `SELECT id, cycle_year_month, due_date::text, total_cents, paid_cents
      FROM statements
      WHERE account_id = $1
@@ -113,7 +113,7 @@ export async function getAllLimitStatuses(
   householdId: string,
   today: string
 ): Promise<LimitStatus[]> {
-  const result = await pool.query<{ rows: Array<{ id: string }> }>(
+  const result = await pool.query<{ id: string }>(
     `SELECT id FROM accounts
      WHERE household_id = $1 AND is_credit_card = true AND deleted_at IS NULL`,
     [householdId]
@@ -132,27 +132,27 @@ export async function getAllLimitStatuses(
 export function formatLimitStatus(s: LimitStatus): string {
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
   const icon: Record<LimitStatus["status"], string> = {
-    ok: "✅",
-    caution: "⚠️",
-    warning: "🔴",
-    over_limit: "🚨",
+    ok: "âœ…",
+    caution: "âš ï¸",
+    warning: "ðŸ”´",
+    over_limit: "ðŸš¨",
   };
   const lines: string[] = [];
   lines.push(`${icon[s.status]} ${s.accountName}: ${s.usagePercent}% do limite usado`);
-  lines.push(`   Limite: ${fmt(s.creditLimitCents)} | Usado: ${fmt(s.usedCents)} | Disponível: ${fmt(s.availableCents)}`);
+  lines.push(`   Limite: ${fmt(s.creditLimitCents)} | Usado: ${fmt(s.usedCents)} | DisponÃ­vel: ${fmt(s.availableCents)}`);
 
   if (s.usagePercent >= 80) {
     if (s.pendingStatements.length > 0) {
       const first = s.pendingStatements[0];
-      lines.push(`   💡 Pagar fatura ${first.cycle} libera ${fmt(first.remaining)}`);
+      lines.push(`   ðŸ’¡ Pagar fatura ${first.cycle} libera ${fmt(first.remaining)}`);
     }
   }
   if (s.status === "over_limit") {
-    lines.push(`   🚨 ESTOURO DE LIMITE! Reduza gastos ou pague faturas.`);
+    lines.push(`   ðŸš¨ ESTOURO DE LIMITE! Reduza gastos ou pague faturas.`);
   }
   if (s.pendingStatements.length > 0 && s.pendingStatements.some((p) => p.daysUntilDue < 0)) {
     const overdue = s.pendingStatements.filter((p) => p.daysUntilDue < 0);
-    lines.push(`   ⏰ ${overdue.length} fatura(s) atrasada(s)`);
+    lines.push(`   â° ${overdue.length} fatura(s) atrasada(s)`);
   }
   return lines.join("\n");
 }

@@ -1,7 +1,7 @@
-/**
- * payment-score — Score de pontualidade nos pagamentos
+﻿/**
+ * payment-score â€” Score de pontualidade nos pagamentos
  *
- * Calcula % de contas pagas em dia nos últimos N meses.
+ * Calcula % de contas pagas em dia nos Ãºltimos N meses.
  *
  * Componentes:
  * - on_time_rate (% pagas em dia, sem atraso)
@@ -41,7 +41,7 @@ export async function computePaymentScore(
   monthsBack: number = 6
 ): Promise<PaymentScore> {
   // Get all paid accounts in the last N months
-  const result = await pool.query<{ rows: any[] }>(
+  const result = await pool.query<any>(
     `SELECT
        id, description, amount_cents,
        due_date::text as due,
@@ -118,18 +118,18 @@ export async function computePaymentScore(
   // Recommendations
   const recommendations: string[] = [];
   if (lateRate > 0.2) {
-    recommendations.push(`🚨 ${Math.round(lateRate * 100)}% das contas foram pagas atrasadas. Configure lembretes mais cedo.`);
+    recommendations.push(`ðŸš¨ ${Math.round(lateRate * 100)}% das contas foram pagas atrasadas. Configure lembretes mais cedo.`);
   }
   if (averageDaysLate > 5) {
-    recommendations.push(`⏰ Em média você atrasa ${averageDaysLate.toFixed(1)} dias. Configure débito automático.`);
+    recommendations.push(`â° Em mÃ©dia vocÃª atrasa ${averageDaysLate.toFixed(1)} dias. Configure dÃ©bito automÃ¡tico.`);
   }
   if (onTimeRate + earlyRate === 0 && total > 0) {
-    recommendations.push("💡 Nenhuma conta paga em dia. Ative débito automático para principais contas.");
+    recommendations.push("ðŸ’¡ Nenhuma conta paga em dia. Ative dÃ©bito automÃ¡tico para principais contas.");
   }
   if (total === 0) {
-    recommendations.push("📋 Sem histórico de pagamentos ainda. Crie e pague contas para gerar score.");
+    recommendations.push("ðŸ“‹ Sem histÃ³rico de pagamentos ainda. Crie e pague contas para gerar score.");
   } else if (totalScore >= 90) {
-    recommendations.push("✨ Excelente! Continue pagando suas contas em dia.");
+    recommendations.push("âœ¨ Excelente! Continue pagando suas contas em dia.");
   }
 
   return {
@@ -152,36 +152,36 @@ export async function computePaymentScore(
 
 export function formatPaymentScore(score: PaymentScore): string {
   const ratingIcon: Record<PaymentScore["rating"], string> = {
-    excellent: "🌟", good: "✅", fair: "⚠️", poor: "🔴", critical: "🚨",
+    excellent: "ðŸŒŸ", good: "âœ…", fair: "âš ï¸", poor: "ðŸ”´", critical: "ðŸš¨",
   };
   const ratingLabel: Record<PaymentScore["rating"], string> = {
     excellent: "Excelente", good: "Bom", fair: "Regular",
-    poor: "Ruim", critical: "Crítico",
+    poor: "Ruim", critical: "CrÃ­tico",
   };
 
   const lines: string[] = [];
-  lines.push(`${ratingIcon[score.rating]} Score de Pagamentos: ${score.totalScore}/100 — ${ratingLabel[score.rating]}`);
+  lines.push(`${ratingIcon[score.rating]} Score de Pagamentos: ${score.totalScore}/100 â€” ${ratingLabel[score.rating]}`);
   lines.push("");
-  lines.push(`📊 Estatísticas (últimos 6 meses):`);
+  lines.push(`ðŸ“Š EstatÃ­sticas (Ãºltimos 6 meses):`);
   lines.push(`   Total de contas: ${score.totalAccounts}`);
-  lines.push(`   ✅ Em dia: ${score.onTimeCount} (${(score.onTimeRate * 100).toFixed(0)}%)`);
-  lines.push(`   ⏰ Adiantadas: ${score.earlyCount} (${(score.earlyRate * 100).toFixed(0)}%) — média ${score.averageDaysEarly.toFixed(1)} dia(s) antes`);
-  lines.push(`   🚨 Atrasadas: ${score.lateCount} (${(score.lateRate * 100).toFixed(0)}%) — média ${score.averageDaysLate.toFixed(1)} dia(s) depois`);
+  lines.push(`   âœ… Em dia: ${score.onTimeCount} (${(score.onTimeRate * 100).toFixed(0)}%)`);
+  lines.push(`   â° Adiantadas: ${score.earlyCount} (${(score.earlyRate * 100).toFixed(0)}%) â€” mÃ©dia ${score.averageDaysEarly.toFixed(1)} dia(s) antes`);
+  lines.push(`   ðŸš¨ Atrasadas: ${score.lateCount} (${(score.lateRate * 100).toFixed(0)}%) â€” mÃ©dia ${score.averageDaysLate.toFixed(1)} dia(s) depois`);
   if (score.cancelledCount > 0) {
-    lines.push(`   ❌ Canceladas: ${score.cancelledCount}`);
+    lines.push(`   âŒ Canceladas: ${score.cancelledCount}`);
   }
 
   if (score.byMonth.length > 0) {
     lines.push("");
-    lines.push(`📅 Evolução mensal:`);
+    lines.push(`ðŸ“… EvoluÃ§Ã£o mensal:`);
     for (const m of score.byMonth.slice(-6)) {
-      const bar = "█".repeat(Math.round(m.onTimeRate * 10)) + "░".repeat(10 - Math.round(m.onTimeRate * 10));
+      const bar = "â–ˆ".repeat(Math.round(m.onTimeRate * 10)) + "â–‘".repeat(10 - Math.round(m.onTimeRate * 10));
       lines.push(`   ${m.yearMonth}: ${bar} ${(m.onTimeRate * 100).toFixed(0)}% (${m.count})`);
     }
   }
 
   lines.push("");
-  lines.push(`💡 Recomendações:`);
+  lines.push(`ðŸ’¡ RecomendaÃ§Ãµes:`);
   for (const r of score.recommendations) {
     lines.push(`   ${r}`);
   }

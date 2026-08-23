@@ -1,22 +1,22 @@
-/**
- * goals-budgets — Helpers para metas e orçamentos
+﻿/**
+ * goals-budgets â€” Helpers para metas e orÃ§amentos
  *
  * Metas (goals):
  * - savings: juntar valor (ex: R$ 10.000 em 12 meses)
  * - income: aumentar receita
- * - debt_payoff: quitar dívida
- * - emergency_fund: reserva de emergência
- * - purchase: comprar algo específico
+ * - debt_payoff: quitar dÃ­vida
+ * - emergency_fund: reserva de emergÃªncia
+ * - purchase: comprar algo especÃ­fico
  *
- * Cálculo de progresso:
+ * CÃ¡lculo de progresso:
  * - progress = current / target
  * - days_remaining = target_date - today
  * - expected_progress = (today - start_date) / (target_date - start_date)
  * - status: ahead | on_track | behind | at_risk
  *
- * Orçamentos (budgets):
- * - Limite de gasto por categoria/período
- * - spent = SUM(transactions) no período
+ * OrÃ§amentos (budgets):
+ * - Limite de gasto por categoria/perÃ­odo
+ * - spent = SUM(transactions) no perÃ­odo
  * - remaining = limit - spent
  * - %_used = spent / limit * 100
  * - alert quando >= 80% (warning) ou >= 100% (critical)
@@ -59,7 +59,7 @@ export interface GoalProgress {
   daysSinceStart: number;
   totalDays: number | null;
   expectedProgressPercent: number;
-  monthlyRequiredCents: number | null;  // quanto precisa poupar/mês para atingir
+  monthlyRequiredCents: number | null;  // quanto precisa poupar/mÃªs para atingir
   formatted: string;
 }
 
@@ -88,7 +88,7 @@ export function computeGoalProgress(goal: Goal, today: string = new Date().toISO
     if (currentCents >= targetCents) {
       status = "achieved";
     } else if (daysRemaining === 0) {
-      status = "at_risk";  // prazo esgotado e não atingiu
+      status = "at_risk";  // prazo esgotado e nÃ£o atingiu
     } else {
       const diff = progressPercent - expectedProgressPercent;
       if (diff >= 10) status = "ahead";
@@ -97,7 +97,7 @@ export function computeGoalProgress(goal: Goal, today: string = new Date().toISO
       else status = "at_risk";
     }
 
-    // Quanto precisa por mês
+    // Quanto precisa por mÃªs
     if (daysRemaining > 0) {
       const monthsRemaining = daysRemaining / 30;
       monthlyRequiredCents = Math.round(remainingCents / monthsRemaining);
@@ -108,18 +108,18 @@ export function computeGoalProgress(goal: Goal, today: string = new Date().toISO
     else if (currentCents > 0) status = "on_track";
   }
 
-  // Formatação
+  // FormataÃ§Ã£o
   const lines: string[] = [];
   lines.push(`${goal.name} (${goal.goal_type})`);
   lines.push(`  ${fmt(currentCents)} / ${fmt(targetCents)} (${progressPercent.toFixed(1)}%)`);
   if (daysRemaining !== null) {
     lines.push(`  Faltam ${daysRemaining} dia(s) | Esperado: ${expectedProgressPercent.toFixed(1)}%`);
     if (monthlyRequiredCents && monthlyRequiredCents > 0) {
-      lines.push(`  Precisa poupar: ${fmt(monthlyRequiredCents)}/mês`);
+      lines.push(`  Precisa poupar: ${fmt(monthlyRequiredCents)}/mÃªs`);
     }
   }
   const statusIcon: Record<GoalProgress["status"], string> = {
-    ahead: "🚀", on_track: "✅", behind: "⚠️", at_risk: "🚨", achieved: "🎉", unknown: "❓",
+    ahead: "ðŸš€", on_track: "âœ…", behind: "âš ï¸", at_risk: "ðŸš¨", achieved: "ðŸŽ‰", unknown: "â“",
   };
   lines.push(`  Status: ${statusIcon[status]} ${status}`);
 
@@ -149,7 +149,7 @@ export async function refreshGoals(pool: Pool, householdId: string): Promise<{
   atRisk: number;
   checked: number;
 }> {
-  const result = await pool.query<{ rows: Goal[] }>(
+  const result = await pool.query<Goal>(
     `SELECT * FROM goals WHERE household_id = $1 AND status = 'active'`,
     [householdId]
   );
@@ -243,7 +243,7 @@ export function getCurrentPeriod(
     periodEnd.setFullYear(periodEnd.getFullYear() + 1);
   }
 
-  // Avança até a data atual
+  // AvanÃ§a atÃ© a data atual
   while (periodEnd < t) {
     periodStart = new Date(periodEnd);
     if (period === "monthly") periodEnd.setMonth(periodEnd.getMonth() + 1);
@@ -274,7 +274,7 @@ export async function computeBudgetStatus(
   const period = getCurrentPeriod(budget.period, budget.start_date, today);
 
   // Get spent amount in this period
-  const spentResult = await pool.query<{ rows: Array<{ total: string }> }>(
+  const spentResult = await pool.query<{ total: string }>(
     `SELECT COALESCE(SUM(amount_cents), 0) as total
      FROM transactions
      WHERE household_id = $1
@@ -296,13 +296,13 @@ export async function computeBudgetStatus(
   let amountCents = parseInt(budget.amount_cents, 10);
 
   // === ROLLOVER: carry over unused from previous period ===
-  // Só rola se (a) rollover true, (b) já passou pelo menos 1 período desde o início
-  // NOTA: pg retorna start_date como Date, não string. Converter pra string pra comparar.
+  // SÃ³ rola se (a) rollover true, (b) jÃ¡ passou pelo menos 1 perÃ­odo desde o inÃ­cio
+  // NOTA: pg retorna start_date como Date, nÃ£o string. Converter pra string pra comparar.
   const startDateStr = typeof budget.start_date === "string"
     ? budget.start_date
     : new Date(budget.start_date as any).toISOString().slice(0, 10);
   if (budget.rollover && period.start > startDateStr) {
-    // Período anterior = (current period start - 1 period) até (current period start)
+    // PerÃ­odo anterior = (current period start - 1 period) atÃ© (current period start)
     const prevStart = new Date(period.start);
     const prevEnd = new Date(period.start);
 
@@ -319,7 +319,7 @@ export async function computeBudgetStatus(
     const prevStartStr = prevStart.toISOString().slice(0, 10);
     const prevEndStr = prevEnd.toISOString().slice(0, 10);
 
-    const prevSpent = await pool.query<{ rows: Array<{ total: string }> }>(
+    const prevSpent = await pool.query<{ total: string }>(
       `SELECT COALESCE(SUM(amount_cents), 0) as total
        FROM transactions
        WHERE household_id = $1 AND category_id = $2 AND kind = 'expense' AND deleted_at IS NULL
@@ -329,7 +329,7 @@ export async function computeBudgetStatus(
     const prevSpentCents = parseInt(prevSpent.rows[0].total, 10);
     const leftover = Math.max(0, parseInt(budget.amount_cents, 10) - prevSpentCents);
     if (leftover > 0) {
-      // Limite efetivo = limite base + sobra do período anterior
+      // Limite efetivo = limite base + sobra do perÃ­odo anterior
       amountCents += leftover;
     }
   }
@@ -351,12 +351,12 @@ export async function computeBudgetStatus(
   lines.push(`${budget.name} (${categoryName || "categoria"})`);
   lines.push(`  ${fmt(spentCents)} / ${fmt(amountCents)} (${percentUsed.toFixed(1)}%)`);
   const statusIcon: Record<BudgetStatusReport["status"], string> = {
-    ok: "✅", warning: "⚠️", critical: "🔴", exceeded: "🚨",
+    ok: "âœ…", warning: "âš ï¸", critical: "ðŸ”´", exceeded: "ðŸš¨",
   };
   lines.push(`  Status: ${statusIcon[status]} ${status}`);
   if (status !== "ok") {
-    lines.push(`  Restante: ${fmt(remainingCents)} | Diário: ${fmt(dailyAllowance)}/dia`);
-    lines.push(`  ${period.daysRemaining} dia(s) restantes no período`);
+    lines.push(`  Restante: ${fmt(remainingCents)} | DiÃ¡rio: ${fmt(dailyAllowance)}/dia`);
+    lines.push(`  ${period.daysRemaining} dia(s) restantes no perÃ­odo`);
   }
 
   return {
@@ -385,7 +385,7 @@ export async function getAllBudgetStatuses(
   pool: Pool,
   householdId: string
 ): Promise<BudgetStatusReport[]> {
-  const result = await pool.query<{ rows: Budget[] }>(
+  const result = await pool.query<Budget>(
     `SELECT * FROM budgets WHERE household_id = $1 AND status = 'active'`,
     [householdId]
   );
@@ -398,7 +398,7 @@ export async function getAllBudgetStatuses(
 }
 
 // ============================================================
-// BUDGET TRENDS — gasto vs orçamento ao longo dos meses
+// BUDGET TRENDS â€” gasto vs orÃ§amento ao longo dos meses
 // ============================================================
 
 export interface BudgetTrendMonth {
@@ -448,7 +448,7 @@ export async function getBudgetTrends(
       periodStart = new Date(t.getFullYear(), t.getMonth() - i, 1);
       periodEnd = new Date(t.getFullYear(), t.getMonth() - i + 1, 1);
     } else if (budget.period === "weekly") {
-      // Approx: go back i*7 days, find start of week (mostra 4 semanas = ~1 mês)
+      // Approx: go back i*7 days, find start of week (mostra 4 semanas = ~1 mÃªs)
       const d = new Date(t);
       d.setDate(d.getDate() - i * 7);
       periodStart = new Date(d);
@@ -469,7 +469,7 @@ export async function getBudgetTrends(
     // Use getCurrentPeriod to get the actual budget period boundaries
     const actualPeriod = getCurrentPeriod(budget.period, budget.start_date, startStr);
 
-    const spent = await pool.query<{ rows: Array<{ total: string }> }>(
+    const spent = await pool.query<{ total: string }>(
       `SELECT COALESCE(SUM(amount_cents), 0) as total
        FROM transactions
        WHERE household_id = $1 AND category_id = $2 AND kind = 'expense' AND deleted_at IS NULL
@@ -512,16 +512,16 @@ export async function getBudgetTrends(
 
   // Format
   const lines: string[] = [];
-  lines.push(`📊 ${budget.name} (${categoryName || "?"}) — ${budget.period}`);
-  lines.push(`   Últimos ${monthsBack + 1} períodos:`);
+  lines.push(`ðŸ“Š ${budget.name} (${categoryName || "?"}) â€” ${budget.period}`);
+  lines.push(`   Ãšltimos ${monthsBack + 1} perÃ­odos:`);
   for (const m of months) {
-    const icon = m.isCurrent ? "◀ " : "  ";
-    const bar = "█".repeat(Math.min(20, Math.round(m.percentUsed / 5)));
+    const icon = m.isCurrent ? "â—€ " : "  ";
+    const bar = "â–ˆ".repeat(Math.min(20, Math.round(m.percentUsed / 5)));
     lines.push(`   ${icon}${m.yearMonth}: ${fmt(m.spentCents)} / ${fmt(m.limitCents)} (${m.percentUsed.toFixed(0)}%) ${bar}`);
   }
-  lines.push(`   Média: ${fmt(avgSpentCents)}/período (${avgPercentUsed.toFixed(0)}% do limite)`);
-  const trendIcons: Record<string, string> = { up: "📈", down: "📉", stable: "➡️", insufficient_data: "❓" };
-  lines.push(`   Tendência: ${trendIcons[trend]} ${trend}`);
+  lines.push(`   MÃ©dia: ${fmt(avgSpentCents)}/perÃ­odo (${avgPercentUsed.toFixed(0)}% do limite)`);
+  const trendIcons: Record<string, string> = { up: "ðŸ“ˆ", down: "ðŸ“‰", stable: "âž¡ï¸", insufficient_data: "â“" };
+  lines.push(`   TendÃªncia: ${trendIcons[trend]} ${trend}`);
 
   return {
     budgetId: budget.id,
@@ -537,7 +537,7 @@ export async function getBudgetTrends(
 }
 
 // ============================================================
-// BUDGET ADJUSTMENT SUGGESTION — auto-adjust based on avg
+// BUDGET ADJUSTMENT SUGGESTION â€” auto-adjust based on avg
 // ============================================================
 
 export interface BudgetAdjustmentSuggestion {
@@ -581,26 +581,26 @@ export async function getBudgetAdjustmentSuggestion(
 
   if (avgSpent === 0) {
     action = "keep";
-    reason = "Nenhum gasto registrado nos últimos períodos. Mantenha o limite atual.";
+    reason = "Nenhum gasto registrado nos Ãºltimos perÃ­odos. Mantenha o limite atual.";
   } else if (suggestedLimit > currentLimit * 1.15) {
     action = "increase";
-    reason = `Gasto médio (${fmt(avgSpent)}) está bem acima do limite (${fmt(currentLimit)}). Considere aumentar.`;
+    reason = `Gasto mÃ©dio (${fmt(avgSpent)}) estÃ¡ bem acima do limite (${fmt(currentLimit)}). Considere aumentar.`;
   } else if (suggestedLimit < currentLimit * 0.85) {
     action = "decrease";
-    reason = `Gasto médio (${fmt(avgSpent)}) está bem abaixo do limite (${fmt(currentLimit)}). Dá pra reduzir sem apertar.`;
+    reason = `Gasto mÃ©dio (${fmt(avgSpent)}) estÃ¡ bem abaixo do limite (${fmt(currentLimit)}). DÃ¡ pra reduzir sem apertar.`;
   } else {
     action = "keep";
-    reason = `Gasto médio (${fmt(avgSpent)}) está alinhado com o limite (${fmt(currentLimit)}).`;
+    reason = `Gasto mÃ©dio (${fmt(avgSpent)}) estÃ¡ alinhado com o limite (${fmt(currentLimit)}).`;
   }
 
   const lines: string[] = [];
-  const actionIcons: Record<string, string> = { increase: "📈", decrease: "📉", keep: "✅" };
+  const actionIcons: Record<string, string> = { increase: "ðŸ“ˆ", decrease: "ðŸ“‰", keep: "âœ…" };
   lines.push(`${actionIcons[action]} ${budget.name} (${categoryName || "?"})`);
   lines.push(`   Limite atual: ${fmt(currentLimit)}`);
   if (action !== "keep") {
-    lines.push(`   Sugestão: ${fmt(suggestedLimit)} (${percentChange > 0 ? "+" : ""}${percentChange.toFixed(0)}%)`);
+    lines.push(`   SugestÃ£o: ${fmt(suggestedLimit)} (${percentChange > 0 ? "+" : ""}${percentChange.toFixed(0)}%)`);
   }
-  lines.push(`   Média de gastos: ${fmt(avgSpent)}/período`);
+  lines.push(`   MÃ©dia de gastos: ${fmt(avgSpent)}/perÃ­odo`);
   lines.push(`   ${reason}`);
 
   return {

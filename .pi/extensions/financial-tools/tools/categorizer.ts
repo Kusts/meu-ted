@@ -1,5 +1,5 @@
-/**
- * categorizer — Auto-categorization for transactions
+﻿/**
+ * categorizer â€” Auto-categorization for transactions
  *
  * Detects the macro and subcategory from a free-form description.
  * Creates new categories if they don't exist.
@@ -12,7 +12,7 @@ export type CategoryKind = "expense" | "income";
 export interface CategoryMatch {
   macro: string;
   subcategory: string | null;
-  fullName: string; // e.g. "Alimentação > Lanche"
+  fullName: string; // e.g. "AlimentaÃ§Ã£o > Lanche"
   kind: CategoryKind;
   confidence: number; // 0-1
   matchedKeyword: string;
@@ -28,53 +28,53 @@ const CATEGORY_RULES: Array<{
   keywords: string[];
   kind: CategoryKind;
 }> = [
-  // ALIMENTAÇÃO
+  // ALIMENTAÃ‡ÃƒO
   {
-    macro: "Alimentação",
+    macro: "AlimentaÃ§Ã£o",
     subcategory: "iFood",
     keywords: ["ifood", "i food"],
     kind: "expense",
   },
   {
-    macro: "Alimentação",
+    macro: "AlimentaÃ§Ã£o",
     subcategory: "Restaurante",
-    keywords: ["restaurante", "almoço executivo", "jantar", "almoço", "almoco", "comida japonesa", "pizza", "hambúrguer", "hamburguer", "sushi", "churrasco", "churrascaria", "comida", "refeição", "refeicao"],
+    keywords: ["restaurante", "almoÃ§o executivo", "jantar", "almoÃ§o", "almoco", "comida japonesa", "pizza", "hambÃºrguer", "hamburguer", "sushi", "churrasco", "churrascaria", "comida", "refeiÃ§Ã£o", "refeicao"],
     kind: "expense",
   },
   {
-    macro: "Alimentação",
+    macro: "AlimentaÃ§Ã£o",
     subcategory: "Lanche",
     keywords: ["lanche", "snack", "petisco", "salgadinho", "miojo"],
     kind: "expense",
   },
   {
-    macro: "Alimentação",
-    subcategory: "Café",
-    keywords: ["café", "cafe", "café da manhã", "café da tarde", "expresso", "cappuccino", "starbucks"],
+    macro: "AlimentaÃ§Ã£o",
+    subcategory: "CafÃ©",
+    keywords: ["cafÃ©", "cafe", "cafÃ© da manhÃ£", "cafÃ© da tarde", "expresso", "cappuccino", "starbucks"],
     kind: "expense",
   },
   {
-    macro: "Alimentação",
+    macro: "AlimentaÃ§Ã£o",
     subcategory: "Padaria",
-    keywords: ["padaria", "pão", "pao", "pão francês", "sonho", "croissant"],
+    keywords: ["padaria", "pÃ£o", "pao", "pÃ£o francÃªs", "sonho", "croissant"],
     kind: "expense",
   },
   {
-    macro: "Alimentação",
+    macro: "AlimentaÃ§Ã£o",
     subcategory: "Mercado",
-    keywords: ["mercado", "supermercado", "feira", "hortifruti", "compras da semana", "compras do mês", "compras do mes"],
+    keywords: ["mercado", "supermercado", "feira", "hortifruti", "compras da semana", "compras do mÃªs", "compras do mes"],
     kind: "expense",
   },
   {
-    macro: "Alimentação",
+    macro: "AlimentaÃ§Ã£o",
     subcategory: "Delivery",
     keywords: ["delivery", "entrega", "uber eats", "rappi", "loggi"],
     kind: "expense",
   },
   {
-    macro: "Alimentação",
+    macro: "AlimentaÃ§Ã£o",
     subcategory: "Bebida",
-    keywords: ["cerveja", "vinho", "refrigerante", "suco", "água", "agua", "drink", "bar"],
+    keywords: ["cerveja", "vinho", "refrigerante", "suco", "Ã¡gua", "agua", "drink", "bar"],
     kind: "expense",
   },
 
@@ -87,14 +87,14 @@ const CATEGORY_RULES: Array<{
   },
   {
     macro: "Transporte",
-    subcategory: "Táxi",
-    keywords: ["táxi", "taxi"],
+    subcategory: "TÃ¡xi",
+    keywords: ["tÃ¡xi", "taxi"],
     kind: "expense",
   },
   {
     macro: "Transporte",
     subcategory: "Gasolina",
-    keywords: ["gasolina", "combustível", "combustivel", "posto", "etanol", "diesel"],
+    keywords: ["gasolina", "combustÃ­vel", "combustivel", "posto", "etanol", "diesel"],
     kind: "expense",
   },
   {
@@ -105,58 +105,58 @@ const CATEGORY_RULES: Array<{
   },
   {
     macro: "Transporte",
-    subcategory: "Ônibus",
-    keywords: ["ônibus", "onibus", "metro", "metrô", "bilhete único", "bilhete unico"],
+    subcategory: "Ã”nibus",
+    keywords: ["Ã´nibus", "onibus", "metro", "metrÃ´", "bilhete Ãºnico", "bilhete unico"],
     kind: "expense",
   },
   {
     macro: "Transporte",
-    subcategory: "Pedágio",
-    keywords: ["pedágio", "pedagio"],
+    subcategory: "PedÃ¡gio",
+    keywords: ["pedÃ¡gio", "pedagio"],
     kind: "expense",
   },
   {
     macro: "Transporte",
-    subcategory: "Manutenção",
-    keywords: ["oficina", "mecânico", "mecanico", "troca de óleo", "troca de oleo", "revisão", "revisao", "pneu", "alinhamento"],
+    subcategory: "ManutenÃ§Ã£o",
+    keywords: ["oficina", "mecÃ¢nico", "mecanico", "troca de Ã³leo", "troca de oleo", "revisÃ£o", "revisao", "pneu", "alinhamento"],
     kind: "expense",
   },
   {
     macro: "Transporte",
     subcategory: "Aluguel de Carro",
-    keywords: ["aluguel de carro", "locação de carro", "locacao de carro", "rent a car"],
+    keywords: ["aluguel de carro", "locaÃ§Ã£o de carro", "locacao de carro", "rent a car"],
     kind: "expense",
   },
 
-  // SAÚDE
+  // SAÃšDE
   {
-    macro: "Saúde",
-    subcategory: "Farmácia",
-    keywords: ["remédio", "remedio", "medicamento", "farmácia", "farmacia", "drogaria", "droga", "paracetamol", "dipirona", "ibuprofeno"],
+    macro: "SaÃºde",
+    subcategory: "FarmÃ¡cia",
+    keywords: ["remÃ©dio", "remedio", "medicamento", "farmÃ¡cia", "farmacia", "drogaria", "droga", "paracetamol", "dipirona", "ibuprofeno"],
     kind: "expense",
   },
   {
-    macro: "Saúde",
+    macro: "SaÃºde",
     subcategory: "Consulta",
-    keywords: ["consulta", "médico", "medico", "doutor", "doutora", "clínica", "clinica", "psicólogo", "psicologo", "psicóloga", "psicologa", "terapia", "dentista", "oftalmologista"],
+    keywords: ["consulta", "mÃ©dico", "medico", "doutor", "doutora", "clÃ­nica", "clinica", "psicÃ³logo", "psicologo", "psicÃ³loga", "psicologa", "terapia", "dentista", "oftalmologista"],
     kind: "expense",
   },
   {
-    macro: "Saúde",
+    macro: "SaÃºde",
     subcategory: "Exames",
-    keywords: ["exame", "exames", "laboratório", "laboratorio", "raio-x", "sangue", "urina", "hemograma"],
+    keywords: ["exame", "exames", "laboratÃ³rio", "laboratorio", "raio-x", "sangue", "urina", "hemograma"],
     kind: "expense",
   },
   {
-    macro: "Saúde",
-    subcategory: "Plano de Saúde",
-    keywords: ["plano de saúde", "plano de saude", "unimed", "amil", "bradesco saúde", "bradesco saude", "amil"],
+    macro: "SaÃºde",
+    subcategory: "Plano de SaÃºde",
+    keywords: ["plano de saÃºde", "plano de saude", "unimed", "amil", "bradesco saÃºde", "bradesco saude", "amil"],
     kind: "expense",
   },
   {
-    macro: "Saúde",
+    macro: "SaÃºde",
     subcategory: "Academia",
-    keywords: ["academia", "gym", "smart fit", "smartfit", "musculação", "musculacao", "crossfit"],
+    keywords: ["academia", "gym", "smart fit", "smartfit", "musculaÃ§Ã£o", "musculacao", "crossfit"],
     kind: "expense",
   },
 
@@ -169,14 +169,14 @@ const CATEGORY_RULES: Array<{
   },
   {
     macro: "Moradia",
-    subcategory: "Condomínio",
-    keywords: ["condomínio", "condominio", "condo"],
+    subcategory: "CondomÃ­nio",
+    keywords: ["condomÃ­nio", "condominio", "condo"],
     kind: "expense",
   },
   {
     macro: "Moradia",
-    subcategory: "Água",
-    keywords: ["água", "agua", "conta de água", "conta de agua", "sabesp"],
+    subcategory: "Ãgua",
+    keywords: ["Ã¡gua", "agua", "conta de Ã¡gua", "conta de agua", "sabesp"],
     kind: "expense",
   },
   {
@@ -193,8 +193,8 @@ const CATEGORY_RULES: Array<{
   },
   {
     macro: "Moradia",
-    subcategory: "Gás",
-    keywords: ["gás", "gas", "botijão", "botijao", "comgás", "comgas"],
+    subcategory: "GÃ¡s",
+    keywords: ["gÃ¡s", "gas", "botijÃ£o", "botijao", "comgÃ¡s", "comgas"],
     kind: "expense",
   },
   {
@@ -238,33 +238,33 @@ const CATEGORY_RULES: Array<{
   {
     macro: "Lazer",
     subcategory: "Viagem",
-    keywords: ["viagem", "passagem aérea", "hotel", "pousada", "airbnb", "booking"],
+    keywords: ["viagem", "passagem aÃ©rea", "hotel", "pousada", "airbnb", "booking"],
     kind: "expense",
   },
 
-  // EDUCAÇÃO
+  // EDUCAÃ‡ÃƒO
   {
-    macro: "Educação",
+    macro: "EducaÃ§Ã£o",
     subcategory: "Curso",
     keywords: ["curso", "alura", "udemy", "coursera", "rocketseat", "origamid", "treinamento", "workshop"],
     kind: "expense",
   },
   {
-    macro: "Educação",
+    macro: "EducaÃ§Ã£o",
     subcategory: "Livro",
     keywords: ["livro", "kindle", "amazon books", "saraiva", "cultura"],
     kind: "expense",
   },
   {
-    macro: "Educação",
+    macro: "EducaÃ§Ã£o",
     subcategory: "Material",
     keywords: ["material escolar", "caderno", "caneta", "mochila"],
     kind: "expense",
   },
   {
-    macro: "Educação",
+    macro: "EducaÃ§Ã£o",
     subcategory: "Mensalidade",
-    keywords: ["mensalidade", "faculdade", "universidade", "escola", "colégio", "colegio"],
+    keywords: ["mensalidade", "faculdade", "universidade", "escola", "colÃ©gio", "colegio"],
     kind: "expense",
   },
 
@@ -272,19 +272,19 @@ const CATEGORY_RULES: Array<{
   {
     macro: "Compras",
     subcategory: "Roupa",
-    keywords: ["roupa", "camisa", "calça", "calca", "sapato", "tênis", "tenis", "vestido", "jeans", "renner", "c&a", "riachuelo", "zara"],
+    keywords: ["roupa", "camisa", "calÃ§a", "calca", "sapato", "tÃªnis", "tenis", "vestido", "jeans", "renner", "c&a", "riachuelo", "zara"],
     kind: "expense",
   },
   {
     macro: "Compras",
-    subcategory: "Eletrônico",
+    subcategory: "EletrÃ´nico",
     keywords: ["celular", "smartphone", "iphone", "samsung", "xiaomi", "notebook", "computador", "tv", "smart tv", "fone", "headphone", "airpods", "tablet", "console"],
     kind: "expense",
   },
   {
     macro: "Compras",
-    subcategory: "Decoração",
-    keywords: ["decoração", "decoracao", "móvel", "movel", "móveis", "moveis", "ikea", "tok stok"],
+    subcategory: "DecoraÃ§Ã£o",
+    keywords: ["decoraÃ§Ã£o", "decoracao", "mÃ³vel", "movel", "mÃ³veis", "moveis", "ikea", "tok stok"],
     kind: "expense",
   },
   {
@@ -294,15 +294,15 @@ const CATEGORY_RULES: Array<{
     kind: "expense",
   },
 
-  // SERVIÇOS
+  // SERVIÃ‡OS
   {
-    macro: "Serviços",
+    macro: "ServiÃ§os",
     subcategory: "Assinatura",
     keywords: ["assinatura", "subscription", "mensal"],
     kind: "expense",
   },
   {
-    macro: "Serviços",
+    macro: "ServiÃ§os",
     subcategory: "Streaming",
     keywords: ["apple music", "youtube music"],
     kind: "expense",
@@ -311,48 +311,48 @@ const CATEGORY_RULES: Array<{
   // PETS
   {
     macro: "Pets",
-    subcategory: "Ração",
-    keywords: ["ração", "racao", "petisco pet", "petisco para cachorro"],
+    subcategory: "RaÃ§Ã£o",
+    keywords: ["raÃ§Ã£o", "racao", "petisco pet", "petisco para cachorro"],
     kind: "expense",
   },
   {
     macro: "Pets",
-    subcategory: "Veterinário",
-    keywords: ["veterinário", "veterinario", "vet", "vacina pet", "castração"],
+    subcategory: "VeterinÃ¡rio",
+    keywords: ["veterinÃ¡rio", "veterinario", "vet", "vacina pet", "castraÃ§Ã£o"],
     kind: "expense",
   },
 
   // TRABALHO
   {
     macro: "Trabalho",
-    subcategory: "Material de Escritório",
-    keywords: ["material de escritório", "caneta", "papel", "grampeador"],
+    subcategory: "Material de EscritÃ³rio",
+    keywords: ["material de escritÃ³rio", "caneta", "papel", "grampeador"],
     kind: "expense",
   },
 
   // === INCOMES ===
   {
-    macro: "Salário",
+    macro: "SalÃ¡rio",
     subcategory: "Mensal",
-    keywords: ["salário", "salario", "pagamento mensal", "holerite", "contracheque"],
+    keywords: ["salÃ¡rio", "salario", "pagamento mensal", "holerite", "contracheque"],
     kind: "income",
   },
   {
-    macro: "Salário",
-    subcategory: "Bônus",
-    keywords: ["bônus", "bonus", "prêmio", "premio", "plr", "participação nos lucros", "bonus de vendas"],
+    macro: "SalÃ¡rio",
+    subcategory: "BÃ´nus",
+    keywords: ["bÃ´nus", "bonus", "prÃªmio", "premio", "plr", "participaÃ§Ã£o nos lucros", "bonus de vendas"],
     kind: "income",
   },
   {
-    macro: "Salário",
-    subcategory: "13º",
-    keywords: ["13º", "decimo terceiro", "décimo terceiro", "13 salario"],
+    macro: "SalÃ¡rio",
+    subcategory: "13Âº",
+    keywords: ["13Âº", "decimo terceiro", "dÃ©cimo terceiro", "13 salario"],
     kind: "income",
   },
   {
-    macro: "Salário",
-    subcategory: "Férias",
-    keywords: ["férias", "ferias"],
+    macro: "SalÃ¡rio",
+    subcategory: "FÃ©rias",
+    keywords: ["fÃ©rias", "ferias"],
     kind: "income",
   },
 
@@ -372,7 +372,7 @@ const CATEGORY_RULES: Array<{
   {
     macro: "Investimento",
     subcategory: "Dividendos",
-    keywords: ["dividendo", "dividendos", "jcp", "jcp's", "juros sobre capital próprio"],
+    keywords: ["dividendo", "dividendos", "jcp", "jcp's", "juros sobre capital prÃ³prio"],
     kind: "income",
   },
   {
@@ -383,8 +383,8 @@ const CATEGORY_RULES: Array<{
   },
   {
     macro: "Investimento",
-    subcategory: "Venda de Ação",
-    keywords: ["venda de ação", "venda de acao", "lucro na venda", "ganho de capital"],
+    subcategory: "Venda de AÃ§Ã£o",
+    keywords: ["venda de aÃ§Ã£o", "venda de acao", "lucro na venda", "ganho de capital"],
     kind: "income",
   },
 
@@ -401,27 +401,27 @@ const CATEGORY_RULES: Array<{
     kind: "income",
   },
 
-  // === TRANSFERÊNCIAS (entrada/saída) ===
+  // === TRANSFERÃŠNCIAS (entrada/saÃ­da) ===
   {
-    macro: "Transferência",
+    macro: "TransferÃªncia",
     subcategory: "PIX",
     keywords: ["pix", "pix para", "pix recebido"],
     kind: "expense",
   },
   {
-    macro: "Transferência",
+    macro: "TransferÃªncia",
     subcategory: "PIX Recebido",
     keywords: ["pix recebido", "recebi pix", "caiu pix"],
     kind: "income",
   },
   {
-    macro: "Transferência",
+    macro: "TransferÃªncia",
     subcategory: "TED",
     keywords: ["ted para", "ted enviado"],
     kind: "expense",
   },
   {
-    macro: "Transferência",
+    macro: "TransferÃªncia",
     subcategory: "TED Recebido",
     keywords: ["ted recebido", "recebi ted"],
     kind: "income",
@@ -497,7 +497,7 @@ export async function findOrCreateCategory(
   kind: CategoryKind
 ): Promise<string> {
   // First, look up using name_normalized (the trigger handles UNACCENT + LOWER)
-  const existing = await pool.query<{ rows: { id: string }[] }>(
+  const existing = await pool.query<{ id: string }>(
     `SELECT id FROM categories
      WHERE household_id = $1
        AND name_normalized = LOWER(UNACCENT($2))
@@ -512,7 +512,7 @@ export async function findOrCreateCategory(
   }
 
   // Create new category
-  const result = await pool.query<{ rows: { id: string }[] }>(
+  const result = await pool.query<{ id: string }>(
     `INSERT INTO categories (id, household_id, name, name_normalized, kind, active, created_at)
      VALUES (gen_random_uuid(), $1, $2, LOWER(UNACCENT($2)), $3, true, NOW())
      RETURNING id`,
@@ -543,5 +543,5 @@ export async function autoCategorize(
  */
 export function formatMatch(match: CategoryMatch): string {
   const conf = Math.round(match.confidence * 100);
-  return `${match.fullName} (${conf}% confiança, matched: "${match.matchedKeyword}")`;
+  return `${match.fullName} (${conf}% confianÃ§a, matched: "${match.matchedKeyword}")`;
 }

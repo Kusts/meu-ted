@@ -1,6 +1,6 @@
-/**
- * create_category — Pi tool facade
- * Delegates to the generated authenticated HTTP adapter (OpenAPI → API).
+﻿/**
+ * create_category â€” Pi tool facade
+ * Delegates to the generated authenticated HTTP adapter (OpenAPI â†’ API).
  */
 import { createCategoryTool as generated } from "../generated/http-tools.js";
 

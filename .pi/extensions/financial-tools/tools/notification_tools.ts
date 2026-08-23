@@ -1,6 +1,6 @@
-/**
- * notification_tools — Pi tools facade for notifications
- * Delegates to generated authenticated HTTP adapters (OpenAPI → API).
+﻿/**
+ * notification_tools â€” Pi tools facade for notifications
+ * Delegates to generated authenticated HTTP adapters (OpenAPI â†’ API).
  */
 import {
   configureNotificationTool as generatedConfigure,

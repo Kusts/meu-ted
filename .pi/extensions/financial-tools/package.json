@@ -7,7 +7,8 @@
     "extensions": ["./index.ts"]
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test api-client-context.test.ts api-migration.test.ts pending-tools.test.ts pending-write-adapters.test.ts tool-schema.test.ts"
   },
   "keywords": ["pi", "extension", "finance", "whatsapp"],
   "author": "",

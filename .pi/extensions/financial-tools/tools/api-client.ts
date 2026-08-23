@@ -1,4 +1,4 @@
-export class PiApiError extends Error {
+﻿export class PiApiError extends Error {
   readonly status: number;
   readonly code: string;
 

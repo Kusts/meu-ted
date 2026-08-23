@@ -1,6 +1,6 @@
-/**
- * get_month_summary — Pi tool facade
- * Delegates to the generated authenticated HTTP adapter (OpenAPI → API).
+﻿/**
+ * get_month_summary â€” Pi tool facade
+ * Delegates to the generated authenticated HTTP adapter (OpenAPI â†’ API).
  */
 import { getMonthSummaryTool as generated } from "../generated/http-tools.js";
 

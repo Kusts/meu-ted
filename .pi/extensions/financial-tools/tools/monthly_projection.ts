@@ -1,22 +1,22 @@
-/**
- * monthly_projection — Projeção de contas a pagar no mês
+﻿/**
+ * monthly_projection â€” ProjeÃ§Ã£o de contas a pagar no mÃªs
  *
- * Soma todas as contas a pagar que vencem no mês,
+ * Soma todas as contas a pagar que vencem no mÃªs,
  * agrupadas por categoria e por dia.
  *
  * Inclui:
- * - Recorrentes (próximas ocorrências baseadas em template/last paid)
+ * - Recorrentes (prÃ³ximas ocorrÃªncias baseadas em template/last paid)
  * - One-time criadas
  *
  * Output:
- * - Total a pagar no mês
+ * - Total a pagar no mÃªs
  * - Breakdown por dia
  * - Breakdown por categoria
- * - Saldo disponível após pagar todas
+ * - Saldo disponÃ­vel apÃ³s pagar todas
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Pool } from "pg";
 
 const HOUSEHOLD_DEFAULT = process.env.HOUSEHOLD_ID || "550e8400-e29b-41d4-a716-446655440000";
@@ -24,10 +24,10 @@ const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
 
 export const monthlyProjection: ToolDefinition = {
   name: "monthly_projection",
-  description: "Projeta todas as contas a pagar em um mês (recorrentes + one-time).",
+  description: "Projeta todas as contas a pagar em um mÃªs (recorrentes + one-time).",
   parameters: Type.Object({
     householdId: Type.Optional(Type.String()),
-    yearMonth: Type.Optional(Type.String({ pattern: "^\\d{4}-\\d{2}$" })),  // default: mês atual
+    yearMonth: Type.Optional(Type.String({ pattern: "^\\d{4}-\\d{2}$" })),  // default: mÃªs atual
   }),
   execute: async (params: any) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -36,7 +36,7 @@ export const monthlyProjection: ToolDefinition = {
       const yearMonth = params.yearMonth || new Date().toISOString().slice(0, 7);
 
       // Get all accounts (pending + overdue) for the month
-      const result = await pool.query<{ rows: any[] }>(
+      const result = await pool.query<any>(
         `SELECT ap.*, a.name as account_name, c.name as category_name
          FROM accounts_payable ap
          LEFT JOIN accounts a ON a.id = ap.account_id
@@ -82,7 +82,7 @@ export const monthlyProjection: ToolDefinition = {
       const pendingCents = totalCents - overdueCents;
 
       // Estimate income (last 3 months average)
-      const incomeResult = await pool.query<{ rows: Array<{ total: string }> }>(
+      const incomeResult = await pool.query<{ total: string }>(
         `SELECT COALESCE(AVG(monthly_total), 0) as total
          FROM (
            SELECT DATE_TRUNC('month', date) as month, SUM(amount_cents) as monthly_total
@@ -100,16 +100,16 @@ export const monthlyProjection: ToolDefinition = {
 
       // Format
       const lines: string[] = [];
-      lines.push(`📅 Projeção de contas a pagar: ${yearMonth}`);
+      lines.push(`ðŸ“… ProjeÃ§Ã£o de contas a pagar: ${yearMonth}`);
       lines.push("");
-      lines.push(`💸 Total a pagar: ${fmt(totalCents)}`);
+      lines.push(`ðŸ’¸ Total a pagar: ${fmt(totalCents)}`);
       if (overdueCents > 0) {
-        lines.push(`   🚨 Vencidas (de meses anteriores): ${fmt(overdueCents)}`);
-        lines.push(`   📅 Pendentes deste mês: ${fmt(pendingCents)}`);
+        lines.push(`   ðŸš¨ Vencidas (de meses anteriores): ${fmt(overdueCents)}`);
+        lines.push(`   ðŸ“… Pendentes deste mÃªs: ${fmt(pendingCents)}`);
       }
       lines.push("");
       if (byDay.size > 0) {
-        lines.push(`📆 Por dia de vencimento:`);
+        lines.push(`ðŸ“† Por dia de vencimento:`);
         const sortedDays = Array.from(byDay.keys()).sort();
         for (const day of sortedDays) {
           const d = byDay.get(day)!;
@@ -118,7 +118,7 @@ export const monthlyProjection: ToolDefinition = {
         lines.push("");
       }
       if (byCategory.size > 0) {
-        lines.push(`🏷️  Por categoria:`);
+        lines.push(`ðŸ·ï¸  Por categoria:`);
         const sortedCats = Array.from(byCategory.entries())
           .sort((a, b) => b[1] - a[1])
           .slice(0, 5);
@@ -128,10 +128,10 @@ export const monthlyProjection: ToolDefinition = {
         lines.push("");
       }
       if (monthlyIncomeCents > 0) {
-        lines.push(`💰 Renda mensal (média 3 meses): ${fmt(monthlyIncomeCents)}`);
-        lines.push(`📊 Comprometimento: ${(commitmentRatio * 100).toFixed(1)}%`);
-        const balIcon = balanceAfter >= 0 ? "✅" : "⚠️";
-        lines.push(`${balIcon} Saldo após pagar todas: ${fmt(balanceAfter)}`);
+        lines.push(`ðŸ’° Renda mensal (mÃ©dia 3 meses): ${fmt(monthlyIncomeCents)}`);
+        lines.push(`ðŸ“Š Comprometimento: ${(commitmentRatio * 100).toFixed(1)}%`);
+        const balIcon = balanceAfter >= 0 ? "âœ…" : "âš ï¸";
+        lines.push(`${balIcon} Saldo apÃ³s pagar todas: ${fmt(balanceAfter)}`);
       }
 
       return {

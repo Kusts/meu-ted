@@ -29,15 +29,19 @@ function createMemoryStorage(): Storage {
 }
 
 function ensureStorage(name: "localStorage" | "sessionStorage") {
-  if (typeof window === "undefined" || typeof window[name] !== "undefined")
-    return;
-
   const storage = createMemoryStorage();
-  Object.defineProperty(window, name, { configurable: true, value: storage });
-  Object.defineProperty(globalThis, name, {
-    configurable: true,
-    value: storage,
-  });
+  try {
+    if (typeof window !== "undefined") {
+      Object.defineProperty(window, name, { configurable: true, writable: true, value: storage });
+    }
+  } catch {}
+  try {
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      writable: true,
+      value: storage,
+    });
+  } catch {}
 }
 
 ensureStorage("localStorage");

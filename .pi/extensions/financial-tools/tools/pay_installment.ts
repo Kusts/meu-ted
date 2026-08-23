@@ -1,5 +1,5 @@
-/**
- * pay_installment — Mark an installment transaction as paid
+﻿/**
+ * pay_installment â€” Mark an installment transaction as paid
  *
  * For out_of_card plans, the user needs to confirm when they pay a specific
  * installment. This tool marks the transaction as 'paid'.
@@ -9,7 +9,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Pool } from "pg";
 
 interface Params {
@@ -26,12 +26,12 @@ const schema = Type.Object({
 
 export const payInstallment: ToolDefinition = {
   name: "pay_installment",
-  description: "Marca uma parcela específica como paga (para parcelamentos fora do cartão).",
+  description: "Marca uma parcela especÃ­fica como paga (para parcelamentos fora do cartÃ£o).",
   parameters: schema,
   execute: async (params: Params) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
     try {
-      const result = await pool.query<{ rows: Array<{
+      const result = await pool.query<{
         id: string;
         description: string;
         amount_cents: string;
@@ -39,7 +39,7 @@ export const payInstallment: ToolDefinition = {
         installments_total: number;
         installment_plan_id: string;
         installment_status: string;
-      }> }>(
+      }>(
         `SELECT id, description, amount_cents,
                 installment_number, installments_total,
                 installment_plan_id, installment_status
@@ -53,7 +53,7 @@ export const payInstallment: ToolDefinition = {
         return {
           success: false,
           error: "installment_not_found",
-          message: "Transação não é uma parcela ou não existe",
+          message: "TransaÃ§Ã£o nÃ£o Ã© uma parcela ou nÃ£o existe",
         };
       }
       const tx = result.rows[0];
@@ -61,7 +61,7 @@ export const payInstallment: ToolDefinition = {
         return {
           success: false,
           error: "already_paid",
-          message: `Parcela ${tx.installment_number}/${tx.installments_total} já está paga`,
+          message: `Parcela ${tx.installment_number}/${tx.installments_total} jÃ¡ estÃ¡ paga`,
         };
       }
 
@@ -74,7 +74,7 @@ export const payInstallment: ToolDefinition = {
       );
 
       // Get plan progress
-      const progressResult = await pool.query<{ rows: Array<{ paid: string; total: string }> }>(
+      const progressResult = await pool.query<{ paid: string; total: string }>(
         `SELECT
            COUNT(*) FILTER (WHERE installment_status = 'paid') as paid,
            COUNT(*) as total
@@ -95,7 +95,7 @@ export const payInstallment: ToolDefinition = {
         paidDate,
         planProgress: `${paid}/${total} parcelas pagas`,
         isComplete: paid >= total,
-        message: `✅ Parcela ${tx.installment_number}/${tx.installments_total} paga: R$ ${(parseInt(tx.amount_cents, 10) / 100).toFixed(2)} (${paid}/${total} no plano)`,
+        message: `âœ… Parcela ${tx.installment_number}/${tx.installments_total} paga: R$ ${(parseInt(tx.amount_cents, 10) / 100).toFixed(2)} (${paid}/${total} no plano)`,
       };
     } catch (e: any) {
       return { success: false, error: "db_error", message: e.message };
@@ -106,7 +106,7 @@ export const payInstallment: ToolDefinition = {
 };
 
 /**
- * check_due_soon — Proactive check of upcoming installments for alerts
+ * check_due_soon â€” Proactive check of upcoming installments for alerts
  *
  * Returns a structured alert with:
  * - overdue: critical (red)
@@ -118,7 +118,7 @@ export const payInstallment: ToolDefinition = {
  */
 export const checkDueSoon: ToolDefinition = {
   name: "check_due_soon",
-  description: "Verifica parcelas próximas do vencimento. Retorna alertas categorizados por urgência.",
+  description: "Verifica parcelas prÃ³ximas do vencimento. Retorna alertas categorizados por urgÃªncia.",
   parameters: Type.Object({
     householdId: Type.String(),
   }),
@@ -128,7 +128,7 @@ export const checkDueSoon: ToolDefinition = {
       const today = new Date().toISOString().slice(0, 10);
       const todayDate = new Date(today);
 
-      const result = await pool.query<{ rows: any[] }>(
+      const result = await pool.query<any>(
         `SELECT t.id, t.description, t.amount_cents, t.date::text as due,
                 t.installment_number, t.installments_total,
                 p.id as plan_id, p.description as plan_description,
@@ -179,9 +179,9 @@ export const checkDueSoon: ToolDefinition = {
       if (overdue.length > 0) {
         hasUrgent = true;
         const total = overdue.reduce((s, i) => s + i.amountCents, 0);
-        lines.push(`🚨 ${overdue.length} ATRASADA(S) — total: ${fmt(total)}`);
+        lines.push(`ðŸš¨ ${overdue.length} ATRASADA(S) â€” total: ${fmt(total)}`);
         for (const i of overdue.slice(0, 5)) {
-          lines.push(`   • ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)} — venceu há ${Math.abs(i.daysUntil)} dia(s)`);
+          lines.push(`   â€¢ ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)} â€” venceu hÃ¡ ${Math.abs(i.daysUntil)} dia(s)`);
         }
         if (overdue.length > 5) {
           lines.push(`   ... e mais ${overdue.length - 5}`);
@@ -190,16 +190,16 @@ export const checkDueSoon: ToolDefinition = {
       if (dueToday.length > 0) {
         hasUrgent = true;
         const total = dueToday.reduce((s, i) => s + i.amountCents, 0);
-        lines.push(`🔥 ${dueToday.length} VENCE HOJE — total: ${fmt(total)}`);
+        lines.push(`ðŸ”¥ ${dueToday.length} VENCE HOJE â€” total: ${fmt(total)}`);
         for (const i of dueToday) {
-          lines.push(`   • ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)}`);
+          lines.push(`   â€¢ ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)}`);
         }
       }
       if (dueThisWeek.length > 0) {
         const total = dueThisWeek.reduce((s, i) => s + i.amountCents, 0);
-        lines.push(`⚠️ ${dueThisWeek.length} vence(m) esta semana — total: ${fmt(total)}`);
+        lines.push(`âš ï¸ ${dueThisWeek.length} vence(m) esta semana â€” total: ${fmt(total)}`);
         for (const i of dueThisWeek.slice(0, 3)) {
-          lines.push(`   • ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)} — em ${i.daysUntil} dia(s)`);
+          lines.push(`   â€¢ ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)} â€” em ${i.daysUntil} dia(s)`);
         }
         if (dueThisWeek.length > 3) {
           lines.push(`   ... e mais ${dueThisWeek.length - 3}`);
@@ -207,10 +207,10 @@ export const checkDueSoon: ToolDefinition = {
       }
       if (dueThisMonth.length > 0) {
         const total = dueThisMonth.reduce((s, i) => s + i.amountCents, 0);
-        lines.push(`📅 ${dueThisMonth.length} vence(m) este mês — total: ${fmt(total)}`);
+        lines.push(`ðŸ“… ${dueThisMonth.length} vence(m) este mÃªs â€” total: ${fmt(total)}`);
       }
       if (lines.length === 0) {
-        lines.push(`✅ Nenhuma parcela prevista para os próximos 30 dias`);
+        lines.push(`âœ… Nenhuma parcela prevista para os prÃ³ximos 30 dias`);
       }
 
       return {
@@ -238,11 +238,11 @@ export const checkDueSoon: ToolDefinition = {
 };
 
 /**
- * list_due_installments — List all installments that are due (or overdue)
+ * list_due_installments â€” List all installments that are due (or overdue)
  */
 export const listDueInstallments: ToolDefinition = {
   name: "list_due_installments",
-  description: "Lista parcelas de parcelamentos fora do cartão que estão próximas do vencimento ou atrasadas.",
+  description: "Lista parcelas de parcelamentos fora do cartÃ£o que estÃ£o prÃ³ximas do vencimento ou atrasadas.",
   parameters: Type.Object({
     householdId: Type.String(),
     date: Type.Optional(Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" })),
@@ -255,7 +255,7 @@ export const listDueInstallments: ToolDefinition = {
       const daysAhead = params.daysAhead || 7;
       const futureDate = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-      const result = await pool.query<{ rows: any[] }>(
+      const result = await pool.query<any>(
         `SELECT t.id, t.description, t.amount_cents, t.date::text,
                 t.installment_number, t.installments_total, t.installment_status,
                 p.id as plan_id, p.description as plan_description,
@@ -298,22 +298,22 @@ export const listDueInstallments: ToolDefinition = {
 
       const lines: string[] = [];
       if (overdue.length > 0) {
-        lines.push(`🚨 ${overdue.length} ATRASADA(S):`);
+        lines.push(`ðŸš¨ ${overdue.length} ATRASADA(S):`);
         for (const i of overdue) {
-          lines.push(`  • ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)} — venceu há ${Math.abs(i.daysUntil)} dia(s)`);
+          lines.push(`  â€¢ ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)} â€” venceu hÃ¡ ${Math.abs(i.daysUntil)} dia(s)`);
         }
       }
       if (upcoming.length > 0) {
-        lines.push(`📅 ${upcoming.length} vence(m) em ${daysAhead} dias:`);
+        lines.push(`ðŸ“… ${upcoming.length} vence(m) em ${daysAhead} dias:`);
         for (const i of upcoming) {
-          const when = i.daysUntil === 0 ? "hoje" : i.daysUntil === 1 ? "amanhã" : `em ${i.daysUntil} dias`;
-          lines.push(`  • ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)} — ${when} (${i.dueDate})`);
+          const when = i.daysUntil === 0 ? "hoje" : i.daysUntil === 1 ? "amanhÃ£" : `em ${i.daysUntil} dias`;
+          lines.push(`  â€¢ ${i.planDescription} (${i.installmentLabel}): ${fmt(i.amountCents)} â€” ${when} (${i.dueDate})`);
         }
       }
       if (lines.length === 0) lines.push("Nenhuma parcela a vencer");
 
       const totalDue = items.reduce((s, i) => s + i.amountCents, 0);
-      lines.unshift(`💰 Total a pagar: ${fmt(totalDue)}\n`);
+      lines.unshift(`ðŸ’° Total a pagar: ${fmt(totalDue)}\n`);
 
       return {
         success: true,

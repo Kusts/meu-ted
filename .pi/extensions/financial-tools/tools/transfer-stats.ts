@@ -1,10 +1,10 @@
 /**
- * transfer-stats — Aggregates transfer statistics by recipient
+ * transfer-stats â€” Aggregates transfer statistics by recipient
  *
  * Provides insights like:
- * - "Você fez 3 PIX para João Silva este mês (R$ 450 total)"
- * - "Total enviado para João Silva: R$ 1.200 (últimos 3 meses)"
- * - "PIX por destinatário (top 5)"
+ * - "VocÃª fez 3 PIX para JoÃ£o Silva este mÃªs (R$ 450 total)"
+ * - "Total enviado para JoÃ£o Silva: R$ 1.200 (Ãºltimos 3 meses)"
+ * - "PIX por destinatÃ¡rio (top 5)"
  */
 
 import type { Pool } from "pg";
@@ -61,7 +61,7 @@ export async function getTransferStats(
      LEFT JOIN categories c ON t.category_id = c.id
      WHERE t.household_id = $1
        AND t.kind = 'expense'
-       AND c.name LIKE 'Transferência >%'
+       AND c.name LIKE 'TransferÃªncia >%'
        AND t.date BETWEEN $2 AND $3
        AND t.deleted_at IS NULL
      ORDER BY t.date DESC`,
@@ -77,7 +77,7 @@ export async function getTransferStats(
      LEFT JOIN categories c ON t.category_id = c.id
      WHERE t.household_id = $1
        AND t.kind = 'income'
-       AND c.name LIKE 'Transferência >%Recebido'
+       AND c.name LIKE 'TransferÃªncia >%Recebido'
        AND t.date BETWEEN $2 AND $3
        AND t.deleted_at IS NULL
      ORDER BY t.date DESC`,
@@ -138,13 +138,13 @@ export async function getTransferStats(
   // From transfers (kind=transfer, between own accounts - not third party)
   // Skip these for recipient stats since they're internal
 
-  // From expenses with category "Transferência > X"
+  // From expenses with category "TransferÃªncia > X"
   for (const row of expenseResult.rows) {
     const recipient = row.recipient_name || extractRecipientFromDescription(row.description, row.category_name);
     addSent(recipient, parseInt(row.amount_cents, 10), row.method, new Date(row.date));
   }
 
-  // From incomes with category "Transferência > X Recebido"
+  // From incomes with category "TransferÃªncia > X Recebido"
   for (const row of incomeResult.rows) {
     const recipient = row.recipient_name || extractRecipientFromDescription(row.description, row.category_name);
     addReceived(recipient, parseInt(row.amount_cents, 10), row.method, new Date(row.date));
@@ -168,25 +168,25 @@ export async function getTransferStats(
 /**
  * Format stats as a human-readable summary.
  */
-export function formatTransferStats(stats: PeriodStats, periodLabel: string = "no período"): string {
+export function formatTransferStats(stats: PeriodStats, periodLabel: string = "no perÃ­odo"): string {
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
   const lines: string[] = [];
 
-  lines.push(`📊 Transferências ${periodLabel} (${stats.startDate} → ${stats.endDate})`);
+  lines.push(`ðŸ“Š TransferÃªncias ${periodLabel} (${stats.startDate} â†’ ${stats.endDate})`);
   lines.push("");
-  lines.push(`💸 Enviado: ${stats.sentCount} transferências, total ${fmt(stats.totalSentCents)}`);
-  lines.push(`💰 Recebido: ${stats.receivedCount} transferências, total ${fmt(stats.totalReceivedCents)}`);
+  lines.push(`ðŸ’¸ Enviado: ${stats.sentCount} transferÃªncias, total ${fmt(stats.totalSentCents)}`);
+  lines.push(`ðŸ’° Recebido: ${stats.receivedCount} transferÃªncias, total ${fmt(stats.totalReceivedCents)}`);
 
   if (stats.byRecipient.length > 0) {
     lines.push("");
-    lines.push(`👥 Por destinatário (top ${Math.min(5, stats.byRecipient.length)}):`);
+    lines.push(`ðŸ‘¥ Por destinatÃ¡rio (top ${Math.min(5, stats.byRecipient.length)}):`);
     const top = stats.byRecipient.slice(0, 5);
     for (const r of top) {
       const parts: string[] = [];
-      if (r.sentCount > 0) parts.push(`enviou ${r.sentCount}× (${fmt(r.totalSentCents)})`);
-      if (r.receivedCount > 0) parts.push(`recebeu ${r.receivedCount}× (${fmt(r.totalReceivedCents)})`);
-      const methods = Object.entries(r.methodCounts).map(([m, c]) => `${m}×${c}`).join(", ");
-      lines.push(`  • ${r.recipientName}: ${parts.join(" | ")} [${methods}]`);
+      if (r.sentCount > 0) parts.push(`enviou ${r.sentCount}Ã— (${fmt(r.totalSentCents)})`);
+      if (r.receivedCount > 0) parts.push(`recebeu ${r.receivedCount}Ã— (${fmt(r.totalReceivedCents)})`);
+      const methods = Object.entries(r.methodCounts).map(([m, c]) => `${m}Ã—${c}`).join(", ");
+      lines.push(`  â€¢ ${r.recipientName}: ${parts.join(" | ")} [${methods}]`);
     }
   }
 
@@ -214,7 +214,7 @@ export async function getRecipientStats(
      LEFT JOIN categories c ON t.category_id = c.id
      WHERE t.household_id = $1
        AND t.kind = 'expense'
-       AND c.name LIKE 'Transferência >%'
+       AND c.name LIKE 'TransferÃªncia >%'
        AND LOWER(UNACCENT(COALESCE(t.recipient_name, ''))) = LOWER(UNACCENT($2))
        AND t.date BETWEEN $3 AND $4
        AND t.deleted_at IS NULL
@@ -230,7 +230,7 @@ export async function getRecipientStats(
      LEFT JOIN categories c ON t.category_id = c.id
      WHERE t.household_id = $1
        AND t.kind = 'income'
-       AND c.name LIKE 'Transferência >%Recebido'
+       AND c.name LIKE 'TransferÃªncia >%Recebido'
        AND LOWER(UNACCENT(COALESCE(t.recipient_name, ''))) = LOWER(UNACCENT($2))
        AND t.date BETWEEN $3 AND $4
        AND t.deleted_at IS NULL
@@ -281,26 +281,26 @@ export async function getRecipientStats(
 /**
  * Format recipient stats as a summary.
  */
-export function formatRecipientStats(stats: RecipientStats, periodLabel: string = "no período"): string {
+export function formatRecipientStats(stats: RecipientStats, periodLabel: string = "no perÃ­odo"): string {
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
   const lines: string[] = [];
 
-  lines.push(`👤 ${stats.recipientName} ${periodLabel}`);
+  lines.push(`ðŸ‘¤ ${stats.recipientName} ${periodLabel}`);
   if (stats.sentCount > 0) {
-    lines.push(`💸 Enviado: ${stats.sentCount}× (${fmt(stats.totalSentCents)})`);
+    lines.push(`ðŸ’¸ Enviado: ${stats.sentCount}Ã— (${fmt(stats.totalSentCents)})`);
     if (stats.lastSentAt) {
-      lines.push(`   Última vez: ${stats.lastSentAt.toISOString().slice(0, 10)}`);
+      lines.push(`   Ãšltima vez: ${stats.lastSentAt.toISOString().slice(0, 10)}`);
     }
   }
   if (stats.receivedCount > 0) {
-    lines.push(`💰 Recebido: ${stats.receivedCount}× (${fmt(stats.totalReceivedCents)})`);
+    lines.push(`ðŸ’° Recebido: ${stats.receivedCount}Ã— (${fmt(stats.totalReceivedCents)})`);
     if (stats.lastReceivedAt) {
-      lines.push(`   Última vez: ${stats.lastReceivedAt.toISOString().slice(0, 10)}`);
+      lines.push(`   Ãšltima vez: ${stats.lastReceivedAt.toISOString().slice(0, 10)}`);
     }
   }
-  const methods = Object.entries(stats.methodCounts).map(([m, c]) => `${m}×${c}`).join(", ");
+  const methods = Object.entries(stats.methodCounts).map(([m, c]) => `${m}Ã—${c}`).join(", ");
   if (methods) {
-    lines.push(`📊 Métodos: ${methods}`);
+    lines.push(`ðŸ“Š MÃ©todos: ${methods}`);
   }
   return lines.join("\n");
 }
@@ -312,7 +312,7 @@ export function formatRecipientStats(stats: RecipientStats, periodLabel: string 
 function extractRecipientFromDescription(description: string | null, categoryName: string | null): string | null {
   if (!description) return null;
   // Same as the classifier's logic
-  const m = description.match(/^(?:PIX|TED|DOC|TRANSFER(?:ÊNCIA|ENCIA)?|DINHEIRO|CAIXA)\s+([A-Za-zÀ-ú][^-]+?)(?:\s*[-–—]\s*.*)?$/i);
+  const m = description.match(/^(?:PIX|TED|DOC|TRANSFER(?:ÊNCIA|ENCIA)?|DINHEIRO|CAIXA)\s+([A-Za-z\u00C0-\u00FF][^-]+?)(?:\s*[-–—]\s*.*)?$/i);
   if (m && m[1]) {
     let name = m[1].trim();
     name = name.replace(/^(para|pra|à|a)\s+/i, "");

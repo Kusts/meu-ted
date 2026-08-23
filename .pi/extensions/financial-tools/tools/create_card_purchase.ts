@@ -1,6 +1,6 @@
-/**
- * create_card_purchase — Pi tool facade
- * Delegates to generated authenticated HTTP adapter (OpenAPI → API).
+﻿/**
+ * create_card_purchase â€” Pi tool facade
+ * Delegates to generated authenticated HTTP adapter (OpenAPI â†’ API).
  */
 import { createCardPurchaseTool as generated } from "../generated/http-tools.js";
 

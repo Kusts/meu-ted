@@ -1,5 +1,5 @@
-/**
- * spending-analysis — Comparative spending analysis
+﻿/**
+ * spending-analysis â€” Comparative spending analysis
  *
  * - Compare user's spending vs reference (own history, average, period)
  * - Anomalies: detect unusual spikes
@@ -53,7 +53,7 @@ export async function compareToAverage(
   const prevStartStr = `${prevStart.getUTCFullYear()}-${String(prevStart.getUTCMonth() + 1).padStart(2, "0")}-01`;
 
   // Current month
-  const currentResult = await pool.query<{ rows: Array<{ category: string; total: string; count: string }> }>(
+  const currentResult = await pool.query<{ category: string; total: string; count: string }>(
     `SELECT COALESCE(c.name, 'Sem categoria') as category,
             SUM(t.amount_cents) as total,
             COUNT(*) as count
@@ -68,7 +68,7 @@ export async function compareToAverage(
   );
 
   // Previous months
-  const prevResult = await pool.query<{ rows: Array<{ category: string; total: string }> }>(
+  const prevResult = await pool.query<{ category: string; total: string }>(
     `SELECT COALESCE(c.name, 'Sem categoria') as category,
             SUM(t.amount_cents) as total
      FROM transactions t
@@ -119,7 +119,7 @@ export async function compareToAverage(
         type: "trend_up",
         severity: pct > 100 ? "alert" : "warning",
         category: cur.category,
-        message: `📈 ${cur.category}: +${pct}% vs média dos últimos ${lookbackMonths} meses`,
+        message: `ðŸ“ˆ ${cur.category}: +${pct}% vs mÃ©dia dos Ãºltimos ${lookbackMonths} meses`,
         currentCents,
         previousCents: Math.round(avgPrev),
         percentChange: pct,
@@ -129,7 +129,7 @@ export async function compareToAverage(
         type: "trend_down",
         severity: "info",
         category: cur.category,
-        message: `📉 ${cur.category}: ${pct}% vs média (economia!)`,
+        message: `ðŸ“‰ ${cur.category}: ${pct}% vs mÃ©dia (economia!)`,
         currentCents,
         previousCents: Math.round(avgPrev),
         percentChange: pct,
@@ -139,7 +139,7 @@ export async function compareToAverage(
         type: "new_category",
         severity: "info",
         category: cur.category,
-        message: `🆕 Nova categoria detectada: ${cur.category} (R$ ${(currentCents / 100).toFixed(2)})`,
+        message: `ðŸ†• Nova categoria detectada: ${cur.category} (R$ ${(currentCents / 100).toFixed(2)})`,
         currentCents,
       });
     }
@@ -161,7 +161,7 @@ export async function compareToAverage(
         type: "category_gone",
         severity: "info",
         category: cat,
-        message: `👋 ${cat} não teve gastos este mês (média anterior R$ ${(total / lookbackMonths / 100).toFixed(2)})`,
+        message: `ðŸ‘‹ ${cat} nÃ£o teve gastos este mÃªs (mÃ©dia anterior R$ ${(total / lookbackMonths / 100).toFixed(2)})`,
         previousCents: Math.round(total / lookbackMonths),
       });
     }
@@ -181,13 +181,13 @@ export async function detectAnomalies(
   householdId: string,
   yearMonth: string
 ): Promise<SpendingInsight[]> {
-  const result = await pool.query<{ rows: Array<{
+  const result = await pool.query<{
     id: string;
     description: string;
     amount_cents: string;
     date: string;
     category: string;
-  }> }>(
+  }>(
     `SELECT t.id, t.description, t.amount_cents, t.date::text,
             COALESCE(c.name, 'Sem categoria') as category
      FROM transactions t
@@ -210,7 +210,7 @@ export async function detectAnomalies(
     const prevStart = new Date(Date.UTC(year, month - 3, 1));
     const prevStartStr = `${prevStart.getUTCFullYear()}-${String(prevStart.getUTCMonth() + 1).padStart(2, "0")}-01`;
 
-    const avgResult = await pool.query<{ rows: Array<{ avg: string | null }> }>(
+    const avgResult = await pool.query<{ avg: string | null }>(
       `SELECT AVG(t.amount_cents) as avg
        FROM transactions t
        LEFT JOIN categories c ON c.id = t.category_id
@@ -228,7 +228,7 @@ export async function detectAnomalies(
         type: "anomaly",
         severity: "warning",
         category: tx.category,
-        message: `🔍 ${tx.description} (${tx.date}): R$ ${(amount / 100).toFixed(2)} — ${Math.round((amount / avg) * 100)}% da média para ${tx.category}`,
+        message: `ðŸ” ${tx.description} (${tx.date}): R$ ${(amount / 100).toFixed(2)} â€” ${Math.round((amount / avg) * 100)}% da mÃ©dia para ${tx.category}`,
         currentCents: amount,
         previousCents: avg,
         percentChange: Math.round(((amount - avg) / avg) * 100),
@@ -251,7 +251,7 @@ export async function getCategoryShareOfIncome(
   const monthEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
 
   // Total income
-  const incomeResult = await pool.query<{ rows: Array<{ total: string }> }>(
+  const incomeResult = await pool.query<{ total: string }>(
     `SELECT COALESCE(SUM(amount_cents), 0) as total
      FROM transactions
      WHERE household_id = $1 AND kind = 'income' AND deleted_at IS NULL
@@ -263,7 +263,7 @@ export async function getCategoryShareOfIncome(
   if (totalIncome === 0) return [];
 
   // Top expense categories
-  const catResult = await pool.query<{ rows: Array<{ category: string; total: string }> }>(
+  const catResult = await pool.query<{ category: string; total: string }>(
     `SELECT COALESCE(c.name, 'Sem categoria') as category,
             SUM(t.amount_cents) as total
      FROM transactions t
@@ -294,17 +294,17 @@ export function formatSpendingAnalysis(
   const lines: string[] = [];
 
   if (insights.length > 0) {
-    lines.push(`💡 ${insights.length} insight(s):`);
+    lines.push(`ðŸ’¡ ${insights.length} insight(s):`);
     for (const ins of insights) {
-      const icon = ins.severity === "alert" ? "🚨" : ins.severity === "warning" ? "⚠️" : "ℹ️";
+      const icon = ins.severity === "alert" ? "ðŸš¨" : ins.severity === "warning" ? "âš ï¸" : "â„¹ï¸";
       lines.push(`  ${icon} ${ins.message}`);
     }
     lines.push("");
   }
 
-  lines.push(`📊 Comparação vs média:`);
+  lines.push(`ðŸ“Š ComparaÃ§Ã£o vs mÃ©dia:`);
   for (const c of comparisons.slice(0, 10)) {
-    const arrow = c.trend === "up" ? "📈" : c.trend === "down" ? "📉" : c.trend === "new" ? "🆕" : c.trend === "gone" ? "👋" : "➡️";
+    const arrow = c.trend === "up" ? "ðŸ“ˆ" : c.trend === "down" ? "ðŸ“‰" : c.trend === "new" ? "ðŸ†•" : c.trend === "gone" ? "ðŸ‘‹" : "âž¡ï¸";
     const pct = c.percentChange !== null ? ` (${c.percentChange > 0 ? "+" : ""}${c.percentChange}%)` : "";
     lines.push(`  ${arrow} ${c.category}: ${fmt(c.currentCents)} vs ${fmt(c.previousCents)}${pct}`);
   }

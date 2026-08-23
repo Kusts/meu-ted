@@ -1,6 +1,6 @@
-/**
- * accounts_payable — Pi tools facade for accounts payable
- * Delegates to generated authenticated HTTP adapters (OpenAPI → API).
+﻿/**
+ * accounts_payable â€” Pi tools facade for accounts payable
+ * Delegates to generated authenticated HTTP adapters (OpenAPI â†’ API).
  */
 import {
   createAccountPayableTool as generatedCreate,

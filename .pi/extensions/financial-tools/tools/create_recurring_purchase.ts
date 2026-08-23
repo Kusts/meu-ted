@@ -1,6 +1,6 @@
-/**
- * create_recurring_purchase — Pi tools facade for recurring purchases
- * Delegates to generated authenticated HTTP adapters (OpenAPI → API).
+﻿/**
+ * create_recurring_purchase â€” Pi tools facade for recurring purchases
+ * Delegates to generated authenticated HTTP adapters (OpenAPI â†’ API).
  */
 import {
   createRecurringPurchaseTool as generatedCreate,

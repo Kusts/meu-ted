@@ -1,6 +1,6 @@
-/**
- * create_account — Pi tool facade
- * Delegates to the generated authenticated HTTP adapter (OpenAPI → API).
+﻿/**
+ * create_account â€” Pi tool facade
+ * Delegates to the generated authenticated HTTP adapter (OpenAPI â†’ API).
  */
 import { createAccountTool as generated } from "../generated/http-tools.js";
 

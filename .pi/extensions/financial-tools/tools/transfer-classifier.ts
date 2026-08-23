@@ -1,8 +1,8 @@
 /**
- * transfer-classifier — Determines if a transaction is:
- * 1. Internal transfer (between own accounts) → create_transfer
- * 2. Outgoing to third party → create_expense
- * 3. Incoming from third party → create_income
+ * transfer-classifier â€” Determines if a transaction is:
+ * 1. Internal transfer (between own accounts) â†’ create_transfer
+ * 2. Outgoing to third party â†’ create_expense
+ * 3. Incoming from third party â†’ create_income
  */
 
 import type { TransferMethod } from "./transfer-parser.js";
@@ -27,20 +27,20 @@ export interface ClassifyResult {
 }
 
 const OWN_ACCOUNT_KEYWORDS = [
-  "carteira", "nubank", "itaú", "itau", "bradesco", "santander", "caixa",
+  "carteira", "nubank", "itaÃº", "itau", "bradesco", "santander", "caixa",
   "banco do brasil", "inter", "picpay", "mercado pago", "conta corrente",
-  "poupança", "poupanca", "investimento",
+  "poupanÃ§a", "poupanca", "investimento",
 ];
 
 const INCOMING_KEYWORDS = [
-  "recebi", "recebeu", "caiu", "chegou", "entrou", "veio", "depósito", "deposito",
-  "transferência recebida", "pix recebido", "pix de", "ted de",
+  "recebi", "recebeu", "caiu", "chegou", "entrou", "veio", "depÃ³sito", "deposito",
+  "transferÃªncia recebida", "pix recebido", "pix de", "ted de",
 ];
 
 const OUTGOING_KEYWORDS = [
   "paguei", "mandei", "enviei", "gastei", "transferi pra", "transferi para", "transferi pro",
   "pix pra", "pix para", "pix pro", "ted pra", "ted para", "ted pro",
-  "doc pra", "doc para", "fiz um pix", "fiz uma transferência", "fiz transferencia",
+  "doc pra", "doc para", "fiz um pix", "fiz uma transferÃªncia", "fiz transferencia",
 ];
 
 const INTERNAL_KEYWORDS = [
@@ -109,8 +109,8 @@ export function classifyTransfer(
   let method: TransferMethod = "PIX";
   if (/\bted\b/i.test(text)) method = "TED";
   else if (/\bdoc\b/i.test(text)) method = "DOC";
-  else if (/\b(transferencia|transferência)\b/i.test(lower)) method = "TRANSFER";
-  else if (/\b(dinheiro|especie|em m[ãa]o)\b/i.test(lower)) method = "CASH";
+  else if (/\b(transferencia|transferÃªncia)\b/i.test(lower)) method = "TRANSFER";
+  else if (/\b(dinheiro|especie|em m[Ã£a]o)\b/i.test(lower)) method = "CASH";
 
   // Extract recipient name (simple version, can be refined)
   const recipientName = extractSimpleRecipient(text);
@@ -127,10 +127,10 @@ export function classifyTransfer(
   // 1. If explicit "movi" or "entre contas" or 2+ accounts mentioned with "de"/"pra"
   if (isInternal || mentionedAccounts.length >= 2) {
     // Determine from/to based on order in the message
-    // "do X pra Y" or "do X pro Y" → from=X, to=Y
+    // "do X pra Y" or "do X pro Y" â†’ from=X, to=Y
     let fromAcc: AccountInfo | null = null;
     let toAcc: AccountInfo | null = null;
-    const fromToMatch = text.match(/(?:de|da|do)\s+(\w+).*?(?:pra|pro|para|→|->)\s+(\w+)/i);
+    const fromToMatch = text.match(/(?:de|da|do)\s+(\w+).*?(?:pra|pro|para|â†’|->)\s+(\w+)/i);
     if (fromToMatch) {
       const fromName = normalizeText(fromToMatch[1]);
       const toName = normalizeText(fromToMatch[2]);
@@ -152,7 +152,7 @@ export function classifyTransfer(
       fromAccount: fromAcc,
       toAccount: toAcc,
       clarifyingQuestion: !fromAcc || !toAcc
-        ? "Transferência entre quais contas? (ex: do Nubank para Carteira)"
+        ? "TransferÃªncia entre quais contas? (ex: do Nubank para Carteira)"
         : null,
     };
   }
@@ -166,7 +166,7 @@ export function classifyTransfer(
       fromAccount: null,
       toAccount: mentionedAccounts[0] ?? null,
       clarifyingQuestion: mentionedAccounts.length === 0
-        ? "Qual conta recebeu? (Nubank, Itaú, etc.)"
+        ? "Qual conta recebeu? (Nubank, ItaÃº, etc.)"
         : null,
     };
   }
@@ -180,7 +180,7 @@ export function classifyTransfer(
       fromAccount: mentionedAccounts[0] ?? null,
       toAccount: null,
       clarifyingQuestion: mentionedAccounts.length === 0
-        ? "De qual conta saiu? (Nubank, Itaú, etc.)"
+        ? "De qual conta saiu? (Nubank, ItaÃº, etc.)"
         : null,
     };
   }
@@ -192,7 +192,7 @@ export function classifyTransfer(
     recipientName,
     fromAccount: mentionedAccounts[0] ?? null,
     toAccount: null,
-    clarifyingQuestion: "É uma transferência entre contas próprias (mover dinheiro) ou para/de terceiro (pagar/receber)?",
+    clarifyingQuestion: "Ã‰ uma transferÃªncia entre contas prÃ³prias (mover dinheiro) ou para/de terceiro (pagar/receber)?",
   };
 }
 
@@ -201,7 +201,7 @@ export function classifyTransfer(
  */
 export function extractSimpleRecipient(text: string): string | null {
   // Try "PIX/TED/DOC/Transfer [Name] - motivo" first
-  const m = text.match(/^(?:PIX|TED|DOC|TRANSFER(?:ÊNCIA|ENCIA)?|DINHEIRO|CAIXA)\s+([A-Za-zÀ-ú][^-]+?)(?:\s*[-–—]\s*.*)?$/i);
+  const m = text.match(/^(?:PIX|TED|DOC|TRANSFER(?:ÊNCIA|ENCIA)?|DINHEIRO|CAIXA)\s+([A-Za-z\u00C0-\u00FF][^-]+?)(?:\s*[-–—]\s*.*)?$/i);
   if (m && m[1]) {
     let name = m[1].trim();
     name = name.replace(/^(para|pra|à|a)\s+/i, "");
@@ -216,7 +216,7 @@ export function extractSimpleRecipient(text: string): string | null {
     }
   }
   // Try "pro X", "pra X", "para X", "de X", "da X" (common prefix words)
-  const m2 = text.match(/(?:pro|pra|para|à|a|de|da|do)\s+([A-ZÀ-ÚÉÓÍÂÊÔÃÕÇ][A-Za-zÀ-ú\s]+?)(?:\s+de\s+|\s+no\s+|\s*[-–—,]|\s+\d|$)/i);
+  const m2 = text.match(/(?:pro|pra|para|à|a|de|da|do)\s+([A-Z\u00C0-\u00DF][A-Za-z\u00C0-\u00FF\s]+?)(?:\s+de\s+|\s+no\s+|\s*[-–—,]|\s+\d|$)/i);
   if (m2 && m2[1]) {
     let name = m2[1].trim();
     // Filter out generic words and own-account keywords
@@ -240,15 +240,15 @@ export function formatClassification(c: ClassifyResult): string {
   const fmt = (acc: AccountInfo | null) => acc?.name ?? "?";
 
   if (type === "internal") {
-    return `Transferência interna (${method}): ${fmt(fromAccount)} → ${fmt(toAccount)}`;
+    return `TransferÃªncia interna (${method}): ${fmt(fromAccount)} â†’ ${fmt(toAccount)}`;
   }
   if (type === "outgoing_third") {
     return `Envio para terceiro (${method}): de ${fmt(fromAccount)} para ${recipientName ?? "?"}`;
   }
   if (type === "incoming_third") {
-    return `Recebimento de terceiro (${method}): ${recipientName ?? "?"} → ${fmt(toAccount)}`;
+    return `Recebimento de terceiro (${method}): ${recipientName ?? "?"} â†’ ${fmt(toAccount)}`;
   }
-  return `Ambíguo: preciso de mais contexto`;
+  return `AmbÃ­guo: preciso de mais contexto`;
 }
 
 /**
@@ -259,10 +259,10 @@ export function getCategoryNameForTransfer(type: TransferType, method: TransferM
     return ""; // No category for internal transfers
   }
   if (type === "incoming_third") {
-    return method === "PIX" ? "Transferência > PIX Recebido" : `Transferência > ${method} Recebido`;
+    return method === "PIX" ? "TransferÃªncia > PIX Recebido" : `TransferÃªncia > ${method} Recebido`;
   }
   if (type === "outgoing_third") {
-    return `Transferência > ${method}`;
+    return `TransferÃªncia > ${method}`;
   }
   return "Outros";
 }

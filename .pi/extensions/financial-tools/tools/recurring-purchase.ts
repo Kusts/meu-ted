@@ -1,5 +1,5 @@
-/**
- * recurring-purchase — Recurring monthly purchases (subscriptions, etc.)
+﻿/**
+ * recurring-purchase â€” Recurring monthly purchases (subscriptions, etc.)
  *
  * Represents a recurring charge that should be posted every month
  * (or N months). When the user confirms, it creates a transaction
@@ -12,9 +12,9 @@
  * - Academia: R$ 99.90 / month
  *
  * Lifecycle:
- *   "active" → posts every cycle
- *   "paused" → does not post
- *   "cancelled" → terminated, history preserved
+ *   "active" â†’ posts every cycle
+ *   "paused" â†’ does not post
+ *   "cancelled" â†’ terminated, history preserved
  */
 
 import type { Pool } from "pg";
@@ -84,7 +84,7 @@ export async function getDueRecurringPurchases(
   householdId: string,
   today: string
 ): Promise<RecurringPurchase[]> {
-  const result = await pool.query<{ rows: RecurringPurchase[] }>(
+  const result = await pool.query<RecurringPurchase>(
     `SELECT id, household_id as "householdId", account_id as "accountId",
             category_id as "categoryId", description, amount_cents as "amountCents",
             frequency, start_date::text as "startDate",
@@ -110,7 +110,7 @@ export async function markRecurringPosted(
   id: string,
   today: string
 ): Promise<void> {
-  const rp = await pool.query<{ rows: RecurringPurchase[] }>(
+  const rp = await pool.query<RecurringPurchase>(
     `SELECT id, household_id as "householdId", account_id as "accountId",
             category_id as "categoryId", description, amount_cents as "amountCents",
             frequency, start_date::text as "startDate",
@@ -138,7 +138,7 @@ export async function getMonthlyRecurringTotal(
   pool: Pool,
   householdId: string
 ): Promise<number> {
-  const result = await pool.query<{ rows: Array<{ amount_cents: string; frequency: string }> }>(
+  const result = await pool.query<{ amount_cents: string; frequency: string }>(
     `SELECT amount_cents, frequency FROM recurring_purchases
      WHERE household_id = $1 AND status = 'active'`,
     [householdId]
@@ -157,18 +157,18 @@ export async function getMonthlyRecurringTotal(
  * Format a list of recurring purchases.
  */
 export function formatRecurringList(rps: RecurringPurchase[]): string {
-  if (rps.length === 0) return "Nenhuma recorrência ativa";
+  if (rps.length === 0) return "Nenhuma recorrÃªncia ativa";
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
-  const lines: string[] = [`🔁 ${rps.length} assinatura(ões) ativa(s):`];
+  const lines: string[] = [`ðŸ” ${rps.length} assinatura(Ãµes) ativa(s):`];
   for (const rp of rps) {
-    const icon = rp.status === "paused" ? "⏸️" : "🔄";
+    const icon = rp.status === "paused" ? "â¸ï¸" : "ðŸ”„";
     const freqLabel: Record<string, string> = {
-      monthly: "/mês",
+      monthly: "/mÃªs",
       quarterly: "/trim",
       yearly: "/ano",
     };
     lines.push(`  ${icon} ${rp.description}: ${fmt(rp.amountCents)} ${freqLabel[rp.frequency]}`);
-    lines.push(`     Próx: ${rp.nextDueDate}${rp.lastPostedDate ? ` (último: ${rp.lastPostedDate})` : ""}`);
+    lines.push(`     PrÃ³x: ${rp.nextDueDate}${rp.lastPostedDate ? ` (Ãºltimo: ${rp.lastPostedDate})` : ""}`);
   }
   return lines.join("\n");
 }

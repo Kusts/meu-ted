@@ -1,13 +1,13 @@
-/**
- * duplicate-detector — Shared helper
+﻿/**
+ * duplicate-detector â€” Shared helper
  *
  * Detects semantically duplicate transactions across all create operations.
  * Used by create_expense, create_income, create_transfer, and the account/category
  * create tools to warn the user before registering.
  *
  * Detection strategy:
- * 1. **Idempotency key** (exact match) — always wins
- * 2. **Semantic similarity** — same household + same kind + similar description
+ * 1. **Idempotency key** (exact match) â€” always wins
+ * 2. **Semantic similarity** â€” same household + same kind + similar description
  *    + same amount + same account + within 1 day window
  *
  * When a duplicate is detected, the tool returns a "duplicate_detected" response
@@ -169,17 +169,17 @@ export function formatDuplicateWarning(match: DuplicateMatch, newDesc: string): 
   const simPct = Math.round(match.similarity * 100);
 
   if (match.match_type === "idempotency_key") {
-    return `⚠️ Já existe um lançamento com essa chave de idempotência:
-• ${match.description} — R$ ${amount} em ${dateStr}
+    return `âš ï¸ JÃ¡ existe um lanÃ§amento com essa chave de idempotÃªncia:
+â€¢ ${match.description} â€” R$ ${amount} em ${dateStr}
 ID: ${match.id}
 
 Quer registrar mesmo assim? Responda "sim" para confirmar.`;
   }
 
-  return `🤔 Achei um lançamento bem parecido:
-• "${match.description}" — R$ ${amount} em ${dateStr} (${simPct}% similar)
+  return `ðŸ¤” Achei um lanÃ§amento bem parecido:
+â€¢ "${match.description}" â€” R$ ${amount} em ${dateStr} (${simPct}% similar)
 
 Seu novo: "${newDesc}"
 
-É o mesmo gasto? Se sim, vou só atualizar. Se for diferente, responda "sim" pra registrar mesmo assim.`;
+Ã‰ o mesmo gasto? Se sim, vou sÃ³ atualizar. Se for diferente, responda "sim" pra registrar mesmo assim.`;
 }

@@ -1,29 +1,29 @@
-/**
- * prepay_installments — Antecipação de parcelas (com ou sem desconto)
+﻿/**
+ * prepay_installments â€” AntecipaÃ§Ã£o de parcelas (com ou sem desconto)
  *
  * Paga N parcelas restantes antecipadamente. Suporta:
  * - Pagamento total: quita todas as restantes
- * - Pagamento parcial: quita apenas as próximas N
+ * - Pagamento parcial: quita apenas as prÃ³ximas N
  * - Com desconto: aplica desconto sobre o valor presente das parcelas
  *
- * Apenas para planos out_of_card (cartão é gerenciado via statement).
+ * Apenas para planos out_of_card (cartÃ£o Ã© gerenciado via statement).
  *
- * Cálculo de desconto:
+ * CÃ¡lculo de desconto:
  * - Sem juros: valor cheio
  * - Com juros: desconto baseado no valor presente das parcelas restantes
  *   (PV = PMT * (1 - (1+i)^-n) / i)
- *   Exemplo: 12x de R$ 100 a 2% a.m., faltam 6 → PV ≈ R$ 558
+ *   Exemplo: 12x de R$ 100 a 2% a.m., faltam 6 â†’ PV â‰ˆ R$ 558
  *   (vs R$ 600 sem desconto, desconto de R$ 42 = 7%)
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Pool } from "pg";
 
 interface Params {
   householdId: string;
   planId: string;
-  numberOfInstallments: number;  // quantas parcelas antecipar (1 = próxima, N = todas)
+  numberOfInstallments: number;  // quantas parcelas antecipar (1 = prÃ³xima, N = todas)
   discountRate?: number;  // 0 to 1, ex: 0.05 = 5% de desconto
   discountType?: "simple" | "present_value";  // simple = X% off, present_value = recalcula com base no VP
   paidDate?: string;
@@ -50,13 +50,13 @@ function calculatePresentValue(pmt: number, rate: number, n: number): number {
 
 export const prepayInstallments: ToolDefinition = {
   name: "prepay_installments",
-  description: "Antecipa N parcelas restantes de um plano fora do cartão. Suporta desconto.",
+  description: "Antecipa N parcelas restantes de um plano fora do cartÃ£o. Suporta desconto.",
   parameters: schema,
   execute: async (params: Params) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
     try {
       // 1. Get plan
-      const planResult = await pool.query<{ rows: any[] }>(
+      const planResult = await pool.query<any>(
         `SELECT id, description, total_amount_cents, installments_count, interest_rate, type
          FROM installment_plans
          WHERE id = $1 AND household_id = $2`,
@@ -70,12 +70,12 @@ export const prepayInstallments: ToolDefinition = {
         return {
           success: false,
           error: "not_out_of_card",
-          message: "Antecipação só funciona para planos fora do cartão. Use pay_statement para cartão.",
+          message: "AntecipaÃ§Ã£o sÃ³ funciona para planos fora do cartÃ£o. Use pay_statement para cartÃ£o.",
         };
       }
 
       // 2. Get scheduled installments (oldest first)
-      const txResult = await pool.query<{ rows: any[] }>(
+      const txResult = await pool.query<any>(
         `SELECT id, installment_number, amount_cents, date::text, installment_status
          FROM transactions
          WHERE installment_plan_id = $1
@@ -126,7 +126,7 @@ export const prepayInstallments: ToolDefinition = {
       );
 
       // 5. Calculate progress
-      const progressResult = await pool.query<{ rows: Array<{ paid: string; total: string }> }>(
+      const progressResult = await pool.query<{ paid: string; total: string }>(
         `SELECT
            COUNT(*) FILTER (WHERE installment_status = 'paid') as paid,
            COUNT(*) as total
@@ -154,8 +154,8 @@ export const prepayInstallments: ToolDefinition = {
         planProgress: `${paid}/${total} parcelas pagas`,
         isComplete: paid >= total,
         message: discountApplied
-          ? `✅ ${txIds.length} parcela(s) antecipada(s) com ${(discountRate * 100).toFixed(2)}% desconto: ${fmt(finalCents)} (economizou ${fmt(discountCents)})`
-          : `✅ ${txIds.length} parcela(s) paga(s): ${fmt(finalCents)}`,
+          ? `âœ… ${txIds.length} parcela(s) antecipada(s) com ${(discountRate * 100).toFixed(2)}% desconto: ${fmt(finalCents)} (economizou ${fmt(discountCents)})`
+          : `âœ… ${txIds.length} parcela(s) paga(s): ${fmt(finalCents)}`,
       };
       return response;
     } catch (e: any) {
@@ -167,11 +167,11 @@ export const prepayInstallments: ToolDefinition = {
 };
 
 /**
- * simulate_prepayment — Simula antecipação sem modificar dados
+ * simulate_prepayment â€” Simula antecipaÃ§Ã£o sem modificar dados
  */
 export const simulatePrepayment: ToolDefinition = {
   name: "simulate_prepayment",
-  description: "Simula antecipação de parcelas mostrando quanto pagaria com/sem desconto.",
+  description: "Simula antecipaÃ§Ã£o de parcelas mostrando quanto pagaria com/sem desconto.",
   parameters: Type.Object({
     householdId: Type.String(),
     planId: Type.String(),
@@ -182,7 +182,7 @@ export const simulatePrepayment: ToolDefinition = {
   execute: async (params: Params) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
     try {
-      const planResult = await pool.query<{ rows: any[] }>(
+      const planResult = await pool.query<any>(
         `SELECT id, description, total_amount_cents, installments_count, interest_rate
          FROM installment_plans WHERE id = $1 AND household_id = $2`,
         [params.planId, params.householdId]
@@ -192,7 +192,7 @@ export const simulatePrepayment: ToolDefinition = {
       }
       const plan = planResult.rows[0];
 
-      const txResult = await pool.query<{ rows: any[] }>(
+      const txResult = await pool.query<any>(
         `SELECT id, installment_number, amount_cents, date::text
          FROM transactions
          WHERE installment_plan_id = $1
@@ -253,14 +253,14 @@ export const simulatePrepayment: ToolDefinition = {
 
       // Build response
       const lines: string[] = [
-        `🔮 Simulação de antecipação: ${plan.description}`,
+        `ðŸ”® SimulaÃ§Ã£o de antecipaÃ§Ã£o: ${plan.description}`,
         `   ${txResult.rows.length} parcela(s) a antecipar`,
         `   Valor cheio: ${fmt(fullTotalCents)}`,
         ``,
-        `   Cenários:`,
+        `   CenÃ¡rios:`,
       ];
       for (const s of simulations) {
-        lines.push(`     • ${s.label}: ${fmt(s.finalCents)} (economia: ${fmt(s.discountCents)})`);
+        lines.push(`     â€¢ ${s.label}: ${fmt(s.finalCents)} (economia: ${fmt(s.discountCents)})`);
       }
 
       return {

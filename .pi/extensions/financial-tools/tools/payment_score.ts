@@ -1,15 +1,15 @@
-/**
- * payment_score — Score de pontualidade nos pagamentos
+﻿/**
+ * payment_score â€” Score de pontualidade nos pagamentos
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Pool } from "pg";
 import { computePaymentScore, formatPaymentScore } from "./payment-score";
 
 export const paymentScore: ToolDefinition = {
   name: "payment_score",
-  description: "Calcula score de pontualidade nos pagamentos (últimos N meses).",
+  description: "Calcula score de pontualidade nos pagamentos (Ãºltimos N meses).",
   parameters: Type.Object({
     householdId: Type.Optional(Type.String()),
     monthsBack: Type.Optional(Type.Integer({ minimum: 1, maximum: 24 })),

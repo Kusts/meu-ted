@@ -125,7 +125,7 @@ function registerTool(pi: ExtensionAPI, tool: ToolDefinition): void {
   const execute = tool.execute.bind(tool);
   pi.registerTool({
     ...tool,
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
+    async execute(toolCallId: string, params: any, signal: any, onUpdate: any, ctx: any) {
       const result = execute.length <= 1
         ? await (execute as (params: unknown) => Promise<unknown>)(params)
         : await execute(toolCallId, params, signal, onUpdate, ctx);

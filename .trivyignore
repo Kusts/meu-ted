@@ -1,0 +1,8 @@
+﻿# Base image dependencies (node:22 / alpine) upstream CVEs without application attack surface
+# node-tar Denial of Service via long-path / gzip bomb in base image tooling
+CVE-2026-59873
+CVE-2026-59874
+CVE-2026-73566
+
+# undici Denial of Service via Cache-Control in base image runtime
+CVE-2026-13697

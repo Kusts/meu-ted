@@ -1,19 +1,19 @@
 /**
- * accounts-payable — Helpers para gestão de contas a pagar
+ * accounts-payable â€” Helpers para gestÃ£o de contas a pagar
  *
  * Conceitos:
- * - `recurring`: conta recorrente (luz, internet, aluguel) — próxima data é calculada
- * - `one_time`: conta avulsa (cartório, anuidade, IPVA)
+ * - `recurring`: conta recorrente (luz, internet, aluguel) â€” prÃ³xima data Ã© calculada
+ * - `one_time`: conta avulsa (cartÃ³rio, anuidade, IPVA)
  *
  * Status:
- * - pending: ainda não paga, data não passou
- * - overdue: data já passou e não foi paga
+ * - pending: ainda nÃ£o paga, data nÃ£o passou
+ * - overdue: data jÃ¡ passou e nÃ£o foi paga
  * - paid: foi paga (paid_date preenchido)
  * - cancelled: conta foi cancelada (ex: cancelou assinatura)
  *
  * Lembretes:
  * - reminder_days_before: dias antes do vencimento para alertar
- * - last_reminder_sent_at: controla idempotência dos lembretes
+ * - last_reminder_sent_at: controla idempotÃªncia dos lembretes
  */
 
 import type { Pool } from "pg";
@@ -50,7 +50,7 @@ export interface AccountPayableWithDetails extends AccountPayable {
  * Compute effective status from status + due_date.
  * - cancelled is terminal
  * - paid is terminal
- * - if status='pending' and due_date < today → overdue
+ * - if status='pending' and due_date < today â†’ overdue
  */
 export function computeEffectiveStatus(
   status: string,
@@ -73,11 +73,11 @@ export function getNextDueDate(
   today: string
 ): string {
   if (account.type !== "recurring" || !account.frequency) {
-    return typeof account.due_date === "string" ? account.due_date : account.due_date.toISOString().slice(0, 10);
+    return typeof account.due_date === "string" ? account.due_date : String(account.due_date).slice(0, 10);
   }
   const t = new Date(today);
   // due_date may be string or Date object
-  let next = typeof account.due_date === "string" ? account.due_date : account.due_date.toISOString().slice(0, 10);
+  let next = typeof account.due_date === "string" ? account.due_date : String(account.due_date).slice(0, 10);
   const monthsToAdd = account.frequency === "monthly" ? 1
     : account.frequency === "quarterly" ? 3
     : 12;
@@ -89,7 +89,7 @@ export function getNextDueDate(
 }
 
 /**
- * Refresh all statuses: pending → overdue if date passed.
+ * Refresh all statuses: pending â†’ overdue if date passed.
  * Returns count of changes.
  */
 export async function refreshAccountsPayable(pool: Pool, householdId: string): Promise<{
@@ -97,7 +97,7 @@ export async function refreshAccountsPayable(pool: Pool, householdId: string): P
   cancelled: any[];
   created: any[];
 }> {
-  const result = await pool.query<{ rows: any[] }>(
+  const result = await pool.query<any>(
     `UPDATE accounts_payable
      SET status = 'overdue', updated_at = NOW()
      WHERE household_id = $1
@@ -109,7 +109,7 @@ export async function refreshAccountsPayable(pool: Pool, householdId: string): P
   );
 
   // Auto-advance recurring accounts: create next occurrence
-  const recResult = await pool.query<{ rows: any[] }>(
+  const recResult = await pool.query<any>(
     `SELECT * FROM accounts_payable
      WHERE household_id = $1
        AND type = 'recurring'
@@ -132,7 +132,7 @@ export async function refreshAccountsPayable(pool: Pool, householdId: string): P
       [ap.description, next, householdId]
     );
     if (exists.rows.length === 0 && next > ap.due_date) {
-      const insert = await pool.query<{ rows: any[] }>(
+      const insert = await pool.query<any>(
         `INSERT INTO accounts_payable
          (household_id, account_id, category_id, description, amount_cents,
           type, frequency, due_date, end_date, reminder_days_before, source_message_id)
@@ -162,7 +162,7 @@ export async function refreshAccountsPayable(pool: Pool, householdId: string): P
 export async function getAccountsNeedingReminder(
   pool: Pool, householdId: string
 ): Promise<AccountPayableWithDetails[]> {
-  const result = await pool.query<{ rows: any[] }>(
+  const result = await pool.query<any>(
     `SELECT ap.*, a.name as account_name, c.name as category_name
      FROM accounts_payable ap
      LEFT JOIN accounts a ON a.id = ap.account_id
@@ -210,15 +210,15 @@ const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
  */
 export function formatReminder(item: AccountPayableWithDetails): string {
   if (item.days_until_due < 0) {
-    return `🚨 VENCIDA há ${Math.abs(item.days_until_due)} dia(s): ${item.description} (${fmt(parseInt(item.amount_cents, 10))}) — conta ${item.account_name}`;
+    return `ðŸš¨ VENCIDA hÃ¡ ${Math.abs(item.days_until_due)} dia(s): ${item.description} (${fmt(parseInt(item.amount_cents, 10))}) â€” conta ${item.account_name}`;
   } else if (item.days_until_due === 0) {
-    return `🔥 VENCE HOJE: ${item.description} (${fmt(parseInt(item.amount_cents, 10))}) — conta ${item.account_name}`;
+    return `ðŸ”¥ VENCE HOJE: ${item.description} (${fmt(parseInt(item.amount_cents, 10))}) â€” conta ${item.account_name}`;
   } else if (item.days_until_due === 1) {
-    return `⏰ Vence amanhã: ${item.description} (${fmt(parseInt(item.amount_cents, 10))}) — conta ${item.account_name}`;
+    return `â° Vence amanhÃ£: ${item.description} (${fmt(parseInt(item.amount_cents, 10))}) â€” conta ${item.account_name}`;
   } else if (item.days_until_due <= 7) {
-    return `📅 Vence em ${item.days_until_due} dia(s): ${item.description} (${fmt(parseInt(item.amount_cents, 10))}) — conta ${item.account_name}`;
+    return `ðŸ“… Vence em ${item.days_until_due} dia(s): ${item.description} (${fmt(parseInt(item.amount_cents, 10))}) â€” conta ${item.account_name}`;
   } else {
-    return `📌 Vence em ${item.days_until_due} dia(s): ${item.description} (${fmt(parseInt(item.amount_cents, 10))}) — conta ${item.account_name}`;
+    return `ðŸ“Œ Vence em ${item.days_until_due} dia(s): ${item.description} (${fmt(parseInt(item.amount_cents, 10))}) â€” conta ${item.account_name}`;
   }
 }
 
@@ -245,25 +245,25 @@ export function formatAccountsList(accounts: AccountPayableWithDetails[]): strin
   const totalCents = (xs: AccountPayableWithDetails[]) => xs.reduce((s, x) => s + parseInt(x.amount_cents, 10), 0);
 
   if (groups.overdue.length > 0) {
-    lines.push(`🚨 Vencidas (${groups.overdue.length}) — total: ${fmt(totalCents(groups.overdue))}`);
+    lines.push(`ðŸš¨ Vencidas (${groups.overdue.length}) â€” total: ${fmt(totalCents(groups.overdue))}`);
     for (const ap of groups.overdue) {
-      lines.push(`   • ${ap.description} (${fmt(parseInt(ap.amount_cents, 10))}) — venceu ${Math.abs(ap.days_until_due)}d atrás, ${ap.due_date}`);
+      lines.push(`   â€¢ ${ap.description} (${fmt(parseInt(ap.amount_cents, 10))}) â€” venceu ${Math.abs(ap.days_until_due)}d atrÃ¡s, ${ap.due_date}`);
     }
   }
   if (groups.pending.length > 0) {
-    lines.push(`📅 Pendentes (${groups.pending.length}) — total: ${fmt(totalCents(groups.pending))}`);
+    lines.push(`ðŸ“… Pendentes (${groups.pending.length}) â€” total: ${fmt(totalCents(groups.pending))}`);
     for (const ap of groups.pending.slice(0, 8)) {
-      lines.push(`   • ${ap.description} (${fmt(parseInt(ap.amount_cents, 10))}) — vence em ${ap.days_until_due}d, ${ap.due_date}`);
+      lines.push(`   â€¢ ${ap.description} (${fmt(parseInt(ap.amount_cents, 10))}) â€” vence em ${ap.days_until_due}d, ${ap.due_date}`);
     }
     if (groups.pending.length > 8) {
       lines.push(`   ... e mais ${groups.pending.length - 8}`);
     }
   }
   if (groups.paid.length > 0) {
-    lines.push(`✅ Pagas (${groups.paid.length}) — total: ${fmt(totalCents(groups.paid))}`);
+    lines.push(`âœ… Pagas (${groups.paid.length}) â€” total: ${fmt(totalCents(groups.paid))}`);
   }
   if (groups.cancelled.length > 0) {
-    lines.push(`❌ Canceladas (${groups.cancelled.length})`);
+    lines.push(`âŒ Canceladas (${groups.cancelled.length})`);
   }
 
   return lines.join("\n");

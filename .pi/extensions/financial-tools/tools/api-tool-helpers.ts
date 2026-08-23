@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 import { getCapabilityMode, isWriteFrozen } from "./capability-flags.js";
 
 export const isUUID = (value: string): boolean =>

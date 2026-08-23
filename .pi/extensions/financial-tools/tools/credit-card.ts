@@ -1,10 +1,10 @@
-/**
- * credit-card — Credit card statement management
+﻿/**
+ * credit-card â€” Credit card statement management
  *
  * Handles:
  * - Credit card accounts (with closing_day, due_day, credit_limit)
  * - Purchases on credit cards (go to open statement)
- * - Statement lifecycle: open → closed → paid/partial/overdue
+ * - Statement lifecycle: open â†’ closed â†’ paid/partial/overdue
  * - Installments
  *
  * Statement logic:
@@ -13,10 +13,10 @@
  * - Statement period: previous_closing_date+1 to current_closing_date
  * - Purchases between closing days go to the current statement
  * - Status transitions:
- *   - "open" → "closed" (after closing_date, before due_date)
- *   - "closed" → "paid" (full payment)
- *   - "closed" → "partial" (partial payment)
- *   - "closed" → "overdue" (after due_date without full payment)
+ *   - "open" â†’ "closed" (after closing_date, before due_date)
+ *   - "closed" â†’ "paid" (full payment)
+ *   - "closed" â†’ "partial" (partial payment)
+ *   - "closed" â†’ "overdue" (after due_date without full payment)
  */
 
 import type { Pool } from "pg";
@@ -134,7 +134,7 @@ export async function getOrCreateOpenStatement(
   const cycle = getCycleYearMonth(closingDate);
   
   // Try to find existing
-  const existing = await pool.query<{ rows: Statement[] }>(
+  const existing = await pool.query<Statement>(
     `SELECT id, account_id as "accountId", cycle_year_month as "cycleYearMonth",
             closing_date as "closingDate", due_date as "dueDate",
             total_cents as "totalCents", paid_cents as "paidCents", status
@@ -149,7 +149,7 @@ export async function getOrCreateOpenStatement(
   
   // Create new
   const id = randomUUID();
-  const result = await pool.query<{ rows: Statement[] }>(
+  const result = await pool.query<Statement>(
     `INSERT INTO statements (id, household_id, account_id, cycle_year_month, closing_date, due_date, total_cents, paid_cents, status, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, 0, 0, 'open', NOW(), NOW())
      RETURNING id, account_id as "accountId", cycle_year_month as "cycleYearMonth",
@@ -163,11 +163,11 @@ export async function getOrCreateOpenStatement(
 
 /**
  * Update statement status based on dates and payments.
- * - If paid_cents >= total_cents → paid
- * - If paid_cents > 0 && paid_cents < total_cents → partial
- * - If today > due_date && paid_cents < total_cents → overdue
- * - If today > closing_date && paid_cents == 0 → closed
- * - Otherwise → open
+ * - If paid_cents >= total_cents â†’ paid
+ * - If paid_cents > 0 && paid_cents < total_cents â†’ partial
+ * - If today > due_date && paid_cents < total_cents â†’ overdue
+ * - If today > closing_date && paid_cents == 0 â†’ closed
+ * - Otherwise â†’ open
  */
 export function computeStatementStatus(
   statement: Statement,
@@ -190,7 +190,7 @@ export async function refreshStatementStatus(
   statementId: string,
   today: string
 ): Promise<Statement["status"]> {
-  const result = await pool.query<{ rows: Statement[] }>(
+  const result = await pool.query<Statement>(
     `SELECT id, account_id as "accountId", cycle_year_month as "cycleYearMonth",
             closing_date::text as "closingDate", due_date::text as "dueDate",
             total_cents as "totalCents", paid_cents as "paidCents", status
@@ -217,12 +217,12 @@ export async function getCreditCardInfo(
   pool: Pool,
   accountId: string
 ): Promise<CreditCardInfo | null> {
-  const result = await pool.query<{ rows: Array<{
+  const result = await pool.query<{
     is_credit_card: boolean;
     credit_limit_cents: string | null;
     closing_day: number | null;
     due_day: number | null;
-  }> }>(
+  }>(
     `SELECT is_credit_card, credit_limit_cents, closing_day, due_day
      FROM accounts WHERE id = $1 AND deleted_at IS NULL`,
     [accountId]
@@ -243,7 +243,7 @@ export async function listOpenStatements(
   pool: Pool,
   accountId: string
 ): Promise<Statement[]> {
-  const result = await pool.query<{ rows: Statement[] }>(
+  const result = await pool.query<Statement>(
     `SELECT id, account_id as "accountId", cycle_year_month as "cycleYearMonth",
             closing_date::text as "closingDate", due_date::text as "dueDate",
             total_cents as "totalCents", paid_cents as "paidCents", status
@@ -263,7 +263,7 @@ export async function listOverdueStatements(
   householdId: string,
   today: string
 ): Promise<Statement[]> {
-  const result = await pool.query<{ rows: Statement[] }>(
+  const result = await pool.query<Statement>(
     `SELECT id, account_id as "accountId", cycle_year_month as "cycleYearMonth",
             closing_date::text as "closingDate", due_date::text as "dueDate",
             total_cents as "totalCents", paid_cents as "paidCents", status
@@ -282,7 +282,7 @@ export async function getStatementPurchases(
   pool: Pool,
   statementId: string
 ): Promise<StatementWithPurchases["purchases"]> {
-  const stmtResult = await pool.query<{ rows: Statement[] }>(
+  const stmtResult = await pool.query<Statement>(
     `SELECT id, account_id as "accountId", cycle_year_month as "cycleYearMonth",
             closing_date::text as "closingDate", due_date::text as "dueDate",
             total_cents as "totalCents", paid_cents as "paidCents", status
@@ -291,14 +291,14 @@ export async function getStatementPurchases(
   );
   if (stmtResult.rows.length === 0) return [];
 
-  const purchases = await pool.query<{ rows: Array<{
+  const purchases = await pool.query<{
     id: string;
     description: string;
     amount_cents: string;
     date: string;
     installments_total: number | null;
     installment_number: number | null;
-  }> }>(
+  }>(
     `SELECT id, description, amount_cents, date::text, installments_total, installment_number
      FROM transactions
      WHERE statement_id = $1 AND deleted_at IS NULL
@@ -323,7 +323,7 @@ export async function recalculateStatementTotal(
   pool: Pool,
   statementId: string
 ): Promise<number> {
-  const result = await pool.query<{ rows: { total: string }[] }>(
+  const result = await pool.query<{ total: string }>(
     `SELECT COALESCE(SUM(amount_cents), 0) as total
      FROM transactions
      WHERE statement_id = $1 AND deleted_at IS NULL`,
@@ -343,7 +343,7 @@ export async function recalculateStatementTotal(
 export function formatStatement(s: Statement, purchases?: StatementWithPurchases["purchases"]): string {
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
   const lines: string[] = [];
-  lines.push(`📅 Fatura ${s.cycleYearMonth} (${s.status})`);
+  lines.push(`ðŸ“… Fatura ${s.cycleYearMonth} (${s.status})`);
   lines.push(`  Fechamento: ${s.closingDate}`);
   lines.push(`  Vencimento: ${s.dueDate}`);
   lines.push(`  Total: ${fmt(s.totalCents)} | Pago: ${fmt(s.paidCents)} | Saldo: ${fmt(s.totalCents - s.paidCents)}`);
@@ -351,7 +351,7 @@ export function formatStatement(s: Statement, purchases?: StatementWithPurchases
     lines.push(`  Compras (${purchases.length}):`);
     for (const p of purchases) {
       const inst = p.installmentsTotal ? ` (${p.installmentNumber}/${p.installmentsTotal})` : "";
-      lines.push(`    • ${p.date} ${p.description}${inst} — ${fmt(p.amountCents)}`);
+      lines.push(`    â€¢ ${p.date} ${p.description}${inst} â€” ${fmt(p.amountCents)}`);
     }
   }
   return lines.join("\n");

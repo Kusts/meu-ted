@@ -1,6 +1,6 @@
-/**
- * audit_logs — Pi tool facade
- * Delegates to the generated authenticated HTTP adapter (OpenAPI → API).
+﻿/**
+ * audit_logs â€” Pi tool facade
+ * Delegates to the generated authenticated HTTP adapter (OpenAPI â†’ API).
  */
 import { auditLogsTool as generated } from "../generated/http-tools.js";
 

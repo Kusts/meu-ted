@@ -1,8 +1,8 @@
-/**
- * statement-automation — Automatic statement status transitions
+﻿/**
+ * statement-automation â€” Automatic statement status transitions
  *
  * Handles automatic transition of statements:
- * - "open" → "closed" (after closing_date, no more purchases accepted)
+ * - "open" â†’ "closed" (after closing_date, no more purchases accepted)
  * - Status refresh for all cards
  * - Returns summary of all changes
  *
@@ -42,7 +42,7 @@ export async function refreshAllStatements(
   today: string
 ): Promise<AutomationResult> {
   // Get all statements with their account names
-  const result = await pool.query<{ rows: Array<{
+  const result = await pool.query<{
     id: string;
     account_id: string;
     account_name: string;
@@ -50,7 +50,7 @@ export async function refreshAllStatements(
     status: Statement["status"];
     total_cents: string;
     due_date: string;
-  }> }>(
+  }>(
     `SELECT s.id, s.account_id, a.name as account_name,
             s.cycle_year_month, s.status, s.total_cents, s.due_date::text
      FROM statements s
@@ -108,14 +108,14 @@ export async function getStatementsClosingSoon(
   totalCents: number;
   daysUntilClose: number;
 }>> {
-  const result = await pool.query<{ rows: Array<{
+  const result = await pool.query<{
     id: string;
     account_name: string;
     cycle_year_month: string;
     closing_date: string;
     due_date: string;
     total_cents: string;
-  }> }>(
+  }>(
     `SELECT s.id, a.name as account_name, s.cycle_year_month,
             s.closing_date::text, s.due_date::text, s.total_cents
      FROM statements s
@@ -147,16 +147,16 @@ export async function getStatementsClosingSoon(
  */
 export function formatChanges(result: AutomationResult): string {
   if (result.changes.length === 0) {
-    return `✅ ${result.totalChecked} faturas verificadas, nenhuma mudança.`;
+    return `âœ… ${result.totalChecked} faturas verificadas, nenhuma mudanÃ§a.`;
   }
-  const lines: string[] = [`🔄 ${result.changes.length} mudança(s) em ${result.totalChecked} faturas:`];
+  const lines: string[] = [`ðŸ”„ ${result.changes.length} mudanÃ§a(s) em ${result.totalChecked} faturas:`];
   for (const c of result.changes) {
-    const icon = c.newStatus === "overdue" ? "🚨" : c.newStatus === "closed" ? "📅" : c.newStatus === "paid" ? "✅" : "ℹ️";
+    const icon = c.newStatus === "overdue" ? "ðŸš¨" : c.newStatus === "closed" ? "ðŸ“…" : c.newStatus === "paid" ? "âœ…" : "â„¹ï¸";
     const fmt = `R$ ${(c.totalCents / 100).toFixed(2)}`;
-    lines.push(`  ${icon} ${c.accountName} ${c.cycle}: ${c.oldStatus} → ${c.newStatus} (${fmt}, vence ${c.dueDate})`);
+    lines.push(`  ${icon} ${c.accountName} ${c.cycle}: ${c.oldStatus} â†’ ${c.newStatus} (${fmt}, vence ${c.dueDate})`);
   }
   if (result.overdue > 0) {
-    lines.push(`\n  ⚠️ ${result.overdue} fatura(s) agora atrasada(s)`);
+    lines.push(`\n  âš ï¸ ${result.overdue} fatura(s) agora atrasada(s)`);
   }
   return lines.join("\n");
 }

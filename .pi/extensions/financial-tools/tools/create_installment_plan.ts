@@ -1,20 +1,20 @@
-/**
- * create_installment_plan — Universal installment plan creator
+﻿/**
+ * create_installment_plan â€” Universal installment plan creator
  *
  * Supports two types:
  * - "credit_card": installments are added to card statements (no interest usually)
  * - "out_of_card": direct installments from any account (can have interest)
  *
  * Examples:
- * - "12x de R$100 na fatura do cartão" → credit_card
- * - "12x de R$120 no boleto (com juros)" → out_of_card
- * - "Parcelei em 3x no carnê da loja" → out_of_card
+ * - "12x de R$100 na fatura do cartÃ£o" â†’ credit_card
+ * - "12x de R$120 no boleto (com juros)" â†’ out_of_card
+ * - "Parcelei em 3x no carnÃª da loja" â†’ out_of_card
  *
  * Generates N transactions, all linked by installment_plan_id.
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Pool } from "pg";
 import {
   buildInstallmentSchedule,
@@ -56,7 +56,7 @@ const schema = Type.Object({
 
 export const createInstallmentPlan: ToolDefinition = {
   name: "create_installment_plan",
-  description: "Cria um plano de parcelamento. Pode ser no cartão (vai pra fatura) ou fora (boleto/carnê/financ).",
+  description: "Cria um plano de parcelamento. Pode ser no cartÃ£o (vai pra fatura) ou fora (boleto/carnÃª/financ).",
   parameters: schema,
   execute: async (params: Params) => {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -65,12 +65,12 @@ export const createInstallmentPlan: ToolDefinition = {
         return {
           success: false,
           error: "installments_limit",
-          message: "Parcelamento no cartão é limitado a 48x. Use type=out_of_card para até 60x.",
+          message: "Parcelamento no cartÃ£o Ã© limitado a 48x. Use type=out_of_card para atÃ© 60x.",
         };
       }
 
       // 1. Validate account type
-      const accResult = await pool.query<{ rows: Array<{ is_credit_card: boolean; name: string }> }>(
+      const accResult = await pool.query<{ is_credit_card: boolean; name: string }>(
         `SELECT is_credit_card, name FROM accounts WHERE id = $1 AND deleted_at IS NULL`,
         [params.accountId]
       );
@@ -82,7 +82,7 @@ export const createInstallmentPlan: ToolDefinition = {
         return {
           success: false,
           error: "type_mismatch",
-          message: `Conta ${acc.name} não é cartão de crédito. Use type=out_of_card.`,
+          message: `Conta ${acc.name} nÃ£o Ã© cartÃ£o de crÃ©dito. Use type=out_of_card.`,
         };
       }
 
@@ -124,7 +124,7 @@ export const createInstallmentPlan: ToolDefinition = {
           return {
             success: false,
             error: "duplicate",
-            message: `Plano similar já existe: ${dup.description}`,
+            message: `Plano similar jÃ¡ existe: ${dup.description}`,
             duplicate: dup,
             hint: "Passe force=true se quiser criar mesmo assim",
           };
@@ -137,7 +137,7 @@ export const createInstallmentPlan: ToolDefinition = {
       let planId: string;
       try {
         await client.query("BEGIN");
-        const planResult = await client.query<{ rows: Array<{ id: string }> }>(
+        const planResult = await client.query<{ id: string }>(
           `INSERT INTO installment_plans (
             id, household_id, account_id, category_id, description,
             total_amount_cents, installments_count, interest_rate, type,
@@ -168,7 +168,7 @@ export const createInstallmentPlan: ToolDefinition = {
         // Insert all installment transactions
         for (const inst of schedule) {
           const idempKey = `plan-${planId}-${inst.number}`;
-          const txResult = await client.query<{ rows: Array<{ id: string }> }>(
+          const txResult = await client.query<{ id: string }>(
             `INSERT INTO transactions (
               id, household_id, from_account_id, description, amount_cents, date,
               kind, category_id, installment_plan_id, installments_total, installment_number,
@@ -242,8 +242,8 @@ export const createInstallmentPlan: ToolDefinition = {
         affectedMonths: summary.months,
         message:
           params.type === "credit_card"
-            ? `💳 Parcelamento no cartão: ${params.description} em ${params.installmentsCount}x de R$ ${(schedule[0].amountCents / 100).toFixed(2)}`
-            : `📋 Parcelamento criado: ${params.description} em ${params.installmentsCount}x de R$ ${(schedule[0].amountCents / 100).toFixed(2)}${totalInterest > 0 ? ` (total com juros: R$ ${(totalWithInterest / 100).toFixed(2)})` : ""}`,
+            ? `ðŸ’³ Parcelamento no cartÃ£o: ${params.description} em ${params.installmentsCount}x de R$ ${(schedule[0].amountCents / 100).toFixed(2)}`
+            : `ðŸ“‹ Parcelamento criado: ${params.description} em ${params.installmentsCount}x de R$ ${(schedule[0].amountCents / 100).toFixed(2)}${totalInterest > 0 ? ` (total com juros: R$ ${(totalWithInterest / 100).toFixed(2)})` : ""}`,
         schedule: params.installmentsCount <= 24 ? schedule : undefined,
         formatted: formatPlanSummary(summary),
       };
@@ -261,11 +261,11 @@ export const createInstallmentPlan: ToolDefinition = {
 };
 
 /**
- * list_installment_plans — List all active installment plans
+ * list_installment_plans â€” List all active installment plans
  */
 export const listInstallmentPlans: ToolDefinition = {
   name: "list_installment_plans",
-  description: "Lista todos os planos de parcelamento (cartão e fora).",
+  description: "Lista todos os planos de parcelamento (cartÃ£o e fora).",
   parameters: Type.Object({
     householdId: Type.String(),
     type: Type.Optional(Type.Union([Type.Literal("credit_card"), Type.Literal("out_of_card")])),
@@ -281,7 +281,7 @@ export const listInstallmentPlans: ToolDefinition = {
         queryParams.push(params.type);
       }
 
-      const result = await pool.query<{ rows: any[] }>(
+      const result = await pool.query<any>(
         `SELECT p.id, p.description, p.total_amount_cents, p.installments_count,
                 p.interest_rate, p.type, p.first_due_date::text, p.start_date::text,
                 a.name as account_name,
@@ -342,24 +342,24 @@ export const listInstallmentPlans: ToolDefinition = {
 
       const lines: string[] = [];
       if (cardPlans.length > 0) {
-        lines.push(`💳 Cartão de crédito (${cardPlans.length}):`);
+        lines.push(`ðŸ’³ CartÃ£o de crÃ©dito (${cardPlans.length}):`);
         for (const p of cardPlans) {
           const interest = p.interestRate > 0 ? ` (${(p.interestRate * 100).toFixed(2)}% juros)` : "";
-          lines.push(`  • ${p.description}: ${p.paidCount}/${p.installmentsCount} pagas — ${fmt(p.remainingCents)} restante${interest}`);
+          lines.push(`  â€¢ ${p.description}: ${p.paidCount}/${p.installmentsCount} pagas â€” ${fmt(p.remainingCents)} restante${interest}`);
         }
       }
       if (otherPlans.length > 0) {
-        lines.push(`📋 Fora do cartão (${otherPlans.length}):`);
+        lines.push(`ðŸ“‹ Fora do cartÃ£o (${otherPlans.length}):`);
         for (const p of otherPlans) {
           const interest = p.interestRate > 0 ? ` (${(p.interestRate * 100).toFixed(2)}% juros)` : "";
-          const status = p.isComplete ? "✅ completo" : `⏳ ${p.scheduledCount} agendada(s)`;
-          lines.push(`  • ${p.description} (${p.accountName}): ${p.paidCount}/${p.installmentsCount} pagas (${status}) — ${fmt(p.remainingCents)} restante${interest}`);
+          const status = p.isComplete ? "âœ… completo" : `â³ ${p.scheduledCount} agendada(s)`;
+          lines.push(`  â€¢ ${p.description} (${p.accountName}): ${p.paidCount}/${p.installmentsCount} pagas (${status}) â€” ${fmt(p.remainingCents)} restante${interest}`);
         }
       }
       if (lines.length === 0) lines.push("Nenhum plano de parcelamento ativo");
 
       const totalRemaining = filtered.reduce((s, p) => s + p.remainingCents, 0);
-      lines.push(`\n💰 Total a pagar: ${fmt(totalRemaining)}`);
+      lines.push(`\nðŸ’° Total a pagar: ${fmt(totalRemaining)}`);
 
       return {
         success: true,

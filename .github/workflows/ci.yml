@@ -68,8 +68,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter pwa typecheck
       - run: pnpm --filter pwa lint
-      - run: pnpm --filter pwa test
       - run: pnpm --filter pwa build
+      - run: pnpm --filter pwa test
 
   # ─── Postgres integration ────────────────────────────────────────────
   postgres:

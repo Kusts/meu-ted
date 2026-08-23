@@ -1,6 +1,6 @@
-/**
- * get_statement_details — Pi tool facade
- * Delegates to generated authenticated HTTP adapter (OpenAPI → API).
+﻿/**
+ * get_statement_details â€” Pi tool facade
+ * Delegates to generated authenticated HTTP adapter (OpenAPI â†’ API).
  */
 import { getStatementDetailsTool as generated } from "../generated/http-tools.js";
 

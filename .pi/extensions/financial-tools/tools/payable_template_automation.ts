@@ -1,6 +1,6 @@
-/**
- * payable_template_automation — Pi tool facade
- * Delegates to generated authenticated HTTP adapter (OpenAPI → API).
+﻿/**
+ * payable_template_automation â€” Pi tool facade
+ * Delegates to generated authenticated HTTP adapter (OpenAPI â†’ API).
  */
 import { autoCreateFromTemplatesTool as generated } from "../generated/http-tools.js";
 

@@ -1,17 +1,17 @@
-/**
- * price-alerts — Alerta de variação de valor em contas recorrentes
+﻿/**
+ * price-alerts â€” Alerta de variaÃ§Ã£o de valor em contas recorrentes
  *
- * Detecta contas cujo valor subiu/desceu mais que X% em relação à média.
- * Útil para:
- * - Conta de luz subiu 40% (clima, bandeira tarifária)
+ * Detecta contas cujo valor subiu/desceu mais que X% em relaÃ§Ã£o Ã  mÃ©dia.
+ * Ãštil para:
+ * - Conta de luz subiu 40% (clima, bandeira tarifÃ¡ria)
  * - Internet subiu (reajuste anual)
- * - Streaming mudou de preço
+ * - Streaming mudou de preÃ§o
  *
- * Compara o valor atual (próxima ocorrência pendente) com a média histórica.
+ * Compara o valor atual (prÃ³xima ocorrÃªncia pendente) com a mÃ©dia histÃ³rica.
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ToolDefinition } from "pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Pool } from "pg";
 
 const HOUSEHOLD_DEFAULT = process.env.HOUSEHOLD_ID || "550e8400-e29b-41d4-a716-446655440000";
@@ -33,7 +33,7 @@ export async function detectPriceAlerts(
   thresholdPercent: number = 15
 ): Promise<PriceAlert[]> {
   // For each recurring account, find the pending/overdue one and historical paid
-  const pendingResult = await pool.query<{ rows: any[] }>(
+  const pendingResult = await pool.query<any>(
     `SELECT id, description, amount_cents, frequency, account_id
      FROM accounts_payable
      WHERE household_id = $1
@@ -49,7 +49,7 @@ export async function detectPriceAlerts(
     const currentCents = parseInt(pending.amount_cents, 10);
 
     // Get last 6 paid occurrences of same description
-    const historyResult = await pool.query<{ rows: any[] }>(
+    const historyResult = await pool.query<any>(
       `SELECT amount_cents, paid_date::text, due_date::text
        FROM accounts_payable
        WHERE household_id = $1
@@ -79,14 +79,14 @@ export async function detectPriceAlerts(
     let possibleReason: string | undefined;
     if (variation > 0) {
       if (pending.frequency === "monthly" && variation > 30) {
-        possibleReason = "Conta mensal subiu muito. Verifique se houve mudança de plano ou tarifa.";
+        possibleReason = "Conta mensal subiu muito. Verifique se houve mudanÃ§a de plano ou tarifa.";
       } else if (pending.frequency === "yearly") {
         possibleReason = "Reajuste anual (comum em assinaturas anuais).";
       } else if (variation > 100) {
-        possibleReason = "Aumento drástico. Vale ligar para o fornecedor.";
+        possibleReason = "Aumento drÃ¡stico. Vale ligar para o fornecedor.";
       }
     } else {
-      possibleReason = "Conta diminuiu. Verifique se a categoria/serviço mudou.";
+      possibleReason = "Conta diminuiu. Verifique se a categoria/serviÃ§o mudou.";
     }
 
     alerts.push({
@@ -107,7 +107,7 @@ export async function detectPriceAlerts(
 
 export const checkPriceAlerts: ToolDefinition = {
   name: "check_price_alerts",
-  description: "Detecta contas recorrentes com valor muito diferente da média histórica.",
+  description: "Detecta contas recorrentes com valor muito diferente da mÃ©dia histÃ³rica.",
   parameters: Type.Object({
     householdId: Type.Optional(Type.String()),
     thresholdPercent: Type.Optional(Type.Integer({ minimum: 5, maximum: 100 })),
@@ -121,17 +121,17 @@ export const checkPriceAlerts: ToolDefinition = {
 
       const lines: string[] = [];
       if (alerts.length === 0) {
-        lines.push(`✅ Nenhum alerta de preço. Todas as contas estão dentro da variação de ${threshold}%.`);
+        lines.push(`âœ… Nenhum alerta de preÃ§o. Todas as contas estÃ£o dentro da variaÃ§Ã£o de ${threshold}%.`);
       } else {
-        lines.push(`🚨 ${alerts.length} conta(s) com variação significativa (>${threshold}%):\n`);
+        lines.push(`ðŸš¨ ${alerts.length} conta(s) com variaÃ§Ã£o significativa (>${threshold}%):\n`);
         for (const a of alerts) {
-          const icon = a.alertLevel === "alert" ? "🚨" : a.alertLevel === "warning" ? "⚠️" : "ℹ️";
-          const direction = a.variationPercent > 0 ? "📈 SUBIU" : "📉 DESCEU";
-          lines.push(`${icon} ${a.description} — ${direction} ${Math.abs(a.variationPercent)}%`);
-          lines.push(`   Atual: ${fmt(a.currentAmountCents)} | Média: ${fmt(a.historicalAverageCents)}`);
-          lines.push(`   Últimos valores: ${a.previousAmounts.map((v) => fmt(v)).join(", ")}`);
+          const icon = a.alertLevel === "alert" ? "ðŸš¨" : a.alertLevel === "warning" ? "âš ï¸" : "â„¹ï¸";
+          const direction = a.variationPercent > 0 ? "ðŸ“ˆ SUBIU" : "ðŸ“‰ DESCEU";
+          lines.push(`${icon} ${a.description} â€” ${direction} ${Math.abs(a.variationPercent)}%`);
+          lines.push(`   Atual: ${fmt(a.currentAmountCents)} | MÃ©dia: ${fmt(a.historicalAverageCents)}`);
+          lines.push(`   Ãšltimos valores: ${a.previousAmounts.map((v) => fmt(v)).join(", ")}`);
           if (a.possibleReason) {
-            lines.push(`   💡 ${a.possibleReason}`);
+            lines.push(`   ðŸ’¡ ${a.possibleReason}`);
           }
           lines.push("");
         }

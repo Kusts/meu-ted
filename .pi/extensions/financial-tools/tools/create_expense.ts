@@ -1,6 +1,6 @@
-/**
- * create_expense — Pi tool facade
- * Delegates to the generated authenticated HTTP adapter (OpenAPI → API).
+﻿/**
+ * create_expense â€” Pi tool facade
+ * Delegates to the generated authenticated HTTP adapter (OpenAPI â†’ API).
  */
 import { createExpenseTool as generated } from "../generated/http-tools.js";
 

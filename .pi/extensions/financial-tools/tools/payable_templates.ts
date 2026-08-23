@@ -1,6 +1,6 @@
-/**
- * payable_templates — Pi tools facade for payable templates
- * Delegates to generated authenticated HTTP adapters (OpenAPI → API).
+﻿/**
+ * payable_templates â€” Pi tools facade for payable templates
+ * Delegates to generated authenticated HTTP adapters (OpenAPI â†’ API).
  */
 import {
   createPayableTemplateTool as generatedCreate,
