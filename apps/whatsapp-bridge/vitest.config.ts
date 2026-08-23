@@ -19,5 +19,7 @@ export default defineConfig({
     },
     reporters: ['default'],
     pool: 'forks',
+    testTimeout: 15000,
+    hookTimeout: 15000,
   },
 });

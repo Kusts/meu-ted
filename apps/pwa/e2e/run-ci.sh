@@ -20,11 +20,15 @@ RESULT=0
 export NEXT_PUBLIC_PI_FINANCE_API_BASE_URL="${NEXT_PUBLIC_PI_FINANCE_API_BASE_URL:-http://127.0.0.1:4010}"
 echo "[run-ci] API base URL: $NEXT_PUBLIC_PI_FINANCE_API_BASE_URL"
 
+FIXTURE_PID=""
+NEXT_PID=""
+SW_PID=""
+
 cleanup() {
   echo "[run-ci] cleaning up..."
-  kill "$FIXTURE_PID" 2>/dev/null || true
-  kill "$NEXT_PID" 2>/dev/null || true
-  kill "$SW_PID" 2>/dev/null || true
+  [ -n "${FIXTURE_PID:-}" ] && kill "$FIXTURE_PID" 2>/dev/null || true
+  [ -n "${NEXT_PID:-}" ] && kill "$NEXT_PID" 2>/dev/null || true
+  [ -n "${SW_PID:-}" ] && kill "$SW_PID" 2>/dev/null || true
   wait 2>/dev/null || true
   exit "$RESULT"
 }

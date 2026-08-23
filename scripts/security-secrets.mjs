@@ -57,21 +57,26 @@ if (process.platform === 'win32') {
   process.exit(0);
 }
 
-const nativeCheck = spawn('gitleaks', ['version'], { stdio: 'ignore', shell: false });
-await new Promise((resolve) => nativeCheck.on('close', resolve));
-if (nativeCheck.exitCode === 0) {
+const checkBinary = (bin, args) =>
+  new Promise((resolve) => {
+    const proc = spawn(bin, args, { stdio: 'ignore', shell: false });
+    proc.on('error', () => resolve(false));
+    proc.on('close', (code) => resolve(code === 0));
+  });
+
+const hasNative = await checkBinary('gitleaks', ['version']);
+if (hasNative) {
   const result = await runWithTimeout('gitleaks', nativeArgs);
   process.exit(result.status ?? 1);
 }
 
-const dockerUp = spawn('docker', ['info'], { stdio: 'ignore', shell: false });
-await new Promise((resolve) => dockerUp.on('close', resolve));
-if (dockerUp.exitCode !== 0) {
-  console.log('Docker daemon not running locally. Skipping containerized gitleaks (verified in CI).');
+const hasDocker = await checkBinary('docker', ['info']);
+if (!hasDocker) {
+  console.log('Docker daemon not running and native gitleaks not found. Skipping containerized gitleaks.');
   process.exit(0);
 }
 
-const result = await runWithTimeout("docker", containerArgs);
+const result = await runWithTimeout('docker', containerArgs);
 if (result.error) {
   console.error(`Unable to run Docker/Gitleaks: ${result.error.message}`);
   process.exit(1);
