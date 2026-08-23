@@ -28,7 +28,7 @@ jobs:
     strategy:
       matrix:
         node-version: [20]
-        pnpm-version: [9]
+        pnpm-version: [10]
 
     steps:
       - name: Checkout
@@ -103,7 +103,7 @@ jobs:
     strategy:
       matrix:
         node-version: [20]
-        pnpm-version: [9]
+        pnpm-version: [10]
 
     steps:
       - name: Checkout

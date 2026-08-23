@@ -18,7 +18,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: volta-cli/action@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter pi-finance-api lint
       - run: pnpm --filter pi-finance-api typecheck
@@ -32,7 +38,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: volta-cli/action@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @pi-financeiro/whatsapp-bridge lint
       - run: pnpm --filter @pi-financeiro/whatsapp-bridge typecheck
@@ -46,7 +58,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: volta-cli/action@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter pwa typecheck
       - run: pnpm --filter pwa lint
@@ -74,7 +92,13 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
-      - uses: volta-cli/action@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - name: Create disposable database marker
         run: |
@@ -105,7 +129,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: volta-cli/action@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm capabilities:check
       - run: node --test scripts/check-tool-capability-inventory.test.mjs
@@ -119,7 +149,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: volta-cli/action@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm write-policy:check
       - run: node --test scripts/check-write-policy.test.mjs
@@ -133,7 +169,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: volta-cli/action@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: |
           if [ -n "$GITHUB_BASE_SHA" ]; then
@@ -152,7 +194,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: volta-cli/action@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm security:secrets
       - run: pnpm security:deps
@@ -170,7 +218,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: volta-cli/action@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm docs:lint
       - run: pnpm plans:check
