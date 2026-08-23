@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastVerified": "2026-08-18",
+  "lastVerified": "2026-08-23",
   "activeWorkspaces": [
     "apps/api",
     "apps/pwa",
@@ -30,8 +30,8 @@
   },
   "counts": {
     "apiRoutes": 95,
-    "databaseMigrations": 30,
-    "latestMigration": "V030__bridge_phone_identity.sql",
+    "databaseMigrations": 33,
+    "latestMigration": "V033__card_purchase_cancellation.sql",
     "capabilitiesTotal": 72,
     "capabilitiesInApiMode": 51
   },
@@ -48,3 +48,4 @@
     "database": "PostgreSQL 16+"
   }
 }
+

@@ -1,7 +1,7 @@
 # Estado do projeto e próximos passos
 
-**Data:** 2026-07-28
-**Branch:** `fase-0-preparo` (17 commits à frente de `main`, working tree limpo)
+**Data:** 2026-08-23
+**Branch:** `fase-0-preparo` (95 commits à frente de `main`, working tree com 30 modificados e 232 untracked, total 262 paths per `docs/recovery/2026-08-23-working-tree-inventory.md`)
 **Propósito:** documento único e estável. Substitui as recomendações soltas dadas ao longo da sessão.
 
 ---
@@ -124,11 +124,10 @@ passou a ser padrão em todo spec delegado, não exceção.
 
 | Item | Estado |
 |---|---|
-| 0.2 — lembrete via PM2 | `ecosystem.reminder.cjs` **não foi criado**. Só planejado |
-| 0.3 — portar 8 features do `.pi` | Não iniciado. Precisa de plano próprio |
-| 0.4 — spike Cloudflare Access | Não iniciado. **Define o formato da Fase 1** |
-| Push / PR da branch | Não feito. 17 commits parados |
-| Validação em CI | Impossível até o push |
+| P3 — Descomissionamento do WhatsApp Bridge (T+36h) | Em progresso planejado: desligamento de canais legados com transição para Web Push e assistente PWA |
+| Deploy e execução de migrações V032/V033 na VPS | Migrações V032 (`legacy_card_purchases_household_id`) e V033 (`card_purchase_cancellation`) implementadas e testadas localmente; pendente aplicação na VPS Hostinger |
+| Push / PR da branch `fase-0-preparo` | 95 commits à frente da `main`; working tree consolidado (29 modificados, 231 untracked per inventário de 2026-08-23) aguardando autorização |
+| Validação de staging e cutover final | Validação end-to-end integrada após deploy na VPS |
 
 ---
 
