@@ -139,8 +139,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm capabilities:check
       - run: node --test scripts/check-tool-capability-inventory.test.mjs
-      - run: pnpm --dir .pi/extensions/financial-tools test
-      - run: pnpm --dir .pi/extensions/financial-tools typecheck
+      - run: pnpm exec tsx --test .pi/extensions/financial-tools/api-client-context.test.ts .pi/extensions/financial-tools/api-migration.test.ts .pi/extensions/financial-tools/pending-tools.test.ts .pi/extensions/financial-tools/pending-write-adapters.test.ts .pi/extensions/financial-tools/tool-schema.test.ts
+      - run: pnpm exec tsc -p .pi/extensions/financial-tools/tsconfig.json --noEmit
 
   # ─── Write/mutator policy gate ───────────────────────────────────────
   write-policy:

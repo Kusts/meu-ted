@@ -1,6 +1,30 @@
-﻿// Polyfill for undici in environments where node:worker_threads lacks markAsUncloneable
-import * as workerThreads from 'node:worker_threads';
+﻿import { createRequire } from 'node:module';
 
-if (workerThreads && typeof (workerThreads as any).markAsUncloneable !== 'function') {
-  (workerThreads as any).markAsUncloneable = () => {};
-}
+try {
+  const require = createRequire(import.meta.url);
+  const wt = require('node:worker_threads');
+  if (wt && typeof wt.markAsUncloneable !== 'function') {
+    try {
+      Object.defineProperty(wt, 'markAsUncloneable', {
+        value: () => {},
+        configurable: true,
+        writable: true,
+      });
+    } catch {
+      // ignore if non-configurable
+    }
+  }
+} catch {}
+
+try {
+  const symbols = [Symbol.for('nodejs.webidl'), Symbol.for('undici.webidl')];
+  for (const sym of symbols) {
+    const webidl = (globalThis as any)[sym];
+    if (webidl) {
+      if (!webidl.util) webidl.util = {};
+      if (typeof webidl.util.markAsUncloneable !== 'function') {
+        webidl.util.markAsUncloneable = () => {};
+      }
+    }
+  }
+} catch {}
