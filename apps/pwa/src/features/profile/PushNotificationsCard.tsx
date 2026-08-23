@@ -4,14 +4,15 @@ import { useEffect, useState } from "react";
 import { disablePush, enablePush, getPushState, type PushState } from "@/lib/api/push-client";
 
 export default function PushNotificationsCard({ workspaceId }: { workspaceId?: string }) {
-  const [state, setState] = useState<PushState | "loading">("loading");
+  const [state, setState] = useState<PushState | "loading">(
+    workspaceId ? "loading" : "unsupported",
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     if (!workspaceId) {
-      setState("unsupported");
       return () => { cancelled = true; };
     }
     void getPushState()

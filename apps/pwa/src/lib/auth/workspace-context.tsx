@@ -45,9 +45,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   const refreshWorkspaces = useCallback(async () => {
-    setError(null);
     try {
       const next = await fetchWorkspaces();
+      setError(null);
       setWorkspaces(next);
       const current = activeWorkspaceIdRef.current;
       const selected = next.some((workspace) => workspace.id === current) ? current : next[0]?.id;
@@ -70,14 +70,36 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    void refreshWorkspaces().catch(() => {
-      if (cancelled) return;
-    });
+    async function load() {
+      try {
+        const next = await fetchWorkspaces();
+        if (cancelled) return;
+        setWorkspaces(next);
+        const current = activeWorkspaceIdRef.current;
+        const selected = next.some((workspace) => workspace.id === current) ? current : next[0]?.id;
+        if (current && selected !== current) {
+          setLoading(true);
+          closeAllSockets("workspace access revoked");
+          await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true });
+        }
+        activeWorkspaceIdRef.current = selected;
+        setActiveWorkspaceIdState(selected);
+        if (selected) setActiveWorkspaceId(selected);
+        else clearActiveWorkspaceId();
+      } catch (cause) {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : "Não foi possível carregar os workspaces.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void load();
     return () => {
       cancelled = true;
       clearActiveWorkspaceId();
     };
-  }, [refreshWorkspaces]);
+  }, []);
 
   const activeWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null,
@@ -91,15 +113,35 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
     setMembersLoading(true);
     try {
-      setMembers(await fetchWorkspaceMembers(activeWorkspace.id));
+      const nextMembers = await fetchWorkspaceMembers(activeWorkspace.id);
+      setMembers(nextMembers);
+    } catch {
+      setMembers([]);
     } finally {
       setMembersLoading(false);
     }
   }, [activeWorkspace]);
 
   useEffect(() => {
-    void refreshMembers().catch(() => setMembers([]));
-  }, [refreshMembers]);
+    let cancelled = false;
+    if (!activeWorkspace) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    async function loadMembers(workspaceId: string) {
+      try {
+        const nextMembers = await fetchWorkspaceMembers(workspaceId);
+        if (!cancelled) setMembers(nextMembers);
+      } catch {
+        if (!cancelled) setMembers([]);
+      }
+    }
+    void loadMembers(activeWorkspace.id);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspace]);
 
   const selectWorkspace = useCallback(async (workspaceId: string) => {
     if (!workspaces.some((workspace) => workspace.id === workspaceId)) return;

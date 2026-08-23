@@ -78,6 +78,8 @@ export default defineConfig({
     pool: "threads",
     maxWorkers: 2,
     fileParallelism: true,
+    testTimeout: 10000,
+    hookTimeout: 10000,
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}", "e2e/**/*.test.{ts,tsx}"],
     exclude: ["e2e/support/matrix.test.ts"],

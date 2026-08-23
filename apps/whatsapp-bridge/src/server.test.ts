@@ -45,8 +45,8 @@ function makeSender(): ResponseSender {
 describe('server /health', () => {
   let app: Awaited<ReturnType<typeof createApp>>;
 
-  afterEach(() => {
-    if (app) app.close().catch(() => {/* ignore */});
+  afterEach(async () => {
+    if (app) await app.close();
   });
 
   it('GET /health returns {status:"ok"} immediately — createApp does NOT prewarm Pi', async () => {
@@ -58,21 +58,15 @@ describe('server /health', () => {
     // Pass piClient explicitly — same pattern as main()
     app = createApp({ piClient: pi, registry: reg, store, sender });
 
-    await app.listen({ port: 0, host: '127.0.0.1' });
-    const address = (app as unknown as { server: { address(): AddressInfo | string | null } }).server.address() as AddressInfo;
+    const res = await app.inject({
+      method: 'GET',
+      url: '/health',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: 'ok' });
 
-    try {
-      // Health responds immediately — warmup is deferred to main(), not createApp
-      const res = await fetch(`http://127.0.0.1:${address.port}/health`);
-      expect(res.status).toBe(200);
-      const json = await res.json() as { status: string };
-      expect(json).toEqual({ status: 'ok' });
-
-      // Verify Pi warmup was NOT called inside createApp
-      expect(pi.send).not.toHaveBeenCalled();
-    } finally {
-      await app.close();
-    }
+    // Verify Pi warmup was NOT called inside createApp
+    expect(pi.send).not.toHaveBeenCalled();
   });
 
   it('createApp uses piClient from options when provided', async () => {
@@ -96,8 +90,8 @@ describe('server /webhooks/evolution', () => {
   let pi: PiClient;
   let sender: ReturnType<typeof makeSender>;
 
-  afterEach(() => {
-    if (app) app.close().catch(() => {/* ignore */});
+  afterEach(async () => {
+    if (app) await app.close();
   });
 
   const directMessagePayload = {
@@ -134,24 +128,18 @@ describe('server /webhooks/evolution', () => {
       allowDirectMessages: false,
     });
 
-    await app.listen({ port: 0, host: '127.0.0.1' });
-    const address = (app as unknown as { server: { address(): AddressInfo | string | null } }).server.address() as AddressInfo;
-
-    try {
-      const res = await fetch(`http://127.0.0.1:${address.port}/webhooks/evolution`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(directMessagePayload),
-      });
-      expect(res.status).toBe(200);
-      const json = await res.json() as { status: string; reason?: string };
-      expect(json.status).toBe('ignored');
-      expect(json.reason).toBe('mensagem direta ignorada');
-      // Pi was never called
-      expect(pi.send).not.toHaveBeenCalled();
-    } finally {
-      await app.close();
-    }
+    const res = await app.inject({
+      method: 'POST',
+      url: '/webhooks/evolution',
+      headers: { 'Content-Type': 'application/json' },
+      payload: directMessagePayload,
+    });
+    expect(res.statusCode).toBe(200);
+    const json = res.json() as { status: string; reason?: string };
+    expect(json.status).toBe('ignored');
+    expect(json.reason).toBe('mensagem direta ignorada');
+    // Pi was never called
+    expect(pi.send).not.toHaveBeenCalled();
   });
 
   it('allows direct chat when allowDirectMessages is true via AppOptions', async () => {
@@ -169,22 +157,16 @@ describe('server /webhooks/evolution', () => {
       allowDirectMessages: true,
     });
 
-    await app.listen({ port: 0, host: '127.0.0.1' });
-    const address = (app as unknown as { server: { address(): AddressInfo | string | null } }).server.address() as AddressInfo;
-
-    try {
-      const res = await fetch(`http://127.0.0.1:${address.port}/webhooks/evolution`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(directMessagePayload),
-      });
-      expect(res.status).toBe(200);
-      const json = await res.json() as { status: string; reason?: string };
-      expect(json.status).toBe('forwarded');
-      expect(pi.send).toHaveBeenCalledTimes(1);
-    } finally {
-      await app.close();
-    }
+    const res = await app.inject({
+      method: 'POST',
+      url: '/webhooks/evolution',
+      headers: { 'Content-Type': 'application/json' },
+      payload: directMessagePayload,
+    });
+    expect(res.statusCode).toBe(200);
+    const json = res.json() as { status: string; reason?: string };
+    expect(json.status).toBe('forwarded');
+    expect(pi.send).toHaveBeenCalledTimes(1);
   });
 
   it('forwards group message when allowDirectMessages is false (group-only mode)', async () => {
@@ -228,21 +210,15 @@ describe('server /webhooks/evolution', () => {
       allowDirectMessages: false,
     });
 
-    await app.listen({ port: 0, host: '127.0.0.1' });
-    const address = (app as unknown as { server: { address(): AddressInfo | string | null } }).server.address() as AddressInfo;
-
-    try {
-      const res = await fetch(`http://127.0.0.1:${address.port}/webhooks/evolution`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(groupPayload),
-      });
-      expect(res.status).toBe(200);
-      const json = await res.json() as { status: string; reason?: string };
-      expect(json.status).toBe('forwarded');
-      expect(pi.send).toHaveBeenCalledTimes(1);
-    } finally {
-      await app.close();
-    }
+    const res = await app.inject({
+      method: 'POST',
+      url: '/webhooks/evolution',
+      headers: { 'Content-Type': 'application/json' },
+      payload: groupPayload,
+    });
+    expect(res.statusCode).toBe(200);
+    const json = res.json() as { status: string; reason?: string };
+    expect(json.status).toBe('forwarded');
+    expect(pi.send).toHaveBeenCalledTimes(1);
   });
 });

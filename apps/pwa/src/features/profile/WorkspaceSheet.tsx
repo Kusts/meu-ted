@@ -6,6 +6,12 @@ import { useWorkspaceSafe } from "@/lib/auth/workspace-context";
 
 export default function WorkspaceSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const workspace = useWorkspaceSafe();
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteToken, setInviteToken] = useState("");
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   if (!workspace) return null;
   const {
     workspaces,
@@ -19,11 +25,6 @@ export default function WorkspaceSheet({ open, onClose }: { open: boolean; onClo
     removeMember,
     leave,
   } = workspace;
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteToken, setInviteToken] = useState("");
-  const [workspaceName, setWorkspaceName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   async function run(action: () => Promise<unknown>, success?: () => void) {
     setBusy(true);

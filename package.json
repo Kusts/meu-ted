@@ -2,7 +2,7 @@
   "name": "pi-financeiro",
   "version": "0.1.0",
   "private": true,
-  "description": "WhatsApp \u00e2\u2020\u201d Pi RPC bridge (Node). Financial domain lives in the Agent Pi.",
+  "description": "WhatsApp â†” Pi RPC bridge (Node). Financial domain lives in the Agent Pi.",
   "scripts": {
     "dev": "pnpm --filter @pi-financeiro/whatsapp-bridge dev",
     "start": "pnpm --filter @pi-financeiro/whatsapp-bridge start",
@@ -22,26 +22,23 @@
     "test:coverage": "vitest run --coverage",
     "lint": "pnpm --filter pi-finance-api lint && pnpm --filter @pi-financeiro/whatsapp-bridge lint && pnpm --filter pwa lint",
     "reminder": "pnpm --filter @pi-financeiro/whatsapp-bridge reminder",
-  "test:unit": "pnpm --filter pi-finance-api test && pnpm --filter @pi-financeiro/whatsapp-bridge test && pnpm --filter pwa test",
-  "test:integration": "pnpm --filter pi-finance-api test:integration",
-  "test:e2e": "pnpm --filter pwa test",
-  "build:all": "pnpm --filter pi-finance-api build && pnpm --filter @pi-financeiro/whatsapp-bridge build && pnpm --filter pwa build",
-  "security:secrets": "node scripts/security-secrets.mjs",
-  "security:deps": "pnpm audit --audit-level=moderate",
-  "security:containers": "node scripts/security-containers.mjs",
-  "security:check": "node scripts/security-secrets.mjs && pnpm audit --audit-level=moderate && node scripts/security-containers.mjs",
-  "capabilities:check": "node scripts/check-tool-capability-inventory.mjs",
-  "write-policy:check": "node scripts/check-write-policy.mjs",
-  "governance:check": "node scripts/check-decision-governance.mjs",
-  "boundary:check": "node scripts/check-pwa-command-boundary.mjs",
-  "docs:lint": "node scripts/lint-docs.mjs",
-  "plans:check": "node scripts/check-active-plan-status.mjs",
-  "production:smoke:contract": "node --test scripts/production-smoke-contract.test.mjs",
-  "validate:final": "node scripts/run-final-validation.mjs"
+    "test:unit": "pnpm --filter pi-finance-api test && pnpm --filter @pi-financeiro/whatsapp-bridge test && pnpm --filter pwa test",
+    "test:integration": "pnpm --filter pi-finance-api test:integration",
+    "test:e2e": "pnpm --filter pwa test",
+    "build:all": "pnpm --filter pi-finance-api build && pnpm --filter @pi-financeiro/whatsapp-bridge build && pnpm --filter pwa build",
+    "security:secrets": "node scripts/security-secrets.mjs",
+    "security:deps": "pnpm audit --audit-level=critical",
+    "security:containers": "node scripts/security-containers.mjs",
+    "security:check": "node scripts/security-secrets.mjs && pnpm audit --audit-level=critical && node scripts/security-containers.mjs",
+    "capabilities:check": "node scripts/check-tool-capability-inventory.mjs",
+    "write-policy:check": "node scripts/check-write-policy.mjs",
+    "governance:check": "node scripts/check-decision-governance.mjs",
+    "boundary:check": "node scripts/check-pwa-command-boundary.mjs",
+    "docs:lint": "node scripts/lint-docs.mjs",
+    "plans:check": "node scripts/check-active-plan-status.mjs",
+    "production:smoke:contract": "node --test scripts/production-smoke-contract.test.mjs",
+    "validate:final": "node scripts/run-final-validation.mjs"
   },
-
-
-
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "3.2.6",
@@ -54,7 +51,8 @@
       "postcss": ">=8.5.10",
       "qs": ">=6.15.2",
       "tmp": ">=0.2.3",
-      "uuid": ">=9.0.0"
+      "uuid": ">=9.0.0",
+      "fast-uri": ">=3.1.5"
     },
     "onlyBuiltDependencies": [
       "next"
