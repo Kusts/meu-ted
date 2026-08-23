@@ -89,7 +89,7 @@ export default defineConfig({
       command: `pnpm exec tsx e2e/fixture-api/server.ts --port ${FIXTURE_PORT}`,
       port: FIXTURE_PORT,
       cwd: PWA_ROOT,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: true,
       timeout: 90000,
     },
     {
@@ -97,7 +97,7 @@ export default defineConfig({
       command: `node e2e/standalone-server.mjs`,
       port: NEXT_PORT,
       cwd: PWA_APP_DIR,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: true,
       timeout: 90000,
       env: {
         ...process.env,
@@ -111,7 +111,7 @@ export default defineConfig({
       command: `pnpm exec tsx e2e/sw-harness/server.ts --target=${NEXT_PORT} --port=${HARNESS_PORT}`,
       port: HARNESS_PORT,
       cwd: PWA_ROOT,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: true,
       timeout: 90000,
     },
   ],

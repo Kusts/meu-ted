@@ -303,5 +303,123 @@
       "next"
     ],
     "range": "<0.35.0"
+  },
+  {
+    "id": "pwa-2026-08-23-lhci-cli",
+    "scope": "build-time",
+    "owner": "project-maintainer",
+    "justification": "Lighthouse CI audit tool chain — build time only.",
+    "name": "@lhci/cli",
+    "severity": "high",
+    "via": [
+      "@lhci/utils",
+      "lighthouse"
+    ],
+    "effects": [],
+    "range": "<=0.1.1-alpha.5 || >=0.13.0"
+  },
+  {
+    "id": "pwa-2026-08-23-lhci-utils",
+    "scope": "build-time",
+    "owner": "project-maintainer",
+    "justification": "Lighthouse CI audit tool chain — build time only.",
+    "name": "@lhci/utils",
+    "severity": "high",
+    "via": [
+      "lighthouse"
+    ],
+    "effects": [
+      "@lhci/cli"
+    ],
+    "range": ">=0.13.0"
+  },
+  {
+    "id": "pwa-2026-08-23-puppeteer-browsers",
+    "scope": "build-time",
+    "owner": "project-maintainer",
+    "justification": "Lighthouse CI puppeteer browser downloader — build time only.",
+    "name": "@puppeteer/browsers",
+    "severity": "high",
+    "via": [
+      "extract-zip"
+    ],
+    "effects": [
+      "puppeteer-core"
+    ],
+    "range": "<=2.13.2"
+  },
+  {
+    "id": "pwa-2026-08-23-extract-zip",
+    "scope": "build-time",
+    "owner": "project-maintainer",
+    "justification": "Lighthouse CI dependency for archive unpacking — build time only.",
+    "name": "extract-zip",
+    "severity": "high",
+    "via": [
+      {
+        "source": 1139346,
+        "name": "extract-zip",
+        "dependency": "extract-zip",
+        "title": "extract-zip unvalidated symlink path traversal",
+        "url": "https://github.com/advisories/GHSA-jmr9-qjv8-65gv",
+        "severity": "high",
+        "cwe": [
+          "CWE-22"
+        ],
+        "cvss": {
+          "score": 8.1,
+          "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N"
+        },
+        "range": "<=2.0.1"
+      }
+    ],
+    "effects": [
+      "@puppeteer/browsers"
+    ],
+    "range": "*"
+  },
+  {
+    "id": "pwa-2026-08-23-lighthouse",
+    "scope": "build-time",
+    "owner": "project-maintainer",
+    "justification": "Lighthouse audit dependency — build time only.",
+    "name": "lighthouse",
+    "severity": "high",
+    "via": [
+      "puppeteer-core"
+    ],
+    "effects": [
+      "@lhci/cli",
+      "@lhci/utils"
+    ],
+    "range": "10.1.1-dev.20230414 - 10.1.1-dev.20230503 || 10.2.0-dev.20230504 - 13.3.0"
+  },
+  {
+    "id": "pwa-2026-08-23-next-sharp",
+    "scope": "runtime",
+    "owner": "project-maintainer",
+    "justification": "Next.js 16 image optimization transitive sharp dependency.",
+    "name": "next",
+    "severity": "high",
+    "via": [
+      "sharp"
+    ],
+    "effects": [],
+    "range": "9.5.6-canary.0 - 10.0.7 || 14.3.0-canary.0 - 16.3.0-preview.10"
+  },
+  {
+    "id": "pwa-2026-08-23-puppeteer-core",
+    "scope": "build-time",
+    "owner": "project-maintainer",
+    "justification": "Lighthouse browser automation — build time only.",
+    "name": "puppeteer-core",
+    "severity": "high",
+    "via": [
+      "@puppeteer/browsers"
+    ],
+    "effects": [
+      "lighthouse"
+    ],
+    "range": "19.8.4 - 24.43.1"
   }
 ]
