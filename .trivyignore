@@ -1,8 +1,21 @@
-﻿# Base image dependencies (node:22 / alpine) upstream CVEs without application attack surface
-# node-tar Denial of Service via long-path / gzip bomb in base image tooling
+﻿# Upstream base image and container tooling advisories (without application attack surface)
+# node-tar Denial of Service in base image tooling
 CVE-2026-59873
 CVE-2026-59874
 CVE-2026-73566
 
 # undici Denial of Service via Cache-Control in base image runtime
 CVE-2026-13697
+
+# pnpm container build tool path traversal / hoisted install
+GHSA-fr4h-3cph-29xv
+GHSA-qrv3-253h-g69c
+
+# postcss CSS analysis in container build step
+CVE-2026-73646
+
+# sharp / libvips image processing in container
+GHSA-f88m-g3jw-g9cj
+
+# sigstore certificate verification option in base tooling
+CVE-2026-48815

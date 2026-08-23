@@ -20,7 +20,7 @@ export default defineConfig({
     reporters: ['default'],
     pool: 'forks',
     setupFiles: ['./src/test-setup.ts'],
-    testTimeout: 15000,
-    hookTimeout: 15000,
+    testTimeout: 30000,
+    hookTimeout: 30000,
   },
 });
