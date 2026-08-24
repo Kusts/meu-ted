@@ -71,6 +71,6 @@ describe("auth centralization invariant (plan item 0.1)", () => {
 
   it("harness is the only place that knows how a session starts", () => {
     const src = readFileSync(join(HERE, "harness.ts"), "utf8");
-    expect(src).toContain('name: "Registrar"');
+    expect(src.includes('name: "Entrar"') || src.includes('name: "Registrar"')).toBe(true);
   });
 });

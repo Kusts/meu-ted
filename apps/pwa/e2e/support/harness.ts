@@ -69,14 +69,15 @@ export async function authenticate(
 
   const emailInput = page.getByLabel("E-mail");
   const passwordInput = page.getByLabel("Senha");
-  const submitBtn = page.getByRole("button", { name: /Entrar|Registrar/i });
+  const loginBtn = page.getByRole("button", { name: "Entrar" });
+  const registerBtn = page.getByRole("button", { name: "Registrar" });
 
   if (await emailInput.isVisible({ timeout: 4000 }).catch(() => false)) {
     await emailInput.fill("test@example.com");
     await passwordInput.fill("password123");
-    await submitBtn.click();
-  } else if (await submitBtn.isVisible({ timeout: 4000 }).catch(() => false)) {
-    await submitBtn.click();
+    await loginBtn.click();
+  } else if (await registerBtn.isVisible({ timeout: 4000 }).catch(() => false)) {
+    await registerBtn.click();
   }
 
   await expect(fab).toBeVisible({ timeout });
