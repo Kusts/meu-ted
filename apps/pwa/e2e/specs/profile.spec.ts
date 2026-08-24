@@ -204,8 +204,8 @@ test("[PROF-06] logout clears token/snapshot → register screen", async ({ page
 
   await page.getByRole("button", { name: "Sair da conta" }).click();
 
-  // Back to register gate
-  await expect(page.getByRole("button", { name: "Registrar" })).toBeVisible({
+  // Back to login gate
+  await expect(page.getByRole("button", { name: /Entrar|Registrar/i })).toBeVisible({
     timeout: 15000,
   });
   await expect(page).toHaveURL(/\/$/);

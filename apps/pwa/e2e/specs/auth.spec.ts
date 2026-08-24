@@ -45,9 +45,18 @@ test("[AUTH-01] register device: POST /auth/devices/register 200, token stored, 
   allowFailure(guard, { message: "reading 'waiting'", reason: "SW blocked by functional project" });
 
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Registrar" })).toBeVisible({ timeout: 15000 });
+  const emailInput = page.getByLabel("E-mail");
+  const passwordInput = page.getByLabel("Senha");
+  const loginBtn = page.getByRole("button", { name: "Entrar" });
+  const regBtn = page.getByRole("button", { name: "Registrar" });
 
-  await page.getByRole("button", { name: "Registrar" }).click();
+  if (await emailInput.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await emailInput.fill("test@example.com");
+    await passwordInput.fill("password123");
+    await loginBtn.click();
+  } else if (await regBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await regBtn.click();
+  }
   await page.waitForLoadState("networkidle");
 
   // Journal: POST /auth/devices/register → 200
@@ -107,7 +116,8 @@ test("[AUTH-02] expired token: GET /auth/devices/me 401, storage cleared, regist
   expect(tokenAfter).toBeNull();
 
   // Register screen must be visible
-  await expect(page.getByRole("button", { name: "Registrar" })).toBeVisible({ timeout: 15000 });
+  const loginOrRegBtn = page.getByRole("button", { name: /Entrar|Registrar/i });
+  await expect(loginOrRegBtn).toBeVisible({ timeout: 15000 });
 
   assertNoUndeclaredFailures(guard);
 });

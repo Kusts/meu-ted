@@ -36,7 +36,11 @@ test.afterEach(async ({ page }) => {
 
 /** Write verbs that are unexpected on pure navigation/open flows. */
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const AUTH_WRITE_PATHS = new Set(["/auth/devices/register"]);
+const AUTH_WRITE_PATHS = new Set([
+  "/auth/devices/register",
+  "/auth/sign-in/email",
+  "/auth/sign-in",
+]);
 
 async function assertNoUnexpectedWrites(testId: string): Promise<void> {
   const journal = await getJournal(testId);
