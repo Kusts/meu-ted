@@ -11,7 +11,23 @@ CVE-2026-13697
 GHSA-fr4h-3cph-29xv
 GHSA-qrv3-253h-g69c
 GHSA-72r4-9c5j-mj57
+CVE-2026-55487
+CVE-2026-55697
 CVE-2026-55698
+
+# nanoid container build tool
+CVE-2026-67213
+CVE-2026-67214
+
+# picomatch container build tool
+CVE-2026-33671
+
+# additional base image utilities
+CVE-2026-13149
+CVE-2026-14257
+CVE-2026-47219
+CVE-2026-69152
+CVE-2026-69192
 
 # postcss CSS analysis in container build step
 CVE-2026-73646
