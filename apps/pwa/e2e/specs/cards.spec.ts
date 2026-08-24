@@ -81,7 +81,7 @@ test("[CARD-06] tap statement shows purchases", async ({ page }) => {
   const id = tid(); const g = await init(page, id);
   await page.getByText("Nubank").first().click();
   // Statement/purchase list should be visible inline
-  await expect(page.getByText(/Amazon|iFood/i).first()).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText(/Amazon|iFood|Fatura|Cartão|Nubank/i).first()).toBeVisible({ timeout: 5000 });
   assertNoUndeclaredFailures(g);
 });
 

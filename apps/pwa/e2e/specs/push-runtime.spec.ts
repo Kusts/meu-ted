@@ -44,6 +44,7 @@ async function waitForServiceWorker(page: Page): Promise<void> {
 async function openPushCard(
   page: Page,
 ): Promise<ReturnType<Page["getByRole"]>> {
+  await page.goto("/perfil");
   await page.getByRole("button", { name: "Notificações" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
