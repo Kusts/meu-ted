@@ -21,7 +21,7 @@ export function generateRuntimeFacts() {
 
   return {
     version: "1.0.0",
-    lastVerified: "2026-08-18",
+    lastVerified: "2026-08-24",
     activeWorkspaces: ["apps/api", "apps/pwa", "apps/agent", "apps/whatsapp-bridge"],
     apps: {
       api: {

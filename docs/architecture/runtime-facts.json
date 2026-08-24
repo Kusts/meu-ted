@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastVerified": "2026-08-23",
+  "lastVerified": "2026-08-24",
   "activeWorkspaces": [
     "apps/api",
     "apps/pwa",
@@ -48,4 +48,3 @@
     "database": "PostgreSQL 16+"
   }
 }
-
