@@ -1,4 +1,4 @@
-﻿/**
+/**
  * create_recurring_purchase â€” Pi tools facade for recurring purchases
  * Delegates to generated authenticated HTTP adapters (OpenAPI â†’ API).
  */
@@ -6,7 +6,7 @@ import {
   createRecurringPurchaseTool as generatedCreate,
   listRecurringPurchasesTool as generatedList,
 } from "../generated/http-tools.js";
-import { Type } from "typebox";
+import { Type } from "@sinclair/typebox";
 import { capabilityDisabled } from "./api-tool-helpers.js";
 
 export const createRecurringPurchase = Object.assign(generatedCreate, { name: "create_recurring_purchase" });

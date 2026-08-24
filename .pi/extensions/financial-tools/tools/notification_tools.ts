@@ -1,4 +1,4 @@
-﻿/**
+/**
  * notification_tools â€” Pi tools facade for notifications
  * Delegates to generated authenticated HTTP adapters (OpenAPI â†’ API).
  */
@@ -6,7 +6,7 @@ import {
   configureNotificationTool as generatedConfigure,
   listNotificationsTool as generatedList,
 } from "../generated/http-tools.js";
-import { Type } from "typebox";
+import { Type } from "@sinclair/typebox";
 import { capabilityDisabled } from "./api-tool-helpers.js";
 
 export const configureNotification = Object.assign(generatedConfigure, { name: "configure_notification" });

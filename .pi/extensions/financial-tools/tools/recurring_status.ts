@@ -1,4 +1,4 @@
-﻿import { Type } from "typebox";
+import { Type } from "@sinclair/typebox";
 import { capabilityDisabled } from "./api-tool-helpers.js";
 export const postDueRecurring = { name: "post_due_recurring", description: "Publica recorrÃªncias devidas.", parameters: Type.Object({ householdId: Type.Optional(Type.String()), date: Type.Optional(Type.String()) }), execute: async () => capabilityDisabled("post_due_recurring") ?? { success: false, reason: "Capability post_due_recurring has no API route yet" } };
 export const listRecurringPurchases = { name: "list_recurring_purchases", description: "Lista compras recorrentes.", parameters: Type.Object({ householdId: Type.Optional(Type.String()), status: Type.Optional(Type.String()) }), execute: async () => capabilityDisabled("list_recurring_purchases") ?? { success: false, reason: "Capability list_recurring_purchases has no API route yet" } };

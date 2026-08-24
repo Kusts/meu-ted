@@ -15,8 +15,7 @@
   "license": "MIT",
   "dependencies": {
     "@sinclair/typebox": "^0.34.49",
-    "pg": "^8.21.0",
-    "typebox": "^1.2.1"
+    "pg": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^25.9.2",

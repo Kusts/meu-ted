@@ -1,4 +1,4 @@
-﻿/**
+/**
  * goals_budgets â€” Pi tools facade for goals and budgets
  * Delegates to generated authenticated HTTP adapters (OpenAPI â†’ API).
  */
@@ -13,7 +13,7 @@ import {
   budgetTrendsTool as generatedBudgetTrends,
   updateBudgetTool as generatedUpdateBudget,
 } from "../generated/http-tools.js";
-import { Type } from "typebox";
+import { Type } from "@sinclair/typebox";
 import { capabilityDisabled } from "./api-tool-helpers.js";
 
 export const createGoal = Object.assign(generatedCreateGoal, { name: "create_goal" });

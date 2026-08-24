@@ -1,4 +1,4 @@
-﻿import { Type } from "typebox";
+import { Type } from "@sinclair/typebox";
 import { capabilityDisabled } from "./api-tool-helpers.js";
 export const deleteNotification = { name: "delete_notification", description: "Remove uma notificaÃ§Ã£o.", parameters: Type.Object({ householdId: Type.Optional(Type.String()), settingId: Type.Optional(Type.String()), chatId: Type.Optional(Type.String()), notificationType: Type.Optional(Type.String()) }), execute: async () => capabilityDisabled("delete_notification") ?? { success: false, reason: "Capability delete_notification has no DELETE API route yet" } };
 export const processNotifications = { name: "process_notifications", description: "Processa notificaÃ§Ãµes pendentes.", parameters: Type.Object({ householdId: Type.Optional(Type.String()), dryRun: Type.Optional(Type.Boolean()), grouped: Type.Optional(Type.Boolean()) }), execute: async () => capabilityDisabled("process_notifications") ?? { success: false, reason: "Capability process_notifications has no API route yet" } };
