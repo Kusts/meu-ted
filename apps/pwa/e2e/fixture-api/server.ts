@@ -276,6 +276,15 @@ async function handleFixtureRequest(
 
   // ── Auth ──────────────────────────────────────────────────────────────────
 
+  if ((pathname === "/auth/sign-in/email" || pathname === "/auth/sign-in") && method === "POST") {
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, {
+      user: { id: "e2e-user-1", email: "test@example.com", name: "Test User" },
+      session: { id: "e2e-session-1", userId: "e2e-user-1" },
+    });
+    return;
+  }
+
   if (pathname === "/auth/devices/register" && method === "POST") {
     const registered = store.seed.authRegister ?? {
       token: "e2e-test-token-" + generateId(),

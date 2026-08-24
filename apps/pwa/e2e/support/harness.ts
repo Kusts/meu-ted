@@ -64,9 +64,22 @@ export async function authenticate(
   options: { timeout?: number } = {},
 ): Promise<void> {
   const timeout = options.timeout ?? 15000;
-  await expect(page.getByRole("button", { name: "Registrar" })).toBeVisible({ timeout });
-  await page.getByRole("button", { name: "Registrar" }).click();
-  await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout });
+  const fab = page.getByLabel("Nova transação");
+  if (await fab.isVisible().catch(() => false)) return;
+
+  const emailInput = page.getByLabel("E-mail");
+  const passwordInput = page.getByLabel("Senha");
+  const submitBtn = page.getByRole("button", { name: /Entrar|Registrar/i });
+
+  if (await emailInput.isVisible({ timeout: 4000 }).catch(() => false)) {
+    await emailInput.fill("test@example.com");
+    await passwordInput.fill("password123");
+    await submitBtn.click();
+  } else if (await submitBtn.isVisible({ timeout: 4000 }).catch(() => false)) {
+    await submitBtn.click();
+  }
+
+  await expect(fab).toBeVisible({ timeout });
 }
 
 /**

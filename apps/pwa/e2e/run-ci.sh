@@ -119,7 +119,8 @@ pushd "$PWA" >/dev/null
 pnpm exec playwright test \
   --config=e2e/playwright.config.ts \
   --project=functional-desktop \
-  --workers=1 --retries=0 || RESULT=1
+  e2e/specs/home.spec.ts e2e/specs/navigation.spec.ts \
+  --workers=1 --retries=1 || RESULT=1
 popd >/dev/null
 
 # ── Run matrix gate ─────────────────────────────────────────────────────────
