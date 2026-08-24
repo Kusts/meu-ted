@@ -17,6 +17,8 @@ const commonArgs = [
   `${repoPath}:/repo:ro`,
   'aquasec/trivy:0.58.1',
   'image',
+  '--scanners',
+  'vuln',
   '--exit-code',
   '1',
   '--severity',
