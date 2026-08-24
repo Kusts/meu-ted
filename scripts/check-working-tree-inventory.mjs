@@ -128,6 +128,16 @@ export function buildInventory(paths) {
   });
 }
 
+export function checkInventory({ porcelainPaths, inventoryCount }) {
+  if (!Array.isArray(porcelainPaths)) throw new TypeError('porcelainPaths must be an array');
+  if (typeof inventoryCount !== 'number') throw new TypeError('inventoryCount must be a number');
+  const count = porcelainPaths.length;
+  if (count !== inventoryCount) {
+    return { ok: false, reason: `count mismatch: porcelain ${count} != inventory ${inventoryCount}` };
+  }
+  return { ok: true, reason: '' };
+}
+
 export function validateInventory(inventory) {
   if (!Array.isArray(inventory)) throw new TypeError('inventory must be an array');
 
@@ -155,14 +165,14 @@ function escapeTableCell(value) {
   return String(value).replaceAll('|', '\\|').replaceAll('\n', ' ');
 }
 
-export function formatInventoryMarkdown(inventory) {
+export function formatInventoryMarkdown(inventory, dateStr = '2026-08-24') {
   const { count } = validateInventory(inventory);
   const rows = inventory
     .map((entry) => `| ${escapeTableCell(entry.path)} | ${entry.class} | ${entry.owner} | ${entry.action} | ${escapeTableCell(entry.rationale)} |`)
     .join('\n');
 
   return [
-    '# Working Tree Inventory — 2026-08-16',
+    `# Working Tree Inventory — ${dateStr}`,
     '',
     '## Safety boundary',
     '',
@@ -185,8 +195,8 @@ export function formatInventoryMarkdown(inventory) {
     '',
   ].join('\n');
 }
-export function writeInventoryDocument(inventory, outputPath = 'docs/recovery/2026-08-16-working-tree-inventory.md') {
-  writeFileSync(outputPath, formatInventoryMarkdown(inventory), 'utf8');
+export function writeInventoryDocument(inventory, outputPath = 'docs/recovery/2026-08-16-working-tree-inventory.md', dateStr = '2026-08-24') {
+  writeFileSync(outputPath, formatInventoryMarkdown(inventory, dateStr), 'utf8');
   return outputPath;
 }
 

@@ -4,6 +4,7 @@ import {
   VALID_ACTIONS,
   VALID_CLASSES,
   buildInventory,
+  checkInventory,
   collectWorkingTreePaths,
   validateInventory,
   writeInventoryDocument,
@@ -13,7 +14,8 @@ test('real working tree inventory is complete, valid, and secret-safe', () => {
   const paths = collectWorkingTreePaths();
   const inventory = buildInventory(paths);
   const summary = validateInventory(inventory);
-  writeInventoryDocument(inventory);
+  // Write to temp location to avoid polluting the tracked 2026-08-16 inventory
+  writeInventoryDocument(inventory, 'C:\\temp\\tmp-test-inventory.md', '2026-08-24');
   assert.ok(paths.length > 0, 'the working tree must have paths to inventory');
   assert.equal(summary.count, paths.length);
   assert.equal(new Set(inventory.map((entry) => entry.path)).size, inventory.length);
@@ -63,4 +65,22 @@ test('rejects duplicate paths', () => {
     ]),
     /duplic/i,
   );
+});
+
+test('fails when porcelain count != inventory count', () => {
+  const result = checkInventory({
+    porcelainPaths: Array(226).fill('a/b.txt'),
+    inventoryCount: 262,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /count mismatch/);
+});
+
+test('passes when porcelain count matches inventory count', () => {
+  const result = checkInventory({
+    porcelainPaths: Array(228).fill('a/b.txt'),
+    inventoryCount: 228,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, '');
 });
