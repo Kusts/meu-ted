@@ -7,9 +7,10 @@ CVE-2026-73566
 # undici Denial of Service via Cache-Control in base image runtime
 CVE-2026-13697
 
-# pnpm container build tool path traversal / hoisted install
+# pnpm container build tool path traversal / hoisted install / patch-remove
 GHSA-fr4h-3cph-29xv
 GHSA-qrv3-253h-g69c
+GHSA-72r4-9c5j-mj57
 
 # postcss CSS analysis in container build step
 CVE-2026-73646

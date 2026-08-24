@@ -66,7 +66,7 @@ export default defineConfig({
         viewport: { width: 390, height: 844 },
         serviceWorkers: "allow",
         baseURL: `http://127.0.0.1:${HARNESS_PORT}`,
-        headless: false,
+        headless: true,
       },
       testMatch: "**/push-runtime.spec.ts",
       fullyParallel: false,

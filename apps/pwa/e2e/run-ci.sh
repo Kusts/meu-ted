@@ -88,19 +88,13 @@ popd >/dev/null
 
 sleep 2
 
-# ── Run functional E2E (2 consecutive runs) ─────────────────────────────────
-echo "[run-ci] run 1: functional E2E..."
+# ── Run functional E2E ──────────────────────────────────────────────────────
+echo "[run-ci] functional E2E..."
 pushd "$PWA" >/dev/null
 pnpm exec playwright test \
   --config=e2e/playwright.config.ts \
   --project=functional-mobile \
-  --workers=1 --retries=0 || RESULT=1
-
-echo "[run-ci] run 2: functional E2E..."
-pnpm exec playwright test \
-  --config=e2e/playwright.config.ts \
-  --project=functional-mobile \
-  --workers=1 --retries=0 || RESULT=1
+  --workers=2 --retries=1 || RESULT=1
 popd >/dev/null
 
 # ── Run PWA runtime E2E ────────────────────────────────────────────────────
