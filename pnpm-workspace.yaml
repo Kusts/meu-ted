@@ -1,5 +1,4 @@
 packages:
-  - 'apps/whatsapp-bridge'
   - 'apps/pwa'
   - 'apps/api'
   - 'apps/agent'
