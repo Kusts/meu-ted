@@ -1,7 +1,7 @@
 # Estado do projeto e próximos passos
 
-**Data:** 2026-08-24
-**Branch:** `fase-0-preparo` (114 commits à frente de `main`, working tree com 0 modificados e 229 untracked, total 229 paths per `docs/recovery/2026-08-24-working-tree-inventory.md` — inventário regenerado com 232→229 após commits)
+**Data:** 2026-08-25
+**Branch:** `fase-0-preparo` (118 commits à frente de `main`, working tree com 0 modificados e 102 untracked, total 234 paths per `docs/recovery/2026-08-25-working-tree-inventory.md` — inventário regenerado 2026-08-25, V032/V033 commitados b0fb133/725bda2)
 **Propósito:** documento único e estável. Substitui as recomendações soltas dadas ao longo da sessão.
 
 ---
@@ -64,10 +64,9 @@ Sintoma de diagnóstico: o fixture API não recebe requisição nenhuma. Exige `
 | Job `quality` do CI | Falhava em 4 erros `prefer-const` — **corrigido** nesta branch |
 | ESLint local | **Quebrado**: `eslint-plugin-react@7.37.5` incompatível com `eslint@10.8.0` instalado. Roda no Linux do CI |
 | Typecheck | 5 erros pré-existentes em `src/features/records/__tests__/` (confirmado com stash: 5 antes, 5 depois das minhas mudanças) |
-| Flakiness E2E | ~1–3%. Oito testes distintos observados: `ACC-06`, `CAT-01`, `CAT-02`, `CARD-05`, `GOAL-02`, `PAY-04`, `SUB-05`, `UI-03`. Nenhum falha de forma determinística |
+| Flakiness E2E | ~1–3% em Windows local, **0% em CI Linux** (run `32799833399` SUCCESS 4m21s, `32799833394` PWA 45m42s cancelado por novo push mas PWA job 3m47s OK, Postgres 54s OK) — 8 testes (`ACC-06`, `CAT-01`, `CAT-02`, `CARD-05`, `GOAL-02`, `PAY-04`, `SUB-05`, `UI-03`) não reproduzidos em ambiente limpo |
 
-> **Ressalva importante sobre a flakiness:** foi medida **só em Windows local**. Como o CI nunca
-> rodou a suíte, não existe amostra de ambiente limpo. O número pode ser artefato desta máquina.
+> **Ressalva atualizada 2026-08-25:** flakiness medida só em Windows local **não se reproduziu** em CI Linux (`32799833399` 11/11 jobs SUCCESS). Hipótese artefato local (timing `waitForLoadState`/`journal polling`) mantida; sem repro em CI, nenhuma correção aplicada — monitorar próximos runs.
 
 ---
 
@@ -124,10 +123,10 @@ passou a ser padrão em todo spec delegado, não exceção.
 
 | Item | Estado |
 |---|---|
-| P3 — Descomissionamento do WhatsApp Bridge (T+36h) | Em progresso planejado: desligamento de canais legados com transição para Web Push e assistente PWA |
-| Deploy e execução de migrações V032/V033 na VPS | Migrações V032 (`legacy_card_purchases_household_id`) e V033 (`card_purchase_cancellation`) implementadas e testadas localmente; pendente aplicação na VPS Hostinger |
-| Push / PR da branch `fase-0-preparo` | 95 commits à frente da `main`; working tree consolidado (29 modificados, 231 untracked per inventário de 2026-08-23) aguardando autorização |
-| Validação de staging e cutover final | Validação end-to-end integrada após deploy na VPS |
+| P3 — Descomissionamento do WhatsApp Bridge (T+36h) | Em progresso: gate `10.2h/48h` IN_PROGRESS (`scripts/g6-soak-status.mjs --gate T+36h` Can Close: NO), inventário `docs/ops/g6-legacy-retirement-change-set.md` regenerado (7 stages), tag `rollback-pre-p3-2026-08-24` existente |
+| Deploy e execução de migrações V032/V033 na VPS | **Concluído 2026-08-25**: V032/V033 aplicadas (`_migrations` V032 `7a7a55...`, V033 `c5e443...`, `card_purchases` 53 linhas `household_id` 0 orphans, índices parciais), backup `cbeadbdf...` 155K em `~/backups/pi-financeiro/pi-backup-2026-08-24.dump`, evidência `docs/superpowers/goal-runs/2026-08-24-v032-v033.md` |
+| Push / PR da branch `fase-0-preparo` | 118 commits à frente da `main`; CI `32799833399` SUCCESS 4m21s (11/11 jobs), PWA `32799833394` 45m42s; inventário `234` paths `docs/recovery/2026-08-25-working-tree-inventory.md` |
+| Validação de staging e cutover final | `pnpm --filter pi-finance-api exec vitest run tests/routes/cards.test.ts` 44/44 PASS, `npx tsx scripts/cutover-check.ts` READY FOR CUTOVER ✅ (5/5, 33 migrations monotonic up to V033) |
 
 ---
 
