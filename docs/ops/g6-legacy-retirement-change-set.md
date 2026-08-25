@@ -19,17 +19,3 @@ This document specifies the exact dry-run change-set for decommissioning the leg
 1. **Annotated Git Tag:** Created before first deletion: `git tag -a pre-g6-legacy-retirement -m "Pre-cutover snapshot"`
 2. **Verified Database Dump:** SHA256 validated database dump preserved.
 3. **Fail-Closed Execution:** Any failed verification halts the progression immediately.
-
-## Status de execução (2026-08-19)
-
-| Stage | Status | Evidência |
-|---|---|---|
-| 1 | ✅ **EXECUTADO** — Ingress do webhook desativado: containers `pi-stack` e `pi-watchdog` parados na VPS Hostinger (2026-08-19 ~15:05Z). `docker exec evolution-go wget http://pi-stack:3945/webhooks/evolution` → **inativo** (bad address). API de gestão Evolution não expõe setWebhook (404 — configuração via frontend web não programática). | Rollback: `docker start pi-stack pi-watchdog` |
-| 2 | ⏳ Pendente — Observar Agent Owner com 0 tráfego de bridge por 48h (gate em progresso, termina 2026-08-20T17:15:55Z) | `docs/ops/g6-48h-gate.md` |
-| 3 | ✅ **PARCIAL** — Bridge parado (docker stop) mas NÃO removido (rm -f aguarda gate e confirmação de estágio destrutivo) | `docker ps -a` mostra `pi-stack Exited` |
-| 4 | 🔒 Pendente até gate 48h + autorização da etapa destrutiva (git rm do bridge) | — |
-| 5 | 🔒 Pendente até gate 48h + autorização (arquivar .pi/extensions em tag) | — |
-| 6 | 🔒 Pendente até gate 48h + autorização (remover refs workspace/scripts) | — |
-| 7 | 🔒 Pendente até gate 48h + autorização (rotacionar EVOLUTION_API_KEY) | — |
-
-Nota de segurança: WhatsApp da instância Evolution `ted` está **desconectado** (Connected: false, LoggedIn: false) e o Postgres da Evolution está com conexões esgotadas ("too many clients") — bridge parado não interrompe tráfego real de mensagens (zero tráfego). Redeploy do Agent worker para Cloudflare concluído em paralelo (pi-finance-agent, health V1 ready) — stage 2 pode ser verificado nos próximos checkpoints do gate.
