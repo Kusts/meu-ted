@@ -1,6 +1,6 @@
 # PI Financeiro — Roadmap
  
-**Last verified:** 2026-08-23  
+**Last verified:** 2026-08-24  
 **Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)  
 
 ## Fases do Programa de Estabilização & Modernização

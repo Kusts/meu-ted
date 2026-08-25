@@ -1,7 +1,7 @@
 # Estado do projeto e próximos passos
 
-**Data:** 2026-08-23
-**Branch:** `fase-0-preparo` (95 commits à frente de `main`, working tree com 30 modificados e 232 untracked, total 262 paths per `docs/recovery/2026-08-23-working-tree-inventory.md`)
+**Data:** 2026-08-24
+**Branch:** `fase-0-preparo` (114 commits à frente de `main`, working tree com 0 modificados e 229 untracked, total 229 paths per `docs/recovery/2026-08-24-working-tree-inventory.md` — inventário regenerado com 232→229 após commits)
 **Propósito:** documento único e estável. Substitui as recomendações soltas dadas ao longo da sessão.
 
 ---
