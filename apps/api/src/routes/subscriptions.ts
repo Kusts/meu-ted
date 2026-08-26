@@ -9,11 +9,9 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
 import { DomainError } from '../writes/errors.js';
-import type { IdempotencyStore } from '../writes/idempotency.js';
+import { requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
 import type { SubscriptionStore } from '../subscriptions/store.js';
 import type { AuthResolver } from './auth.js';
-
-const IDEMPOTENCY_HEADER = 'idempotency-key';
 
 // ── Input schemas ────────────────────────────────────────────────
 
@@ -32,6 +30,7 @@ const listQuerySchema = z.object({
 // ── Helpers ──────────────────────────────────────────────────────
 
 const resolveAuth = (resolveToken: AuthResolver) => async (req: FastifyRequest) => {
+  if (req.authenticatedContext) return req.authenticatedContext;
   const token = req.headers[DEVICE_TOKEN_HEADER];
   return resolveToken(Array.isArray(token) ? token[0] : token);
 };
@@ -47,18 +46,21 @@ const handleError = (err: unknown, reply: FastifyReply) => {
   throw err;
 };
 
-const idemKey = (req: FastifyRequest): string | undefined => {
-  const v = req.headers[IDEMPOTENCY_HEADER];
-  if (typeof v === 'string' && v.trim() !== '') return v.trim();
-  if (Array.isArray(v) && v[0]) return v[0].trim();
-  return undefined;
-};
-
 // ── Registration ─────────────────────────────────────────────────
+
+import { createPendingApproval } from '../approvals/guard.js';
+import type { ApprovalPolicy } from '../approvals/policy.js';
+import type { PendingOperationStore } from '../approvals/pending.js';
 
 export const registerSubscriptionRoutes = (
   app: FastifyInstance,
-  opts: { subscriptionStore: SubscriptionStore; resolveToken: AuthResolver; idempotency: IdempotencyStore },
+  opts: {
+    subscriptionStore: SubscriptionStore;
+    resolveToken: AuthResolver;
+    idempotency: IdempotencyStore;
+    approvalPolicy?: ApprovalPolicy;
+    pendingStore?: PendingOperationStore;
+  },
 ): void => {
   const resolve = resolveAuth(opts.resolveToken);
 
@@ -80,7 +82,20 @@ export const registerSubscriptionRoutes = (
     try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const parsed = createSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    const key = idemKey(req);
+    const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
+    const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
+    if (opts.approvalPolicy && opts.pendingStore) {
+      const pending = await createPendingApproval(opts.approvalPolicy, opts.pendingStore, {
+        householdId: ctx.householdId,
+        requesterId: ctx.deviceId,
+        operation: 'subscription.create',
+        payload: parsed.data,
+        idempotencyKey: key ?? crypto.randomUUID(),
+        amountCents: parsed.data.amountCents,
+        destructive: false,
+      });
+      if (pending) return reply.code(pending.status).send(pending.body);
+    }
     const fn = async () => {
       const sub = await opts.subscriptionStore.createSubscription(ctx.householdId, parsed.data);
       return { status: 201 as const, body: sub };

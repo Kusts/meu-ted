@@ -9,86 +9,29 @@
  */
 
 import { test, expect } from "@playwright/test";
+import { assertNoUndeclaredFailures, allowFailure } from "../support/failure-guard";
 import {
-  createGuard,
-  attachGuard,
-  assertNoUndeclaredFailures,
-  allowFailure,
-} from "../support/failure-guard";
-import { FIXTURE_URL } from "../support/reset";
+  prepareSpec,
+  authenticate,
+  getJournal as getJournalEntries,
+  expectJournal as expectJournalEntry,
+} from "../support/harness";
 
-const SW = { message: "reading 'waiting'", reason: "SW blocked" };
 let counter = 0;
 function tid(): string {
   counter += 1;
   return `rec-${counter}`;
 }
 
-async function allowFixtureCsp(page: import("@playwright/test").Page): Promise<void> {
-  await page.route("**", async (route) => {
-    try {
-      const response = await route.fetch();
-      const headers = { ...response.headers() };
-      const csp = headers["content-security-policy"];
-      if (csp) {
-        headers["content-security-policy"] = csp
-          .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
-          .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
-      }
-      await route.fulfill({ response, headers });
-    } catch {
-      /* teardown */
-    }
-  });
-}
-
-async function resetFixture(testId: string): Promise<void> {
-  const response = await fetch(`${FIXTURE_URL}/__e2e/reset`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-e2e-test-id": testId },
-    body: JSON.stringify({ testId, seed: "populated" }),
-  });
-  expect(response.ok).toBe(true);
-}
-
-async function registerDevice(page: import("@playwright/test").Page): Promise<void> {
-  const registerButton = page.getByRole("button", { name: "Registrar" });
-  await expect(registerButton).toBeVisible({ timeout: 15000 });
-  await registerButton.click();
-  await page.waitForLoadState("networkidle");
-}
-
-async function getJournalEntries(
-  testId: string,
-): Promise<Array<{ method: string; path: string; status: number; body?: unknown }>> {
-  const response = await fetch(`${FIXTURE_URL}/__e2e/journal?testId=${testId}`, {
-    headers: { "x-e2e-test-id": testId },
-  });
-  if (!response.ok) return [];
-  return response.json();
-}
-
-async function expectJournalEntry(
-  testId: string,
-  method: string,
-  path: string,
-  status: number,
-): Promise<void> {
-  await expect
-    .poll(async () => getJournalEntries(testId))
-    .toContainEqual(expect.objectContaining({ method, path, status }));
-}
-
+/**
+ * Every test on this page deep-links into /registros and only then registers.
+ * That order is what the page is expected to support, so it is preserved:
+ * prepare → goto → authenticate. Do not collapse this into `initSpec`.
+ */
 async function init(page: import("@playwright/test").Page, id: string) {
-  const guard = createGuard();
-  attachGuard(page, guard);
-  await allowFixtureCsp(page);
-  await resetFixture(id);
-  await page.clock.setFixedTime("2026-07-17T12:00:00.000Z");
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(guard, SW);
+  const guard = await prepareSpec(page, id);
   await page.goto("/registros");
-  await registerDevice(page);
+  await authenticate(page);
   return guard;
 }
 
@@ -128,15 +71,7 @@ test("[REC-01] type in search bar filters records", async ({ page }) => {
 // Placeholder tests for REC-02..06 to satisfy matrix (will be implemented separately)
 test("[REC-02] period filter shows only matching records", async ({ page }) => {
   const id = tid();
-  const guard = createGuard();
-  attachGuard(page, guard);
-  await allowFixtureCsp(page);
-  await resetFixture(id);
-  await page.clock.setFixedTime("2026-07-17T12:00:00.000Z");
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(guard, SW);
-  await page.goto("/registros");
-  await registerDevice(page);
+  const guard = await init(page, id);
 
   // Both transactions (July 10 and July 11) are visible before filtering
   await expect(page.getByText("Supermercado")).toBeVisible();
@@ -178,15 +113,7 @@ test("[REC-02] period filter shows only matching records", async ({ page }) => {
 
 test("[REC-03] category filter shows only matching records", async ({ page }) => {
   const id = tid();
-  const guard = createGuard();
-  attachGuard(page, guard);
-  await allowFixtureCsp(page);
-  await resetFixture(id);
-  await page.clock.setFixedTime("2026-07-17T12:00:00.000Z");
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(guard, SW);
-  await page.goto("/registros");
-  await registerDevice(page);
+  const guard = await init(page, id);
 
   // Both transactions visible before filtering
   await expect(page.getByText("Supermercado")).toBeVisible();
@@ -228,15 +155,7 @@ test("[REC-03] category filter shows only matching records", async ({ page }) =>
 
 test("[REC-04] tap transaction row opens action sheet", async ({ page }) => {
   const id = tid();
-  const guard = createGuard();
-  attachGuard(page, guard);
-  await allowFixtureCsp(page);
-  await resetFixture(id);
-  await page.clock.setFixedTime("2026-07-17T12:00:00.000Z");
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(guard, SW);
-  await page.goto("/registros");
-  await registerDevice(page);
+  const guard = await init(page, id);
 
   await page.getByText("Supermercado").click();
   await expect(page.getByText("Editar")).toBeVisible();
@@ -328,7 +247,7 @@ test("[REC-06a] cancel delete preserves item and makes zero DELETE calls", async
 test("[REC-06b] confirm delete DELETE /transactions/:id", async ({ page }) => {
   const id = tid();
   const guard = await init(page, id);
-  // DELETE request may be aborted by route.fetch() in allowFixtureCsp; allowed.
+  // DELETE request may be aborted by route.fetch() in the harness CSP rewrite; allowed.
   allowFailure(guard, { url: "/transactions/", message: "ERR_ABORTED", reason: "route.fetch abort on 204 response" });
 
   // Supermercado is visible before delete

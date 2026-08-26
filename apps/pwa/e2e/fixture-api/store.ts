@@ -20,6 +20,7 @@ export interface SeedData {
     name: string;
     kind: "bank" | "cash" | "credit_card";
     initialBalanceCents: number;
+    balanceCents?: number;
     creditLimitCents?: number;
     closingDay?: number;
     dueDay?: number;
@@ -202,8 +203,8 @@ export const SEEDS: Record<string, SeedData> = {
     deviceId: "e2e-device-001",
     householdId: "e2e-household-001",
     accounts: [
-      { id: "acc-1", name: "Conta Corrente", kind: "bank", initialBalanceCents: 500000 },
-      { id: "acc-2", name: "Dinheiro", kind: "cash", initialBalanceCents: 20000 },
+      { id: "acc-1", name: "Conta Corrente", kind: "bank", initialBalanceCents: 500000, balanceCents: 500000 },
+      { id: "acc-2", name: "Dinheiro", kind: "cash", initialBalanceCents: 20000, balanceCents: 20000 },
     ],
     categories: [
       { id: "cat-1", name: "Alimentação", kind: "expense" },

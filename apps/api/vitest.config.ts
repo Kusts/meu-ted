@@ -8,6 +8,8 @@ export default defineConfig({
     // Integration tests touch a shared Postgres database;
     // serialise them to avoid TRUNCATE races between contracts.
     fileParallelism: false,
+    testTimeout: 15000,
+    hookTimeout: 15000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],

@@ -18,16 +18,9 @@
  */
 
 import { test, expect } from "@playwright/test";
-import {
-  allowFailure,
-  assertNoUndeclaredFailures,
-  attachGuard,
-  createGuard,
-} from "../support/failure-guard";
-import { FIXTURE_URL } from "../support/reset";
+import { assertNoUndeclaredFailures } from "../support/failure-guard";
+import { prepareSpec, authenticate, getJournal } from "../support/harness";
 
-const FIXED_CLOCK = "2026-07-17T12:00:00.000Z";
-const SW = { message: "reading 'waiting'", reason: "SW blocked" };
 
 let counter = 0;
 function tid(): string {
@@ -35,49 +28,19 @@ function tid(): string {
   return `wal-${counter}`;
 }
 
-async function allowFixtureCsp(page: import("@playwright/test").Page): Promise<void> {
-  await page.route("**/*", async (route) => {
-    try {
-      const response = await route.fetch();
-      const headers = { ...response.headers() };
-      const csp = headers["content-security-policy"];
-      if (csp) {
-        headers["content-security-policy"] = csp
-          .replace(/connect-src\s+([^;]+)/, "connect-src http://127.0.0.1:4010 $1")
-          .replace(/script-src\s+([^;]+)/, "script-src 'unsafe-eval' $1");
-      }
-      await route.fulfill({ response, headers });
-    } catch {
-      /* teardown */
-    }
-  });
-}
 
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
-async function resetFixture(testId: string, seed = "populated"): Promise<void> {
-  const res = await fetch(`${FIXTURE_URL}/__e2e/reset`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-e2e-test-id": testId },
-    body: JSON.stringify({ testId, seed }),
-  });
-  if (!res.ok) throw new Error(`Fixture reset failed: ${res.status}`);
-}
 
-async function getJournal(
-  testId: string,
-): Promise<Array<{ method: string; path: string; status: number }>> {
-  const res = await fetch(`${FIXTURE_URL}/__e2e/journal?testId=${testId}`, {
-    headers: { "x-e2e-test-id": testId },
-  });
-  if (!res.ok) return [];
-  return res.json();
-}
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const AUTH_WRITE_PATHS = new Set(["/auth/devices/register"]);
+const AUTH_WRITE_PATHS = new Set([
+  "/auth/devices/register",
+  "/auth/sign-in/email",
+  "/auth/sign-in",
+]);
 
 async function assertNoUnexpectedWrites(testId: string): Promise<void> {
   const journal = await getJournal(testId);
@@ -87,29 +50,20 @@ async function assertNoUnexpectedWrites(testId: string): Promise<void> {
   expect(unexpected).toEqual([]);
 }
 
-async function registerDevice(page: import("@playwright/test").Page): Promise<void> {
-  const registerButton = page.getByRole("button", { name: "Registrar" });
-  await expect(registerButton).toBeVisible({ timeout: 15000 });
-  await registerButton.click();
-  await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout: 15000 });
-}
 
 async function init(page: import("@playwright/test").Page, id: string) {
-  const guard = createGuard();
-  attachGuard(page, guard);
-  await allowFixtureCsp(page);
-  await resetFixture(id);
-  await page.clock.setFixedTime(FIXED_CLOCK);
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(guard, SW);
-  // Next.js RSC prefetches abort on navigation — not app failures
-  allowFailure(guard, { url: "_rsc", reason: "RSC prefetch aborted on nav" });
-  allowFailure(guard, {
-    message: "ERR_ABORTED",
-    reason: "RSC prefetch aborted on nav",
+  // Deep-links into /patrimonio before registering — order preserved.
+  const guard = await prepareSpec(page, id, {
+    baselineAllows: false,
+    allow: [
+      { message: "reading 'waiting'", reason: "SW blocked" },
+      // Next.js RSC prefetches abort on navigation — not app failures
+      { url: "_rsc", reason: "RSC prefetch aborted on nav" },
+      { message: "ERR_ABORTED", reason: "RSC prefetch aborted on nav" },
+    ],
   });
   await page.goto("/patrimonio");
-  await registerDevice(page);
+  await authenticate(page);
   await expect(page.getByText("Patrimônio líquido")).toBeVisible({ timeout: 10000 });
   return guard;
 }

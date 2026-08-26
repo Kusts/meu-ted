@@ -22,6 +22,7 @@ import type {
   CardStatement,
   Profile,
   QuickInsight,
+  DashboardSummary,
 } from "./types";
 import {
   ALL_MOCK_TRANSACTIONS,
@@ -32,6 +33,7 @@ import {
   mockGoals,
   mockDebts,
   mockSubscriptions,
+  mockDashboardSummary,
 } from "./mock-data";
 import { isApiConfigured, getAuthToken } from "@/lib/api/client";
 import { type DomainKey } from "./snapshot-store";
@@ -59,6 +61,7 @@ export interface AppState {
   cardStatements: CardStatement[];
   profile: Profile | null;
   quickInsights?: QuickInsight[];
+  dashboardSummary: DashboardSummary | null;
   saveProfile: (input: {
     name?: string;
     email?: string;
@@ -67,6 +70,7 @@ export interface AppState {
     greetingStyle?: Profile["greetingStyle"];
   }) => Promise<void>;
   refreshProfile: () => Promise<void>;
+  refreshDashboardSummary: () => Promise<void>;
   // Sync / mode
   sync: Record<DomainKey, DomainSync>;
   readOnly: boolean;
@@ -242,6 +246,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     useState<Subscription[]>(configured ? [] : mockSubscriptions);
   const [cardStatements, setCardStatements] = useState<CardStatement[]>([]);
   const [quickInsights, setQuickInsights] = useState<QuickInsight[]>([]);
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(
+    configured ? null : mockDashboardSummary,
+  );
   // Profile starts as null; defaults are derived via `effectiveProfile`.
   // We don't bake a "Marina" mock into the state because the spec wants
   // the home/avatar to reflect the persisted profile (real data, not
@@ -442,6 +449,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setQuickInsights(insights);
       } catch {
         setQuickInsights([]);
+      }
+      try {
+        const summary = await endpoints.fetchDashboardSummary();
+        setDashboardSummary(summary);
+      } catch {
+        setDashboardSummary(null);
       }
     };
 
@@ -1447,6 +1460,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
   }, [profileAdapter]);
 
+  const refreshDashboardSummary = useCallback(async () => {
+    if (!apiUsable()) return;
+    try {
+      const summary = await endpoints.fetchDashboardSummary();
+      setDashboardSummary(summary);
+    } catch {
+      setDashboardSummary(null);
+    }
+  }, []);
+
   // ── Local-mode persistence for profile (mock/local-storage) ─
   // When the API is configured, saveProfile already persists server-side;
   // in mock mode we hydrate from localStorage on mount and write back
@@ -1479,8 +1502,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         cardStatements,
         profile,
         quickInsights,
+        dashboardSummary,
         saveProfile,
         refreshProfile,
+        refreshDashboardSummary,
         sync,
         readOnly,
         loading,

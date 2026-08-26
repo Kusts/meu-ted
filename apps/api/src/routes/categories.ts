@@ -5,15 +5,28 @@ import type { ReadModelStore } from '../read-models/store.js';
 import type { WriteStore } from '../writes/store.js';
 import { createCategoryInputSchema, updateCategoryInputSchema } from '../writes/types.js';
 import { DomainError } from '../writes/errors.js';
+import { requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
 import type { AuthResolver } from './auth.js';
+import { createPendingApproval } from '../approvals/guard.js';
+import type { ApprovalPolicy } from '../approvals/policy.js';
+import type { PendingOperationStore } from '../approvals/pending.js';
 
-const querySchema = z.object({ kind: z.enum(['expense', 'income']).optional() });
+export const categoryQuerySchema = z.object({ kind: z.enum(['expense', 'income']).optional() });
+const querySchema = categoryQuerySchema;
 
 export const registerCategoryRoutes = (
   app: FastifyInstance,
-  opts: { store: ReadModelStore; writes: WriteStore; resolveToken: AuthResolver },
+  opts: {
+    store: ReadModelStore;
+    writes: WriteStore;
+    resolveToken: AuthResolver;
+    idempotency?: IdempotencyStore;
+    approvalPolicy?: ApprovalPolicy;
+    pendingStore?: PendingOperationStore;
+  },
 ): void => {
   const resolve = async (req: import('fastify').FastifyRequest) => {
+    if (req.authenticatedContext) return req.authenticatedContext;
     const token = req.headers[DEVICE_TOKEN_HEADER];
     return opts.resolveToken(Array.isArray(token) ? token[0] : token);
   };
@@ -26,20 +39,32 @@ export const registerCategoryRoutes = (
     throw err;
   };
 
+  const runIdempotent = async <T>(req: import('fastify').FastifyRequest, householdId: string, payload: unknown, producer: () => Promise<T>): Promise<T> => {
+    const raw = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
+    if (raw === undefined) return producer();
+    const key = requireIdempotencyKey(req.headers);
+    const store = opts.idempotency;
+    if (!store) return producer();
+    const res = await store.lookupOrRecord(householdId, key, payload, async () => ({ status: 200, body: await producer() }));
+    return res.response.body as T;
+  };
+
   app.get('/categories', async (req, reply) => {
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
-    const parsed = querySchema.safeParse(req.query);
+    const parsed = querySchema.safeParse(req.query ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    let cats = await opts.store.listCategories(ctx.householdId);
-    if (parsed.data.kind) cats = cats.filter((c) => c.kind === parsed.data.kind);
-    return reply.code(200).send({ items: cats, total: cats.length });
+    try {
+      let items = await opts.store.listCategories(ctx.householdId);
+      if (parsed.data.kind) items = items.filter((c) => c.kind === parsed.data.kind);
+      return reply.code(200).send({ items, total: items.length });
+    } catch (e) { return handleError(e, reply); }
   });
 
   app.post('/categories', async (req, reply) => {
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const parsed = createCategoryInputSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    try { return reply.code(201).send(await opts.writes.createCategory(ctx.householdId, parsed.data)); }
+    try { return reply.code(201).send(await runIdempotent(req, ctx.householdId, parsed.data, () => opts.writes.createCategory(ctx.householdId, parsed.data))); }
     catch (e) { return handleError(e, reply); }
   });
 
@@ -49,7 +74,7 @@ export const registerCategoryRoutes = (
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
     const parsed = updateCategoryInputSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    try { return reply.code(200).send(await opts.writes.updateCategory(ctx.householdId, params.data.id, parsed.data)); }
+    try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id, ...parsed.data }, () => opts.writes.updateCategory(ctx.householdId, params.data.id, parsed.data))); }
     catch (e) { return handleError(e, reply); }
   });
 
@@ -57,7 +82,20 @@ export const registerCategoryRoutes = (
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
-    try { return reply.code(200).send(await opts.writes.deactivateCategory(ctx.householdId, params.data.id)); }
+    const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
+    const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
+    if (opts.approvalPolicy && opts.pendingStore) {
+      const pending = await createPendingApproval(opts.approvalPolicy, opts.pendingStore, {
+        householdId: ctx.householdId,
+        requesterId: ctx.deviceId,
+        operation: 'category.deactivate',
+        payload: { id: params.data.id },
+        idempotencyKey: key ?? crypto.randomUUID(),
+        destructive: true,
+      });
+      if (pending) return reply.code(pending.status).send(pending.body);
+    }
+    try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id }, () => opts.writes.deactivateCategory(ctx.householdId, params.data.id))); }
     catch (e) { return handleError(e, reply); }
   });
 };

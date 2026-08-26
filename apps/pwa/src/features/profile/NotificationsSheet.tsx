@@ -3,11 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import BottomSheet from "@/components/BottomSheet";
+import PushNotificationsCard from "./PushNotificationsCard";
 import { useAppState } from "@/lib/state/app-state-context";
 
 interface NotificationsSheetProps {
   open: boolean;
   onClose: () => void;
+  workspaceId?: string;
 }
 
 const DISMISSED_STORAGE_KEY = "pi-finance:notifications-dismissed";
@@ -43,6 +45,7 @@ function fmtBRL(cents: number): string {
 export default function NotificationsSheet({
   open,
   onClose,
+  workspaceId,
 }: NotificationsSheetProps) {
   const router = useRouter();
   const { payables, budgets, transactions, accounts, cardStatements, goals } = useAppState();
@@ -219,6 +222,7 @@ export default function NotificationsSheet({
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Notificações">
+      <PushNotificationsCard workspaceId={workspaceId ?? "device"} />
       <div className="mb-4 rounded-[18px] bg-fill-light p-4">
         <div className="mb-1 text-[15px] font-bold text-text-primary">
           Alertas do Pi

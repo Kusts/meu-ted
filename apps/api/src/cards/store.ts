@@ -17,6 +17,11 @@ export type CardStore = {
     status?: string;
     limit?: number;
   }): Promise<Statement[]>;
+  /** List recurring card purchases, optionally filtered by account and status. */
+  listRecurringPurchases(householdId: string, opts?: {
+    accountId?: string;
+    status?: RecurringPurchase['status'];
+  }): Promise<RecurringPurchase[]>;
 
   /** Get a statement with its purchases. */
   getStatementDetail(householdId: string, statementId: string): Promise<StatementDetail | null>;
@@ -82,4 +87,7 @@ export type CardStore = {
     date?: string;
     categoryId?: string;
   }): Promise<StatementDetail>;
+
+  /** Cancel a purchase on an open statement (auditável via soft-delete). Idempotente. */
+  cancelPurchase(householdId: string, purchaseId: string): Promise<void>;
 };

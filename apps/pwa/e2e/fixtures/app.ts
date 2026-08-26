@@ -45,7 +45,18 @@ export async function allowFixtureCsp(page: Page): Promise<void> {
  * Must be called after page.goto() when on registration screen.
  */
 export async function registerDevice(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Registrar" }).click({ timeout: 10000 });
+  const emailInput = page.getByLabel("E-mail");
+  const passwordInput = page.getByLabel("Senha");
+  const loginBtn = page.getByRole("button", { name: "Entrar" });
+  const regBtn = page.getByRole("button", { name: "Registrar" });
+
+  if (await emailInput.isVisible({ timeout: 4000 }).catch(() => false)) {
+    await emailInput.fill("test@example.com");
+    await passwordInput.fill("password123");
+    await loginBtn.click();
+  } else if (await regBtn.isVisible({ timeout: 4000 }).catch(() => false)) {
+    await regBtn.click();
+  }
   await page.waitForTimeout(1000);
   await page.waitForLoadState("networkidle");
 }

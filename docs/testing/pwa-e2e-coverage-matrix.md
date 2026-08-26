@@ -137,6 +137,11 @@ Every ID is atomic: one visible action, required state, expected UI/API effect, 
 | PWA-04 | SW update | P | clean form triggers waiting worker → activates once and reloads | null waiting safe | pwa-runtime |
 | PWA-05 | SW reload | P | reload with active SW → offline shell still renders on network failure | network failure only | pwa-runtime |
 | PWA-06 | SW dirty | P | dirty form retains waiting worker → no activation on dirty | null waiting safe | pwa-runtime |
+| NOAPI-01 | offline/no-API | M | no API rejects write before optimistic success (draft never persisted) | write aborted, draft kept client-side | no-api |
+| PUSH-01 | `/` push UI | P | real PWA registers `/sw.js` and completes push UI flow | permission denied graceful | push-runtime |
+| PUSH-02 | iOS standalone | P | controlled iOS standalone uses real UI + permission API | permission denied graceful | push-runtime |
+| PUSH-03 | iOS standalone | P | standalone activation invokes permission API from user gesture | non-gesture ignored | push-runtime |
+| PUSH-04 | iOS outside standalone | P | iOS outside standalone shows installation onboarding before permission | not standalone | push-runtime |
 | SMOKE-01 | `/` | opt-in | direct load `/` → registration shell renders, no authenticated content | no auth | production-smoke |
 | SMOKE-02 | `/registros` | opt-in | direct load `/registros` → registration shell renders | no auth | production-smoke |
 | SMOKE-03 | `/contas` | opt-in | direct load `/contas` → registration shell renders | no auth | production-smoke |

@@ -869,7 +869,7 @@ export default function CardsPage() {
         card={payCard}
         accounts={accounts}
         onPay={(input) => {
-          if (selectedStatementId) payStatement(selectedStatementId, input);
+          if (selectedStatementId) return payStatement(selectedStatementId, input);
         }}
       />
 

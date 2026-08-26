@@ -1,0 +1,202 @@
+import { z } from "zod";
+import { apiFetch, isApiConfigured } from "./client";
+
+const historySchema = z.object({
+  items: z.array(z.object({
+    id: z.string(),
+    actorId: z.string(),
+    role: z.string(),
+    content: z.string(),
+    createdAt: z.string().optional(),
+  })),
+});
+
+export type AgentMessage = z.infer<typeof historySchema>["items"][number];
+
+function agentBaseUrl(): string | undefined {
+  return process.env.NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL?.replace(/\/$/, "") || undefined;
+}
+
+export type AgentTurn = { turnId: string; status: string; attempts?: number; output?: string };
+
+const agentHistoryExportSchema = z.object({
+  version: z.number(),
+  exportedAt: z.string(),
+  turns: z.array(z.unknown()),
+  messages: z.array(z.unknown()),
+  actions: z.array(z.unknown()),
+  events: z.array(z.unknown()),
+});
+export type AgentHistoryExport = z.infer<typeof agentHistoryExportSchema>;
+const deleteAgentHistorySchema = z.object({ deleted: z.boolean(), recordCount: z.number() });
+export type DeleteAgentHistoryResult = z.infer<typeof deleteAgentHistorySchema>;
+const accessLogSchema = z.object({ items: z.array(z.object({ id: z.number(), actor_id: z.string(), action: z.string(), record_count: z.number(), created_at: z.string() })) });
+export type AgentAccessLog = z.infer<typeof accessLogSchema>;
+
+const pendingOperationSchema = z.object({
+  id: z.string(),
+  householdId: z.string(),
+  requesterId: z.string(),
+  operation: z.string(),
+  payload: z.unknown(),
+  reason: z.enum(["high_value", "destructive"]),
+  idempotencyKey: z.string(),
+  status: z.enum(["pending", "approved", "rejected", "expired"]),
+  createdAt: z.string(),
+  expiresAt: z.string(),
+}).passthrough();
+const pendingOperationsSchema = z.object({ items: z.array(pendingOperationSchema), total: z.number() });
+export type PendingOperation = z.infer<typeof pendingOperationSchema>;
+
+function agentRequestUrl(workspaceId: string, suffix: string): string {
+  const baseUrl = agentBaseUrl();
+  if (!baseUrl) throw new Error("Agent não configurado");
+  return `${baseUrl}/agents/workspace/${encodeURIComponent(workspaceId)}/message${suffix}`;
+}
+
+function agentHistoryUrl(workspaceId: string, suffix: string): string {
+  const baseUrl = agentBaseUrl();
+  if (!baseUrl) throw new Error("Agent não configurado");
+  return `${baseUrl}/agents/workspace/${encodeURIComponent(workspaceId)}/history${suffix}`;
+}
+
+async function parseJson<T>(response: Response): Promise<T> {
+  if (!response.ok) throw new Error("Operação do agente falhou.");
+  return await response.json() as T;
+}
+
+export async function sendAgentMessage(workspaceId: string, content: string): Promise<AgentTurn> {
+  const response = await fetch(agentRequestUrl(workspaceId, ""), {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json", "X-Workspace-Id": workspaceId },
+    body: JSON.stringify({ content }),
+  });
+  return parseJson<AgentTurn>(response);
+}
+
+export async function cancelAgentTurn(workspaceId: string, turnId: string): Promise<AgentTurn> {
+  const response = await fetch(agentRequestUrl(workspaceId, `/${encodeURIComponent(turnId)}/abort`), {
+    method: "POST", credentials: "include", headers: { "X-Workspace-Id": workspaceId },
+  });
+  return parseJson<AgentTurn>(response);
+}
+
+export async function retryAgentTurn(workspaceId: string, turnId: string): Promise<AgentTurn> {
+  const response = await fetch(agentRequestUrl(workspaceId, `/${encodeURIComponent(turnId)}/retry`), {
+    method: "POST", credentials: "include", headers: { "X-Workspace-Id": workspaceId },
+  });
+  return parseJson<AgentTurn>(response);
+}
+
+export async function processAgentTurn(workspaceId: string, turnId: string): Promise<AgentTurn> {
+  const response = await fetch(agentRequestUrl(workspaceId, `/${encodeURIComponent(turnId)}/process`), {
+    method: "POST", credentials: "include", headers: { "X-Workspace-Id": workspaceId },
+  });
+  return parseJson<AgentTurn>(response);
+}
+
+export type AgentEvent = { id: number; type: string; data: string };
+
+function parseAgentEvents(body: string): AgentEvent[] {
+  return body.trim().split(/\n\n+/).filter(Boolean).map((chunk) => {
+    const lines = chunk.split("\n");
+    const id = Number(lines.find((line) => line.startsWith("id:"))?.slice(3).trim() ?? 0);
+    const type = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() ?? "status";
+    const data = lines.find((line) => line.startsWith("data:"))?.slice(5).trim() ?? "{}";
+    return { id, type, data };
+  });
+}
+
+export async function reconnectAgentTurn(workspaceId: string, turnId: string, lastEventId = 0): Promise<AgentEvent[]> {
+  let cursor = lastEventId;
+  const events: AgentEvent[] = [];
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    let body: string;
+    try {
+      body = await streamAgentTurn(workspaceId, turnId, cursor);
+    } catch (error) {
+      if (attempt === 2) throw error;
+      continue;
+    }
+    const next = parseAgentEvents(body);
+    events.push(...next);
+    if (next.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      continue;
+    }
+    cursor = next[next.length - 1]!.id;
+    if (next.some((event) => ["completed", "failed", "aborted"].includes(event.type))) break;
+  }
+  return events;
+}
+
+export async function streamAgentTurn(workspaceId: string, turnId: string, lastEventId = 0): Promise<string> {
+  const response = await fetch(agentRequestUrl(workspaceId, `/stream/${encodeURIComponent(turnId)}`), {
+    credentials: "include",
+    headers: { "Accept": "text/event-stream", "Last-Event-ID": String(lastEventId), "X-Workspace-Id": workspaceId },
+  });
+  if (!response.ok) throw new Error("Reconexão do agente falhou.");
+  return response.text();
+}
+
+export async function exportAgentHistory(workspaceId: string): Promise<AgentHistoryExport> {
+  const response = await fetch(agentHistoryUrl(workspaceId, "/export"), {
+    credentials: "include",
+    headers: { "X-Workspace-Id": workspaceId },
+  });
+  return parseJson<AgentHistoryExport>(response).then((body) => agentHistoryExportSchema.parse(body));
+}
+
+export async function deleteAgentHistory(workspaceId: string): Promise<DeleteAgentHistoryResult> {
+  const response = await fetch(agentHistoryUrl(workspaceId, ""), {
+    method: "DELETE",
+    credentials: "include",
+    headers: { "X-Workspace-Id": workspaceId },
+  });
+  return parseJson<DeleteAgentHistoryResult>(response).then((body) => deleteAgentHistorySchema.parse(body));
+}
+
+export async function fetchAgentAccessLog(workspaceId: string): Promise<AgentAccessLog> {
+  const response = await fetch(agentHistoryUrl(workspaceId, "/access-log"), {
+    credentials: "include",
+    headers: { "X-Workspace-Id": workspaceId },
+  });
+  return parseJson<AgentAccessLog>(response).then((body) => accessLogSchema.parse(body));
+}
+
+export async function fetchPendingOperations(workspaceId: string): Promise<PendingOperation[]> {
+  if (!isApiConfigured()) return [];
+  const response = await apiFetch<z.infer<typeof pendingOperationsSchema>>(`/pending-operations?status=pending`, {
+    responseSchema: pendingOperationsSchema,
+    headers: { "X-Workspace-Id": workspaceId },
+  });
+  return response.items;
+}
+
+export async function approvePendingOperation(workspaceId: string, pendingOperationId: string): Promise<PendingOperation> {
+  return apiFetch<PendingOperation>(`/pending-operations/${encodeURIComponent(pendingOperationId)}/approve`, {
+    method: "POST",
+    responseSchema: pendingOperationSchema,
+    headers: { "X-Workspace-Id": workspaceId },
+  });
+}
+
+export async function rejectPendingOperation(workspaceId: string, pendingOperationId: string): Promise<PendingOperation> {
+  return apiFetch<PendingOperation>(`/pending-operations/${encodeURIComponent(pendingOperationId)}/reject`, {
+    method: "POST",
+    responseSchema: pendingOperationSchema,
+    headers: { "X-Workspace-Id": workspaceId },
+  });
+}
+
+export async function fetchAgentHistory(workspaceId: string): Promise<AgentMessage[]> {
+  const baseUrl = agentBaseUrl();
+  if (!baseUrl) return [];
+  const response = await fetch(`${baseUrl}/agents/workspace/${encodeURIComponent(workspaceId)}/message`, {
+    credentials: "include",
+    headers: { "X-Workspace-Id": workspaceId },
+  });
+  if (!response.ok) throw new Error("Não foi possível carregar o histórico do agente.");
+  return historySchema.parse(await response.json()).items;
+}

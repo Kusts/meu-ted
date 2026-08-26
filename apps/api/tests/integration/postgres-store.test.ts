@@ -17,8 +17,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { runReadModelStoreContract, defaultContractSeed } from '../contract/read-model-store.contract.js';
 import { createPostgresReadModelStore } from '../../src/read-models/postgres-store.js';
-import { createPool } from '../../src/db/pool.js';
 import { runMigrations } from '../../src/read-models/sql/migrate.js';
+import { requireTestDatabase } from '../../src/db/db-guard.js';
 import type { Pool } from 'pg';
 
 const DB_URL = process.env.DATABASE_URL;
@@ -28,6 +28,7 @@ const SKIP_REASON =
 const TEST_TABLES = ['accounts', 'categories', 'transactions', 'device_tokens'] as const;
 
 const truncate = async (pool: Pool): Promise<void> => {
+  await requireTestDatabase(pool, 'truncate');
   await pool.query(`TRUNCATE TABLE ${TEST_TABLES.join(', ')} RESTART IDENTITY CASCADE`);
 };
 

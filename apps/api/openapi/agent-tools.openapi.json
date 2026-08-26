@@ -1,0 +1,3029 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Pi Finance Agent HTTP contract",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/pending-operations/details": {
+      "get": {
+        "operationId": "get_pending_operation",
+        "summary": "Retrieve pending approval details by canonical id or legacy chat id",
+        "x-pi-tool": {
+          "label": "Get Pending Operation",
+          "shadow": false,
+          "result": {
+            "kind": "first",
+            "key": "operation",
+            "path": "operation"
+          }
+        },
+        "parameters": [
+          {
+            "name": "pendingOperationId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "chatId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        ]
+      }
+    },
+    "/pending-operations/approve": {
+      "post": {
+        "operationId": "confirm_pending_operation",
+        "summary": "Confirm and execute a pending operation by canonical id or legacy chat id",
+        "x-pi-tool": {
+          "label": "Confirm Pending Operation",
+          "shadow": false,
+          "idempotency": true
+        },
+        "parameters": [
+          {
+            "name": "pendingOperationId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "chatId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        ]
+      }
+    },
+    "/pending-operations/reject": {
+      "post": {
+        "operationId": "cancel_pending_operation",
+        "summary": "Cancel a pending operation by canonical id or legacy chat id",
+        "x-pi-tool": {
+          "label": "Cancel Pending Operation",
+          "shadow": false,
+          "idempotency": true
+        },
+        "parameters": [
+          {
+            "name": "pendingOperationId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "chatId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          }
+        ]
+      }
+    },
+    "/audit-logs": {
+      "get": {
+        "operationId": "audit_logs",
+        "summary": "List audit log entries",
+        "x-pi-tool": {
+          "label": "Audit Logs",
+          "result": {
+            "kind": "items",
+            "key": "logs",
+            "fields": {
+              "id": "id",
+              "action": "operation",
+              "event_type": "eventType",
+              "actor_id": "actorId",
+              "created_at": "createdAt"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "x-pi-context": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "entityType",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "entityId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "query",
+            "required": false,
+            "context": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "eventType",
+            "in": "query",
+            "required": false,
+            "context": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "actorType",
+            "in": "query",
+            "required": false,
+            "context": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "device",
+                "user"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/accounts": {
+      "get": {
+        "operationId": "list_accounts",
+        "summary": "List active accounts",
+        "x-pi-tool": {
+          "label": "List Accounts",
+          "result": {
+            "kind": "items",
+            "key": "accounts",
+            "fields": {
+              "id": "id",
+              "name": "name",
+              "balance_cents": "balanceCents",
+              "active": {
+                "path": "status",
+                "equals": "active"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "x-pi-context": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "context": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "bank",
+                "cash",
+                "credit_card"
+              ]
+            }
+          }
+        ],
+        "x-pi-tools": []
+      },
+      "post": {
+        "operationId": "create_account",
+        "summary": "HTTP contract for create_account",
+        "x-pi-tool": {
+          "name": "create_account",
+          "label": "create_account",
+          "description": "HTTP contract for create_account",
+          "method": "POST",
+          "path": "/accounts",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "bank",
+                      "cash"
+                    ]
+                  },
+                  "initialBalanceCents": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "name",
+                  "kind",
+                  "initialBalanceCents"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/categories": {
+      "get": {
+        "operationId": "list_categories",
+        "summary": "List active categories",
+        "x-pi-tool": {
+          "label": "List Categories",
+          "result": {
+            "kind": "items",
+            "key": "categories",
+            "fields": {
+              "id": "id",
+              "name": "name",
+              "kind": "kind",
+              "status": "status"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "x-pi-context": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "context": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "expense",
+                "income"
+              ]
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "create_category",
+        "summary": "HTTP contract for create_category",
+        "x-pi-tool": {
+          "name": "create_category",
+          "label": "create_category",
+          "description": "HTTP contract for create_category",
+          "method": "POST",
+          "path": "/categories",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "expense",
+                      "income"
+                    ]
+                  },
+                  "parentId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "name",
+                  "kind"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard/month-summary": {
+      "get": {
+        "operationId": "get_month_summary",
+        "summary": "Get income and expense totals for a month",
+        "x-pi-tool": {
+          "name": "get_month_summary",
+          "label": "Monthly Summary",
+          "description": "Get income/expense totals and transaction count for a given year-month",
+          "method": "GET",
+          "path": "/dashboard/month-summary",
+          "idempotency": false,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "yearMonth",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-(0[1-9]|1[0-2])$"
+            }
+          }
+        ]
+      }
+    },
+    "/transactions": {
+      "get": {
+        "operationId": "list_recent_transactions",
+        "summary": "List recent transactions",
+        "x-pi-tool": {
+          "label": "List Recent Transactions",
+          "result": {
+            "kind": "items",
+            "key": "transactions",
+            "fields": {
+              "id": "id",
+              "description": "description",
+              "amount_cents": "amountCents",
+              "date": "date",
+              "kind": "kind",
+              "account_id": "accountId"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "x-pi-context": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "default": 0
+            }
+          },
+          {
+            "name": "accountId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "required": false,
+            "context": false,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "required": false,
+            "context": false,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "categoryId",
+            "in": "query",
+            "required": false,
+            "context": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "context": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "expense",
+                "income",
+                "transfer"
+              ]
+            }
+          },
+          {
+            "name": "minAmountCents",
+            "in": "query",
+            "required": false,
+            "context": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "maxAmountCents",
+            "in": "query",
+            "required": false,
+            "context": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "context": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            }
+          }
+        ]
+      }
+    },
+    "/transactions/expense": {
+      "post": {
+        "operationId": "create_expense",
+        "summary": "Register an expense",
+        "x-pi-tool": {
+          "label": "Create Expense",
+          "idempotency": true,
+          "result": {
+            "kind": "first",
+            "key": "transactionId",
+            "path": "id"
+          }
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "x-pi-context": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "x-pi-context": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "description",
+                  "amountCents",
+                  "categoryId",
+                  "accountId",
+                  "date"
+                ],
+                "properties": {
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "date": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "categoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payables": {
+      "post": {
+        "operationId": "create_account_payable",
+        "summary": "HTTP contract for create_account_payable",
+        "x-pi-tool": {
+          "name": "create_account_payable",
+          "label": "create_account_payable",
+          "description": "HTTP contract for create_account_payable",
+          "method": "POST",
+          "path": "/payables",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "dueDate": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "one_time",
+                      "recurring"
+                    ]
+                  },
+                  "frequency": {
+                    "type": "string",
+                    "enum": [
+                      "monthly",
+                      "quarterly",
+                      "yearly"
+                    ]
+                  },
+                  "endDate": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "reminderDaysBefore": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 30
+                  },
+                  "notes": {
+                    "type": "string"
+                  },
+                  "categoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "templateName": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "accountId",
+                  "description",
+                  "amountCents",
+                  "dueDate"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "list_accounts_payable",
+        "summary": "HTTP contract for list_accounts_payable",
+        "x-pi-tool": {
+          "name": "list_accounts_payable",
+          "label": "list_accounts_payable",
+          "description": "HTTP contract for list_accounts_payable",
+          "method": "GET",
+          "path": "/payables",
+          "idempotency": false,
+          "shadow": true,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "paid",
+                "overdue",
+                "cancelled"
+              ]
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "one_time",
+                "recurring"
+              ]
+            }
+          },
+          {
+            "name": "dueWithinDays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 365
+            }
+          }
+        ]
+      }
+    },
+    "/payables/{payableId}/pay": {
+      "post": {
+        "operationId": "mark_account_paid",
+        "summary": "HTTP contract for mark_account_paid",
+        "x-pi-tool": {
+          "name": "mark_account_paid",
+          "label": "mark_account_paid",
+          "description": "HTTP contract for mark_account_paid",
+          "method": "POST",
+          "path": "/payables/{payableId}/pay",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "payableId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "paidDate": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "createTransaction": {
+                    "type": "boolean"
+                  },
+                  "prepayMonths": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 24
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payables/{payableId}/cancel": {
+      "post": {
+        "operationId": "cancel_account_payable",
+        "summary": "HTTP contract for cancel_account_payable",
+        "x-pi-tool": {
+          "name": "cancel_account_payable",
+          "label": "cancel_account_payable",
+          "description": "HTTP contract for cancel_account_payable",
+          "method": "POST",
+          "path": "/payables/{payableId}/cancel",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "payableId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payables/reminders": {
+      "get": {
+        "operationId": "check_payable_reminders",
+        "summary": "HTTP contract for check_payable_reminders",
+        "x-pi-tool": {
+          "name": "check_payable_reminders",
+          "label": "check_payable_reminders",
+          "description": "HTTP contract for check_payable_reminders",
+          "method": "GET",
+          "path": "/payables/reminders",
+          "idempotency": false,
+          "shadow": true,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ]
+      }
+    },
+    "/transactions/income": {
+      "post": {
+        "operationId": "create_income",
+        "summary": "HTTP contract for create_income",
+        "x-pi-tool": {
+          "name": "create_income",
+          "label": "create_income",
+          "description": "HTTP contract for create_income",
+          "method": "POST",
+          "path": "/transactions/income",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "date": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "categoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "description",
+                  "amountCents",
+                  "date",
+                  "accountId",
+                  "categoryId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cards/recurring": {
+      "get": {
+        "operationId": "list_recurring_purchases",
+        "summary": "List recurring credit-card purchases",
+        "x-pi-tool": {
+          "name": "list_recurring_purchases",
+          "label": "list_recurring_purchases",
+          "description": "List recurring credit-card purchases",
+          "method": "GET",
+          "path": "/cards/recurring",
+          "idempotency": false,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "accountId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "paused",
+                "cancelled"
+              ]
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "create_recurring_purchase",
+        "summary": "HTTP contract for create_recurring_purchase",
+        "x-pi-tool": {
+          "name": "create_recurring_purchase",
+          "label": "create_recurring_purchase",
+          "description": "HTTP contract for create_recurring_purchase",
+          "method": "POST",
+          "path": "/cards/recurring",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "frequency": {
+                    "type": "string",
+                    "enum": [
+                      "monthly",
+                      "quarterly",
+                      "yearly"
+                    ]
+                  },
+                  "startDate": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "endDate": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "categoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "accountId",
+                  "description",
+                  "amountCents",
+                  "frequency",
+                  "startDate"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transfers": {
+      "post": {
+        "operationId": "create_transfer",
+        "summary": "HTTP contract for create_transfer",
+        "x-pi-tool": {
+          "name": "create_transfer",
+          "label": "create_transfer",
+          "description": "HTTP contract for create_transfer",
+          "method": "POST",
+          "path": "/transfers",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "date": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "fromAccountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "toAccountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "description",
+                  "amountCents",
+                  "date",
+                  "fromAccountId",
+                  "toAccountId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{accountId}/deactivate": {
+      "post": {
+        "operationId": "deactivate_account",
+        "summary": "HTTP contract for deactivate_account",
+        "x-pi-tool": {
+          "name": "deactivate_account",
+          "label": "deactivate_account",
+          "description": "HTTP contract for deactivate_account",
+          "method": "POST",
+          "path": "/accounts/{accountId}/deactivate",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "accountId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/categories/{categoryId}/deactivate": {
+      "post": {
+        "operationId": "deactivate_category",
+        "summary": "HTTP contract for deactivate_category",
+        "x-pi-tool": {
+          "name": "deactivate_category",
+          "label": "deactivate_category",
+          "description": "HTTP contract for deactivate_category",
+          "method": "POST",
+          "path": "/categories/{categoryId}/deactivate",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "categoryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/transactions/{transactionId}": {
+      "delete": {
+        "operationId": "delete_transaction",
+        "summary": "HTTP contract for delete_transaction",
+        "x-pi-tool": {
+          "name": "delete_transaction",
+          "label": "delete_transaction",
+          "description": "HTTP contract for delete_transaction",
+          "method": "DELETE",
+          "path": "/transactions/{transactionId}",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "transactionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "update_transaction",
+        "summary": "HTTP contract for update_transaction",
+        "x-pi-tool": {
+          "name": "update_transaction",
+          "label": "update_transaction",
+          "description": "HTTP contract for update_transaction",
+          "method": "PATCH",
+          "path": "/transactions/{transactionId}",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "transactionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "date": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "categoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "/goals": {
+      "post": {
+        "operationId": "create_goal",
+        "summary": "HTTP contract for create_goal",
+        "x-pi-tool": {
+          "name": "create_goal",
+          "label": "create_goal",
+          "description": "HTTP contract for create_goal",
+          "method": "POST",
+          "path": "/goals",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "goalType": {
+                    "type": "string",
+                    "enum": [
+                      "savings",
+                      "purchase",
+                      "debt_payoff",
+                      "emergency_fund"
+                    ]
+                  },
+                  "targetAmountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "startDate": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "targetDate": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "categoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "goalType",
+                  "targetAmountCents",
+                  "startDate"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "list_goals",
+        "summary": "HTTP contract for list_goals",
+        "x-pi-tool": {
+          "name": "list_goals",
+          "label": "list_goals",
+          "description": "HTTP contract for list_goals",
+          "method": "GET",
+          "path": "/goals",
+          "idempotency": false,
+          "shadow": true,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ]
+      }
+    },
+    "/goals/{goalId}/contribute": {
+      "post": {
+        "operationId": "contribute_to_goal",
+        "summary": "HTTP contract for contribute_to_goal",
+        "x-pi-tool": {
+          "name": "contribute_to_goal",
+          "label": "contribute_to_goal",
+          "description": "HTTP contract for contribute_to_goal",
+          "method": "POST",
+          "path": "/goals/{goalId}/contribute",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "goalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "contributionDate": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "amountCents"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/goals/{goalId}/cancel": {
+      "post": {
+        "operationId": "cancel_goal",
+        "summary": "HTTP contract for cancel_goal",
+        "x-pi-tool": {
+          "name": "cancel_goal",
+          "label": "cancel_goal",
+          "description": "HTTP contract for cancel_goal",
+          "method": "POST",
+          "path": "/goals/{goalId}/cancel",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "goalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/budgets": {
+      "post": {
+        "operationId": "create_budget",
+        "summary": "HTTP contract for create_budget",
+        "x-pi-tool": {
+          "name": "create_budget",
+          "label": "create_budget",
+          "description": "HTTP contract for create_budget",
+          "method": "POST",
+          "path": "/budgets",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "categoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "period": {
+                    "type": "string",
+                    "enum": [
+                      "monthly",
+                      "quarterly",
+                      "yearly"
+                    ]
+                  },
+                  "startDate": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "alertThreshold": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  }
+                },
+                "required": [
+                  "categoryId",
+                  "name",
+                  "amountCents",
+                  "period",
+                  "startDate"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "list_budgets",
+        "summary": "HTTP contract for list_budgets",
+        "x-pi-tool": {
+          "name": "list_budgets",
+          "label": "list_budgets",
+          "description": "HTTP contract for list_budgets",
+          "method": "GET",
+          "path": "/budgets",
+          "idempotency": false,
+          "shadow": true,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ]
+      }
+    },
+    "/budgets/check": {
+      "get": {
+        "operationId": "check_budgets",
+        "summary": "HTTP contract for check_budgets",
+        "x-pi-tool": {
+          "name": "check_budgets",
+          "label": "check_budgets",
+          "description": "HTTP contract for check_budgets",
+          "method": "GET",
+          "path": "/budgets/check",
+          "idempotency": false,
+          "shadow": true,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ]
+      }
+    },
+    "/budgets/{budgetId}/trends": {
+      "get": {
+        "operationId": "budget_trends",
+        "summary": "HTTP contract for budget_trends",
+        "x-pi-tool": {
+          "name": "budget_trends",
+          "label": "budget_trends",
+          "description": "HTTP contract for budget_trends",
+          "method": "GET",
+          "path": "/budgets/{budgetId}/trends",
+          "idempotency": false,
+          "shadow": true,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "budgetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "monthsBack",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12
+            }
+          }
+        ]
+      }
+    },
+    "/notifications": {
+      "post": {
+        "operationId": "configure_notification",
+        "summary": "HTTP contract for configure_notification",
+        "x-pi-tool": {
+          "name": "configure_notification",
+          "label": "configure_notification",
+          "description": "HTTP contract for configure_notification",
+          "method": "POST",
+          "path": "/notifications",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "chatId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "notificationType": {
+                    "type": "string",
+                    "enum": [
+                      "overdue_reminder",
+                      "due_today_reminder",
+                      "upcoming_reminder",
+                      "daily_summary",
+                      "weekly_summary"
+                    ]
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "scheduleHour": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 23
+                  },
+                  "scheduleMinute": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 59
+                  },
+                  "scheduleWindowMinutes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1440
+                  },
+                  "daysOfWeek": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 6
+                    }
+                  },
+                  "thresholdDays": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 90
+                  },
+                  "timezone": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "chatId",
+                  "notificationType",
+                  "enabled"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "list_notifications",
+        "summary": "HTTP contract for list_notifications",
+        "x-pi-tool": {
+          "name": "list_notifications",
+          "label": "list_notifications",
+          "description": "HTTP contract for list_notifications",
+          "method": "GET",
+          "path": "/notifications",
+          "idempotency": false,
+          "shadow": true,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ]
+      }
+    },
+    "/payables/templates": {
+      "post": {
+        "operationId": "create_payable_template",
+        "summary": "HTTP contract for create_payable_template",
+        "x-pi-tool": {
+          "name": "create_payable_template",
+          "label": "create_payable_template",
+          "description": "HTTP contract for create_payable_template",
+          "method": "POST",
+          "path": "/payables/templates",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "frequency": {
+                    "type": "string",
+                    "enum": [
+                      "monthly",
+                      "quarterly",
+                      "yearly"
+                    ]
+                  },
+                  "dayOfMonth": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 31
+                  },
+                  "reminderDaysBefore": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 30
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "accountId",
+                  "name",
+                  "description",
+                  "amountCents",
+                  "frequency",
+                  "dayOfMonth"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "list_payable_templates",
+        "summary": "HTTP contract for list_payable_templates",
+        "x-pi-tool": {
+          "name": "list_payable_templates",
+          "label": "list_payable_templates",
+          "description": "HTTP contract for list_payable_templates",
+          "method": "GET",
+          "path": "/payables/templates",
+          "idempotency": false,
+          "shadow": true,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ]
+      }
+    },
+    "/payables/refresh-status": {
+      "post": {
+        "operationId": "refresh_payable_status",
+        "summary": "Refresh payable statuses for a workspace",
+        "x-pi-tool": {
+          "name": "refresh_payable_status",
+          "label": "refresh_payable_status",
+          "description": "Refresh pending payables that are overdue",
+          "method": "POST",
+          "path": "/payables/refresh-status",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statuses refreshed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["updated", "updatedCount"],
+                  "properties": {
+                    "updated": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "updatedCount": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payables/auto-create-from-templates": {
+      "post": {
+        "operationId": "auto_create_from_templates",
+        "summary": "Create due payables from active templates",
+        "x-pi-tool": {
+          "name": "auto_create_from_templates",
+          "label": "auto_create_from_templates",
+          "description": "Create due payables from active templates",
+          "method": "POST",
+          "path": "/payables/auto-create-from-templates",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "daysAhead",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 90,
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Due payables created from templates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["created", "createdCount"],
+                  "properties": {
+                    "created": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "createdCount": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payables/from-template": {
+      "post": {
+        "operationId": "create_payable_from_template",
+        "summary": "HTTP contract for create_payable_from_template",
+        "x-pi-tool": {
+          "name": "create_payable_from_template",
+          "label": "create_payable_from_template",
+          "description": "HTTP contract for create_payable_from_template",
+          "method": "POST",
+          "path": "/payables/from-template",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "templateId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "templateName": {
+                    "type": "string"
+                  },
+                  "dueDate": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "amountOverrideCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "dueDate"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{accountId}": {
+      "get": {
+        "summary": "Get one account",
+        "operationId": "get_balance",
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "accountId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "x-pi-tool": {
+          "name": "get_balance",
+          "label": "get_balance",
+          "description": "HTTP contract for get_balance",
+          "method": "GET",
+          "path": "/accounts/{accountId}",
+          "idempotency": false,
+          "shadow": true,
+          "result": null
+        }
+      },
+      "patch": {
+        "operationId": "update_account",
+        "summary": "Update account",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "x-pi-context": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "x-pi-tool": {
+          "name": "update_account",
+          "idempotency": true
+        }
+      }
+    },
+    "/categories/{categoryId}": {
+      "patch": {
+        "operationId": "update_category",
+        "summary": "HTTP contract for update_category",
+        "x-pi-tool": {
+          "name": "update_category",
+          "label": "update_category",
+          "description": "HTTP contract for update_category",
+          "method": "PATCH",
+          "path": "/categories/{categoryId}",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "categoryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cards": {
+      "post": {
+        "operationId": "create_credit_card_account",
+        "summary": "HTTP contract for create_credit_card_account",
+        "x-pi-tool": {
+          "name": "create_credit_card_account",
+          "label": "create_credit_card_account",
+          "description": "HTTP contract for create_credit_card_account",
+          "method": "POST",
+          "path": "/cards",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "creditLimitCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "closingDay": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 31
+                  },
+                  "dueDay": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 31
+                  }
+                },
+                "required": [
+                  "name",
+                  "creditLimitCents",
+                  "closingDay",
+                  "dueDay"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cards/purchases": {
+      "post": {
+        "operationId": "create_card_purchase",
+        "summary": "HTTP contract for create_card_purchase",
+        "x-pi-tool": {
+          "name": "create_card_purchase",
+          "label": "create_card_purchase",
+          "description": "HTTP contract for create_card_purchase",
+          "method": "POST",
+          "path": "/cards/purchases",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "date": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "categoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "installmentsTotal": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 48
+                  },
+                  "installmentNumber": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 48
+                  }
+                },
+                "required": [
+                  "accountId",
+                  "description",
+                  "amountCents",
+                  "date"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cards/installments": {
+      "post": {
+        "operationId": "create_card_installments",
+        "summary": "HTTP contract for create_card_installments",
+        "x-pi-tool": {
+          "name": "create_card_installments",
+          "label": "create_card_installments",
+          "description": "HTTP contract for create_card_installments",
+          "method": "POST",
+          "path": "/cards/installments",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "totalAmountCents": {
+                    "type": "integer",
+                    "minimum": 100
+                  },
+                  "purchaseDate": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "installmentsTotal": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 48
+                  },
+                  "categoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "accountId",
+                  "description",
+                  "totalAmountCents",
+                  "purchaseDate",
+                  "installmentsTotal"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cards/statements/{statementId}/pay": {
+      "post": {
+        "operationId": "pay_statement",
+        "summary": "HTTP contract for pay_statement",
+        "x-pi-tool": {
+          "name": "pay_statement",
+          "label": "pay_statement",
+          "description": "HTTP contract for pay_statement",
+          "method": "POST",
+          "path": "/cards/statements/{statementId}/pay",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "statementId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "fromAccountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "amountCents",
+                  "fromAccountId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cards/statements": {
+      "get": {
+        "operationId": "list_statements",
+        "summary": "HTTP contract for list_statements",
+        "x-pi-tool": {
+          "name": "list_statements",
+          "label": "list_statements",
+          "description": "HTTP contract for list_statements",
+          "method": "GET",
+          "path": "/cards/statements",
+          "idempotency": false,
+          "shadow": true,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "accountId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed",
+                "paid",
+                "partial",
+                "overdue",
+                "cancelled"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          }
+        ]
+      }
+    },
+    "/cards/statements/{statementId}": {
+      "get": {
+        "operationId": "get_statement_details",
+        "summary": "HTTP contract for get_statement_details",
+        "x-pi-tool": {
+          "name": "get_statement_details",
+          "label": "get_statement_details",
+          "description": "HTTP contract for get_statement_details",
+          "method": "GET",
+          "path": "/cards/statements/{statementId}",
+          "idempotency": false,
+          "shadow": true,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "statementId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/budgets/{budgetId}": {
+      "patch": {
+        "operationId": "update_budget",
+        "summary": "HTTP contract for update_budget",
+        "x-pi-tool": {
+          "name": "update_budget",
+          "label": "update_budget",
+          "description": "HTTP contract for update_budget",
+          "method": "PATCH",
+          "path": "/budgets/{budgetId}",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "budgetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "alertThreshold": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pending-operations/undo": {
+      "post": {
+        "operationId": "undo_last_action",
+        "summary": "Undo the last eligible action of the actor and workspace",
+        "x-pi-tool": {
+          "label": "Undo Last Action",
+          "shadow": false,
+          "idempotency": true
+        },
+        "parameters": []
+      }
+    },
+    "/insights/spending": {
+      "get": {
+        "operationId": "spending_insights",
+        "summary": "Compare spend history and income share",
+        "x-pi-tool": {
+          "name": "spending_insights",
+          "label": "spending_insights",
+          "description": "Compare spending vs history, detect anomalies and show % of income",
+          "method": "GET",
+          "path": "/insights/spending",
+          "idempotency": false,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "yearMonth",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}$"
+            }
+          },
+          {
+            "name": "insightType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["all", "comparison", "anomalies", "income-share"]
+            }
+          },
+          {
+            "name": "lookbackMonths",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Spending insights",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

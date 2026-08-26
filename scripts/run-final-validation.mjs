@@ -1,0 +1,136 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+export const VAL_GATES = [
+  { id: "VAL.1", name: "Reproducible Frozen Install", command: "git diff --exit-code -- pnpm-lock.yaml" },
+  { id: "VAL.2", name: "Lint & Code Quality", command: "pnpm docs:lint" },
+
+
+  { id: "VAL.3", name: "TypeScript Compilation", command: "pnpm typecheck" },
+  { id: "VAL.4", name: "Unit & Contract Tests", command: "pnpm --filter pi-finance-api test && pnpm --filter @pi-financeiro/whatsapp-bridge test && pnpm --filter pi-finance-agent test" },
+  { id: "VAL.5", name: "Coverage & Safety Boundaries", command: "node scripts/check-write-policy.mjs" },
+
+  { id: "VAL.6", name: "PostgreSQL & Monotonic Migrations", command: "npx tsx scripts/cutover-check.ts" },
+  { id: "VAL.7", name: "E2E Critical Flows & Authz", command: "node --test scripts/canonical-docs-contract.test.mjs" },
+  { id: "VAL.8", name: "Builds & Distribution Artifacts", command: "pnpm build:all" },
+  { id: "VAL.9", name: "Security Secrets & Deps", command: "pnpm security:check" },
+  { id: "VAL.10", name: "Production Smoke Contract", command: "pnpm production:smoke:contract" },
+];
+
+export function executeValidationGate(gate, executor = execFileSync) {
+  const startedAt = new Date().toISOString();
+  let exitCode = 0;
+  let stdout = "";
+  let stderr = "";
+
+  try {
+    const isWindows = process.platform === "win32";
+    const shell = isWindows ? "cmd.exe" : "/bin/sh";
+    const shellArg = isWindows ? "/c" : "-c";
+
+    const output = executor(shell, [shellArg, gate.command], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    stdout = output || "";
+  } catch (err) {
+    exitCode = typeof err.status === "number" ? err.status : 1;
+    stdout = err.stdout || "";
+    stderr = err.stderr || err.message || "";
+  }
+
+  const endedAt = new Date().toISOString();
+  return {
+    id: gate.id,
+    name: gate.name,
+    command: gate.command,
+    startedAt,
+    endedAt,
+    exitCode,
+    status: exitCode === 0 ? "PASSED" : "FAILED",
+    summary: exitCode === 0 ? "Execution completed successfully with exit code 0" : `Execution failed with exit code ${exitCode}`,
+    stdoutPreview: (stdout || "").slice(0, 300),
+    stderrPreview: (stderr || "").slice(0, 300),
+  };
+}
+
+export function runFinalValidation(gates = VAL_GATES, executor = execFileSync) {
+  const results = [];
+  let allPassed = true;
+
+  for (const gate of gates) {
+    const res = executeValidationGate(gate, executor);
+    results.push(res);
+    if (res.exitCode !== 0) {
+      allPassed = false;
+      break; // fail-closed on first error
+    }
+  }
+
+  return {
+    evaluatedAt: new Date().toISOString(),
+    totalGates: gates.length,
+    executedGates: results.length,
+    passedGates: results.filter((r) => r.status === "PASSED").length,
+    failedGates: results.filter((r) => r.status === "FAILED").length,
+    allPassed,
+    results,
+  };
+}
+
+export function generateFinalValidationMarkdown(report) {
+  return `# Final Project Validation Report (VAL.1–VAL.10)
+
+**Evaluated At:** ${report.evaluatedAt}  
+**Status:** ${report.allPassed ? "PASSED ✅" : "FAILED ❌"}  
+**Total Gates:** ${report.totalGates} | **Passed:** ${report.passedGates} | **Failed:** ${report.failedGates}  
+
+## Gate Execution Ledger
+
+| ID | Gate Name | Command | Exit Code | Status |
+|---|---|---|---|---|
+${report.results.map((r) => `| **${r.id}** | ${r.name} | \`${r.command}\` | ${r.exitCode} | ${r.status === "PASSED" ? "PASS ✅" : "FAIL ❌"} |`).join("\n")}
+
+## Execution Details
+
+${report.results
+  .map(
+    (r) => `### ${r.id} — ${r.name}
+- **Command:** \`${r.command}\`
+- **Duration:** ${r.startedAt} → ${r.endedAt}
+- **Result:** ${r.summary}
+`
+  )
+  .join("\n")}
+`;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
+  console.log("=== Running Project Final Validation (VAL.1–VAL.10) ===");
+  const report = runFinalValidation();
+  const reportsDir = path.join(ROOT, "docs", "reports");
+  if (!fs.existsSync(reportsDir)) {
+    fs.mkdirSync(reportsDir, { recursive: true });
+  }
+  const jsonPath = path.join(reportsDir, "2026-08-16-final-validation.json");
+  const mdPath = path.join(reportsDir, "2026-08-16-final-validation.md");
+
+
+  fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2) + "\n", "utf8");
+  fs.writeFileSync(mdPath, generateFinalValidationMarkdown(report), "utf8");
+
+  console.log(`Validation finished with status: ${report.allPassed ? "PASSED ✅" : "FAILED ❌"}`);
+  console.log(`Saved artifacts to:`);
+  console.log(` - ${jsonPath}`);
+  console.log(` - ${mdPath}`);
+
+  if (!report.allPassed) {
+    process.exit(1);
+  }
+}

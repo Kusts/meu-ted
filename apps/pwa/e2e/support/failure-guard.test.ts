@@ -126,6 +126,16 @@ describe("request failure detection", () => {
     expect(guard.requestFailures).toHaveLength(0);
     expect(() => assertNoUndeclaredFailures(guard)).not.toThrow();
   });
+
+  it("ignores aborted static asset under /_next/static (benign navigation noise)", () => {
+    const guard = createGuard();
+    onRequestFailed(guard, {
+      url: () => "http://127.0.0.1:3000/_next/static/media/abc-s.p.woff2",
+      failure: () => ({ errorText: "net::ERR_ABORTED" }),
+    });
+    expect(guard.requestFailures).toHaveLength(0);
+    expect(() => assertNoUndeclaredFailures(guard)).not.toThrow();
+  });
 });
 
 // ── HTTP response failures ───────────────────────────────────────────────────

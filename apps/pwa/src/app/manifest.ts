@@ -1,11 +1,31 @@
 import type { MetadataRoute } from "next";
 
-export default function manifest(): MetadataRoute.Manifest {
+type CaptureManifest = MetadataRoute.Manifest & {
+  share_target: {
+    action: string;
+    method: "GET";
+    enctype: "application/x-www-form-urlencoded";
+    params: { title: string; text: string; url: string };
+  };
+  shortcuts: Array<{ name: string; url: string }>;
+};
+
+export default function manifest(): CaptureManifest {
   return {
     name: "Pi Financeiro",
     short_name: "Pi Financeiro",
     description: "Controle financeiro pessoal via WhatsApp",
     start_url: "/",
+    share_target: {
+      action: "/capture",
+      method: "GET",
+      enctype: "application/x-www-form-urlencoded",
+      params: {
+        title: "title",
+        text: "text",
+        url: "url",
+      },
+    },
     display: "standalone",
     background_color: "#F7F8F5",
     theme_color: "#0E8C5A",
@@ -38,5 +58,11 @@ export default function manifest(): MetadataRoute.Manifest {
     ],
     lang: "pt-BR",
     categories: ["finance"],
+    shortcuts: [
+      {
+        name: "Novo gasto",
+        url: "/capture?kind=expense",
+      },
+    ],
   };
 }

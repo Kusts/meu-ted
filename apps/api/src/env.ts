@@ -46,6 +46,12 @@ export type AppConfig = {
   host: string;
   databaseUrl: string | null;
   defaultHouseholdId: string;
+  betterAuthSecret: string;
+  betterAuthUrl: string;
+  trustedOrigins: string[];
+  disableSignUp: boolean;
+  disableDeviceRegistration: boolean;
+  adminEmails: string[];
 };
 
 export const loadConfig = (): AppConfig => {
@@ -53,5 +59,34 @@ export const loadConfig = (): AppConfig => {
   const host = process.env.HOST ?? '0.0.0.0';
   const databaseUrl = process.env.DATABASE_URL?.trim() || null;
   const defaultHouseholdId = process.env.DEFAULT_HOUSEHOLD_ID?.trim() || '11111111-1111-4111-8111-111111111111';
-  return { port, host, databaseUrl, defaultHouseholdId };
+  const betterAuthSecret = process.env.BETTER_AUTH_SECRET?.trim() || 'pi-financeiro-dev-secret-at-least-32-chars!';
+  const betterAuthUrl = process.env.BETTER_AUTH_URL?.trim() || process.env.API_BASE_URL?.trim() || (process.env.NODE_ENV === 'production' ? 'https://api.synkroo.com.br' : `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
+  const defaultOrigins = [
+    'https://pi-finance-pwa.walissonead.workers.dev',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001',
+  ];
+  const envOrigins = process.env.TRUSTED_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean);
+  const trustedOrigins = envOrigins && envOrigins.length > 0 ? envOrigins : defaultOrigins;
+  const disableSignUp = process.env.DISABLE_SIGN_UP !== 'false';
+  const disableDeviceRegistration = process.env.DISABLE_DEVICE_REGISTRATION !== 'false';
+  const adminEmails = (process.env.ADMIN_EMAILS ?? 'walissonead@gmail.com')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+
+  return {
+    port,
+    host,
+    databaseUrl,
+    defaultHouseholdId,
+    betterAuthSecret,
+    betterAuthUrl,
+    trustedOrigins,
+    disableSignUp,
+    disableDeviceRegistration,
+    adminEmails,
+  };
 };

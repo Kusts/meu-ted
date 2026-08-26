@@ -1,0 +1,25 @@
+{
+  "rotated_at": "2026-07-29",
+  "phase": "G0.1.5",
+  "tokens": [
+    {
+      "token": "40e59372-8033-4931-8322-be4078ff42d3",
+      "device_id": "b42d8cbf-4a69-4c65-a74b-4936c69960d1",
+      "household_id": "DEMO_HOUSEHOLD_ID",
+      "environment": "dev (in-memory)",
+      "replaces": "dev-token-1"
+    },
+    {
+      "token": "14e64635-3e80-449e-a5d1-892e53e27f87",
+      "device_id": "53512a51-3709-418c-91ef-a5a8bbe8e63a",
+      "household_id": "DEMO_HOUSEHOLD_ID",
+      "environment": "dev (in-memory)",
+      "replaces": "dev-token-2"
+    }
+  ],
+  "revoked": [
+    "dev-token-1 (was: in-memory store, seed-demo.ts, test-app.ts)",
+    "dev-token-2 (was: in-memory store, test-app.ts)"
+  ],
+  "notes": "Production tokens not accessible. Use procedure in device-token-inventory.md for production rotation."
+}

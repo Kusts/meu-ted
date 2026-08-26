@@ -4,12 +4,13 @@ import StatusBar from "@/components/StatusBar";
 import Link from "next/link";
 import { StaleBanner } from "@/components/StaleBanner";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Skeleton from "@/components/ui/Skeleton";
 import { useAppState } from "@/lib/state/app-state-context";
 import NotificationsSheet from "@/features/profile/NotificationsSheet";
 import { useEffectiveProfile } from "@/features/profile/hooks";
+import { dashboardSummaryGate } from "@/features/dashboard-summary-gate";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -100,11 +101,28 @@ interface HomePageProps {
 }
 
 export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
-  const { accounts, transactions, categories, payables, budgets, cardStatements, quickInsights, loading, error } =
-    useAppState();
+  const {
+    accounts,
+    transactions,
+    categories,
+    payables,
+    budgets,
+    cardStatements,
+    quickInsights,
+    dashboardSummary,
+    refreshDashboardSummary,
+    loading,
+    error,
+  } = useAppState();
   const profile = useEffectiveProfile();
   const router = useRouter();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+
+  useEffect(() => {
+    if (!dashboardSummary && refreshDashboardSummary) {
+      refreshDashboardSummary();
+    }
+  }, [dashboardSummary, refreshDashboardSummary]);
 
   const handleNew = (kind: "expense" | "income" | "transfer") => {
     if (onNewTransaction) onNewTransaction(kind);
@@ -235,20 +253,23 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   const checkingAccounts = accounts.filter((a) => a.kind !== "credit_card");
   const creditCards = accounts.filter((a) => a.kind === "credit_card");
 
-  const totalBalance = checkingAccounts.reduce(
-    (sum, a) => sum + a.balanceCents,
-    0,
-  );
+  const hasServerSummary = dashboardSummaryGate({ serverSummary: dashboardSummary });
 
-  const totalIncome = transactions
-    .filter((t) => t.kind === "income")
-    .reduce((s, t) => s + t.amountCents, 0);
+  const totalBalance = hasServerSummary
+    ? (dashboardSummary?.totalBalanceCents ?? (dashboardSummary as unknown as { totals?: { balanceCents?: number } })?.totals?.balanceCents ?? 0)
+    : null;
 
-  const totalExpenses = transactions
-    .filter((t) => t.kind === "expense")
-    .reduce((s, t) => s + t.amountCents, 0);
+  const totalIncome = hasServerSummary
+    ? (dashboardSummary?.monthIncomeCents ?? (dashboardSummary as unknown as { totals?: { incomeCents?: number } })?.totals?.incomeCents ?? 0)
+    : null;
 
-  const netResult = totalIncome - totalExpenses;
+  const totalExpenses = hasServerSummary
+    ? (dashboardSummary?.monthExpenseCents ?? (dashboardSummary as unknown as { totals?: { expenseCents?: number } })?.totals?.expenseCents ?? 0)
+    : null;
+
+  const netResult = hasServerSummary
+    ? (dashboardSummary?.monthNetCents ?? (totalIncome !== null && totalExpenses !== null ? totalIncome - totalExpenses : 0))
+    : null;
 
   // ── Donut: gastos por categoria (top 4) ──
   // (hooked above before early return)
@@ -286,7 +307,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   const fallbackInsights: InsightItem[] = [];
 
   // 1. Savings rate
-  if (totalIncome > 0) {
+  if (hasServerSummary && totalIncome !== null && totalIncome > 0 && totalExpenses !== null) {
     const savingsRate = ((totalIncome - totalExpenses) / totalIncome) * 100;
     const isGood = savingsRate >= 20;
     const isWarn = savingsRate >= 5;
@@ -509,7 +530,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
             className="mb-[18px] font-mono text-[40px] font-semibold text-white"
             style={{ letterSpacing: "-0.02em", lineHeight: 1 }}
           >
-            {formatBRL(totalBalance)}
+            {totalBalance !== null ? formatBRL(totalBalance) : "—"}
           </div>
 
           {/* Mini-stats row */}
@@ -519,7 +540,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
             >
               <div className="mb-[3px] text-[11px] text-white/70">Receitas</div>
               <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[13px] font-semibold text-white">
-                {formatBRL(totalIncome)}
+                {totalIncome !== null ? formatBRL(totalIncome) : "—"}
               </div>
             </div>
             <div className="flex-1 rounded-[13px] p-[10px_12px]"
@@ -527,7 +548,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
             >
               <div className="mb-[3px] text-[11px] text-white/70">Despesas</div>
               <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[13px] font-semibold text-white">
-                {formatBRL(totalExpenses)}
+                {totalExpenses !== null ? formatBRL(totalExpenses) : "—"}
               </div>
             </div>
             <div className="flex-1 rounded-[13px] p-[10px_12px]"
@@ -535,9 +556,16 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
             >
               <div className="mb-[3px] text-[11px] text-white/70">Resultado</div>
               <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[13px] font-semibold"
-                style={{ color: netResult >= 0 ? "#7FE3B0" : "#F9A8A2" }}
+                style={{
+                  color:
+                    netResult === null
+                      ? "rgba(255,255,255,0.7)"
+                      : netResult >= 0
+                        ? "#7FE3B0"
+                        : "#F9A8A2",
+                }}
               >
-                {formatBRL(netResult)}
+                {netResult !== null ? formatBRL(netResult) : "—"}
               </div>
             </div>
           </div>
@@ -904,7 +932,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                 Gastos por categoria
               </span>
               <span className="font-mono text-[12px] font-semibold text-text-primary">
-                Total: {formatBRL(totalExpenses)}
+                Total: {totalExpenses !== null ? formatBRL(totalExpenses) : "—"}
               </span>
             </div>
             {donutData.length === 0 ? (
@@ -922,7 +950,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                   <div className="absolute inset-[23px] flex flex-col items-center justify-center rounded-full bg-surface">
                     <span className="text-[9px] text-text-muted">Total</span>
                     <span className="font-mono text-[14px] font-semibold text-text-primary">
-                      {formatBRL(totalExpenses)}
+                      {totalExpenses !== null ? formatBRL(totalExpenses) : "—"}
                     </span>
                   </div>
                 </div>

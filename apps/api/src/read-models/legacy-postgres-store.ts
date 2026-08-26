@@ -95,8 +95,9 @@ export const createLegacyPostgresReadModelStore = (opts: { pool: Pool }): ReadMo
                COALESCE(SUM(CASE WHEN t.kind = 'transfer' THEN t.amount_cents ELSE 0 END) FILTER (WHERE t.from_account_id = a.id), 0) as transfer_out,
                COALESCE(SUM(CASE WHEN t.kind = 'transfer' THEN t.amount_cents ELSE 0 END) FILTER (WHERE t.to_account_id = a.id), 0) as transfer_in
              FROM transactions t
-             WHERE t.deleted_at IS NULL
+             WHERE t.household_id = $1 AND t.deleted_at IS NULL
            ) totals ON true
+
            WHERE a.household_id = $1 AND a.active = true AND a.deleted_at IS NULL`,
         [householdId],
       );

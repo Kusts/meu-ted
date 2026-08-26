@@ -14,6 +14,7 @@ import type { Pool } from 'pg';
 import type { Account, Category, Transaction } from '../types/domain.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors, DomainError } from './errors.js';
+import { buildIdempotencyKey } from './idempotency.js';
 import type { WriteStore } from './store.js';
 import type {
   CreateAccountInput,
@@ -246,9 +247,10 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
         await client.query(
           `UPDATE accounts
               SET balance_cents = GREATEST(0, balance_cents - $2)
-            WHERE id = $1`,
-          [input.accountId, input.amountCents],
+            WHERE id = $1 AND household_id = $3`,
+          [input.accountId, input.amountCents, householdId],
         );
+
         return mapTransaction(txRes.rows[0]!);
       });
     },
@@ -267,8 +269,8 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
           [householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId],
         );
         await client.query(
-          `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1`,
-          [input.accountId, input.amountCents],
+          `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
+          [input.accountId, input.amountCents, householdId],
         );
         return mapTransaction(txRes.rows[0]!);
       });
@@ -293,12 +295,12 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
         await client.query(
           `UPDATE accounts
               SET balance_cents = GREATEST(0, balance_cents - $2)
-            WHERE id = $1`,
-          [input.fromAccountId, input.amountCents],
+            WHERE id = $1 AND household_id = $3`,
+          [input.fromAccountId, input.amountCents, householdId],
         );
         await client.query(
-          `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1`,
-          [input.toAccountId, input.amountCents],
+          `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
+          [input.toAccountId, input.amountCents, householdId],
         );
         return mapTransaction(txRes.rows[0]!);
       });
@@ -347,26 +349,26 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
         if (patch.amountCents !== undefined) {
           const sign = tx.kind === 'expense' ? '+' : '-';
           await client.query(
-            `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1`,
-            [tx.accountId, tx.amountCents],
+            `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1 AND household_id = $3`,
+            [tx.accountId, tx.amountCents, householdId],
           );
           const newSign = tx.kind === 'expense' ? '-' : '+';
           await client.query(
-            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1`,
-            [tx.accountId, patch.amountCents],
+            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1 AND household_id = $3`,
+            [tx.accountId, patch.amountCents, householdId],
           );
         }
         if (patch.accountId !== undefined && patch.accountId !== tx.accountId) {
           // Revert on old, apply on new.
           const sign = tx.kind === 'expense' ? '+' : '-';
           await client.query(
-            `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1`,
-            [tx.accountId, tx.amountCents],
+            `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1 AND household_id = $3`,
+            [tx.accountId, tx.amountCents, householdId],
           );
           const newSign = tx.kind === 'expense' ? '-' : '+';
           await client.query(
-            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1`,
-            [patch.accountId, tx.amountCents],
+            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1 AND household_id = $3`,
+            [patch.accountId, tx.amountCents, householdId],
           );
         }
         const res = await client.query<Row>(
@@ -397,23 +399,23 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
         // Restore balance effect.
         if (tx.kind === 'expense') {
           await client.query(
-            `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1`,
-            [tx.accountId, tx.amountCents],
+            `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
+            [tx.accountId, tx.amountCents, householdId],
           );
         } else if (tx.kind === 'income') {
           await client.query(
-            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1`,
-            [tx.accountId, tx.amountCents],
+            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1 AND household_id = $3`,
+            [tx.accountId, tx.amountCents, householdId],
           );
         } else if (tx.kind === 'transfer') {
           await client.query(
-            `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1`,
-            [tx.accountId, tx.amountCents],
+            `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
+            [tx.accountId, tx.amountCents, householdId],
           );
           if (tx.transferToAccountId) {
             await client.query(
-              `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1`,
-              [tx.transferToAccountId, tx.amountCents],
+              `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1 AND household_id = $3`,
+              [tx.transferToAccountId, tx.amountCents, householdId],
             );
           }
         }
@@ -434,43 +436,120 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
 /**
  * Postgres idempotency store. TTL 24h, lazy eviction on lookup.
  */
-export const createPostgresIdempotencyStore = (opts: { pool: Pool }): import('./idempotency.js').IdempotencyStore => {
-  const { pool } = opts;
+export const createPostgresIdempotencyStore = (opts: { pool: Pool; legacy?: boolean }): import('./idempotency.js').IdempotencyStore => {
+  const { pool, legacy } = opts;
   const hash = (payload: unknown): string => {
-    const json = JSON.stringify(payload, Object.keys(payload as object).sort());
+    if (payload === undefined || payload === null) return '0';
+    const json = typeof payload === 'object'
+      ? JSON.stringify(payload, Object.keys(payload as object).sort())
+      : JSON.stringify(payload);
     let h = 0;
     for (let i = 0; i < json.length; i++) h = (h * 31 + json.charCodeAt(i)) | 0;
     return String(h);
   };
   return {
-    async lookupOrRecord(householdId, key, payload, producer) {
+    async lookupOrRecord(scopeOrHouseholdId: any, keyOrPayload: any, payloadOrProducer: any, maybeProducer?: any) {
+      let householdId: string;
+      let key: string;
+      let payload: unknown;
+      let producer: () => Promise<any>;
+      let operation: string | undefined;
+      let actorType: string | undefined;
+      let actorId: string | undefined;
+
+      if (typeof scopeOrHouseholdId === 'object' && scopeOrHouseholdId !== null) {
+        householdId = scopeOrHouseholdId.householdId ?? scopeOrHouseholdId.workspaceId;
+        key = scopeOrHouseholdId.key;
+        operation = scopeOrHouseholdId.operation;
+        actorType = scopeOrHouseholdId.actorType;
+        actorId = scopeOrHouseholdId.actorId;
+        payload = keyOrPayload;
+        producer = payloadOrProducer;
+      } else {
+        householdId = scopeOrHouseholdId;
+        key = keyOrPayload;
+        payload = payloadOrProducer;
+        producer = maybeProducer;
+      }
+
+      // Canonical composite key: raw key for the legacy string form,
+      // buildIdempotencyKey for the request-object form (same as in-memory).
+      const compositeKey = typeof scopeOrHouseholdId === 'object' && scopeOrHouseholdId !== null
+        ? buildIdempotencyKey(scopeOrHouseholdId as never)
+        : key;
+
       const payloadHash = hash(payload);
       return withTransaction(pool, async (client) => {
-        const existing = await client.query<{ payload_hash: string; response: unknown; created_at: Date }>(
-          `SELECT payload_hash, response, created_at
-             FROM idempotency_keys
-            WHERE household_id = $1 AND key = $2`,
-          [householdId, key],
-        );
-        const now = Date.now();
-        if (existing.rowCount && existing.rowCount > 0) {
-          const row = existing.rows[0]!;
-          const ageMs = now - new Date(row.created_at).getTime();
-          if (ageMs > 24 * 60 * 60 * 1000) {
-            await client.query(`DELETE FROM idempotency_keys WHERE household_id = $1 AND key = $2`, [householdId, key]);
-          } else {
-            if (row.payload_hash !== payloadHash) throw domainErrors.idempotencyConflict();
-            return { response: row.response as never, replayed: true };
-          }
+        if (legacy) {
+          await client.query(
+            `INSERT INTO operation_records (id, household_id, actor_type, actor_id, operation, idempotency_key, request_payload, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+            [randomUUID(), householdId, actorType ?? 'device', actorId ?? 'unknown', operation ?? 'write', key, JSON.stringify(payload)],
+          );
+          const response = await producer();
+          await client.query(
+            `INSERT INTO audit_logs (id, household_id, actor_type, actor_id, action, before_json, after_json, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+            [randomUUID(), householdId, actorType ?? 'device', actorId ?? 'unknown', operation ?? 'write', null, JSON.stringify(response)],
+          );
+          return { response, replayed: false };
         }
-        const response = await producer();
-        await client.query(
-          `INSERT INTO idempotency_keys (household_id, key, payload_hash, response)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (household_id, key) DO UPDATE SET payload_hash = EXCLUDED.payload_hash, response = EXCLUDED.response, created_at = NOW()`,
-          [householdId, key, payloadHash, JSON.stringify(response)],
+
+        // Canonical path: claim + effect + completion + audit in one
+        // transaction against operation_records (V013-V016 lifecycle).
+        const entityType = (operation ?? 'write').split('.')[0]!.replace(/s$/, '');
+        const claim = await client.query<{ id: string; status: string; response: unknown; effect_ref: string | null }>(
+          `INSERT INTO operation_records
+             (workspace_id, actor_id, operation, idempotency_key, payload_hash, status,
+              lease_until, retry_until, retention_until)
+           VALUES ($1, $2, $3, $4, $5, 'processing',
+                   NOW() + INTERVAL '5 minutes', NOW() + INTERVAL '7 days', NOW() + INTERVAL '90 days')
+           ON CONFLICT (workspace_id, idempotency_key) DO NOTHING
+           RETURNING id, status, response, effect_ref`,
+          [householdId, actorId ?? 'device', operation ?? 'write', compositeKey, payloadHash],
         );
-        return { response, replayed: false };
+
+        if (claim.rowCount === 1) {
+          const recordId = claim.rows[0]!.id;
+          const response = await producer();
+          const effectRef = (response as { transactionId?: string } | null)?.transactionId ?? null;
+          await client.query(
+            `UPDATE operation_records
+                SET status = 'completed', response = $3, effect_ref = $4, completed_at = NOW()
+              WHERE id = $1 AND workspace_id = $2`,
+            [recordId, householdId, JSON.stringify(response), effectRef],
+          );
+          await client.query(
+            `INSERT INTO audit_logs
+               (id, operation_record_id, workspace_id, actor_id, operation, event_type, payload_hash, effect_ref, metadata)
+             VALUES ($1, $2, $3, $4, $5, 'financial_effect.committed', $6, $7, $8)`,
+            [
+              randomUUID(),
+              recordId,
+              householdId,
+              actorId ?? 'device',
+              operation ?? 'write',
+              payloadHash,
+              effectRef,
+              JSON.stringify({ entityType }),
+            ],
+          );
+          return { response, replayed: false };
+        }
+
+        // Lost the claim race: read the settled operation and treat it as a
+        // canonical replay (no producer execution, no duplicate effect).
+        const settled = await client.query<{ status: string; response: unknown; payload_hash: string }>(
+          `SELECT status, response, payload_hash
+             FROM operation_records
+            WHERE workspace_id = $1 AND idempotency_key = $2`,
+          [householdId, compositeKey],
+        );
+        if (settled.rowCount === 0) throw domainErrors.idempotencyConflict();
+        const row = settled.rows[0]!;
+        if (row.status === 'failed') throw domainErrors.idempotencyConflict();
+        if (row.payload_hash !== payloadHash) throw domainErrors.idempotencyConflict();
+        return { response: row.response as never, replayed: true };
       });
     },
     clear: () => {
@@ -478,3 +557,4 @@ export const createPostgresIdempotencyStore = (opts: { pool: Pool }): import('./
     },
   };
 };
+

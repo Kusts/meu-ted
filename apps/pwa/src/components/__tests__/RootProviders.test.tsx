@@ -49,8 +49,8 @@ describe("RootProviders — API env configured", () => {
         <div data-testid="cfg-app">Cfg App</div>
       </RootProviders>,
     );
-    // API configured → AuthGate path renders (register UI, children gated)
-    expect(screen.getByText("Registrar")).toBeInTheDocument();
+    // API configured → AuthGate path renders (login UI, children gated)
+    expect(screen.getByRole("button", { name: /Entrar/i })).toBeInTheDocument();
   });
 });
 

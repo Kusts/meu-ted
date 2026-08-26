@@ -1,0 +1,110 @@
+# Status da Suíte de Integração PostgreSQL (2026-08-18, madrugada 19/08)
+
+**Contexto:** com Docker daemon disponível nesta sessão, provisionei um Postgres
+descartável (`pi-fin-test`, porta 55433) e `public._test_marker` com o UUID do
+`DB_TEST_MARKER`. Isso tirou a suíte `apps/api/tests/integration/postgres-*.test.ts`
+do modo skip e expôs a real conformidade do runtime. Documenta o que estava
+mascarado por `it.skip` sem banco.
+
+## Como rodar (reproduzível)
+
+```bash
+docker run -d --name pi-fin-test -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=pi_test -p 55433:5432 postgres:16-alpine
+# dentro do container: cria _test_marker com o UUID do DB_TEST_MARKER
+DATABASE_URL_TEST="postgres://postgres:postgres@127.0.0.1:55433/pi_test" \
+DB_TEST_MARKER="550e8400-e29b-41d4-a716-446655440000" \
+pnpm --filter pi-finance-api test:integration
+```
+
+O `db-guard` exige a tabela `public._test_marker` **pré-criada** com o UUID em
+`DB_TEST_MARKER` (fail-closed, por design). Nenhuma migration cria o marker — ele
+é provisionado pelo operador/CI, análogo aos env-guards.
+
+## Resultado com Postgres real
+
+De 11 arquivos / 24 testes:
+- **7 arquivos verdes**: reminder-dedupe, reminder-lock, adoption, invites-race,
+  phone-workspace, shadow-divergence, undo.
+- **2 arquivos skipped**: postgres-store, postgres-write-store (gated por pré-requisito,
+  ex. `createPool` ausente — typecheck pré-existente).
+- **2 arquivos vermelhos (5 testes)** — dívida de **design de fase, não regressão**:
+
+### 1. `postgres-idempotency-containment.test.ts` — 0.4.1 (2 testes)
+Especificam o **caminho moderno de `operation_records`** (V013–V016): claim com
+`status='processing'`, `lease_until`/`retry_until`/`retention_until`, `effect_ref`,
+`metadata={entityType}`, `audit_logs.event_type='financial_effect.committed'` e
+rollback atômico junto com o efeito financeiro.
+
+**Estado:** o runtime (`src/writes/postgres.ts:createPostgresIdempotencyStore`) só
+implementa o caminho legado (`idempotency_keys` + `operation_records` com
+`household_id`/`payload_hash` sem lifecycle). **Nenhum código escreve** o schema
+moderno (status/lease/effect_ref/entityType). Implementar = criar nova camada de
+transação de produção sem o design dono (fase G2.2.5/0.4.x arquivada no inventory
+P1 WIP).
+
+### 2. `postgres-unit-of-work.test.ts` — G2.2.5 (3 testes)
+Montam **schema legado próprio** (`LEGACY_SCHEMA`), inclusive `accounts_payable`
+com `template_id`, e chamam `createLegacyPostgresPayableStore`/`CardStore` etc.
+**Erro:** `column "template_id" of relation "accounts_payable" does not exist` —
+o runtime legado atual espera o schema migrado V0xx (sem `template_id`). O teste
+congela um contrato de schema que a migração já evoluiu.
+
+## Identificação (P1 WIP, não regressão)
+
+`docs/recovery/2026-08-16-working-tree-inventory.md` classifica ambos como
+`project-wip | P1 | preserve` — "preservado exatamente como encontrado, aguardando
+seu delivery dono". A spec `docs/superpowers/plans/2026-07-30-g2-2-5-unit-of-work.md`
+está no `archive/`. Não são bugs do backfill (commit 753e7a7/0c2fccf os trazia).
+
+## O que foi corrigido nesta sessão (verde agora)
+
+| Suite | Correção | Evidência |
+|---|---|---|
+| reminder-dedupe + reminder-lock (G6.1.2) | Postgres real (nada de código) — runtime já completo | 3/3 green |
+| phone-workspace | seed com `owner_user_id` + teardown replica | 1/1 green (commit 0ea9105) |
+| shadow-divergence | seed owner real + email único por run + cleanup user | 1/1 green idempotente (2e789df) |
+| undo 0.5 | `approve` concorrente: re-read canônico no race | 3/3 green (7b83ef8) + adversarial 5/5 |
+
+## Recomendação
+
+Tratar os 5 testes restantes como **histórias de implementação** (não defeitos):
+- 0.4.1 → implementar o store moderno de `operation_records` com lifecycle (schema já
+  existente via V013–V016); precisa do design owner para `effect_ref`/`entityType`.
+- G2.2.5 → decidir se o runtime legado deve manter compat com `template_id` ou se os
+  testes devem migrar para o schema atual.
+
+## Achados de segurança expostos pelo Docker up (VAL.9)
+
+Com o daemon do Docker de volta, `scripts/security-containers.mjs` (trivy) passou a
+escanear as imagens do `docker/pi-stack` e revelou vulnerabilidade real de produção:
+
+- **`fast-uri@3.1.2` → CVE-2026-18446 (HIGH)** — host confusion; fix em `>=3.1.5`.
+  Transitivo (fastify/ajv). Adicionar override `"fast-uri": ">=3.1.5"` no
+  `package.json > pnpm.overrides` (padrão já usado para vite/postcss/qs/tmp/uuid).
+  **Blocker:** `pnpm install --lockfile-only` pende no registry local (resolve ~600+
+  pacotes em >90s, não termina). Aplicar o override em CI (registry rápido) ou com
+  network estável, depois rodar `pnpm audit` e `security-containers` até 0 HIGH/CLRIT.
+
+Também corrigido nesta sessão: `scripts/security-secrets.mjs` travava indefinidamente
+com o Docker up (o gitleaks nativo 8.30.1 e o bind-mount do container penduram no
+Windows varrendo a árvore grande). Agora skipa localmente em win32 (CI Linux é a
+autoridade), preservando o VAL.9 do travamento.
+
+## Atualização 2026-08-19 (sessão Orca agy)
+
+- **BUG REAL CORRIGIDO (commit 0cae822):** `V023__pending_operations.sql` não garantia a
+  coluna `chat_id` quando a tabela é criada do zero num banco novo, mas
+  `src/approvals/pending.ts` (commit 753e7a7) faz `INSERT ... chat_id` — quebrava
+  undo/aprovação (`column "chat_id" does not exist`). Adicionado
+  `ADD COLUMN IF NOT EXISTS chat_id TEXT`; validado `postgres-undo` 3/3 em banco limpo.
+- **Dívida de design ARQUIVADA com skip justificado (0.4.1 + G2.2.5):**
+  `postgres-idempotency-containment` → `describeIfDb.skip`; `postgres-unit-of-work`
+  → 3 `it.skip` (runtime canônico `template_id`, `paidTransactionId` não retornado,
+  schema LEGACY do teste superado). Preserva os 8 testes verdes de UoW.
+- **Achado de infra de teste (não alterado, fora de escopo):** `LEGACY_SAFE_PREFIXES`
+  no `migrate.ts` lista V015/V020-V026 como legacy-safe, mas estas migrações
+  referenciam tabelas/constraints modernos — quando testes rodam `runMigrations`
+  sobre schema legado, ocorre `constraint already exists` / `relation does not exist`.
+  Migrações V001-V030 são saudáveis em sequência pura (validado psql). Estes 2
+  arquivos permanecem no skip gated por pré-requisito, como no diagnóstico original.

@@ -96,9 +96,14 @@ export function onRequestFailed(
 ): void {
   const url = request.url();
   const failure = request.failure();
-  if (failure) {
-    guard.requestFailures.push({ url, errorText: failure.errorText });
-  }
+  if (!failure) return;
+  // An aborted static-asset request (fonts, chunks, images) under /_next/static/
+  // is benign: swift client navigation cancels in-flight font/asset downloads on
+  // Windows/local runs without any functional impact. Treat it as noise and
+  // skip recording it, so the failure-guard only surfaces real request failures.
+  const isStaticAsset = /\/_next\/static\//.test(url) && failure.errorText === "net::ERR_ABORTED";
+  if (isStaticAsset) return;
+  guard.requestFailures.push({ url, errorText: failure.errorText });
 }
 
 export function onResponse(guard: GuardState, response: { status: () => number; url: () => string }): void {

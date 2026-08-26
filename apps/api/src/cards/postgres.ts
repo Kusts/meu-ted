@@ -91,6 +91,23 @@ const mapStatement = (r: Row): Statement => ({
   status: r['status'] as Statement['status'],
 });
 
+const mapRecurring = (r: Row): RecurringPurchase => opt<RecurringPurchase>(
+  {
+    id: r['id'] as string,
+    householdId: r['household_id'] as string,
+    accountId: r['account_id'] as string,
+    description: r['description'] as string,
+    amountCents: Number(r['amount_cents']),
+    frequency: r['frequency'] as RecurringPurchase['frequency'],
+    startDate: (r['start_date'] as Date).toISOString().slice(0, 10),
+    status: r['status'] as RecurringPurchase['status'],
+  },
+  {
+    endDate: r['end_date'] instanceof Date ? r['end_date'].toISOString().slice(0, 10) : r['end_date'] as string | undefined,
+    categoryId: r['category_id'] as string | undefined,
+  } as Partial<RecurringPurchase>,
+);
+
 // ── CardStore implementation ──────────────────────────────────────
 
 export const createPostgresCardStore = (pool: Pool): CardStore => {
@@ -145,18 +162,19 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
       if (stmtRows.length === 0) return null;
       const s = mapStatement(stmtRows[0]!);
 
-      // Primary query: purchases linked by statement_id
-      const includeCatId = `, t.category_id, c.name AS category_name`;
+      // Primary query: purchases linked by statement_id, scoped to category household
+      const includeCatId = `, c.id AS category_id, c.name AS category_name`;
 
       let purchaseRows = await query<Row>(
         `SELECT t.id, t.description, t.amount_cents, t.date::text AS date,
                 t.installments_total, t.installment_number${includeCatId}
            FROM transactions t
-           LEFT JOIN categories c ON t.category_id = c.id
+           LEFT JOIN categories c ON t.category_id = c.id AND c.household_id = $2
           WHERE t.statement_id = $1
+            AND t.household_id = $2
             AND t.deleted_at IS NULL
           ORDER BY t.date ASC, t.created_at ASC`,
-        [statementId],
+        [statementId, householdId],
       );
 
       // Fallback: when statement_id query is empty, find purchases by
@@ -171,25 +189,27 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
           `SELECT t.id, t.description, t.amount_cents, t.date::text AS date,
                   t.installments_total, t.installment_number${includeCatId}
              FROM transactions t
-             LEFT JOIN categories c ON t.category_id = c.id
+             LEFT JOIN categories c ON t.category_id = c.id AND c.household_id = $4
             WHERE t.account_id = $1
+              AND t.household_id = $4
               AND t.date > $2
               AND t.date <= $3
               AND t.deleted_at IS NULL
             ORDER BY t.date ASC, t.created_at ASC`,
-          [s.accountId, periodStart, s.closingDate],
+          [s.accountId, periodStart, s.closingDate, householdId],
         );
       }
 
       const purchases: StatementPurchase[] = purchaseRows.map(r => {
         const instNum = r['installment_number'];
         const instTotal = r['installments_total'];
+        const dateStr = r['date'] instanceof Date ? r['date'].toISOString().slice(0, 10) : String(r['date']).slice(0, 10);
         return opt<StatementPurchase>(
           {
             id: r['id'] as string,
             description: r['description'] as string,
             amountCents: Number(r['amount_cents']),
-            date: (r['date'] as Date).toISOString().slice(0, 10),
+            date: dateStr,
             isRecurring: false,
           },
           {
@@ -205,70 +225,90 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
     },
 
     async createCardPurchase(householdId, input) {
-      // Validate credit card account
-      const cardRows = await query<Row>(
-        `SELECT id, kind, closing_day, due_day, credit_limit_cents
-           FROM accounts
-          WHERE id = $1 AND household_id = $2 AND status = 'active' AND deleted_at IS NULL`,
-        [input.accountId, householdId],
-      );
-      if (cardRows.length === 0) throw domainErrors.notFound('Conta');
-      const card = cardRows[0]!;
-      if (card['kind'] !== 'credit_card') throw domainErrors.invalid('accountId', 'não é cartão de crédito');
-      if (card['closing_day'] == null || card['due_day'] == null) {
-        throw domainErrors.invalid('accountId', 'cartão sem fechamento/vencimento configurado');
-      }
-      const closingDay = Number(card['closing_day']);
-      const dueDay = Number(card['due_day']);
+      return withTransaction(pool, async (client) => {
+        if (input.categoryId) {
+          const catRows = await client.query<Row>(
+            `SELECT id FROM categories WHERE id = $1 AND household_id = $2`,
+            [input.categoryId, householdId],
+          );
+          if (catRows.rowCount === 0 || catRows.rows.length === 0) throw domainErrors.notFound('Categoria');
+        }
 
-      const closing = getClosingDate(input.date, closingDay);
-      const cycle = closing.slice(0, 7);
-      const due = getDueDate(closing, dueDay);
-
-      // Find or create statement
-      let stmtRows = await query<Row>(
-        `SELECT id FROM statements WHERE account_id = $1 AND cycle_year_month = $2`,
-        [input.accountId, cycle],
-      );
-
-      let statementId: string;
-      if (stmtRows.length > 0) {
-        statementId = stmtRows[0]!['id'] as string;
-      } else {
-        statementId = randomUUID();
-        await query(
-          `INSERT INTO statements (id, household_id, account_id, cycle_year_month, closing_date, due_date, total_cents, paid_cents, status)
-           VALUES ($1, $2, $3, $4, $5, $6, 0, 0, 'open')`,
-          [statementId, householdId, input.accountId, cycle, closing, due],
+        // Validate credit card account
+        const cardRows = await client.query<Row>(
+          `SELECT id, kind, closing_day, due_day, credit_limit_cents
+             FROM accounts
+            WHERE id = $1 AND household_id = $2 AND status = 'active' AND deleted_at IS NULL`,
+          [input.accountId, householdId],
         );
-      }
+        if (cardRows.rowCount === 0 || cardRows.rows.length === 0) throw domainErrors.notFound('Conta');
+        const card = cardRows.rows[0]!;
+        if (card['kind'] !== 'credit_card') throw domainErrors.invalid('accountId', 'não é cartão de crédito');
+        if (card['closing_day'] == null || card['due_day'] == null) {
+          throw domainErrors.invalid('accountId', 'cartão sem fechamento/vencimento configurado');
+        }
 
-      // Insert transaction
-      const txId = randomUUID();
-      await query(
-        `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id, statement_id, installments_total, installment_number)
-         VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [txId, householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId ?? null, statementId, input.installmentsTotal ?? null, input.installmentNumber ?? null],
-      );
 
-      // Recalculate statement total
-      const totalResult = await query<Row>(
-        `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND deleted_at IS NULL`,
-        [statementId],
-      );
-      const total = Number(totalResult[0]!['total']);
-      const stmtForStatus = mapStatement((await query<Row>(`SELECT * FROM statements WHERE id = $1`, [statementId]))[0]!);
-      const newStatus = computeStatus({ ...stmtForStatus, totalCents: total }, todayISO());
-      await query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3`, [total, newStatus, statementId]);
+        const closingDay = Number(card['closing_day']);
+        const dueDay = Number(card['due_day']);
 
-      const created: Transaction[] = [
-        opt<Transaction>(
-          { id: txId, householdId, kind: 'expense', description: input.description, amountCents: input.amountCents, date: input.date, accountId: input.accountId },
-          { categoryId: input.categoryId } as Partial<Transaction>,
-        ),
-      ];
+        const closing = getClosingDate(input.date, closingDay);
+        const cycle = closing.slice(0, 7);
+        const due = getDueDate(closing, dueDay);
 
-      return created;
+        // Find or create statement
+        let stmtRows = await client.query<Row>(
+          `SELECT id FROM statements WHERE account_id = $1 AND household_id = $3 AND cycle_year_month = $2`,
+          [input.accountId, cycle, householdId],
+        );
+
+        let statementId: string;
+        if (stmtRows.rows.length > 0) {
+          statementId = stmtRows.rows[0]!['id'] as string;
+        } else {
+          statementId = randomUUID();
+          await client.query(
+            `INSERT INTO statements (id, household_id, account_id, cycle_year_month, closing_date, due_date, total_cents, paid_cents, status)
+             VALUES ($1, $2, $3, $4, $5, $6, 0, 0, 'open')`,
+            [statementId, householdId, input.accountId, cycle, closing, due],
+          );
+        }
+
+        // Insert transaction
+        const txId = randomUUID();
+        await client.query(
+          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id, statement_id, installments_total, installment_number)
+           VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [txId, householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId ?? null, statementId, input.installmentsTotal ?? null, input.installmentNumber ?? null],
+        );
+        // Dual-write to card_purchases for auditável vínculo (best-effort após V033)
+        try {
+          await client.query(
+            `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, installments_total, installment_number, transaction_id, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())`,
+            [householdId, input.accountId, statementId, input.description, input.amountCents, input.date, input.categoryId ?? null, input.installmentsTotal ?? null, input.installmentNumber ?? null, txId],
+          );
+        } catch {}
+
+        // Recalculate statement total
+        const totalResult = await client.query<Row>(
+          `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          [statementId, householdId],
+        );
+        const total = Number(totalResult.rows[0]!['total']);
+        const stmtForStatus = mapStatement((await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [statementId, householdId])).rows[0]!);
+        const newStatus = computeStatus({ ...stmtForStatus, totalCents: total }, todayISO());
+        await client.query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`, [total, newStatus, statementId, householdId]);
+
+        const created: Transaction[] = [
+          opt<Transaction>(
+            { id: txId, householdId, kind: 'expense', description: input.description, amountCents: input.amountCents, date: input.date, accountId: input.accountId },
+            { categoryId: input.categoryId } as Partial<Transaction>,
+          ),
+        ];
+
+        return created;
+      });
     },
 
     async createCardInstallments(householdId, input) {
@@ -281,6 +321,15 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
         const card = cardRows.rows[0]!;
         if (card['kind'] !== 'credit_card') throw domainErrors.invalid('accountId', 'não é cartão de crédito');
         if (card['closing_day'] == null || card['due_day'] == null) throw domainErrors.invalid('accountId', 'cartão sem fechamento/vencimento');
+
+        if (input.categoryId) {
+          const catRows = await client.query<Row>(
+            `SELECT id FROM categories WHERE id = $1 AND household_id = $2`,
+            [input.categoryId, householdId],
+          );
+          if (catRows.rowCount === 0 || catRows.rows.length === 0) throw domainErrors.notFound('Categoria');
+        }
+
         const closingDay = Number(card['closing_day']);
         const dueDay = Number(card['due_day']);
 
@@ -300,8 +349,8 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
           const due = getDueDate(closing, dueDay);
 
           const stmtRows = await client.query<Row>(
-            `SELECT id FROM statements WHERE account_id = $1 AND cycle_year_month = $2`,
-            [input.accountId, cycle],
+            `SELECT id FROM statements WHERE account_id = $1 AND household_id = $3 AND cycle_year_month = $2`,
+            [input.accountId, cycle, householdId],
           );
           let statementId: string;
           if (stmtRows.rows.length > 0) {
@@ -321,18 +370,25 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
              VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, $8, $9, $10)`,
             [txId, householdId, input.description, amount, dateStr, input.accountId, input.categoryId ?? null, statementId, input.installmentsTotal, i + 1],
           );
+          try {
+            await client.query(
+              `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, installments_total, installment_number, transaction_id, created_at, updated_at)
+               VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())`,
+              [householdId, input.accountId, statementId, input.description, amount, dateStr, input.categoryId ?? null, input.installmentsTotal, i + 1, txId],
+            );
+          } catch {}
 
           const totalResult = await client.query<Row>(
-            `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND deleted_at IS NULL`,
-            [statementId],
+            `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+            [statementId, householdId],
           );
           const total = Number(totalResult.rows[0]!['total']);
-          const stmtFetch = await client.query<Row>(`SELECT * FROM statements WHERE id = $1`, [statementId]);
+          const stmtFetch = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [statementId, householdId]);
           const stmtForStatus = mapStatement(stmtFetch.rows[0]!);
           const newStatus = computeStatus({ ...stmtForStatus, totalCents: total }, todayISO());
           await client.query(
-            `UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3`,
-            [total, newStatus, statementId],
+            `UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`,
+            [total, newStatus, statementId, householdId],
           );
 
           txs.push(
@@ -345,18 +401,54 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
         return txs;
       });
     },
+    async listRecurringPurchases(householdId, opts) {
+      const params: unknown[] = [householdId];
+      const conditions: string[] = ['household_id = $1'];
+      if (opts?.accountId) {
+        params.push(opts.accountId);
+        conditions.push(`account_id = $${params.length}`);
+      }
+      if (opts?.status) {
+        params.push(opts.status);
+        conditions.push(`status = $${params.length}`);
+      }
+      const rows = await query<Row>(
+        `SELECT id, household_id, account_id, description, amount_cents, frequency, start_date, end_date, category_id, status
+           FROM recurring_purchases
+          WHERE ${conditions.join(' AND ')}
+          ORDER BY start_date DESC, created_at DESC`,
+        params,
+      );
+      return rows.map(mapRecurring);
+    },
 
     async createRecurringPurchase(householdId, input) {
-      const id = randomUUID();
-      await query(
-        `INSERT INTO recurring_purchases (id, household_id, account_id, description, amount_cents, frequency, start_date, end_date, category_id, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')`,
-        [id, householdId, input.accountId, input.description, input.amountCents, input.frequency, input.startDate, input.endDate ?? null, input.categoryId ?? null],
-      );
-      return opt<RecurringPurchase>(
-        { id, householdId, accountId: input.accountId, description: input.description, amountCents: input.amountCents, frequency: input.frequency, startDate: input.startDate, status: 'active' as const },
-        { endDate: input.endDate, categoryId: input.categoryId } as Partial<RecurringPurchase>,
-      );
+      return withTransaction(pool, async (client) => {
+        const cardRows = await client.query<Row>(
+          `SELECT id FROM accounts WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          [input.accountId, householdId],
+        );
+        if (cardRows.rowCount === 0 || cardRows.rows.length === 0) throw domainErrors.notFound('Conta');
+
+        if (input.categoryId) {
+          const catRows = await client.query<Row>(
+            `SELECT id FROM categories WHERE id = $1 AND household_id = $2`,
+            [input.categoryId, householdId],
+          );
+          if (catRows.rowCount === 0 || catRows.rows.length === 0) throw domainErrors.notFound('Categoria');
+        }
+
+        const id = randomUUID();
+        await client.query(
+          `INSERT INTO recurring_purchases (id, household_id, account_id, description, amount_cents, frequency, start_date, end_date, category_id, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')`,
+          [id, householdId, input.accountId, input.description, input.amountCents, input.frequency, input.startDate, input.endDate ?? null, input.categoryId ?? null],
+        );
+        return opt<RecurringPurchase>(
+          { id, householdId, accountId: input.accountId, description: input.description, amountCents: input.amountCents, frequency: input.frequency, startDate: input.startDate, status: 'active' as const },
+          { endDate: input.endDate, categoryId: input.categoryId } as Partial<RecurringPurchase>,
+        );
+      });
     },
 
     async payStatement(householdId, statementId, input) {
@@ -382,31 +474,31 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
         const balance = Number(fromRows.rows[0]!['balance_cents']);
         if (balance < input.amountCents) throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
         await client.query(
-          `UPDATE accounts SET balance_cents = balance_cents - $1, updated_at = NOW() WHERE id = $2`,
-          [input.amountCents, input.fromAccountId],
+          `UPDATE accounts SET balance_cents = balance_cents - $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
+          [input.amountCents, input.fromAccountId, householdId],
         );
 
         // Apply to statement
         await client.query(
-          `UPDATE statements SET paid_cents = paid_cents + $1, updated_at = NOW() WHERE id = $2`,
-          [input.amountCents, statementId],
+          `UPDATE statements SET paid_cents = paid_cents + $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
+          [input.amountCents, statementId, householdId],
         );
 
         // Recalculate status
-        const updated = await client.query<Row>(`SELECT * FROM statements WHERE id = $1`, [statementId]);
+        const updated = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [statementId, householdId]);
         const updatedStmt = mapStatement(updated.rows[0]!);
         const newStatus = computeStatus(updatedStmt, todayISO());
         if (newStatus !== updatedStmt.status) {
           await client.query(
-            `UPDATE statements SET status = $1, updated_at = NOW() WHERE id = $2`,
-            [newStatus, statementId],
+            `UPDATE statements SET status = $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
+            [newStatus, statementId, householdId],
           );
         }
 
         // Add to card balance (paid amount goes toward the card's "available credit")
         await client.query(
-          `UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = NOW() WHERE id = $2`,
-          [input.amountCents, s.accountId],
+          `UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
+          [input.amountCents, s.accountId, householdId],
         );
 
         return { ...updatedStmt, status: newStatus };
@@ -414,15 +506,21 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
     },
 
     async updatePurchase(householdId, purchaseId, input) {
-      // Try transactions table first
-      const txExists = await query<Row>(
-        `SELECT id, statement_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
-        [purchaseId, householdId],
-      );
+      return withTransaction(pool, async (client) => {
+        if (input.categoryId) {
+          const catRows = await client.query<Row>(
+            `SELECT id FROM categories WHERE id = $1 AND household_id = $2`,
+            [input.categoryId, householdId],
+          );
+          if (catRows.rowCount === 0 || catRows.rows.length === 0) throw domainErrors.notFound('Categoria');
+        }
 
-      let stmtId: string | null = null;
+        const txExists = await client.query<Row>(
+          `SELECT id, statement_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          [purchaseId, householdId],
+        );
+        if (txExists.rowCount === 0 || txExists.rows.length === 0) throw domainErrors.notFound('Compra');
 
-      if (txExists.length > 0) {
         const sets: string[] = [];
         const params: unknown[] = [];
         let idx = 1;
@@ -433,52 +531,66 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
         if (sets.length === 0) throw domainErrors.invalid('body', 'nenhum campo para atualizar');
 
         params.unshift(purchaseId, householdId);
-        await query(
+        await client.query(
           `UPDATE transactions SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $1 AND household_id = $2`,
           params,
         );
-        stmtId = txExists[0]!['statement_id'] as string ?? null;
-      } else {
-        // Try card_purchases table (legacy)
-        const cpExists = await query<Row>(
-          `SELECT id, statement_id FROM card_purchases WHERE id = $1`,
-          [purchaseId],
+        const stmtId = txExists.rows[0]!['statement_id'] as string ?? null;
+
+        if (stmtId) {
+          // Recalc statement total
+          const totalResult = await client.query<Row>(
+            `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+            [stmtId, householdId],
+          );
+          const total = Number(totalResult.rows[0]!['total']);
+          const stmtForStatus = mapStatement((await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [stmtId, householdId])).rows[0]!);
+          const newStatus = computeStatus({ ...stmtForStatus, totalCents: total }, todayISO());
+          await client.query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`, [total, newStatus, stmtId, householdId]);
+
+          // Fetch and return updated detail
+          return (await this.getStatementDetail(householdId, stmtId))!;
+        }
+
+        throw domainErrors.notFound('Compra');
+      });
+    },
+
+    async cancelPurchase(householdId, purchaseId) {
+      return withTransaction(pool, async (client) => {
+        // Idempotência: se já deletado, retorna
+        const already = await client.query<Row>(
+          `SELECT id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NOT NULL`,
+          [purchaseId, householdId],
         );
-        if (cpExists.length === 0) throw domainErrors.notFound('Compra');
+        if ((already.rowCount ?? 0) > 0) return;
 
-        const sets: string[] = [];
-        const params: unknown[] = [];
-        let idx = 1;
-        if (input.description !== undefined) { sets.push(`description = $${++idx}`); params.push(input.description); }
-        if (input.amountCents !== undefined) { sets.push(`amount_cents = $${++idx}`); params.push(input.amountCents); }
-        if (input.date !== undefined) { sets.push(`date = $${++idx}`); params.push(input.date); }
-        if (input.categoryId !== undefined) { sets.push(`category_id = $${++idx}`); params.push(input.categoryId); }
-        if (sets.length === 0) throw domainErrors.invalid('body', 'nenhum campo para atualizar');
-
-        params.unshift(purchaseId);
-        await query(
-          `UPDATE card_purchases SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $1`,
-          params,
+        const txExists = await client.query<Row>(
+          `SELECT id, statement_id, amount_cents, date FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          [purchaseId, householdId],
         );
-        stmtId = cpExists[0]!['statement_id'] as string ?? null;
-      }
+        if ((txExists.rowCount ?? 0) === 0) {
+          throw domainErrors.notFound('Compra');
+        }
+        const stmtId = txExists.rows[0]!['statement_id'] as string | null;
+        if (!stmtId) throw domainErrors.notFound('Compra');
+        const stmtRow = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [stmtId, householdId]);
+        if ((stmtRow.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
+        const stmt = mapStatement(stmtRow.rows[0]!);
+        if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
 
-      if (stmtId) {
-        // Recalc statement total
-        const totalResult = await query<Row>(
-          `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND deleted_at IS NULL`,
-          [stmtId],
+        await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
+        // Se existir card_purchases vinculado, também soft-deletar
+        await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE transaction_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]).catch(() => {});
+
+        const totalResult = await client.query<Row>(
+          `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          [stmtId, householdId],
         );
-        const total = Number(totalResult[0]!['total']);
-        const stmtForStatus = mapStatement((await query<Row>(`SELECT * FROM statements WHERE id = $1`, [stmtId]))[0]!);
-        const newStatus = computeStatus({ ...stmtForStatus, totalCents: total }, todayISO());
-        await query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3`, [total, newStatus, stmtId]);
-
-        // Fetch and return updated detail
-        return (await this.getStatementDetail(householdId, stmtId))!;
-      }
-
-      throw domainErrors.notFound('Compra');
+        const total = Number(totalResult.rows[0]!['total']);
+        const newStatus = computeStatus({ ...stmt, totalCents: total }, todayISO());
+        await client.query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`, [total, newStatus, stmtId, householdId]);
+      });
     },
 
     async createCard(householdId, input) {
@@ -492,23 +604,25 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
     },
 
     async updateCard(householdId, id, input) {
-      const sets: string[] = [];
-      const params: unknown[] = [];
-      let idx = 1;
-      if (input.name !== undefined) { sets.push(`name = $${++idx}`); params.push(input.name); }
-      if (input.creditLimitCents !== undefined) { sets.push(`credit_limit_cents = $${++idx}`); params.push(input.creditLimitCents); }
-      if (input.closingDay !== undefined) { sets.push(`closing_day = $${++idx}`); params.push(input.closingDay); }
-      if (input.dueDay !== undefined) { sets.push(`due_day = $${++idx}`); params.push(input.dueDay); }
-      if (sets.length === 0) throw domainErrors.invalid('body', 'nenhum campo para atualizar');
-      params.unshift(id, householdId);
-      const res = await query<Row>(
-        `UPDATE accounts SET ${sets.join(', ')}, updated_at = NOW()
-          WHERE id = $1 AND household_id = $2 AND kind = 'credit_card' AND status = 'active' AND deleted_at IS NULL
-          RETURNING id, household_id, name, kind, balance_cents, status, credit_limit_cents, closing_day, due_day`,
-        params,
-      );
-      if (res.length === 0) throw domainErrors.notFound('Cartão');
-      return mapAccount(res[0]!);
+      return withTransaction(pool, async (client) => {
+        const sets: string[] = [];
+        const params: unknown[] = [];
+        let idx = 1;
+        if (input.name !== undefined) { sets.push(`name = $${++idx}`); params.push(input.name); }
+        if (input.creditLimitCents !== undefined) { sets.push(`credit_limit_cents = $${++idx}`); params.push(input.creditLimitCents); }
+        if (input.closingDay !== undefined) { sets.push(`closing_day = $${++idx}`); params.push(input.closingDay); }
+        if (input.dueDay !== undefined) { sets.push(`due_day = $${++idx}`); params.push(input.dueDay); }
+        if (sets.length === 0) throw domainErrors.invalid('body', 'nenhum campo para atualizar');
+        params.unshift(id, householdId);
+        const res = await client.query<Row>(
+          `UPDATE accounts SET ${sets.join(', ')}, updated_at = NOW()
+            WHERE id = $1 AND household_id = $2 AND kind = 'credit_card' AND status = 'active' AND deleted_at IS NULL
+            RETURNING id, household_id, name, kind, balance_cents, status, credit_limit_cents, closing_day, due_day`,
+          params,
+        );
+        if (res.rowCount === 0 || res.rows.length === 0) throw domainErrors.notFound('Cartão');
+        return mapAccount(res.rows[0]!);
+      });
     },
   };
 };

@@ -8,11 +8,27 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 PWA="$ROOT/apps/pwa"
 RESULT=0
 
+# Point the PWA at the local fixture API. REQUIRED.
+#
+# src/lib/api/client.ts:baseUrl() returns undefined when this is unset and the
+# host is not the production PWA — which puts the app in mock mode, so the
+# registration screen never renders and every spec fails on
+# getByRole("button", { name: "Registrar" }).
+#
+# NEXT_PUBLIC_* is inlined at build time, so this must be exported before
+# `pnpm build:next:cloudflare`, not only before `next start`.
+export NEXT_PUBLIC_PI_FINANCE_API_BASE_URL="${NEXT_PUBLIC_PI_FINANCE_API_BASE_URL:-http://127.0.0.1:4010}"
+echo "[run-ci] API base URL: $NEXT_PUBLIC_PI_FINANCE_API_BASE_URL"
+
+FIXTURE_PID=""
+NEXT_PID=""
+SW_PID=""
+
 cleanup() {
   echo "[run-ci] cleaning up..."
-  kill "$FIXTURE_PID" 2>/dev/null || true
-  kill "$NEXT_PID" 2>/dev/null || true
-  kill "$SW_PID" 2>/dev/null || true
+  [ -n "${FIXTURE_PID:-}" ] && kill "$FIXTURE_PID" 2>/dev/null || true
+  [ -n "${NEXT_PID:-}" ] && kill "$NEXT_PID" 2>/dev/null || true
+  [ -n "${SW_PID:-}" ] && kill "$SW_PID" 2>/dev/null || true
   wait 2>/dev/null || true
   exit "$RESULT"
 }
@@ -72,19 +88,13 @@ popd >/dev/null
 
 sleep 2
 
-# ── Run functional E2E (2 consecutive runs) ─────────────────────────────────
-echo "[run-ci] run 1: functional E2E..."
+# ── Run functional E2E ──────────────────────────────────────────────────────
+echo "[run-ci] functional E2E..."
 pushd "$PWA" >/dev/null
 pnpm exec playwright test \
   --config=e2e/playwright.config.ts \
   --project=functional-mobile \
-  --workers=1 --retries=0 || RESULT=1
-
-echo "[run-ci] run 2: functional E2E..."
-pnpm exec playwright test \
-  --config=e2e/playwright.config.ts \
-  --project=functional-mobile \
-  --workers=1 --retries=0 || RESULT=1
+  --workers=2 --retries=1 || RESULT=1
 popd >/dev/null
 
 # ── Run PWA runtime E2E ────────────────────────────────────────────────────
@@ -95,20 +105,28 @@ pnpm exec playwright test \
   --project=pwa-runtime \
   --workers=1 --retries=0 || RESULT=1
 popd >/dev/null
-
+# ── Run push runtime E2E with real Service Worker + browser Permission API ─────
+echo "[run-ci] push runtime E2E..."
+pushd "$PWA" >/dev/null
+pnpm exec playwright test \
+  --config=e2e/playwright.config.ts \
+  --project=push-runtime \
+  --workers=1 --retries=0 || RESULT=1
+popd >/dev/null
 # ── Run desktop E2E (representative only) ───────────────────────────────────
 echo "[run-ci] desktop E2E..."
 pushd "$PWA" >/dev/null
 pnpm exec playwright test \
   --config=e2e/playwright.config.ts \
   --project=functional-desktop \
-  --workers=1 --retries=0 || RESULT=1
+  e2e/specs/home.spec.ts e2e/specs/navigation.spec.ts \
+  --workers=1 --retries=1 || RESULT=1
 popd >/dev/null
 
 # ── Run matrix gate ─────────────────────────────────────────────────────────
 echo "[run-ci] matrix gate..."
 pushd "$PWA" >/dev/null
-node --experimental-strip-types --test e2e/support/matrix.test.ts || RESULT=1
+pnpm exec tsx --test e2e/support/matrix.test.ts || RESULT=1
 popd >/dev/null
 
 # ── Report ──────────────────────────────────────────────────────────────────

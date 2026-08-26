@@ -7,9 +7,32 @@
  * All env reads happen at call-time, allowing tests to use vi.stubEnv.
  */
 
+import { z, type ZodType } from "zod";
+import { closeAllSockets } from "@/lib/auth/socket-registry";
+
+export const responseSchema = z
+  .object({
+    ok: z.boolean().optional(),
+    data: z.unknown().optional(),
+    error: z.unknown().optional(),
+  })
+  .refine(
+    (obj) => obj.ok !== undefined || obj.data !== undefined || obj.error !== undefined,
+    { message: "Invalid API response envelope" },
+  );
+
 const PRODUCTION_PWA_HOST = "pi-finance-pwa.walissonead.workers.dev";
 const PRODUCTION_API_BASE_URL = "https://api.synkroo.com.br";
 
+let activeWorkspaceId: string | undefined;
+
+export function setActiveWorkspaceId(workspaceId: string | undefined): void {
+  activeWorkspaceId = workspaceId;
+}
+
+export function clearActiveWorkspaceId(): void {
+  activeWorkspaceId = undefined;
+}
 function baseUrl(): string | undefined {
   const configured = process.env.NEXT_PUBLIC_PI_FINANCE_API_BASE_URL?.replace(/\/$/, "");
   if (configured) return configured;
@@ -39,6 +62,8 @@ export interface ApiClientOptions extends RequestInit {
   token?: string;
   /** X-Idempotency-Key header */
   idempotencyKey?: string;
+  /** Optional runtime response validation for protected API boundaries. */
+  responseSchema?: ZodType<unknown>;
 }
 
 export class ApiError extends Error {
@@ -56,13 +81,14 @@ export async function apiFetch<T>(
   path: string,
   options: ApiClientOptions = {},
 ): Promise<T> {
-  const { headers: optsHeaders, token, idempotencyKey, ...rest } = options;
+  const { headers: optsHeaders, token, idempotencyKey, responseSchema, ...rest } = options;
   const resolvedToken = token ?? getAuthToken();
 
   const requestHeaders: Record<string, string> = {
     Accept: "application/json",
     ...(rest.body ? { "Content-Type": "application/json" } : {}),
     ...(resolvedToken ? { "x-device-token": resolvedToken } : {}),
+    ...(activeWorkspaceId ? { "X-Workspace-Id": activeWorkspaceId } : {}),
     ...((optsHeaders as Record<string, string>) ?? {}),
   };
 
@@ -72,12 +98,18 @@ export async function apiFetch<T>(
 
   const res = await fetch(`${baseUrl() ?? ""}${path}`, {
     ...rest,
+    // Better-Auth sets a SameSite=None session cookie; the auth endpoints
+    // (/auth/sign-in, /auth/devices/register) require it to identify the
+    // logged-in session. Without credentials:'include' the cookie never goes
+    // cross-origin and register stays blocked (403) even after a valid login.
+    credentials: "include",
     headers: requestHeaders,
   });
 
   if (res.status === 401) {
     let body: Record<string, unknown> = {};
     try { body = await res.json(); } catch { /* noop */ }
+    closeAllSockets("session expired");
     throw new ApiError(
       401,
       (body.code as string) ?? "auth.error",
@@ -97,7 +129,8 @@ export async function apiFetch<T>(
     );
   }
 
-  return res.json() as Promise<T>;
+  const payload: unknown = await res.json();
+  return (responseSchema ? responseSchema.parse(payload) : payload) as T;
 }
 
 /** Convenience: GET with explicit token */

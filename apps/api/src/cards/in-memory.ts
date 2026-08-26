@@ -118,8 +118,8 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
     return s;
   };
 
-  const recalcTotal = (statementId: string): void => {
-    const stmt = statements.find(s => s.id === statementId);
+  const recalcTotal = (statementId: string, householdId: string): void => {
+    const stmt = statements.find(s => s.householdId === householdId && s.id === statementId);
     if (!stmt) return;
     const total = state.transactions
       .filter(t => (t as any).statementId === statementId && !state.deletedTransactions.has(t.id))
@@ -226,6 +226,10 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
 
     async createCardPurchase(householdId, input) {
       const card = findAccount(input.accountId, householdId);
+      if (input.categoryId) {
+        const cat = state.categories.find(c => c.id === input.categoryId && c.householdId === householdId);
+        if (!cat) throw domainErrors.notFound('Categoria');
+      }
       const stmt = findOrCreateStatement(input.accountId, householdId, input.date, card);
 
       const tx = opt<Transaction & { statementId: string }>(
@@ -242,13 +246,18 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
         } as any,
       );
       state.transactions.push(tx);
-      recalcTotal(stmt.id);
+      recalcTotal(stmt.id, householdId);
       return [tx];
     },
 
     async createCardInstallments(householdId, input) {
       const card = findAccount(input.accountId, householdId);
+      if (input.categoryId) {
+        const cat = state.categories.find(c => c.id === input.categoryId && c.householdId === householdId);
+        if (!cat) throw domainErrors.notFound('Categoria');
+      }
       const baseValue = Math.floor(input.totalAmountCents / input.installmentsTotal);
+
       const remainder = input.totalAmountCents - baseValue * input.installmentsTotal;
       const txs: Transaction[] = [];
       const date = new Date(input.purchaseDate + 'T00:00:00.000Z');
@@ -273,13 +282,25 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
         );
         state.transactions.push(tx);
         txs.push(tx);
-        recalcTotal(stmt.id);
+        recalcTotal(stmt.id, householdId);
       }
       return txs;
     },
+    async listRecurringPurchases(householdId, opts) {
+      return recurring.filter((item) =>
+        item.householdId === householdId &&
+        (opts?.accountId === undefined || item.accountId === opts.accountId) &&
+        (opts?.status === undefined || item.status === opts.status),
+      );
+    },
+
 
     async createRecurringPurchase(householdId, input) {
       findAccount(input.accountId, householdId);
+      if (input.categoryId) {
+        const cat = state.categories.find(c => c.id === input.categoryId && c.householdId === householdId);
+        if (!cat) throw domainErrors.notFound('Categoria');
+      }
       const r = opt<RecurringPurchase>(
         {
           id: randomUUID(), householdId, accountId: input.accountId,
@@ -311,7 +332,7 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
       s.status = computeStatus(s, todayISO());
 
       // Create payment transaction (transfer-like, from source to the card's "balance")
-      const card = state.accounts.find(a => a.id === s.accountId);
+      const card = state.accounts.find(a => a.householdId === householdId && a.id === s.accountId);
       if (card) card.balanceCents += input.amountCents;
 
       return s;
@@ -343,6 +364,10 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
     },
 
     async updatePurchase(householdId, purchaseId, input) {
+      if (input.categoryId) {
+        const cat = state.categories.find(c => c.id === input.categoryId && c.householdId === householdId);
+        if (!cat) throw domainErrors.notFound('Categoria');
+      }
       // In-memory: transactions store purchases linked by statement_id
       const tx = state.transactions.find(t => t.id === purchaseId && t.householdId === householdId && !state.deletedTransactions.has(t.id));
       if (tx) {
@@ -351,10 +376,10 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
         if (input.date !== undefined) tx.date = input.date;
         if (input.categoryId !== undefined) tx.categoryId = input.categoryId;
 
-        const stmt = statements.find(s => s.id === (tx as any).statementId);
+        const stmt = statements.find(s => s.householdId === householdId && s.id === (tx as any).statementId);
         if (stmt) {
-          recalcTotal(stmt.id);
-          const detail = statements.find(s => s.id === stmt.id)!;
+
+          recalcTotal(stmt.id, householdId);
           const purchases: StatementPurchase[] = state.transactions
             .filter(t2 => (t2 as any).statementId === stmt.id && !state.deletedTransactions.has(t2.id))
             .map(t2 => ({
@@ -365,10 +390,55 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
               categoryId: t2.categoryId,
               isRecurring: false,
             } as StatementPurchase));
-          return { ...detail, purchases };
+          return { ...stmt, purchases };
         }
       }
 
+      throw domainErrors.notFound('Compra');
+    },
+
+    async cancelPurchase(householdId, purchaseId) {
+      // Idempotência: se já deletado, considerar sucesso.
+      const deletedTx = state.transactions.find(t => t.id === purchaseId && t.householdId === householdId);
+      if (deletedTx && state.deletedTransactions.has(purchaseId)) return;
+      const cpDeleted = (state as any)._deletedCardPurchases as Set<string> | undefined;
+      if (cpDeleted?.has(purchaseId)) return;
+
+      // Tentar encontrar transação ativa
+      const tx = state.transactions.find(t => t.id === purchaseId && t.householdId === householdId && !state.deletedTransactions.has(t.id));
+      if (tx) {
+        const stmt = statements.find(s => s.householdId === householdId && s.id === (tx as any).statementId);
+        if (!stmt) throw domainErrors.notFound('Compra');
+        if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
+        state.deletedTransactions.add(tx.id);
+        // Também remover de cardPurchases legado se existir duplicata
+        const idx = cardPurchases.findIndex(cp => cp.id === purchaseId);
+        if (idx >= 0) cardPurchases.splice(idx, 1);
+        recalcTotal(stmt.id, householdId);
+        return;
+      }
+
+      // Tentar card_purchases legado
+      const cpIndex = cardPurchases.findIndex(cp => cp.id === purchaseId);
+      if (cpIndex >= 0) {
+        const cp = cardPurchases[cpIndex]!;
+        const stmt = statements.find(s => s.id === cp.statementId && s.householdId === householdId);
+        if (!stmt) throw domainErrors.notFound('Compra');
+        if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
+        // Simular vínculo legado: verificar transações compatíveis (mesma fatura, valor, data)
+        // Se houver ambiguidade, falhar sem mutação.
+        const candidates = state.transactions.filter(t => !state.deletedTransactions.has(t.id) && t.householdId === householdId && (t as any).statementId === stmt.id && t.amountCents === cp.amountCents && t.date === cp.date);
+        if (candidates.length !== 1) throw domainErrors.conflict('Compra legada sem vínculo único: intervenção manual necessária.');
+        // Cancelar ambos
+        if (!(state as any)._deletedCardPurchases) (state as any)._deletedCardPurchases = new Set<string>();
+        (state as any)._deletedCardPurchases.add(purchaseId);
+        cardPurchases.splice(cpIndex, 1);
+        state.deletedTransactions.add(candidates[0]!.id);
+        recalcTotal(stmt.id, householdId);
+        return;
+      }
+
+      // Se não encontrado no household, lançar 404
       throw domainErrors.notFound('Compra');
     },
   };

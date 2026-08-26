@@ -28,7 +28,7 @@ jobs:
     strategy:
       matrix:
         node-version: [20]
-        pnpm-version: [9]
+        pnpm-version: [10]
 
     steps:
       - name: Checkout
@@ -103,7 +103,7 @@ jobs:
     strategy:
       matrix:
         node-version: [20]
-        pnpm-version: [9]
+        pnpm-version: [10]
 
     steps:
       - name: Checkout
@@ -127,7 +127,7 @@ jobs:
         run: pnpm --dir apps/pwa exec playwright install --with-deps chromium
 
       - name: Run matrix gate
-        run: node --experimental-strip-types apps/pwa/e2e/support/matrix.test.ts
+        run: pnpm --dir apps/pwa exec tsx --test e2e/support/matrix.test.ts
 
       - name: Run comprehensive E2E
         run: bash apps/pwa/e2e/run-ci.sh

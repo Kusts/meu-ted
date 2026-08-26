@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plano: Recuperacao e Evolucao do Pi Financeiro</title>
+<style>
+:root {
+  --ink: #18211c;
+  --muted: #637069;
+  --paper: #f4f1e8;
+  --panel: #fffdf7;
+  --line: #d8d2c3;
+  --green: #1f6b4f;
+  --green-soft: #dceadf;
+  --amber: #b66a1e;
+  --amber-soft: #f5e5ca;
+  --red: #a43e35;
+  --red-soft: #f4dbd7;
+  --blue: #315d77;
+  --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  --sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--ink); background: var(--paper); font-family: var(--sans); line-height: 1.55; }
+main { width: min(1180px, calc(100% - 32px)); margin: 32px auto 80px; }
+header { border-top: 8px solid var(--green); padding: 28px 32px; background: var(--panel); box-shadow: 0 8px 30px #18211c12; }
+h1 { max-width: 850px; margin: 0 0 12px; font-size: clamp(2rem, 5vw, 4.4rem); line-height: .98; letter-spacing: -.055em; }
+h2 { margin: 0 0 18px; font-size: clamp(1.45rem, 3vw, 2.1rem); letter-spacing: -.025em; }
+h3 { margin: 0 0 12px; font-size: 1.25rem; }
+h4 { margin: 24px 0 8px; }
+p { max-width: 900px; }
+section { margin-top: 22px; padding: 28px 32px; background: var(--panel); border: 1px solid var(--line); }
+code, pre { font-family: var(--mono); }
+code { color: #194f3e; }
+pre { overflow: auto; padding: 18px; color: #f6f2e7; background: #19231e; border-radius: 4px; }
+table { width: 100%; border-collapse: collapse; font-size: .94rem; }
+th, td { padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .07em; }
+ul { padding-left: 20px; }
+li { margin: 6px 0; }
+details { margin: 8px 0; padding: 10px 12px; border: 1px solid var(--line); background: #fff; }
+summary { cursor: pointer; font-weight: 700; }
+.meta { max-width: 760px; margin-top: 18px; }
+.meta dl { display: grid; grid-template-columns: 130px 1fr; gap: 5px 12px; margin: 12px 0 0; }
+.meta dt { color: var(--muted); }
+.meta dd { margin: 0; font-family: var(--mono); font-size: .86rem; }
+.hero { display: grid; grid-template-columns: 1fr 1.2fr; gap: 22px; align-items: stretch; margin-top: 22px; }
+.hero-copy { padding: 30px; background: #19231e; color: #f8f4ea; }
+.hero-copy strong { display: block; margin-bottom: 12px; color: #92d2af; font-family: var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+.hero figure { margin: 0; padding: 18px; background: var(--green-soft); border: 1px solid #b9d1c1; }
+.hero svg { width: 100%; height: auto; }
+.tag { display: inline-block; padding: 2px 7px; border-radius: 999px; font: 700 .72rem var(--mono); text-transform: uppercase; }
+.existing { background: var(--green-soft); color: var(--green); }
+.new { background: var(--amber-soft); color: #7b460f; }
+.blocked { background: var(--red-soft); color: var(--red); }
+.decision { background: #dce6ec; color: var(--blue); }
+.phase { margin-top: 18px; padding: 24px; border-left: 6px solid var(--green); background: #fff; box-shadow: 0 4px 16px #18211c0b; }
+.phase.p0 { border-left-color: var(--red); }
+.phase.gate { border-left-color: var(--amber); }
+.status { display: inline-block; min-width: 42px; color: var(--muted); }
+.checklist { list-style: none; padding: 0; }
+.checklist li { padding: 7px 0; border-bottom: 1px dashed var(--line); }
+.loop { margin-top: 18px; padding: 12px 14px; background: var(--amber-soft); border-left: 4px solid var(--amber); }
+.callout { padding: 14px 16px; background: var(--red-soft); border-left: 4px solid var(--red); }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.card { padding: 16px; border: 1px solid var(--line); background: #fff; }
+.metric { font: 700 1.65rem var(--mono); color: var(--green); }
+.qa-answer { color: var(--muted); }
+@media (max-width: 760px) {
+  main { width: min(100% - 18px, 1180px); margin-top: 10px; }
+  header, section { padding: 22px 18px; }
+  .hero, .grid { grid-template-columns: 1fr; }
+  table { display: block; overflow-x: auto; }
+  .meta dl { grid-template-columns: 1fr; }
+  .meta dd { margin-bottom: 8px; }
+}
+@media print {
+  body { background: #fff; }
+  main { width: 100%; margin: 0; }
+  section, header, .phase { break-inside: avoid; box-shadow: none; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Recuperacao e Evolucao do Pi Financeiro</h1>
+    <p>Plano executavel derivado da spec canonica. Estabiliza seguranca e dados antes de identidade, workspaces, Agent e retirada do WhatsApp.</p>
+    <details class="meta">
+      <summary>Metadados</summary>
+      <dl>
+        <dt>created</dt><dd>2026-07-28T00:00:00-03:00</dd>
+        <dt>modified</dt><dd>2026-07-28T00:00:00-03:00, 2026-07-28T22:08:36-03:00</dd>
+        <dt>commits</dt><dd>uncommitted</dd>
+        <dt>agent name</dt><dd>openai/gpt-5.6-sol</dd>
+        <dt>session id</dt><dd>current-session</dd>
+        <dt>back refs</dt><dd>docs/superpowers/specs/2026-07-28-project-recovery-product-architecture.md</dd>
+        <dt>forward refs</dt><dd>future phase plans and ADRs</dd>
+      </dl>
+    </details>
+  </header>
+
+  <div class="hero">
+    <div class="hero-copy">
+      <strong>Ordem fixa</strong>
+      <h2>Conter. Medir. Corrigir. Expandir. Migrar.</h2>
+      <p>Nenhum agente deve pular gate para chegar mais rapido em chat ou multiusuario. Dinheiro correto e isolamento vencem velocidade aparente.</p>
+    </div>
+    <figure>
+      <svg viewBox="0 0 760 330" role="img" aria-label="Fluxo em sete gates da recuperacao ate retirada do WhatsApp">
+        <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#315d77"/></marker></defs>
+        <g font-family="system-ui" font-size="16" fill="#18211c">
+          <rect x="20" y="45" width="140" height="72" rx="8" fill="#f4dbd7" stroke="#a43e35"/><text x="90" y="76" text-anchor="middle" font-weight="700">G0</text><text x="90" y="99" text-anchor="middle">Contencao</text>
+          <rect x="220" y="45" width="140" height="72" rx="8" fill="#fffdf7" stroke="#1f6b4f"/><text x="290" y="76" text-anchor="middle" font-weight="700">G1</text><text x="290" y="99" text-anchor="middle">Baseline</text>
+          <rect x="420" y="45" width="140" height="72" rx="8" fill="#fffdf7" stroke="#1f6b4f"/><text x="490" y="76" text-anchor="middle" font-weight="700">G2</text><text x="490" y="99" text-anchor="middle">Integridade</text>
+          <rect x="620" y="45" width="120" height="72" rx="8" fill="#fffdf7" stroke="#1f6b4f"/><text x="680" y="76" text-anchor="middle" font-weight="700">G3</text><text x="680" y="99" text-anchor="middle">PWA</text>
+          <path d="M160 81 H212" stroke="#315d77" stroke-width="3" marker-end="url(#arrow)"/><path d="M360 81 H412" stroke="#315d77" stroke-width="3" marker-end="url(#arrow)"/><path d="M560 81 H612" stroke="#315d77" stroke-width="3" marker-end="url(#arrow)"/>
+          <rect x="100" y="210" width="150" height="72" rx="8" fill="#f5e5ca" stroke="#b66a1e"/><text x="175" y="241" text-anchor="middle" font-weight="700">G4</text><text x="175" y="264" text-anchor="middle">Identidade</text>
+          <rect x="310" y="210" width="150" height="72" rx="8" fill="#f5e5ca" stroke="#b66a1e"/><text x="385" y="241" text-anchor="middle" font-weight="700">G5</text><text x="385" y="264" text-anchor="middle">Agent canary</text>
+          <rect x="520" y="210" width="150" height="72" rx="8" fill="#dceadf" stroke="#1f6b4f"/><text x="595" y="241" text-anchor="middle" font-weight="700">G6</text><text x="595" y="264" text-anchor="middle">Transicao</text>
+          <path d="M680 117 V160 H175 V202" fill="none" stroke="#315d77" stroke-width="3" marker-end="url(#arrow)"/><path d="M250 246 H302" stroke="#315d77" stroke-width="3" marker-end="url(#arrow)"/><path d="M460 246 H512" stroke="#315d77" stroke-width="3" marker-end="url(#arrow)"/>
+        </g>
+      </svg>
+      <figcaption>Dependencias sao gates, nao sugestoes de ordem.</figcaption>
+    </figure>
+  </div>
+
+  <section id="purpose">
+    <h2>Proposito</h2>
+    <p>Transformar estado atual em produto financeiro privado, seguro, reproduzivel e evolutivo. Plano cobre contencao, qualidade, dominio, PWA, identidade, workspaces, chat Agent, notificacoes e retirada controlada do WhatsApp.</p>
+  </section>
+
+  <section id="problem">
+    <h2>Problema</h2>
+    <div class="grid">
+      <div class="card"><div class="metric">3</div><strong>autoridades concorrentes</strong><p>API, Pi tools e partes do PWA implementam comportamento financeiro.</p></div>
+      <div class="card"><div class="metric">4</div><strong>gates locais quebrados</strong><p>API tests, bridge typecheck, PWA typecheck/lint e PWA tests sem baseline verde.</p></div>
+      <div class="card"><div class="metric">58</div><strong>rotas reais</strong><p>Roadmap anterior estimou 36 e subdimensionou authz e paridade.</p></div>
+      <div class="card"><div class="metric">72</div><strong>tools registradas</strong><p>Inventario semantico ainda nao existe; oito gaps nao sao prova de paridade.</p></div>
+    </div>
+    <p class="callout"><strong>Release bloqueado:</strong> cadastro anonimo no household default, testes destrutivos sem guard, idempotencia concorrente quebrada e mistura potencial de chats Pi.</p>
+  </section>
+
+  <section id="solution">
+    <h2>Solucao</h2>
+    <pre>PWA + WhatsApp transitorio
+          |
+          v
+ identidade + membership
+          |
+     +----+----+
+     |         |
+ Agent HTTP   API Fastify ----> Postgres real versionado
+ sem SQL      dominio unico      operacoes atomicas</pre>
+    <p>Cada fase termina em criterio mensuravel e deployavel. Fase seguinte nao inicia com gate anterior vermelho.</p>
+  </section>
+
+  <section id="execution-loop">
+    <h2>Loop de execucao escolhido</h2>
+    <p><span class="tag decision">decision</span> <strong>01 Stateless Goal Loop, via <code>/goal</code>.</strong> Escolha baseada em verificacao automatica, baixo custo e compatibilidade direta com TDD. Nenhuma instalacao adicional. Fonte: <a href="https://github.com/giovani-junior-dev/loops/tree/main/01-stateless-goal">Agent Loops / 01</a>.</p>
+    <table>
+      <thead><tr><th>Loop avaliado</th><th>Uso</th><th>Decisao</th></tr></thead>
+      <tbody>
+        <tr><td>01 Stateless Goal</td><td>Tarefa deterministica com teste/build</td><td>Selecionado para implementacao</td></tr>
+        <tr><td>02 Learning</td><td>Melhorar skill</td><td>Fora do objetivo</td></tr>
+        <tr><td>03 Multi-Agent Review</td><td>Revisao multidimensional</td><td>Pode revisar gate; nao implementa</td></tr>
+        <tr><td>04 Verification</td><td>Aplicacao pronta contra score</td><td>Custo alto e score inadequado como termino primario</td></tr>
+        <tr><td>05 Workflow Improvement</td><td>Otimizar processo entre FRs</td><td>Complexidade sem necessidade atual</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Unidade do loop</h3>
+    <p>Um `/goal` cobre uma tarefa numerada, nunca fase completa ou roadmap inteiro. Somente Fase 0 pode gerar goals agora.</p>
+    <pre>GOAL-ID: G0-T&lt;numero&gt;
+ESCOPO: arquivos permitidos e comportamento unico
+RED: comando que falha pelo motivo esperado
+TERMINO:
+  - acceptance test passa
+  - testes impactados passam
+  - typecheck/lint impactados passam
+  - diff nao remove guard/assertion
+LIMITES:
+  - maximo 6 continuacoes ou 45 minutos
+  - parar apos mesma falha em 2 ciclos
+  - sem deploy, VPS, Cloudflare ou Postgres nao descartavel
+EVIDENCIA: docs/superpowers/goal-runs/&lt;goal-id&gt;.md</pre>
+
+    <h3>Protocolo TDD + <code>/goal</code></h3>
+    <ol>
+      <li>Escrever acceptance/unit test antes de codigo de producao.</li>
+      <li>Executar RED e registrar comando, falha esperada e baseline.</li>
+      <li>Invocar `/goal` com escopo, termino, limites e comandos literais.</li>
+      <li>Dentro do loop: GREEN minimo, refactor, gates impactados, revisar diff.</li>
+      <li>Encerrar somente com evidencia; falha de limite vira blocker, nunca relaxamento de teste.</li>
+    </ol>
+
+    <h3>Template de invocacao</h3>
+    <pre>/goal GOAL-ID G0-TX. Implementar [comportamento] somente em [arquivos].
+RED ja confirmado: [comando] falha com [motivo].
+Concluir somente quando [acceptance], [unit/contract], [typecheck] e [lint] passarem,
+sem remover assertions/guards e registrando evidencia em docs/superpowers/goal-runs/G0-TX.md.
+Maximo 6 continuacoes ou 45 minutos. Parar se mesma falha repetir 2 vezes,
+se precisar mudar arquitetura/escopo, acessar producao ou executar comando destrutivo.
+Commits de snapshot somente quando esta invocacao trouxer autorizacao explicita,
+todos gates do goal estiverem verdes e somente arquivos do escopo forem staged.
+Inspecionar git status/diff; nunca usar git add -A.</pre>
+
+    <div class="callout"><strong>Limite:</strong> `/goal` nao autoaprova design, copy, adocao, canary, seguranca de producao ou teste em iPhone fisico. Esses gates exigem evidencia externa e aceite humano/independente.</div>
+  </section>
+
+  <section id="stack">
+    <h2>Stack fixada</h2>
+    <table>
+      <thead><tr><th>Camada</th><th>Tecnologia</th><th>Decisao</th></tr></thead>
+      <tbody>
+        <tr><td>Runtime</td><td>Node 22 + pnpm 10.34.1</td><td>Mesmo pin em local, CI e containers</td></tr>
+        <tr><td>API</td><td>Fastify 5 + Zod + pg</td><td>Unica autoridade financeira</td></tr>
+        <tr><td>Frontend</td><td>Next.js 16 + React 19 + OpenNext</td><td>PWA canonico; ler docs locais antes de mudanca</td></tr>
+        <tr><td>Dados</td><td>Postgres, candidato legacy</td><td>Baseline decidida por fingerprint read-only</td></tr>
+        <tr><td>Agent</td><td>Cloudflare Agents + AIChatAgent</td><td>Tools HTTP; transcript em SQLite/DO</td></tr>
+        <tr><td>Auth</td><td>Access aprovado por spike ou Better Auth</td><td>Criterio fixo; sem auth artesanal</td></tr>
+        <tr><td>Testes</td><td>Vitest, Playwright, Stryker, Postgres descartavel</td><td>TDD e coverage minimo 80%</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="architecture">
+    <h2>Arquitetura e limites</h2>
+    <pre>apps/
+├── api/                 auth, authz, dominio, Postgres, auditoria
+├── pwa/                 UI, chat, snapshots read-only
+├── agent/               AIChatAgent, tools HTTP, push, scheduling
+└── whatsapp-bridge/     adapter transitorio; removido em G6
+
+postgres
+├── users
+├── households           workspace fisico: personal | shared
+├── memberships
+├── invites
+├── pending_operations
+├── audit_logs
+└── dominio existente com household_id</pre>
+    <ul>
+      <li>API e unico modulo autorizado a executar SQL financeiro.</li>
+      <li>Authz ocorre antes do handler e antes da resolucao do Durable Object.</li>
+      <li>Workspace vem de membership resolvida, nunca de argumento confiado do modelo.</li>
+      <li>Postgres guarda efeitos; Durable Object guarda transcript e coordenacao de chat.</li>
+      <li>WhatsApp usa API durante transicao e perde acesso SQL antes de ser retirado.</li>
+    </ul>
+  </section>
+
+  <section id="schemas">
+    <h2>Schemas principais</h2>
+    <pre>AuthenticatedContext = {
+  userId: UUID,
+  workspaceId: UUID,   // mesmo ID fisico de households.id
+  role: "owner" | "member",
+  sessionId: string
+}
+
+FinancialCommand = {
+  actor: AuthenticatedContext,
+  idempotencyKey: UUID,
+  payload: ValidatedPayload
+}
+
+PendingOperation = {
+  id: UUID,
+  workspaceId: UUID,
+  actorType: "device" | "user",
+  actorId: string,
+  kind: string,
+  payloadHash: SHA256,
+  status: "pending" | "approved" | "rejected" | "expired" | "executed",
+  expiresAt: Timestamp
+}</pre>
+  </section>
+
+  <section id="endpoints">
+    <h2>Endpoints novos/alterados</h2>
+    <table>
+      <thead><tr><th>Metodo</th><th>Path conceitual</th><th>Contrato</th><th>Fase</th></tr></thead>
+      <tbody>
+        <tr><td>POST</td><td><code>/auth/invites/:token/accept</code></td><td>Consome convite uma vez; cria user/membership</td><td>4</td></tr>
+        <tr><td>POST</td><td><code>/auth/logout</code></td><td>Revoga sessao server-side</td><td>4</td></tr>
+        <tr><td>GET</td><td><code>/workspaces</code></td><td>Lista memberships ativas</td><td>4</td></tr>
+        <tr><td>POST</td><td><code>/workspaces</code></td><td>Cria pessoal ou compartilhado</td><td>4</td></tr>
+        <tr><td>POST</td><td><code>/workspaces/:id/invites</code></td><td>Owner convida email</td><td>4</td></tr>
+        <tr><td>DELETE</td><td><code>/workspaces/:id/members/:userId</code></td><td>Owner remove membership com invariantes</td><td>4</td></tr>
+        <tr><td>POST</td><td><code>/pending-operations</code></td><td>Persiste acao sensivel antes de executar</td><td>2</td></tr>
+        <tr><td>POST</td><td><code>/pending-operations/:id/approve</code></td><td>Consome e executa atomicamente</td><td>2</td></tr>
+        <tr><td>POST</td><td><code>/pending-operations/:id/reject</code></td><td>Rejeita uma vez e audita</td><td>2</td></tr>
+        <tr><td>GET</td><td><code>/dashboard/summary</code></td><td>Agregados completos server-side</td><td>3</td></tr>
+      </tbody>
+    </table>
+    <p>Paths finais exigem contract test e podem ajustar nomenclatura, sem mudar semantica da spec.</p>
+  </section>
+
+  <section id="files" class="files">
+    <h2>Arquivos relevantes</h2>
+    <h3>Existentes</h3>
+    <ul>
+      <li><span class="tag existing">existing</span> <code>apps/api/src/routes/auth.ts</code> — cadastro publico atual</li>
+      <li><span class="tag existing">existing</span> <code>apps/api/src/writes/postgres.ts</code> — idempotencia atual</li>
+      <li><span class="tag existing">existing</span> <code>apps/api/src/read-models/sql/</code> — migrations concorrentes</li>
+      <li><span class="tag existing">existing</span> <code>apps/pwa/src/lib/state/</code> — sync, commands e snapshots</li>
+      <li><span class="tag existing">existing</span> <code>apps/pwa/e2e/</code> — harness e fixture divergente</li>
+      <li><span class="tag existing">existing</span> <code>apps/whatsapp-bridge/</code> — canal transitorio</li>
+      <li><span class="tag existing">existing</span> <code>.pi/extensions/financial-tools/</code> — inventario de paridade</li>
+    </ul>
+    <h3>Novos</h3>
+    <ul>
+      <li><span class="tag new">new</span> <code>docs/adr/</code> — mudancas em decisoes travadas</li>
+      <li><span class="tag new">new</span> <code>docs/security/THREAT-MODEL.md</code> — auth, IDOR, Agent e dados</li>
+      <li><span class="tag new">new</span> <code>docs/architecture/tool-capability-inventory.md</code> — 72 tools versus API/UI</li>
+      <li><span class="tag new">new</span> <code>docs/superpowers/goal-runs/</code> — evidencia objetiva de cada execucao `/goal`</li>
+      <li><span class="tag new">new</span> <code>apps/agent/</code> — criado somente na Fase 5</li>
+      <li><span class="tag new">new</span> <code>.github/workflows/ci.yml</code> — CI monorepo</li>
+    </ul>
+  </section>
+
+  <section id="phases">
+    <h2>Fases de implementacao</h2>
+    <p><strong>Executar em ordem.</strong> Somente Fase 0 esta autorizada agora. Cada tarefa usa um `/goal` bounded apos RED confirmado. Cada fase posterior exige gate anterior aprovado e plano TDD proprio. Este arquivo e roadmap do programa, nao permissao para uma branch longa.</p>
+    <p>Marcadores: <code>[]</code> pendente, <code>[wip]</code> em execucao, <code>[x]</code> completo, <code>[f]</code> falhou.</p>
+
+    <div class="phase p0">
+      <h3><code class="status">[]</code> Fase 0: Contencao de emergencia</h3>
+      <p>Prazo alvo: 3-7 dias. Nenhuma feature nem deploy antes do gate. Fecha todos os CRITICAL, inclusive idempotencia e migration startup.</p>
+      <h4>0.1 Cadastro e tokens</h4>
+      <ul class="checklist">
+        <li><code>[]</code> RED: provar que caller anonimo recebe token do household default.</li>
+        <li><code>[]</code> Desabilitar cadastro de novo device ate Fase 4; nao criar bootstrap HTTP temporario.</li>
+        <li><code>[]</code> Permitir somente revogacao do proprio token autenticado; provisioning novo fica offline/manual.</li>
+        <li><code>[]</code> Fazer producao falhar sem config de auth, DB e schema.</li>
+        <li><code>[]</code> Inventariar, revogar e rotacionar device tokens existentes.</li>
+        <li><code>[]</code> Aplicar rate limit e log sem token sensivel.</li>
+      </ul>
+      <h4>0.2 Banco de teste</h4>
+      <ul class="checklist">
+        <li><code>[]</code> RED: banco sem marker server-side esperado deve ser rejeitado antes de migration/truncate.</li>
+        <li><code>[]</code> Usar credencial dedicada sem privilegio em producao e Postgres descartavel.</li>
+        <li><code>[]</code> Exigir <code>DATABASE_URL_TEST</code>, opt-in e UUID de marker esperado.</li>
+        <li><code>[]</code> Validar <code>current_database()</code>, server identity e marker antes de qualquer operacao destrutiva.</li>
+        <li><code>[]</code> Bloquear host, banco e tunnel de producao conhecidos como defesa adicional, nao prova principal.</li>
+      </ul>
+      <h4>0.3 Bridge transitorio</h4>
+      <ul class="checklist">
+        <li><code>[]</code> RED: duas mensagens concorrentes nao podem compartilhar eventos/resposta.</li>
+        <li><code>[]</code> RED: duas entregas simultaneas do mesmo providerMessageId produzem um efeito.</li>
+        <li><code>[]</code> Criar fila exclusiva em torno do cliente RPC inteiro.</li>
+        <li><code>[]</code> Fazer claim persistente e atomico de providerMessageId antes do Pi.</li>
+        <li><code>[]</code> Propagar abort no timeout e impedir retry duplicado.</li>
+        <li><code>[]</code> Reiniciar/recuperar explicitamente processo Pi morto.</li>
+        <li><code>[]</code> Falhar startup se token/allowlist obrigatorios estiverem vazios.</li>
+      </ul>
+      <h4>0.4 Idempotencia e migrations</h4>
+      <ul class="checklist">
+        <li><code>[]</code> RED: duas requests concorrentes com mesma chave geram um efeito.</li>
+        <li><code>[]</code> Usar chave <code>(workspace, actor, operation, key)</code>, SHA-256 e payload versionado.</li>
+        <li><code>[]</code> Persistir claim/effect/operation-record minimo/completion na mesma transacao.</li>
+        <li><code>[]</code> Fixar lease em 5 min, retention em 90 dias e retry suportado em no maximo 7 dias.</li>
+        <li><code>[]</code> Tornar processo web <code>verify-only</code>; remover aplicacao de SQL no startup.</li>
+        <li><code>[]</code> Criar job de migration explicito com checksum, advisory lock e backup gate.</li>
+      </ul>
+      <h4>0.5 Governanca minima</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Apontar README/AGENTS para spec e roadmap canonicos sem sobrescrever conteudo local nao relacionado.</li>
+        <li><code>[]</code> Marcar spec 2026-07-27 como substituida e planos concluidos como arquivo historico.</li>
+        <li><code>[]</code> Proibir alteracao D01-D19 sem ADR e atualizacao conjunta.</li>
+        <li><code>[]</code> Adicionar regra de snapshot: autorizacao explicita, gates verdes, diff revisado e staging apenas do goal.</li>
+        <li><code>[]</code> Criar primeiro goal-run usando template e provar cap/estagnacao.</li>
+      </ul>
+      <h4>0.6 Testes e gate</h4>
+      <table><tbody>
+        <tr><th>Unit RED</th><td>auth config, DB marker, bridge queue/claim, migration mode</td></tr>
+        <tr><th>Contract</th><td>register/revoke anonimos negados; idempotencia por operacao</td></tr>
+        <tr><th>Concurrency</th><td>4+ requests/entregas iguais, crash entre claim e conclusao</td></tr>
+        <tr><th>E2E</th><td>Nao; risco coberto em API/bridge</td></tr>
+        <tr><th>Mutation</th><td>guards, claim e migration mode, meta >=70%</td></tr>
+        <tr><th>Coverage</th><td>>=80% do codigo novo</td></tr>
+      </table>
+      <div class="loop"><strong>Gate G0:</strong> todos CRITICAL fechados; processo web nao migra; teste destrutivo exige credencial descartavel e marker server-side.</div>
+    </div>
+
+    <div class="phase">
+      <h3><code class="status">[]</code> Fase 1: Baseline e CI confiavel</h3>
+      <p>Prazo alvo: 1-2 semanas. Transforma estado atual em build reproduzivel.</p>
+      <h4>1.1 Runtime e comandos</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Pin Node 22 e pnpm 10.34.1 via <code>packageManager</code>, CI e containers.</li>
+        <li><code>[]</code> Corrigir scripts root para lint, typecheck, test e build dos tres apps.</li>
+        <li><code>[]</code> Corrigir bridge tsconfig/global declarations sem mascarar erros.</li>
+        <li><code>[]</code> Fixar ESLint compativel e eliminar erros PWA TypeScript.</li>
+        <li><code>[]</code> Corrigir 7 testes API e 2 testes PWA por causa raiz.</li>
+        <li><code>[]</code> Executar OpenNext em Linux/CI; Windows nao vira baseline oficial.</li>
+      </ul>
+      <h4>1.2 CI monorepo</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Criar workflow raiz para API, bridge, PWA, Postgres e Docker.</li>
+        <li><code>[]</code> Escolher um unico dono dos servidores E2E: Playwright ou script.</li>
+        <li><code>[]</code> Aplicar >=80% no codigo novo/modificado e ratchet global sem queda.</li>
+        <li><code>[]</code> Adicionar secret scan, audit do lockfile real e container scan.</li>
+        <li><code>[]</code> Tornar production smoke read-only pos-deploy, com rollback.</li>
+      </ul>
+      <h4>1.3 Testes e gate</h4>
+      <table><tbody>
+        <tr><th>Unit RED</th><td>scripts/gates que hoje passam ou nao rodam</td></tr>
+        <tr><th>Snapshot</th><td>Nao</td></tr>
+        <tr><th>Contract</th><td>CI dispara para cada workspace e arquivo de gate</td></tr>
+        <tr><th>E2E</th><td>Sim; mobile, desktop e runtime sem dupla inicializacao</td></tr>
+        <tr><th>Mutation</th><td>Stryker no estado PWA e guards criticos</td></tr>
+        <tr><th>Coverage</th><td>>=80% changed code; baseline global so sobe</td></tr>
+      </table>
+      <div class="loop"><strong>Gate G1:</strong> checkout limpo reproduz CI verde com um conjunto documentado de comandos.</div>
+    </div>
+
+    <div class="phase">
+      <h3><code class="status">[]</code> Fase 2: Schema, dominio e integridade</h3>
+      <p>Prazo alvo: 2-4 semanas. Corrige fundacao antes de aumentar numero de usuarios.</p>
+      <h4>2.1 Baseline de dados e migrations</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Extrair fingerprint read-only do schema real, constraints, history e semantica de saldo.</li>
+        <li><code>[]</code> Confirmar ou rejeitar candidato legacy por evidencia, sem assumir docs historicos.</li>
+        <li><code>[]</code> Declarar baseline unica e arquivar migrations concorrentes.</li>
+        <li><code>[]</code> Ensaiar migrator criado em G0 sobre snapshot anonimizado.</li>
+        <li><code>[]</code> Provar backup e restore antes da primeira migration estrutural.</li>
+      </ul>
+      <h4>2.2 Escopo e atomicidade</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Criar auth context/pre-handler unico ainda com device token temporario.</li>
+        <li><code>[]</code> Fazer stores exigirem workspace em lookup, update e delete.</li>
+        <li><code>[]</code> Corrigir IDOR de card purchases e referencias cross-household.</li>
+        <li><code>[]</code> Expandir idempotencia de G0 para toda mutacao financeira e validar retention/recovery.</li>
+        <li><code>[]</code> Transacionar payable, fatura, compra, goal e recorrencia.</li>
+        <li><code>[]</code> Evoluir operation-record de G0 para pending/audit canonicos com actor_type/actor_id.</li>
+      </ul>
+      <h4>2.3 Consolidacao de capacidades</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Gerar inventario de tools/rotas; cada item exige capability ID e classification.</li>
+        <li><code>[]</code> Registrar persona, frequencia, risco, API e destino UI/chat/internal/retire.</li>
+        <li><code>[]</code> Portar capacidade ausente como funcao/API testada, nao arquivo por arquivo.</li>
+        <li><code>[]</code> Migrar capability por capability de SQL para API sob feature flag.</li>
+        <li><code>[]</code> Comparacao shadow e somente read-only; nunca executa segundo side effect.</li>
+      </ul>
+      <h4>2.4 Testes e gate</h4>
+      <table><tbody>
+        <tr><th>Unit RED</th><td>regras puras, hash canonico, state transitions</td></tr>
+        <tr><th>Contract</th><td>API versus schema real versionado e capacidade Pi</td></tr>
+        <tr><th>Integration</th><td>Postgres real descartavel, rollback e migrations</td></tr>
+        <tr><th>Concurrency</th><td>4+ requests para idempotencia, payment e contribution</td></tr>
+        <tr><th>Mutation</th><td>idempotencia, authz e pending operation >=70%</td></tr>
+        <tr><th>Coverage</th><td>>=80%; 100% branches dos guards criticos</td></tr>
+      </table>
+      <div class="loop"><strong>Gate G2:</strong> schema real versionado; retry, concorrencia ou falha intermediaria nao duplicam, vazam nem deixam estado parcial.</div>
+    </div>
+
+    <div class="phase">
+      <h3><code class="status">[]</code> Fase 3: Correcao funcional do PWA</h3>
+      <p>Prazo alvo: 2-4 semanas. Nao adicionar chat antes de tela financeira representar verdade.</p>
+      <h4>3.1 Mutations e estado</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Gerar matriz de todos mutators e endpoints de escrita; item novo sem policy falha CI.</li>
+        <li><code>[]</code> Padronizar mutator: sucesso retorna canonico; falha rollback + throw.</li>
+        <li><code>[]</code> Gerar idempotency key antes do request e preservar em retry.</li>
+        <li><code>[]</code> Testar header no boundary fetch, nao somente chamada de funcao mockada.</li>
+        <li><code>[]</code> Invalidar/refetch projections afetadas depois do commit.</li>
+        <li><code>[]</code> Persistir snapshot somente apos confirmacao server-side.</li>
+        <li><code>[]</code> Remover chamadas diretas que contornam command boundary.</li>
+      </ul>
+      <h4>3.2 Dados corretos</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Consumir agregados server-side para Home e Relatorios.</li>
+        <li><code>[]</code> Implementar paginacao de registros; remover limite silencioso de 200.</li>
+        <li><code>[]</code> Remover grafico patrimonial ficticio e opcoes nao persistidas.</li>
+        <li><code>[]</code> Corrigir subcategoria de receita e drafts resetados.</li>
+        <li><code>[]</code> Definir timeout, AbortSignal e schemas runtime de responses.</li>
+      </ul>
+      <h4>3.3 Testes e gate</h4>
+      <table><tbody>
+        <tr><th>Unit RED</th><td>mutators, reducers, agregacoes, drafts</td></tr>
+        <tr><th>Snapshot</th><td>Sim, somente componentes/estados visuais criticos; <=50 linhas</td></tr>
+        <tr><th>Contract</th><td>PWA contra API real ou schema compartilhado; fixture nao diverge</td></tr>
+        <tr><th>E2E</th><td>Sim: criar, editar, pagar, falhar, retry, offline read-only</td></tr>
+        <tr><th>Mutation</th><td>commands/reducer/sync >=70%</td></tr>
+        <tr><th>Coverage</th><td>>=80% changed code; elevar global a >=80% ate G3</td></tr>
+      </table>
+      <div class="loop"><strong>Gate G3:</strong> UI nunca afirma sucesso falso, perde draft ou mostra agregado parcial sem aviso.</div>
+    </div>
+
+    <div class="phase gate">
+      <h3><code class="status">[]</code> Fase 4: Identidade, convites e workspaces</h3>
+      <p>Prazo alvo: 3-5 semanas. Primeira expansao de produto, somente apos G0-G3.</p>
+      <h4>4.1 Gate Access versus Better Auth</h4>
+      <ul class="checklist">
+        <li><code>[x]</code> Spike timeboxed em 2 dias usando docs atuais — G4.1.1 concluído.</li>
+        <li><code>[x]</code> Provar PWA instalada, logout, JWT completo, WebSocket e Worker -> API — matriz registrada; Access falhou no gate.</li>
+        <li><code>[x]</code> Se qualquer criterio falhar, registrar ADR e usar Better Auth — ADR-002 aceito; Better Auth selecionado.</li>
+        <li><code>[]</code> Para Better Auth, provar cookie/sessao, CSRF, revogacao, email, existing user e invite race.</li>
+        <li><code>[]</code> Negar aceite quando email autenticado nao coincide com convite normalizado.</li>
+      </ul>
+      <h4>4.2 Dados e autorizacao</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Criar users, memberships, invites e campos kind em households.</li>
+        <li><code>[]</code> Migrar household atual sem remover ou renomear household_id.</li>
+        <li><code>[]</code> Criar no maximo um workspace pessoal opcional por usuario; sem invites e sem conversao para shared.</li>
+        <li><code>[]</code> Exigir ao menos um owner no compartilhado; ultimo owner transfere ou exclui.</li>
+        <li><code>[]</code> Dar a novo membro acesso ao historico compartilhado anterior; remocao encerra acesso imediato.</li>
+        <li><code>[]</code> Implementar owner/member; viewer fica fora.</li>
+        <li><code>[]</code> Receber <code>X-Workspace-Id</code> nao confiavel; resolver contexto uma vez e proibir header em handlers.</li>
+        <li><code>[]</code> Gerar inventario de rotas e cobrir 401/403/ownership, inclusive rotas futuras.</li>
+      </ul>
+      <h4>4.3 PWA</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Trocar auth somente na fronteira central e reescrever auth spec.</li>
+        <li><code>[]</code> Criar fluxo de convite, troca de workspace e gerenciamento de membros.</li>
+        <li><code>[]</code> Limpar snapshots e estado sensivel na troca de usuario/workspace.</li>
+        <li><code>[]</code> Fechar sockets e invalidar reconnect/delegated tokens em logout ou revogacao.</li>
+      </ul>
+      <h4>4.4 Testes e gate</h4>
+      <table><tbody>
+        <tr><th>Unit RED</th><td>invite expiry/consume, roles, ownership transfer</td></tr>
+        <tr><th>Contract</th><td>JWT/session, membership context, logout/revocation</td></tr>
+        <tr><th>Security</th><td>IDOR em inventario dinamico, token replay, invite race, revogacao com socket aberto</td></tr>
+        <tr><th>E2E</th><td>Sim: convite, pessoal, compartilhado, troca, remocao</td></tr>
+        <tr><th>Mutation</th><td>auth/authz >=80%</td></tr>
+        <tr><th>Coverage</th><td>100% branches de authorization; >=80% restante</td></tr>
+      </table>
+      <div class="loop"><strong>Gate G4:</strong> usuario nao-membro nao acessa API, snapshot, chat ou metadata de outro workspace.</div>
+    </div>
+
+    <div class="phase gate">
+      <h3><code class="status">[]</code> Fase 5: Agent e chat em canary</h3>
+      <p>Prazo alvo: 3-5 semanas. Comeca read-only; writes entram por capability e metricas.</p>
+      <h4>5.1 Fundacao do Agent</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Criar <code>apps/agent</code> com binding/migration SQLite versionada.</li>
+        <li><code>[]</code> Autorizar membership antes de <code>getAgentByName</code>.</li>
+        <li><code>[]</code> Revalidar sessao/membership por mensagem ou binding curto renovavel.</li>
+        <li><code>[]</code> Usar um DO por workspace; pessoal singleton, compartilhado colaborativo.</li>
+        <li><code>[]</code> Guardar actor em cada mensagem/acao do workspace compartilhado.</li>
+        <li><code>[]</code> Configurar queue de mensagens, resumable stream, abort e recovery com budget.</li>
+      </ul>
+      <h4>5.2 Tools e aprovacao</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Gerar tools a partir de contratos HTTP tipados da API.</li>
+        <li><code>[]</code> Injetar token por turno com iss/aud/sub/workspace/role/capabilities/jti/request/exp <=5min.</li>
+        <li><code>[]</code> Nao persistir token no DO nem incluir token no prompt/model input.</li>
+        <li><code>[]</code> Rodar read-only shadow contra respostas Pi e registrar divergencia.</li>
+        <li><code>[]</code> Liberar write por capability com intention ID persistido e estavel em regeneracao.</li>
+        <li><code>[]</code> Aplicar matriz de approval: >=R$500 configuravel, destrutivos sempre, somente requester aprova.</li>
+        <li><code>[]</code> Apresentar pending operation no chat; Postgres decide estado/execucao uma vez.</li>
+        <li><code>[]</code> Aplicar budget de tokens, rate limit e redacao de transcript.</li>
+        <li><code>[]</code> Implementar retention 180 dias, export/delete, access log e minimizacao de tool payload.</li>
+      </ul>
+      <h4>5.3 Testes e gate</h4>
+      <table><tbody>
+        <tr><th>Unit RED</th><td>tool mapping, delegated scope, budget e redacao</td></tr>
+        <tr><th>Contract</th><td>Agent -> API com identidade final e schemas</td></tr>
+        <tr><th>Security</th><td>prompt injection, workspace swap, token leak/replay, DO enumeration, revoke em socket ativo</td></tr>
+        <tr><th>E2E</th><td>Sim: chat pessoal, compartilhado, reconnect e approval</td></tr>
+        <tr><th>Mutation</th><td>auth boundary e tool policy >=80%</td></tr>
+        <tr><th>Coverage</th><td>>=80%; 100% branches de scope</td></tr>
+      </table>
+      <div class="loop"><strong>Gate G5:</strong> canary completa periodo definido sem cross-workspace, write duplicado, custo sem limite ou tool fora do inventario.</div>
+    </div>
+
+    <div class="phase">
+      <h3><code class="status">[]</code> Fase 6: Push, transicao e retirada do WhatsApp</h3>
+      <p>Prazo alvo: 2-4 semanas mais soak. Retirada depende de uso real, nao somente testes.</p>
+      <h4>6.1 Substitutos de canal</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Web Push com VAPID, consentimento e onboarding iOS instalado.</li>
+        <li><code>[]</code> Reminder server-side com timezone, lock, dedupe e observabilidade.</li>
+        <li><code>[]</code> Share Target, manifest shortcuts e atalho iOS para captura.</li>
+        <li><code>[]</code> Medir entrega, abertura, uso do chat e tempo de captura.</li>
+      </ul>
+      <h4>6.2 Decommission seguro</h4>
+      <ul class="checklist">
+        <li><code>[]</code> Estagio A: Pi continua dono da resposta, mas tools usam API sem SQL direto.</li>
+        <li><code>[]</code> Estagio B: novo Agent recebe shadow read-only; nao responde nem executa side effect.</li>
+        <li><code>[]</code> Estagio C: bridge envia ao novo Agent com phone->user/workspace resolvido server-side.</li>
+        <li><code>[]</code> Em cada estagio, exatamente um runtime responde/executa; feature flag define rollback.</li>
+        <li><code>[]</code> Congelar writes Pi e manter fallback read-only antes de remover runtime.</li>
+        <li><code>[]</code> Validar inventario de capacidade e aceite humano item a item.</li>
+        <li><code>[]</code> Executar soak com rollback testado.</li>
+        <li><code>[]</code> Remover webhook/Evolution, observar, depois remover bridge e `.pi`.</li>
+        <li><code>[]</code> Rotacionar secrets e remover referencias residuais.</li>
+      </ul>
+      <h4>6.3 Testes e gate</h4>
+      <table><tbody>
+        <tr><th>Unit RED</th><td>scheduler, dedupe, subscriptions e feature flags</td></tr>
+        <tr><th>Contract</th><td>Push, API e reminder</td></tr>
+        <tr><th>E2E</th><td>Automatizado: browser, Android quando suportado, share target e rollback</td></tr>
+        <tr><th>Dispositivo</th><td>Checklist manual versionado em iPhone fisico: install, push, reconnect e captura</td></tr>
+        <tr><th>Mutation</th><td>scheduler/dedupe >=70%</td></tr>
+        <tr><th>Coverage</th><td>>=80%</td></tr>
+        <tr><th>Produto</th><td>adocao e confiabilidade acima de limiar definido antes do canary</td></tr>
+      </table>
+      <div class="loop"><strong>Gate G6:</strong> nenhum fluxo critico depende do WhatsApp; rollback e dados continuam integros.</div>
+    </div>
+
+    <div class="phase">
+      <h3><code class="status">[]</code> Fase 7: Governanca e limpeza</h3>
+      <p>Prazo alvo: 3-5 dias. Completa limpeza iniciada em G0; nao adia fonte canonica.</p>
+      <ul class="checklist">
+        <li><code>[]</code> Reescrever README e AGENTS com arquitetura real.</li>
+        <li><code>[]</code> Criar PRODUCT, ARCHITECTURE-CURRENT, ARCHITECTURE-TARGET e ROADMAP.</li>
+        <li><code>[]</code> Extrair ADRs validas e arquivar specs/planos superados.</li>
+        <li><code>[]</code> Manter somente planos ativos com status atualizado.</li>
+        <li><code>[]</code> Adicionar lint documental contra links quebrados e fatos contaveis.</li>
+      </ul>
+      <div class="loop"><strong>Saida:</strong> novo agente encontra uma fonte canonica, uma arquitetura atual, uma alvo e um plano ativo.</div>
+    </div>
+  </section>
+
+  <section id="milestones">
+    <h2>Milestones</h2>
+    <table>
+      <thead><tr><th>Marco</th><th>Estimativa</th><th>Entrega</th><th>Dependencia</th></tr></thead>
+      <tbody>
+        <tr><td>M0 Contencao</td><td>3-7 dias</td><td>Todos CRITICAL fechados e direcao publicada</td><td>Nenhuma</td></tr>
+        <tr><td>M1 Baseline</td><td>1-2 semanas</td><td>CI monorepo verde</td><td>M0</td></tr>
+        <tr><td>M2 Integridade</td><td>2-4 semanas</td><td>API/transacoes confiaveis</td><td>M1</td></tr>
+        <tr><td>M3 PWA correta</td><td>2-4 semanas</td><td>UI coerente com servidor</td><td>M2</td></tr>
+        <tr><td>M4 Identidade</td><td>3-5 semanas</td><td>Convites e workspaces seguros</td><td>M3</td></tr>
+        <tr><td>M5 Agent canary</td><td>3-5 semanas</td><td>Chat autenticado e tools HTTP</td><td>M4</td></tr>
+        <tr><td>M6 Transicao</td><td>2-4 semanas + soak</td><td>WhatsApp retiravel</td><td>M5</td></tr>
+      </tbody>
+    </table>
+    <p>Estimativa total indicativa: 13-24 semanas, executando sequencialmente com um engenheiro. Contencao nao espera estimativa total.</p>
+  </section>
+
+  <section id="tradeoffs">
+    <h2>Trade-offs</h2>
+    <table>
+      <thead><tr><th>Decisao</th><th>Ganho</th><th>Custo aceito</th><th>Alternativa rejeitada</th></tr></thead>
+      <tbody>
+        <tr><td>API unica</td><td>Regra e seguranca central</td><td>Portar capacidade Pi</td><td>Duas implementacoes</td></tr>
+        <tr><td>Schema real como baseline</td><td>Migracao baseada em fingerprint</td><td>Legacy permanece candidato ate prova</td><td>Forcar docs ou schema ideal</td></tr>
+        <tr><td>WhatsApp transitorio</td><td>Adocao e rollback</td><td>Coexistencia temporaria</td><td>Big-bang</td></tr>
+        <tr><td>DO por workspace</td><td>Chat compartilhado natural</td><td>Authz obrigatoria antes do DO</td><td>DO por user+workspace sempre</td></tr>
+        <tr><td>Postgres para approvals</td><td>Visibilidade e atomicidade</td><td>Mais contrato API</td><td>Approval apenas no chat</td></tr>
+        <tr><td>Sem write offline</td><td>Evita replay financeiro</td><td>Menor conveniencia offline</td><td>Outbox prematuro</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="validation">
+    <h2>Validacao global</h2>
+    <ul class="checklist">
+      <li><code>[]</code> <code>pnpm install --frozen-lockfile</code> — lockfile reproduzivel.</li>
+      <li><code>[]</code> <code>pnpm lint</code> — tres workspaces sem erro.</li>
+      <li><code>[]</code> <code>pnpm typecheck</code> — producao, testes e scripts tipados.</li>
+      <li><code>[]</code> <code>pnpm test</code> — suites unit/contract verdes sem DB externo.</li>
+      <li><code>[]</code> <code>pnpm test:coverage</code> — minimo 80% aplicado.</li>
+      <li><code>[]</code> <code>pnpm test:integration</code> — Postgres descartavel e guards ativos.</li>
+      <li><code>[]</code> <code>pnpm test:e2e</code> — fluxos criticos e authz.</li>
+      <li><code>[]</code> <code>pnpm build</code> — API, bridge transitorio, PWA e Agent.</li>
+      <li><code>[]</code> <code>pnpm security:check</code> — secrets, deps, SAST e containers.</li>
+      <li><code>[]</code> Production smoke read-only — health, auth deny, assets e rollback.</li>
+    </ul>
+    <div class="loop"><strong>Regra:</strong> comando inexistente deve ser criado na Fase 1. Plano nao termina com gate ignorado ou convertido em aviso.</div>
+  </section>
+
+  <section id="questionables">
+    <h2>Incertezas controladas</h2>
+    <details open>
+      <summary>Cloudflare Access ou Better Auth?</summary>
+      <p class="qa-answer">Nao e debate aberto. Spike da Fase 4 aplica seis criterios da spec. Access aprovado usa JWT validado; qualquer falha seleciona Better Auth e registra ADR.</p>
+    </details>
+    <details>
+      <summary>Qual schema roda em producao?</summary>
+      <p class="qa-answer">Legacy e candidato, nao fato travado. G0 retira migrations do startup; Fase 2 extrai fingerprint read-only antes de escolher baseline ou aplicar mudanca estrutural.</p>
+    </details>
+    <details>
+      <summary>Quantas capacidades faltam na API?</summary>
+      <p class="qa-answer">Numero oito da spec anterior nao e confiavel. Inventario semantico das 72 tools define resposta e impede port cego.</p>
+    </details>
+    <details>
+      <summary>Quando WhatsApp pode sair?</summary>
+      <p class="qa-answer">Somente G6: paridade aceita, push/reminder estaveis, adocao medida, soak e rollback. Data nao substitui criterio.</p>
+    </details>
+  </section>
+
+  <section id="notes">
+    <h2>Notas de execucao</h2>
+    <ul>
+      <li>Cada fase recebe plano TDD proprio antes de codigo.</li>
+      <li>Commit deve ser pequeno e reversivel; feature e refactor estrutural nao compartilham PR.</li>
+      <li>Teste verde nao autoriza remover assercao, guard ou contrato sem revisao de diff.</li>
+      <li>Mudanca de decisao D01-D19 exige ADR e atualizacao simultanea da spec/plano.</li>
+      <li>Implementacao usa Stateless Goal Loop; um goal por tarefa verificavel, nunca por fase inteira.</li>
+      <li>Teste RED existe antes do `/goal`; mesmo erro por dois ciclos encerra loop sem afrouxar gate.</li>
+      <li>Snapshot autorizado ocorre somente verde, depois de status/diff e sem staging de mudanca alheia.</li>
+      <li>Nenhum agente acessa VPS, Cloudflare ou deploy sem autorizacao explicita da etapa.</li>
+    </ul>
+  </section>
+
+  <section id="amendments">
+    <h2>Amendments</h2>
+    <p>Nenhum. Historico append-only comeca apos primeira execucao.</p>
+  </section>
+</main>
+</body>
+</html>

@@ -15,6 +15,7 @@ const eslintConfig = defineConfig([
     // Cloudflare / test artifacts:
     ".open-next/**",
     "coverage/**",
+    ".stryker-tmp/**",
     // Wrangler dev artifacts:
     ".wrangler/**",
     // Generated SW (built from src/sw.ts via @serwist/next) and minified shell:
