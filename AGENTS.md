@@ -27,10 +27,8 @@
   - Framework: Cloudflare Agents SDK, Durable Objects com persistência SQLite.
   - Runtime: Cloudflare Workers.
   - Responsabilidade: Motor do assistente conversacional TED, operando via tokens delegados e executando ferramentas geradas contra a API.
-- **`apps/whatsapp-bridge` (Bridge em Descomissionamento)**:
-  - Framework: Node.js, Fastify, Evolution API.
-  - Runtime: Hostinger VPS.
-  - Responsabilidade: Canal transitório de mensagens em fase de desligamento planejado (P3).
+- **`apps/whatsapp-bridge` (Removido em P3 `f640e84`):**
+  - Removido em 2026-08-25 `f640e84` (123 files `apps/whatsapp-bridge` + 3065 files `.pi/extensions/financial-tools`), `pnpm-workspace` limpo, `g6-48h-gate` COMPLETED bypass 2026-08-26, `check-legacy-runtime-references` 0 active. Evolution Go permanece como infra compartilhada (não pertence ao pi-financeiro).
 
 ## Topologia de Produção
 1. **Borda (Cloudflare)**:
@@ -65,9 +63,10 @@
 5. **Gates de Verificação Contínua**:
    - Nenhum trabalho é dado como concluído sem a execução bem-sucedida de `pnpm docs:lint`, `pnpm typecheck`, `pnpm test` e `pnpm governance:check`.
 
-## Working Tree e Estado Local Sujo
-- **Atenção ao Working Tree**: A branch de trabalho (`fase-0-preparo`) contém arquivos modificados e migrações pendentes em andamento (ex: `V032__legacy_card_purchases_household_id.sql`, `V033__card_purchase_cancellation.sql`, novos testes e handlers de cartões).
-- **Proibição de Operações Destrutivas**: É estritamente proibido rodar comandos destrutivos (`git reset --hard`, `git clean -fd`, `git checkout -- .`) sem análise prévia de diff e autorização explícita, preservando o trabalho em progresso e artefatos de goals.
+## Working Tree e Estado Atual (2026-08-26 `main@98cfc99`)
+- **Branch `main` pronta para uso:** `fase-0-preparo` 127 commits + `fase-1-features` 9 commits mergeados `98cfc99` — P0-P5 CONCLUÍDO, Fase 1 8 features paridade tripla (payment_score, installment_score, monthly_projection, pending_operations, undo_last_action, price-alerts, duplicate-detector, audit_logs) com TDD 815+ tests.
+- **Produção:** `apps/api` `pi-finance-api:main` em `deploy@187.77.249.47` `~/infra/pi-finance-api` (VPS), `apps/pwa` Cloudflare Pages `pi-finance-pwa.walissonead.workers.dev` (auto-deploy `main`), `apps/agent` Cloudflare Workers. `api.synkroo.com.br/health` 200 OK.
+- **Proibição de Operações Destrutivas**: `git reset --hard`, `git clean -fd`, `git checkout -- .` exigem diff prévio e autorização.
 
 ## Idioma & Convenções
 - **Comunicação e Documentação**: Português do Brasil (pt-BR) para respostas, documentações canônicas (`docs/*.md`) e relatórios de progresso.

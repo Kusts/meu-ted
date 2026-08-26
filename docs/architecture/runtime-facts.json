@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0",
-  "lastVerified": "2026-08-26T17:00Z",
+  "version": "1.1.0",
+  "lastVerified": "2026-08-26T19:30Z",
   "activeWorkspaces": [
     "apps/api",
     "apps/pwa",
@@ -24,11 +24,13 @@
     }
   },
   "counts": {
-    "apiRoutes": 95,
+    "apiRoutes": 98,
     "databaseMigrations": 33,
     "latestMigration": "V033__card_purchase_cancellation.sql",
     "capabilitiesTotal": 72,
-    "capabilitiesInApiMode": 51
+    "capabilitiesInApiMode": 52,
+    "pwaRoutes": 3,
+    "agentTools": 52
   },
   "architecture": {
     "sourceOfTruth": "Fastify PostgreSQL API (apps/api)",

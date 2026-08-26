@@ -1,8 +1,8 @@
 # Estado do projeto e próximos passos
 
-**Data:** 2026-08-26T18:00Z
-**Branch:** `fase-0-preparo` (126 commits à frente de `main` @ `61e8bdf`, working tree com 0 modificados; inventário `docs/recovery/2026-08-25-working-tree-inventory.md` 234 paths, V032/V033 `b0fb133`/`725bda2`, verificação 2026-08-26T17:00Z + fixes Task 0 `93c478e`/`61e8bdf`)
-**Propósito:** documento único e estável. Substitui as recomendações soltas dadas ao longo da sessão. Atualizado com verificação de pendências 2026-08-26 (ver §1.4) e fechamento P3/P5 via unlock explícito §1.5 (sem aguardar soak 48h).
+**Data:** 2026-08-26T19:30Z
+**Branch:** `main@98cfc99` (P0-P5 + Fase 1 8 features mergeados, `pi-finance-api:main` em VPS `deploy@187.77.249.47`, PWA `pi-finance-pwa.walissonead.workers.dev` pronto para uso)
+**Propósito:** documento único e estável. Atualizado com deploy produção 2026-08-26T19:30Z e Fase 1 concluída — projeto pronto para uso.
 
 ---
 
