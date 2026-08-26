@@ -509,6 +509,86 @@ export async function undoLastAction(input?: { lastOperationId?: string }): Prom
   });
 }
 
+// ─── Duplicate detector ─────────────────────────────────────
+
+export type DuplicateCheckInput = {
+  kind: "expense" | "income" | "transfer";
+  description: string;
+  amountCents: number;
+  date: string;
+  accountId?: string;
+  fromAccountId?: string;
+  toAccountId?: string;
+  idempotencyKey?: string;
+};
+
+export type DuplicateMatch = {
+  id: string;
+  description: string;
+  amount_cents: string;
+  date: string;
+  match_type: "idempotency_key" | "semantic";
+  similarity: number;
+};
+
+export type DuplicateCheckResult = {
+  duplicate_detected: boolean;
+  match?: DuplicateMatch;
+};
+
+export function formatDuplicateWarning(match: DuplicateMatch, newDesc: string): string {
+  const dateStr = new Date(match.date).toISOString().slice(0, 10);
+  const amount = (parseInt(match.amount_cents, 10) / 100).toFixed(2);
+  const simPct = Math.round(match.similarity * 100);
+  if (match.match_type === "idempotency_key") {
+    return `Já existe um lançamento com essa chave de idempotência: ${match.description} — R$ ${amount} em ${dateStr} ID: ${match.id} Quer registrar mesmo assim?`;
+  }
+  return `Achei um lançamento parecido: "${match.description}" — R$ ${amount} em ${dateStr} (${simPct}% similar) Seu novo: "${newDesc}" É o mesmo gasto?`;
+}
+
+export async function checkDuplicate(input: DuplicateCheckInput): Promise<DuplicateCheckResult> {
+  return apiFetch<DuplicateCheckResult>("/transactions/detect-duplicate", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+// ─── Audit logs ───────────────────────────────────────────
+
+export type AuditLog = {
+  id: string;
+  workspaceId: string;
+  actorType: "device" | "user";
+  actorId: string;
+  operation: string;
+  eventType: string;
+  payloadHash: string;
+  effectRef?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type AuditLogFilters = {
+  limit?: number;
+  operation?: string;
+  eventType?: string;
+  actorType?: "device" | "user";
+  entityType?: string;
+  entityId?: string;
+};
+
+export async function fetchAuditLogs(filters: AuditLogFilters = {}): Promise<{ items: AuditLog[]; total: number }> {
+  const q = new URLSearchParams();
+  if (filters.limit !== undefined) q.set("limit", String(filters.limit));
+  if (filters.operation) q.set("operation", filters.operation);
+  if (filters.eventType) q.set("eventType", filters.eventType);
+  if (filters.actorType) q.set("actorType", filters.actorType);
+  if (filters.entityType) q.set("entityType", filters.entityType);
+  if (filters.entityId) q.set("entityId", filters.entityId);
+  const qs = q.toString();
+  return apiFetch(`/audit-logs${qs ? `?${qs}` : ""}`);
+}
+
 // ─── Dashboard Summary ───────────────────────────────────
 
 export async function fetchDashboardSummary(): Promise<DashboardSummary> {

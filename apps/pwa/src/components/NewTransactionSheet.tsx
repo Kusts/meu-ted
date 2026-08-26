@@ -5,6 +5,9 @@ import type { ReactNode } from "react";
 import { CategoryBadge } from "@/components/ui/CategoryBadge";
 import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import type { Account, Category } from "@/lib/state/types";
+import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
+import { checkDuplicate, formatDuplicateWarning } from "@/lib/api/endpoints";
+import { isApiConfigured } from "@/lib/api/client";
 
 export type SheetTab = "expense" | "income" | "transfer";
 
@@ -282,11 +285,24 @@ export default function NewTransactionSheet({
     setAddingCard(false);
   }
 
-  async function handleSave() {
+  // Duplicate-detector state
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const [pendingData, setPendingData] = useState<SaveData | null>(null);
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false);
+
+  async function doSave(data: SaveData) {
+    try {
+      await onSave(data);
+      markClean();
+    } catch {
+      // Save failed: keep dirty.
+    }
+  }
+
+  async function handleSave(force = false) {
     if (amountCents <= 0) return;
     let data: SaveData;
     if (isTransfer) {
-      // Reject missing or same origin/destination before hitting the API.
       if (!fromAccountId || !toAccountId || fromAccountId === toAccountId)
         return;
       data = {
@@ -311,12 +327,54 @@ export default function NewTransactionSheet({
         data.installmentsTotal = installmentsCount;
       }
     }
-    try {
-      await onSave(data);
-      markClean();
-    } catch {
-      // Save failed: keep dirty.
+
+    // Duplicate check before save (unless force:true bypass)
+    if (!force && isApiConfigured() && description.trim()) {
+      try {
+        setCheckingDuplicate(true);
+        const dupInput = isTransfer
+          ? {
+              kind: "transfer" as const,
+              description: data.description,
+              amountCents: data.amountCents,
+              date: data.date,
+              fromAccountId: data.fromAccountId,
+              toAccountId: data.toAccountId,
+            }
+          : {
+              kind: (data.kind === "income" ? "income" : "expense") as "expense" | "income",
+              description: data.description,
+              amountCents: data.amountCents,
+              date: data.date,
+              accountId: data.accountId,
+            };
+        const result = await checkDuplicate(dupInput);
+        if (result.duplicate_detected && result.match) {
+          const warning = formatDuplicateWarning(result.match, data.description);
+          setDuplicateWarning(warning);
+          setPendingData(data);
+          return;
+        }
+      } catch {
+        // Fail-open: on detection error, proceed to save.
+      } finally {
+        setCheckingDuplicate(false);
+      }
     }
+
+    await doSave(data);
+  }
+
+  async function handleForceConfirm() {
+    const data = pendingData;
+    setDuplicateWarning(null);
+    setPendingData(null);
+    if (data) await doSave(data);
+  }
+
+  function handleDuplicateCancel() {
+    setDuplicateWarning(null);
+    setPendingData(null);
   }
 
   const tabs: { key: SheetTab; label: string }[] = [
@@ -1082,16 +1140,28 @@ export default function NewTransactionSheet({
 
       {/* Save button */}
       <button
-        onClick={handleSave}
-        disabled={amountCents <= 0}
+        onClick={() => handleSave(false)}
+        disabled={amountCents <= 0 || checkingDuplicate}
         className="w-full rounded-[14px] bg-primary py-4 text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
       >
-        {isTransfer
-          ? "Transferir"
-          : installmentsEnabled
-            ? `Salvar em ${installmentsCount}x`
-            : "Salvar"}
+        {checkingDuplicate
+          ? "Verificando..."
+          : isTransfer
+            ? "Transferir"
+            : installmentsEnabled
+              ? `Salvar em ${installmentsCount}x`
+              : "Salvar"}
       </button>
+
+      <ConfirmActionDialog
+        open={duplicateWarning !== null}
+        title="Lançamento parecido encontrado"
+        message={duplicateWarning ?? ""}
+        confirmLabel="Salvar mesmo assim"
+        cancelLabel="Cancelar"
+        onConfirm={handleForceConfirm}
+        onCancel={handleDuplicateCancel}
+      />
     </div>
   );
 }
