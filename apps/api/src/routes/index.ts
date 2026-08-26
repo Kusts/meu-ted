@@ -57,6 +57,7 @@ import { registerSubscriptionRoutes } from "./subscriptions.js";
 import { registerPushRoutes } from "./push.js";
 import { registerAdoptionRoutes } from "./adoption.js";
 import { registerAuditRoutes } from "./audit.js";
+import { registerDuplicateDetectRoutes } from "./duplicate-detect.js";
 import { registerOwnershipTransferRoutes } from "../auth/ownership-transfers-http.js";
 import type { OwnershipTransferStore } from "../auth/ownership-transfers-postgres.js";
 import type { AuditLogStore } from "../audit/store.js";
@@ -352,6 +353,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     auditLogs: deps.auditLogs ?? createInMemoryAuditLogStore(),
     resolveToken,
   });
+  registerDuplicateDetectRoutes(app, { resolveToken });
   if (deps.ownershipTransferStore) {
     registerOwnershipTransferRoutes(app, deps.ownershipTransferStore);
   }
