@@ -9,6 +9,7 @@ import type { PayableStore } from '../payables/store.js';
 import type { CardStore } from '../cards/store.js';
 import { computePaymentScore, parsePeriodQuery } from '../insights/payment-score.js';
 import { computeInstallmentScore, parseMonthQuery } from '../insights/installment-score.js';
+import { computeMonthlyProjection, parseYearMonthQuery } from '../insights/monthly-projection.js';
 
 export const spendingInsightQuerySchema = z.object({
   yearMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
@@ -183,6 +184,51 @@ export const registerInsightRoutes = (
         score: result.score,
       },
     });
+  });
+
+  app.get('/insights/monthly-projection', async (req, reply) => {
+    let ctx: Awaited<ReturnType<AuthResolver>>;
+    if ((req as any).authenticatedContext) {
+      ctx = (req as any).authenticatedContext;
+    } else {
+      const token = req.headers[DEVICE_TOKEN_HEADER];
+      try {
+        ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token);
+      } catch (e) {
+        const err = e as { statusCode?: number; code?: string; message?: string };
+        return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.error', message: err.message ?? 'unauthorized' });
+      }
+    }
+
+    const parsed = parseYearMonthQuery((req.query ?? {}) as Record<string, unknown>);
+    if ('error' in parsed) {
+      return reply.code(400).send({
+        code: 'validation.error',
+        issues: [{ path: ['yearMonth'], message: parsed.error }],
+      });
+    }
+    const { yearMonth } = parsed;
+
+    let transactions: import('../types/domain.js').Transaction[] = [];
+    try {
+      transactions = await opts.store.listAllTransactions(ctx.householdId);
+    } catch {
+      transactions = [];
+    }
+
+    let payables: import('../types/domain.js').Payable[] = [];
+    if (opts.payableStore) {
+      try {
+        payables = await opts.payableStore.listPayables(ctx.householdId);
+      } catch {
+        payables = [];
+      }
+    }
+
+    const clock = opts.clock ?? (() => new Date());
+    const result = computeMonthlyProjection(transactions, payables, yearMonth, clock);
+
+    return reply.code(200).send(result);
   });
 };
 
