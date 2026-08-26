@@ -395,6 +395,26 @@ export default function AppShell({ children }: AppShellProps) {
                 ),
               },
               {
+                label: "Aprovações",
+                tint: "#FBF1E3",
+                color: "#B8791F",
+                icon: (
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
+                    <path d="m9 12 2 2 4-4" />
+                  </svg>
+                ),
+              },
+              {
                 label: "Relatórios",
                 tint: "#E8EFF7",
                 color: "#3E6FB0",
@@ -428,6 +448,7 @@ export default function AppShell({ children }: AppShellProps) {
                     Contas: "/contas",
                     Categorias: "/categorias",
                     Assinaturas: "/assinaturas",
+                    Aprovações: "/pending",
                   };
                   const route = routeMap[item.label];
                   if (route) router.push(route);
