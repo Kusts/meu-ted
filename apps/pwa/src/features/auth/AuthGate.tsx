@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { getToken, setToken } from "@/lib/auth/token-store";
-import { apiGet, apiPost, ApiError } from "@/lib/api/client";
+import { apiFetch, apiGet, ApiError } from "@/lib/api/client";
 import { clearSensitiveSession } from "@/lib/session";
 import { SessionProvider } from "@/lib/auth/session-context";
 
@@ -55,15 +55,31 @@ export function AuthGate({ children }: Props) {
   const handleLogin = useCallback(async (credentials: { email: string; password: string }) => {
     setError("");
     try {
-      // 1. Sign in via Better-Auth endpoint
-      await apiPost<{ user: unknown; session: unknown }>("/auth/sign-in/email", null, credentials);
+      // 1. Sign in via Better-Auth endpoint — capture session token for Bearer fallback (iOS Safari blocks 3rd-party cookies)
+      const signInRes = await apiFetch<{ token?: string; user?: unknown; redirect?: boolean }>(
+        "/auth/sign-in/email",
+        {
+          method: "POST",
+          body: JSON.stringify(credentials),
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+      const sessionToken = signInRes?.token;
 
       // 2. Register/obtain device token subordinated to the authenticated session
-      const res = await apiPost<{
+      // Send both cookie (credentials:include is automatic in apiFetch) and Authorization Bearer fallback
+      const res = await apiFetch<{
         token: string;
         deviceId: string;
         householdId: string;
-      }>("/auth/devices/register", null, { deviceName: "PWA Web Device" });
+      }>("/auth/devices/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+        },
+        body: JSON.stringify({ deviceName: "PWA Web Device" }),
+      });
 
       if (!res?.token) {
         throw new Error("Token de dispositivo não retornado pelo servidor.");
