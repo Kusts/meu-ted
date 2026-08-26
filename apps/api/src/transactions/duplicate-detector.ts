@@ -6,10 +6,10 @@ export interface DuplicateCheckParams {
   description: string;
   amountCents: number;
   date: string;
-  accountId?: string;
-  fromAccountId?: string;
-  toAccountId?: string;
-  idempotencyKey?: string;
+  accountId?: string | undefined;
+  fromAccountId?: string | undefined;
+  toAccountId?: string | undefined;
+  idempotencyKey?: string | undefined;
   windowDays?: number;
 }
 

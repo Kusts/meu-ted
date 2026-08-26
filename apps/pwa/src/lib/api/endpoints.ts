@@ -499,6 +499,16 @@ export async function rejectPendingOperation(id: string): Promise<PendingOperati
   });
 }
 
+export async function undoLastAction(input?: { lastOperationId?: string }): Promise<{
+  undone: { operation: string; entityId: string; reversal: string };
+}> {
+  return apiFetch<{ undone: { operation: string; entityId: string; reversal: string } }>('/audit/undo', {
+    method: 'POST',
+    body: JSON.stringify(input ?? {}),
+    idempotencyKey: crypto.randomUUID(),
+  });
+}
+
 // ─── Dashboard Summary ───────────────────────────────────
 
 export async function fetchDashboardSummary(): Promise<DashboardSummary> {

@@ -358,6 +358,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   registerAuditRoutes(app, {
     auditLogs: deps.auditLogs ?? createInMemoryAuditLogStore(),
     resolveToken,
+    ...(deps.undoService ? { undoService: deps.undoService } : {}),
   });
   registerDuplicateDetectRoutes(app, { resolveToken });
   if (deps.ownershipTransferStore) {

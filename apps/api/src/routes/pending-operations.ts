@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
 import type { AuthResolver } from './auth.js';
 import { DomainError, domainErrors } from '../writes/errors.js';
+import { requireIdempotencyKey } from '../writes/idempotency.js';
 import type { PendingOperationExecutor, PendingOperationStore } from '../approvals/pending.js';
 import type { UndoService } from '../approvals/undo.js';
 
@@ -120,9 +121,12 @@ catch (error) { return handleError(error, reply, true); }
     let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); }
     try {
       if (!undoService) throw domainErrors.unsupported('undo');
-      const rawKey = req.headers['idempotency-key'];
-      const idempotencyKey = Array.isArray(rawKey) ? rawKey[0] : (rawKey ?? `undo:${ctx.deviceId}`);
-      return reply.send(await undoService.undo(ctx.householdId, ctx.deviceId, String(idempotencyKey)));
+      const idempotencyKey = requireIdempotencyKey(req.headers as Record<string, unknown>);
+      const bodySchema = z.object({ lastOperationId: z.string().uuid().optional() });
+      const parsed = bodySchema.safeParse((req.body as unknown) ?? {});
+      if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+      const result = await undoService.undo(ctx.householdId, ctx.deviceId, idempotencyKey, parsed.data.lastOperationId);
+      return reply.code(200).send(result);
     } catch (error) { return handleError(error, reply); }
   });
 };

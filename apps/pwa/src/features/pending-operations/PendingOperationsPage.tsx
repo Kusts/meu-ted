@@ -9,6 +9,7 @@ import {
   fetchPendingOperations,
   approvePendingOperation,
   rejectPendingOperation,
+  undoLastAction,
 } from "@/lib/api/endpoints";
 import type { PendingOperation } from "@/lib/state/types";
 import { ApiError, isApiConfigured } from "@/lib/api/client";
@@ -69,6 +70,9 @@ export default function PendingOperationsPage() {
   const [actionId, setActionId] = useState<string | null>(null);
   const [confirmApprove, setConfirmApprove] = useState<PendingOperation | null>(null);
   const [confirmReject, setConfirmReject] = useState<PendingOperation | null>(null);
+  const [undoLoading, setUndoLoading] = useState(false);
+  const [undoResult, setUndoResult] = useState<string | null>(null);
+  const [undoError, setUndoError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!isApiConfigured()) {
@@ -125,6 +129,23 @@ export default function PendingOperationsPage() {
     }
   };
 
+  const handleUndo = async () => {
+    setUndoLoading(true);
+    setUndoError(null);
+    setUndoResult(null);
+    try {
+      const res = await undoLastAction();
+      setUndoResult(`Desfeito: ${res.undone.operation} (${res.undone.reversal})`);
+      await load();
+    } catch (e) {
+      if (e instanceof ApiError) setUndoError(e.message);
+      else if (e instanceof Error) setUndoError(e.message);
+      else setUndoError('Falha ao desfazer');
+    } finally {
+      setUndoLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-dvh flex-col bg-bg">
@@ -149,6 +170,28 @@ export default function PendingOperationsPage() {
       />
 
       <main className="flex flex-1 flex-col gap-3 px-5 pb-[var(--tab-bar-height)]">
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => void handleUndo()}
+            disabled={undoLoading}
+            data-testid="undo-last-action"
+            className="w-full rounded-[12px] border border-border bg-surface px-4 py-3 text-[13px] font-bold text-text-primary disabled:opacity-60"
+          >
+            {undoLoading ? 'Desfazendo…' : 'Desfazer última ação'}
+          </button>
+          {undoResult && (
+            <div className="rounded-[12px] bg-success-tint px-4 py-2.5 text-[12px] font-semibold text-success" data-testid="undo-success">
+              ✓ {undoResult}
+            </div>
+          )}
+          {undoError && (
+            <div className="rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger" data-testid="undo-error">
+              ⚠ {undoError}
+            </div>
+          )}
+        </div>
+
         {!isApiConfigured() && (
           <div className="rounded-[12px] bg-warning-tint px-4 py-3 text-[12px] font-semibold text-warning">
             API não configurada — modo demonstração. Nenhuma operação pendente real.
