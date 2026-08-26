@@ -292,7 +292,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     idempotency,
   });
   registerDashboardRoutes(app, { store: deps.store, resolveToken, clock });
-  registerInsightRoutes(app, { store: deps.store, resolveToken });
+  registerInsightRoutes(app, { store: deps.store, resolveToken, ...(deps.payableStore ? { payableStore: deps.payableStore } : {}), clock });
   if (deps.profileStore) {
     registerProfileRoutes(app, {
       resolveToken,

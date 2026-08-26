@@ -8,6 +8,8 @@ const fmtBRL = (cents: number): string =>
  * Pure function over dashboard summary — easy to test and stable to swap
  * for an LLM call later.
  */
+export { computePaymentScore, parsePeriodQuery } from '../insights/payment-score.js';
+
 export const buildQuickInsights = (summary: DashboardSummary): QuickInsight[] => {
   const insights: QuickInsight[] = [];
 
