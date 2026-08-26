@@ -15,15 +15,17 @@ export function checkActivePlans(dir = PLANS_DIR) {
   for (const file of files) {
     const fullPath = path.join(dir, file);
     const content = fs.readFileSync(fullPath, "utf8");
-    const isMasterOrPhase = file.startsWith("2026-08-16-");
+    const hasGoal = content.includes("**Goal:**") || content.includes("# ");
+    const isDatedPlan = /^\d{4}-\d{2}-\d{2}-/.test(file);
+    const isMasterOrPhase = file.startsWith("2026-08-16-") || isDatedPlan;
     plans.push({
       file,
-      valid: isMasterOrPhase,
-      hasGoal: content.includes("**Goal:**") || content.includes("# "),
+      valid: isMasterOrPhase && hasGoal,
+      hasGoal,
     });
   }
 
-  const allValid = plans.every((p) => p.valid && p.hasGoal);
+  const allValid = plans.every((p) => p.valid);
   return {
     valid: allValid,
     total: plans.length,
