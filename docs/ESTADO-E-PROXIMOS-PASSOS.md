@@ -1,8 +1,8 @@
 # Estado do projeto e próximos passos
 
-**Data:** 2026-08-25
-**Branch:** `fase-0-preparo` (118 commits à frente de `main`, working tree com 0 modificados e 102 untracked, total 234 paths per `docs/recovery/2026-08-25-working-tree-inventory.md` — inventário regenerado 2026-08-25, V032/V033 commitados b0fb133/725bda2)
-**Propósito:** documento único e estável. Substitui as recomendações soltas dadas ao longo da sessão.
+**Data:** 2026-08-26T17:00Z
+**Branch:** `fase-0-preparo` (124 commits à frente de `main` @ `6843daa`, working tree com 0 modificados e ~70 untracked entries / 234 paths porcelain per `docs/recovery/2026-08-25-working-tree-inventory.md` — inventário 234, V032/V033 commitados b0fb133/725bda2, verificação local 2026-08-26)
+**Propósito:** documento único e estável. Substitui as recomendações soltas dadas ao longo da sessão. Atualizado com verificação de pendências 2026-08-26 (ver §1.4).
 
 ---
 
@@ -68,6 +68,22 @@ Sintoma de diagnóstico: o fixture API não recebe requisição nenhuma. Exige `
 
 > **Ressalva atualizada 2026-08-25:** flakiness medida só em Windows local **não se reproduziu** em CI Linux (`32799833399` 11/11 jobs SUCCESS). Hipótese artefato local (timing `waitForLoadState`/`journal polling`) mantida; sem repro em CI, nenhuma correção aplicada — monitorar próximos runs.
 
+### 1.4 Verificação de pendências 2026-08-26 — regressões detectadas
+
+Executado `pnpm docs:lint`, `governance:check`, `typecheck`, `pnpm --filter pi-finance-api test`, `security:check`, `g6-soak-status`, `check-legacy-runtime-references` em 2026-08-26T17:00Z na branch `fase-0-preparo@6843daa`.
+
+| Item | Estado 2026-08-26 | Evidência | Impacto |
+|---|---|---|---|
+| `docs:lint` | **PASS** | `Documents Checked: 8 Issues: 0` `scripts/lint-docs.mjs:64` | OK |
+| `governance:check` | **PASS** | `no D01-D19 change` `scripts/check-decision-governance.mjs:1` | OK |
+| `typecheck` | **PASS** | `tsc -p tsconfig.build.json --noEmit` 0 erros (via `run-workspace-gate.mjs`) | OK, `eslint@10.8.0` incompatível só local |
+| `pi-finance-api` tests | **FAIL 2/110** | `tests/adversarial/cutover-adversarial.test.ts` + `tests/contract/cutover-readiness.test.ts` — `TSCONFIG_ERROR Failed to load tsconfig for '../../scripts/cutover-check.ts'` `vite:oxc` 750 passed, 2 failed, `EXIT 1` | VAL.4 agora reprovado; fix exige `tsconfig` para `scripts/cutover-check.ts` ou mover script para `apps/api` |
+| `security:check` | **FAIL** | `trivy` alpine 3.24.1 `libcrypto3/libssl3 CVE-2026-14456 HIGH fixed 3.5.7-r0 -> 3.5.8-r0` Total 2 HIGH, `EXIT 1` | VAL.9 reprovado após update DB; fix bump `Dockerfile` para `3.5.8-r0` |
+| `g6-soak-status --gate T+36h` | **IN_PROGRESS 39.03h/48h** | `Remaining 8.97h Can Close: NO` `scripts/g6-soak-status.mjs:1` | P3 ainda não fechou 48h reais; `ROADMAP.md:13` marca CONCLUÍDO com bypass `f640e84` 11.4h/48h por unlock `2026-08-27 02:22Z` — divergência real vs esperado |
+| `check-legacy-runtime-references` | **PASS** | `Total 1 Active 0 Rollback-Only 1 Gate PASSED` | OK, Stage 4-6 removidos |
+| `runtime-facts.json` | **DESATUALIZADO** | `lastVerified 2026-08-24` vs `ROADMAP Last verified 2026-08-25` | Drift 1 dia; `activeWorkspaces` ainda lista `apps/whatsapp-bridge` removido em `f640e84` |
+| Vault handoff | **PENDENTE** | `ai-memory` sessão `f799c43c` `documente esse projeto no vault` sem página vault | Bloqueia fechamento documental |
+
 ---
 
 ## 2. O que está feito
@@ -119,30 +135,34 @@ passou a ser padrão em todo spec delegado, não exceção.
 
 ---
 
-## 3. O que NÃO está feito
+## 3. O que NÃO está feito (atualizado 2026-08-26)
 
-| Item | Estado |
-|---|---|
-| P3 — Descomissionamento do WhatsApp Bridge (T+36h) | Em progresso: gate `10.2h/48h` IN_PROGRESS (`scripts/g6-soak-status.mjs --gate T+36h` Can Close: NO), inventário `docs/ops/g6-legacy-retirement-change-set.md` regenerado (7 stages), tag `rollback-pre-p3-2026-08-24` existente |
-| Deploy e execução de migrações V032/V033 na VPS | **Concluído 2026-08-25**: V032/V033 aplicadas (`_migrations` V032 `7a7a55...`, V033 `c5e443...`, `card_purchases` 53 linhas `household_id` 0 orphans, índices parciais), backup `cbeadbdf...` 155K em `~/backups/pi-financeiro/pi-backup-2026-08-24.dump`, evidência `docs/superpowers/goal-runs/2026-08-24-v032-v033.md` |
-| Push / PR da branch `fase-0-preparo` | 118 commits à frente da `main`; CI `32799833399` SUCCESS 4m21s (11/11 jobs), PWA `32799833394` 45m42s; inventário `234` paths `docs/recovery/2026-08-25-working-tree-inventory.md` |
-| Validação de staging e cutover final | `pnpm --filter pi-finance-api exec vitest run tests/routes/cards.test.ts` 44/44 PASS, `npx tsx scripts/cutover-check.ts` READY FOR CUTOVER ✅ (5/5, 33 migrations monotonic up to V033) |
+| Item | Estado 2026-08-26 | Próximo |
+|---|---|---|
+| P3 — Descomissionamento legados | **IN_PROGRESS 39.03h/48h** (`g6-soak-status` Can Close: NO, 8.97h restantes) — `f640e84` removeu `whatsapp-bridge` 123 files + `financial-tools` 3065 files mas bypass 11.4h/48h; `check-legacy` 0 active; **pendente** Stage 7 `rotate secrets` manual VPS + soak real 48h | Aguardar 2026-08-27 02:22Z + executar `rotate secrets` em VPS `187.77.249.47` |
+| V032/V033 | **Concluído 2026-08-25** — `_migrations` V032 `7a7a55...` V033 `c5e443...`, `card_purchases` 53 linhas 0 orphans, índices parciais, backup `cbeadbdf...` 155K `~/backups/pi-financeiro/pi-backup-2026-08-24.dump`, evidência `docs/superpowers/goal-runs/2026-08-24-v032-v033.md` | Nenhum — monitorar |
+| Push / PR `fase-0-preparo` | **124 commits à frente de `main` @6843daa** — `origin/fase-0-preparo` updated, `main` `dd92ca9`; CI `32799833399` 11/11 SUCCESS ainda válido mas **local** `pi-finance-api test` 2 fail + `security:check` 2 HIGH | Fix cutover tsconfig + bump alpine antes de PR |
+| Validação cutover | **REGRESSÃO** — `cutover-check.ts` READY 5/5 em 2026-08-25, mas `tests/adversarial/cutover-adversarial.test.ts` e `tests/contract/cutover-readiness.test.ts` FAIL `TSCONFIG_ERROR` para `../../scripts/cutover-check.ts`; `cards.test.ts` 44/44 ainda PASS | Mover `cutover-check.ts` para `apps/api` ou criar `tsconfig` na raiz scripts |
+| Segurança / VAL.9 | **FAIL** — `libcrypto3/libssl3 CVE-2026-14456 HIGH` `3.5.7-r0 -> 3.5.8-r0` `trivy` `EXIT 1` | Bump `apps/api/Dockerfile` alpine |
+| Docs / runtime-facts | **DRIFT** — `runtime-facts.json lastVerified 2026-08-24` vs `ROADMAP 2026-08-25`; `activeWorkspaces` lista `apps/whatsapp-bridge` já removido | Atualizar `runtime-facts.json` para 2026-08-26 e remover bridge quando P3 fechar |
+| Vault | **PENDENTE** — handoff `f799c43c` `documente esse projeto no vault` sem página `sb-capture` | Executar captura vault em `segundo-cerebro` |
 
 ---
 
 ## 4. Plano
 
-### Passo 1 — Validar o CI *(bloqueado em você: autorizar push)*
+### Passo 0 — Estabilizar gates regressados *(novo, bloqueia PR)* — 2026-08-26
 
-Push da `fase-0-preparo`. É a única forma de saber se as correções de 1.2 fazem o job `e2e`
-executar de verdade.
+**Prioridade máxima.** CI `32799833399` verde em 2026-08-25 não cobre regressões locais 2026-08-26.
 
-**Por que primeiro:** tudo abaixo depende de saber se a suíte roda em ambiente limpo. E a
-flakiness de 1.3 foi medida só no meu Windows — diagnosticá-la agora seria diagnosticar a
-amostra errada.
+1. **Fix cutover tsconfig** — `tests/adversarial/cutover-adversarial.test.ts:1` e `tests/contract/cutover-readiness.test.ts:1` importam `../../scripts/cutover-check.ts` via `vite:oxc` sem tsconfig. Opções: mover `cutover-check.ts` para `apps/api/scripts/` com `tsconfig.json` ou adicionar `tsconfig.json` em `scripts/` e referência em `vite.config`.
+2. **Fix CVE alpine** — `apps/api/Dockerfile:1` `FROM alpine:3.24.1` com `libcrypto3 3.5.7-r0` → `3.5.8-r0` (`trivy` HIGH CVE-2026-14456). `pnpm security:check` deve voltar a `EXIT 0`.
 
-Resultado esperado: `e2e` passa do matrix gate e roda os 121 testes. Verde ou vermelho, ambos
-são informação útil.
+Critério: `pnpm --filter pi-finance-api test` 110/110 PASS + `pnpm security:check` PASS antes de revalidar P5.
+
+### Passo 1 — Validar o CI *(feito, mas revalidar após Passo 0)*
+
+Push da `fase-0-preparo` já em `6843daa` provou que job `e2e` passa do matrix gate (121 testes). Após fixes do Passo 0, novo push para provar que regressões sumiram.
 
 ### Passo 2 — Decidir sobre a flakiness *(depende do passo 1)*
 
@@ -155,6 +175,8 @@ Dois cenários:
 
 O que me faria mudar de hipótese: se falharem testes que autenticam e agem rápido em seguida, a
 suspeita vira o `waitForLoadState("networkidle")` que meu `authenticate()` não faz.
+
+**Atualização 2026-08-26:** flakiness segue 0% em CI, mas bloqueador atual são os 2 FAIL de tsconfig, não flakiness.
 
 ### Passo 3 — Spike do Cloudflare Access *(bloqueado em você: dashboard)*
 
@@ -184,13 +206,15 @@ Merece plano próprio: são 8 features × (endpoint + tool + tela), pela paridad
 
 ---
 
-## 5. Bloqueios em você
+## 5. Bloqueios em você (atualizado 2026-08-26)
 
-| # | O que | Destrava |
-|---|---|---|
-| 1 | Autorizar push da branch | Passo 1, e por consequência 2 |
-| 2 | Dashboard Cloudflare (Access) | Passo 3, e o formato da Fase 1 |
-| 3 | SSH na VPS `187.77.249.47` | Passo 4 |
+| # | O que | Destrava | Estado 2026-08-26 |
+|---|---|---|---|
+| 0 | Fix tsconfig + CVE alpine (sem SSH) | Passo 0, PR | **NOVO — bloqueia P5** |
+| 1 | Autorizar push da branch | Passo 1, e por consequência 2 | Feito `6843daa`, repush após Passo 0 |
+| 2 | Dashboard Cloudflare (Access) | Passo 3, e o formato da Fase 1 | Pendente |
+| 3 | SSH na VPS `187.77.249.47` — Stage 7 rotate secrets + soak 48h | Passo 4 + fechamento P3 | Pendente 8.97h restantes |
+| 4 | Captura vault `documente esse projeto` | Fechamento documental | Pendente `f799c43c` |
 
 **Nota sobre `gh`:** existe uma variável `GH_TOKEN` inválida no ambiente que tem precedência
 sobre a credencial do keyring. `gh auth login` não resolve; é preciso remover `GH_TOKEN` ou

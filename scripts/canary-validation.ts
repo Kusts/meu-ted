@@ -1,5 +1,5 @@
-import { isShadowEligible } from "../.pi/extensions/financial-tools/shadow/shadow-config.js";
-import { ALL_CAPABILITIES } from "../.pi/extensions/financial-tools/tools/capability-flags.js";
+import { isShadowEligible } from "./shadow-config.js";
+import { ALL_CAPABILITIES } from "./capability-flags.js";
 
 export interface CanaryRunResult {
   totalRuns: number;

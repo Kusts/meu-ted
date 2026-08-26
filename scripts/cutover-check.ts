@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ALL_CAPABILITIES, getCapabilityMode } from "../.pi/extensions/financial-tools/tools/capability-flags.js";
+import { ALL_CAPABILITIES, getCapabilityMode } from "./capability-flags.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -70,16 +70,25 @@ export async function evaluateCutoverReadiness(options: {
     "payable_templates.ts",
   ];
   const sqlViolations: string[] = [];
-  try {
-    for (const file of facadeFiles) {
+  let facadeReadErrors: string[] = [];
+  for (const file of facadeFiles) {
+    try {
       const filePath = resolve(toolsDir, file);
       const content = readFileSync(filePath, "utf8");
       if (/\bfrom ["']pg["']|\bnew pg\.Pool|\bnew Pool\b|\.query\(|\bSELECT\s+.+\s+FROM\b|\bINSERT\s+INTO\b|\bUPDATE\s+\w+\s+SET\b|\bDELETE\s+FROM\b/i.test(content)) {
         sqlViolations.push(file);
       }
+    } catch (err: any) {
+      // P3 retirement: facades archived (f640e84) => missing files mean zero SQL, not failure.
+      // Only treat non-ENOENT errors as violations; ENOENT is expected post-retirement.
+      const code = err?.code;
+      if (code !== "ENOENT") {
+        facadeReadErrors.push(`${file}: ${err.message}`);
+      }
     }
-  } catch (err: any) {
-    sqlViolations.push(`Error reading tools: ${err.message}`);
+  }
+  if (facadeReadErrors.length > 0) {
+    sqlViolations.push(...facadeReadErrors);
   }
   checks.push({
     id: "zero-direct-sql",

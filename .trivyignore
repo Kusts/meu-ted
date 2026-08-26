@@ -37,3 +37,6 @@ GHSA-f88m-g3jw-g9cj
 
 # sigstore certificate verification option in base tooling
 CVE-2026-48815
+
+# fast-uri host confusion via backslash in URI authority - legacy bridge image (pi-finance-pi-stack:ci) uses pinned 3.1.4/4.1.1; api image already 4.1.2. Bridge removed f640e84, no runtime surface.
+CVE-2026-18446

@@ -3,6 +3,8 @@
 # Build from repo root: docker build -f apps/api/Dockerfile .
 
 FROM node:22-alpine
+# CVE-2026-14456 libcrypto3/libssl3 3.5.7-r0 -> 3.5.8-r0: force upgrade on alpine 3.24
+RUN apk update && apk upgrade --no-cache libcrypto3 libssl3
 RUN npm install -g pnpm@10.34.1
 WORKDIR /monorepo
 
