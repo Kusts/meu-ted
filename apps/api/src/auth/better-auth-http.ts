@@ -49,7 +49,8 @@ export const registerBetterAuthRoutes = (app: FastifyInstance, auth: BetterAuth,
       reply.header('Access-Control-Allow-Origin', request.headers.origin ?? '*');
       reply.header('Access-Control-Allow-Credentials', 'true');
       reply.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-      reply.header('Access-Control-Allow-Headers', 'Content-Type, X-Device-Token, Idempotency-Key, Accept, Authorization');
+      reply.header('Access-Control-Allow-Headers', 'Content-Type, X-Device-Token, Idempotency-Key, Accept, Authorization, X-Workspace-Id');
+      reply.header('Access-Control-Expose-Headers', 'set-auth-token');
       return reply.code(204).send();
     }
     if (isUntrustedMutation(request, auth)) {
