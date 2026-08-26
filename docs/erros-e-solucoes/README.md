@@ -13,6 +13,7 @@
 | Data | Erro | Severidade | Status |
 |------|------|------------|--------|
 | 2026-08-26 | [Registro de dispositivo desabilitado no iPhone (ITP / cookie cross-site bloqueado)](./2026-08-26-registro-dispositivo-desabilitado-iphone.md) | crítica | corrigido |
+| 2026-08-26 | [PWA Server failed to respond — deploy Windows opennext + Node 20 vs 22](./2026-08-26-pwa-server-failed-to-respond-windows-opennext.md) | crítica | corrigido |
 
 ## Convenções
 
