@@ -57,6 +57,7 @@ import { registerSubscriptionRoutes } from "./subscriptions.js";
 import { registerPushRoutes } from "./push.js";
 import { registerAdoptionRoutes } from "./adoption.js";
 import { registerAuditRoutes } from "./audit.js";
+import { registerDuplicateDetectRoutes } from "./duplicate-detect.js";
 import { registerOwnershipTransferRoutes } from "../auth/ownership-transfers-http.js";
 import type { OwnershipTransferStore } from "../auth/ownership-transfers-postgres.js";
 import type { AuditLogStore } from "../audit/store.js";
@@ -72,6 +73,8 @@ import type { WorkspaceStore } from "../auth/workspaces-http.js";
 
 import type { WorkspaceAccessStore } from "../auth/workspace-access.js";
 import { getBetterAuthSessionContext } from "../auth/better-auth.js";
+import { createInMemoryPriceAlertStore, type PriceAlertStore } from "../price-alerts/store.js";
+import { registerPriceAlertRoutes } from "./price-alerts.js";
 
 export type RouteDeps = {
   store: ReadModelStore;
@@ -108,6 +111,7 @@ export type RouteDeps = {
   disableDeviceRegistration?: boolean;
   approvalPolicy?: import('../approvals/policy.js').ApprovalPolicy;
   clock?: () => Date;
+  priceAlertStore?: PriceAlertStore;
 };
 
 
@@ -291,7 +295,13 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     idempotency,
   });
   registerDashboardRoutes(app, { store: deps.store, resolveToken, clock });
-  registerInsightRoutes(app, { store: deps.store, resolveToken });
+  registerInsightRoutes(app, {
+    store: deps.store,
+    resolveToken,
+    ...(deps.payableStore ? { payableStore: deps.payableStore } : {}),
+    ...(deps.cardStore ? { cardStore: deps.cardStore } : {}),
+    clock,
+  });
   if (deps.profileStore) {
     registerProfileRoutes(app, {
       resolveToken,
@@ -348,10 +358,17 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       ...(deps.adoptionStore ? { adoption: deps.adoptionStore } : {}),
     });
   }
+  // Price alerts — always registered (in-memory default, household-isolated)
+  registerPriceAlertRoutes(app, {
+    priceAlertStore: deps.priceAlertStore ?? createInMemoryPriceAlertStore(),
+    resolveToken,
+  });
   registerAuditRoutes(app, {
     auditLogs: deps.auditLogs ?? createInMemoryAuditLogStore(),
     resolveToken,
+    ...(deps.undoService ? { undoService: deps.undoService } : {}),
   });
+  registerDuplicateDetectRoutes(app, { resolveToken });
   if (deps.ownershipTransferStore) {
     registerOwnershipTransferRoutes(app, deps.ownershipTransferStore);
   }

@@ -2957,6 +2957,116 @@
         "parameters": []
       }
     },
+    "/transactions/detect-duplicate": {
+      "post": {
+        "operationId": "detect_duplicate",
+        "summary": "Detect duplicate transaction before creation",
+        "x-pi-tool": {
+          "name": "detect_duplicate",
+          "label": "Detect Duplicate",
+          "description": "Check if a transaction would be a duplicate by idempotency key or semantic similarity (amount+description+date±1d). Returns duplicate_detected and match with formatDuplicateWarning.",
+          "method": "POST",
+          "path": "/transactions/detect-duplicate",
+          "idempotency": true,
+          "shadow": false,
+          "result": null
+        },
+        "parameters": [
+          {
+            "name": "householdId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          },
+          {
+            "name": "idempotencyKey",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "x-pi-context": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": ["expense", "income", "transfer"]
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 240
+                  },
+                  "amountCents": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "date": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "fromAccountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "toAccountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "idempotencyKey": {
+                    "type": "string"
+                  }
+                },
+                "required": ["kind", "description", "amountCents", "date"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Duplicate check result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["duplicate_detected"],
+                  "properties": {
+                    "duplicate_detected": {
+                      "type": "boolean"
+                    },
+                    "match": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string", "format": "uuid" },
+                        "description": { "type": "string" },
+                        "amount_cents": { "type": "string" },
+                        "date": { "type": "string", "format": "date-time" },
+                        "match_type": { "type": "string", "enum": ["idempotency_key", "semantic"] },
+                        "similarity": { "type": "number" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/insights/spending": {
       "get": {
         "operationId": "spending_insights",

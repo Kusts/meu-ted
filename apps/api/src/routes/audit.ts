@@ -4,6 +4,9 @@ import { requireAuthenticatedRequest, type AuthenticatedContext } from '../auth/
 import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
 import type { AuditLogFilters, AuditLogStore } from '../audit/store.js';
 import type { AuthResolver } from './auth.js';
+import { DomainError } from '../writes/errors.js';
+import { requireIdempotencyKey } from '../writes/idempotency.js';
+import type { UndoService } from '../approvals/undo.js';
 
 export const auditQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -33,7 +36,39 @@ const resolveAuth = async (
   return requireAuthenticatedRequest(request).authenticatedContext;
 };
 
-export const registerAuditRoutes = (app: FastifyInstance, opts: { auditLogs: AuditLogStore; resolveToken?: AuthResolver }): void => {
+export const undoBodySchema = z.object({
+  lastOperationId: z.string().uuid().optional(),
+});
+
+export const registerAuditRoutes = (app: FastifyInstance, opts: { auditLogs: AuditLogStore; resolveToken?: AuthResolver; undoService?: UndoService }): void => {
+  app.post('/audit/undo', async (req, reply) => {
+    let ctx: AuthenticatedContext;
+    try {
+      ctx = await resolveAuth(req, opts.resolveToken);
+    } catch (e: any) {
+      return reply.code(e.statusCode ?? 401).send({ code: e.code ?? 'auth.error', message: e.message ?? 'unauthorized' });
+    }
+    let idempotencyKey: string;
+    try {
+      idempotencyKey = requireIdempotencyKey(req.headers as Record<string, unknown>);
+    } catch (e: any) {
+      if (e instanceof DomainError) return reply.code(e.statusCode).send({ code: e.code, message: e.message });
+      throw e;
+    }
+    if (!opts.undoService) {
+      return reply.code(400).send({ code: 'unsupported', message: 'Operação não suportada: undo.' });
+    }
+    const parsed = undoBodySchema.safeParse((req.body as unknown) ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    try {
+      const result = await opts.undoService.undo(ctx.householdId, ctx.actorId, idempotencyKey, parsed.data.lastOperationId);
+      return reply.code(200).send(result);
+    } catch (e: any) {
+      if (e instanceof DomainError) return reply.code(e.statusCode).send({ code: e.code, message: e.message });
+      throw e;
+    }
+  });
+
   app.get('/audit-logs', async (req, reply) => {
     let ctx: AuthenticatedContext;
     try {

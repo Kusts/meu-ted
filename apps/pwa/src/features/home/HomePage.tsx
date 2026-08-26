@@ -11,6 +11,8 @@ import { useAppState } from "@/lib/state/app-state-context";
 import NotificationsSheet from "@/features/profile/NotificationsSheet";
 import { useEffectiveProfile } from "@/features/profile/hooks";
 import { dashboardSummaryGate } from "@/features/dashboard-summary-gate";
+import { fetchPendingOperations } from "@/lib/api/endpoints";
+import { isApiConfigured } from "@/lib/api/client";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -117,12 +119,28 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   const profile = useEffectiveProfile();
   const router = useRouter();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!dashboardSummary && refreshDashboardSummary) {
       refreshDashboardSummary();
     }
   }, [dashboardSummary, refreshDashboardSummary]);
+
+  useEffect(() => {
+    if (!isApiConfigured()) return;
+    let cancelled = false;
+    fetchPendingOperations("pending")
+      .then((items) => {
+        if (!cancelled) setPendingCount(items.length);
+      })
+      .catch(() => {
+        if (!cancelled) setPendingCount(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleNew = (kind: "expense" | "income" | "transfer") => {
     if (onNewTransaction) onNewTransaction(kind);
@@ -644,6 +662,22 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
 
         {/* ── Content area ── */}
         <div className="px-5 pb-6 pt-4 sm:px-8 lg:px-12">
+          {pendingCount !== null && pendingCount > 0 && (
+            <button
+              type="button"
+              onClick={() => router.push("/pending")}
+              data-testid="pending-banner"
+              className="mb-[14px] flex w-full items-center justify-between rounded-[14px] border border-warning bg-warning-tint px-4 py-3 text-left"
+            >
+              <span className="flex items-center gap-2 text-[13px] font-bold text-warning">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-warning text-white text-[11px] font-bold">
+                  {pendingCount}
+                </span>
+                {pendingCount} operação{pendingCount !== 1 ? "ões" : ""} pendente{pendingCount !== 1 ? "s" : ""} — requer aprovação
+              </span>
+              <span className="text-[11px] font-bold text-warning">Ver →</span>
+            </button>
+          )}
           {/* KPI delta row */}
           <div
             data-testid="kpi-delta-row"

@@ -92,6 +92,6 @@ export const domainErrors = {
     new DomainError(
       "undo.nothing_to_undo",
       "Nada para desfazer para este workspace e ator.",
-      403,
+      404,
     ),
 };

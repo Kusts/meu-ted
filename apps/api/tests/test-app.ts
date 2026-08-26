@@ -5,6 +5,7 @@ import type { OwnershipTransferStore } from "../src/auth/ownership-transfers-pos
 import type { BetterAuth } from "../src/auth/better-auth.js";
 import type { InviteService } from "../src/auth/invites.js";
 import { createInMemoryWorkspaceStore, type WorkspaceStore } from "../src/auth/workspaces-http.js";
+import { createInMemoryPriceAlertStore, type PriceAlertStore } from "../src/price-alerts/store.js";
 
 import {
   createInMemoryReadModelStore,
@@ -203,6 +204,13 @@ export const buildTestApp = (
       value !== null &&
       typeof (value as { evaluate?: unknown }).evaluate === "function",
   );
+  const priceAlertStore = optional.find(
+    (value): value is PriceAlertStore =>
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as PriceAlertStore).createAlert === "function" &&
+      typeof (value as PriceAlertStore).listAlerts === "function",
+  );
   const app = Fastify({ logger: false });
   registerCors(app);
   registerRoutes(app, {
@@ -217,6 +225,7 @@ export const buildTestApp = (
     subscriptionStore,
     profileStore,
     pushStore,
+    ...(priceAlertStore ? { priceAlertStore } : { priceAlertStore: createInMemoryPriceAlertStore() }),
     vapidPublicKey: "test-vapid-public-key",
     disableDeviceRegistration,
     ...(delegationSecret ? { delegationSecret } : {}),

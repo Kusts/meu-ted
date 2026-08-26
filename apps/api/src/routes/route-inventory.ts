@@ -103,6 +103,7 @@ export const ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
   { id: 'transfers-create', method: 'POST', path: '/transfers', auth: 'workspace', ownership: 'membership' },
   { id: 'transactions-update', method: 'PATCH', path: '/transactions/:id', auth: 'workspace', ownership: 'membership' },
   { id: 'transactions-delete', method: 'DELETE', path: '/transactions/:id', auth: 'workspace', ownership: 'membership' },
+  { id: 'transactions-detect-duplicate', method: 'POST', path: '/transactions/detect-duplicate', auth: 'workspace', ownership: 'membership' },
   { id: 'shadow-divergence-record', method: 'POST', path: '/observability/shadow-divergence', auth: 'workspace', ownership: 'membership' },
   { id: 'shadow-divergence-summary', method: 'GET', path: '/observability/shadow-divergence/summary', auth: 'workspace', ownership: 'membership' },
   { id: 'shadow-divergence-events', method: 'GET', path: '/observability/shadow-divergence/events', auth: 'workspace', ownership: 'membership' },
@@ -121,7 +122,7 @@ export const ROUTE_COVERAGE_IDS = [
   'payables-update', 'payables-cancel', 'payables-templates-list', 'payables-templates-create', 'payables-from-template', 'payables-auto-create-from-templates', 'payables-refresh-status',
   'payables-reminders', 'notifications-list', 'pending-operations-list', 'pending-operations-details-dual', 'pending-operations-details', 'pending-operations-approve-dual', 'pending-operations-approve', 'pending-operations-reject-dual', 'pending-operations-reject', 'pending-operations-undo', 'notifications-create', 'adoption-events-create', 'adoption-funnel-get', 'insights-quick', 'insights-spending', 'profile-get',
   'profile-update', 'push-vapid-public-key', 'push-subscriptions-create', 'push-notifications-send', 'push-subscriptions-delete', 'subscriptions-list', 'subscriptions-create', 'subscriptions-cancel', 'subscriptions-update', 'transactions-list',
-  'transactions-expense-create', 'transactions-income-create', 'transfers-create', 'transactions-update', 'transactions-delete',
+  'transactions-expense-create', 'transactions-income-create', 'transfers-create', 'transactions-update', 'transactions-delete', 'transactions-detect-duplicate',
   'shadow-divergence-record', 'shadow-divergence-summary', 'shadow-divergence-events', 'health',
 ] as const;
 

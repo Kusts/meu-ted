@@ -11,7 +11,7 @@ export type UndoResult = {
 };
 
 export type UndoService = {
-  undo(householdId: string, actorId: string, idempotencyKey: string): Promise<UndoResult>;
+  undo(householdId: string, actorId: string, idempotencyKey: string, lastOperationId?: string): Promise<UndoResult>;
 };
 
 const REVERSIBLE_OPERATIONS = new Set([
@@ -26,8 +26,18 @@ export const createUndoService = (deps: { auditLogs: AuditLogStore; writes: Writ
   const completed = new Map<string, UndoResult>();
   const undone = new Set<string>();
 
+  const resolveEntityId = (log: AuditLog): string | undefined => {
+    const metaId = log.metadata.entityId;
+    if (metaId !== undefined && metaId !== null) return String(metaId);
+    if (log.effectRef) return String(log.effectRef);
+    const after = (log.metadata.after as Record<string, unknown> | undefined)?.id;
+    if (after) return String(after);
+    return undefined;
+  };
+
   const applyReversal = async (householdId: string, log: AuditLog): Promise<string> => {
-    const entityId = String(log.metadata.entityId);
+    const entityId = resolveEntityId(log);
+    if (!entityId) throw domainErrors.undoNothingToUndo();
     switch (log.operation) {
       case 'transactions.expense.create':
       case 'transactions.income.create':
@@ -46,26 +56,37 @@ export const createUndoService = (deps: { auditLogs: AuditLogStore; writes: Writ
   };
 
   return {
-    async undo(householdId, actorId, idempotencyKey) {
-      if (completed.has(idempotencyKey)) return completed.get(idempotencyKey)!;
+    async undo(householdId, actorId, idempotencyKey, lastOperationId) {
+      const compositeKey = `${householdId}:${idempotencyKey}`;
+      if (completed.has(compositeKey)) return completed.get(compositeKey)!;
       const { items } = await deps.auditLogs.listAuditLogs(householdId, { limit: 50 });
       const candidates = items
         .filter(
           (log) =>
-            log.actorId === actorId &&
             REVERSIBLE_OPERATIONS.has(log.operation) &&
-            log.metadata.entityId !== undefined &&
-            !undone.has(`${householdId}:${log.metadata.entityId}`),
+            resolveEntityId(log) !== undefined &&
+            !undone.has(`${householdId}:${resolveEntityId(log)}`),
         )
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-      if (candidates.length === 0) throw domainErrors.undoNothingToUndo();
-      const target = candidates[0]!;
+
+      let target: AuditLog | undefined;
+      if (lastOperationId) {
+        target = candidates.find((log) => log.id === lastOperationId);
+        if (!target) throw domainErrors.undoNothingToUndo();
+      } else {
+        // Prefer actor's own operations when possible, fallback to household-wide most recent
+        const own = candidates.filter((log) => log.actorId === actorId);
+        const pool = own.length > 0 ? own : candidates;
+        if (pool.length === 0) throw domainErrors.undoNothingToUndo();
+        target = pool[0]!;
+      }
+      const entityId = resolveEntityId(target)!;
       const reversal = await applyReversal(householdId, target);
-      undone.add(`${householdId}:${target.metadata.entityId}`);
+      undone.add(`${householdId}:${entityId}`);
       const result: UndoResult = {
-        undone: { operation: target.operation, entityId: String(target.metadata.entityId), reversal },
+        undone: { operation: target.operation, entityId, reversal },
       };
-      completed.set(idempotencyKey, result);
+      completed.set(compositeKey, result);
       return result;
     },
   };

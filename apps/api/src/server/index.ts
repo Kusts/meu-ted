@@ -41,6 +41,7 @@ import {
   createPostgresWriteStore,
 } from "../writes/postgres.js";
 import { createBetterAuth } from "../auth/better-auth.js";
+import { createInMemoryPriceAlertStore } from "../price-alerts/store.js";
 import { registerCors } from "./cors.js";
 
 const start = async (): Promise<void> => {
@@ -131,6 +132,7 @@ const start = async (): Promise<void> => {
         subscriptionStore,
         profileStore,
         pushStore,
+        priceAlertStore: createInMemoryPriceAlertStore(),
         auth,
         adminEmails: cfg.adminEmails,
         disableDeviceRegistration: cfg.disableDeviceRegistration,
@@ -209,6 +211,7 @@ const start = async (): Promise<void> => {
         subscriptionStore,
         profileStore,
         pushStore,
+        priceAlertStore: createInMemoryPriceAlertStore(),
         adoptionStore,
         auth,
         adminEmails: cfg.adminEmails,
@@ -246,6 +249,7 @@ const start = async (): Promise<void> => {
       createInMemorySubscriptionStore(subscriptionState);
     const profileStore = createInMemoryProfileStore();
     const pushStore = createInMemoryPushSubscriptionStore();
+    const priceAlertStore = createInMemoryPriceAlertStore();
     const pushDelivery = vapid
       ? createWebPushDelivery({ store: pushStore, config: vapid })
       : undefined;
@@ -261,6 +265,7 @@ const start = async (): Promise<void> => {
       subscriptionStore,
       profileStore,
       pushStore,
+      priceAlertStore,
       auth,
       adminEmails: cfg.adminEmails,
       disableDeviceRegistration: cfg.disableDeviceRegistration,

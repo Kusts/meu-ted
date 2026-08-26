@@ -166,6 +166,24 @@ export interface Profile {
   updatedAt: string;
 }
 
+// ── Pending Operations (approvals) ───────────────────────────────
+
+export type PendingOperationStatus = "pending" | "approved" | "rejected" | "expired";
+
+export interface PendingOperation {
+  id: string;
+  householdId: string;
+  chatId?: string;
+  requesterId: string;
+  operation: string;
+  payload: unknown;
+  reason: "high_value" | "destructive";
+  idempotencyKey: string;
+  status: PendingOperationStatus;
+  createdAt: string;
+  expiresAt: string;
+}
+
 // ── Dashboard Summary (Server-owned Aggregates) ─────────────────────
 
 export interface DashboardSummary {
