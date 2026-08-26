@@ -1,11 +1,12 @@
 # G6 48-Hour Independence Gate
 
 **Started At:** 2026-08-18T17:15:55.044Z  
-**Ends At:** 2026-08-20T17:15:55.044Z  
-**Status:** IN_PROGRESS  
+**Ends At:** 2026-08-26T17:50Z  
+**Status:** COMPLETED (bypass por unlock explícito do solicitante 2026-08-26 — soak real 39.03h/48h, sem aguardar 48h)  
 **Critical Alerts:** 0  
 **Data Integrity:** VERIFIED  
 **WhatsApp Dependency:** REMOVED  
+**Closed By:** unlock explícito `não precisa esperar prazo` 2026-08-26 — Stage 7 `rotate secrets` mantido como pendência manual VPS sem bloqueio (ver `docs/ROADMAP.md:13`)  
 
 ## Periodic Checkpoints
 
@@ -17,7 +18,7 @@
 | T+12h | 2026-08-19T05:15:55.044Z | 200 OK | 200 OK | 200 OK | 0 | PASS ✅ |
 | T+24h | 2026-08-19T17:15:55.044Z | 200 OK | 302→Access OK | 200 OK | 0 | PASS ✅ |
 | T+36h | 2026-08-20T05:15:55.044Z | 200 OK | 302→Access OK | 200 OK | 0 | PASS | 
-| T+48h (Final) | — | — | — | — | 0 | PENDING |
+| T+48h (Final) | 2026-08-26T17:50Z | 200 OK (bypass) | 302→Access OK | N/A (bypass) | 0 | PASS ✅ (bypass unlock explícito) |
 ## Verificação independente (2026-08-19T13:15Z, sessão Cloudflare Access autenticada)
 
 | Endpoint | Método | Resultado |

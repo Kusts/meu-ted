@@ -4,8 +4,7 @@
   "activeWorkspaces": [
     "apps/api",
     "apps/pwa",
-    "apps/agent",
-    "apps/whatsapp-bridge"
+    "apps/agent"
   ],
   "apps": {
     "api": {
@@ -22,10 +21,6 @@
       "name": "pi-finance-agent",
       "framework": "Cloudflare Workers / Agents SDK",
       "runtime": "Cloudflare Workers / Durable Objects"
-    },
-    "bridge": {
-      "name": "@pi-financeiro/whatsapp-bridge",
-      "status": "transitional / staged retirement"
     }
   },
   "counts": {
