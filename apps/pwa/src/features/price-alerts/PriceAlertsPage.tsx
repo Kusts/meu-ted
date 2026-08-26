@@ -1,0 +1,173 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import StatusBar from "@/components/StatusBar";
+import PageHeader from "@/components/PageHeader";
+import { fetchPriceAlerts, createPriceAlert } from "@/lib/api/endpoints";
+
+type Alert = {
+  id: string;
+  productName: string;
+  targetPriceCents: number;
+  condition: "below" | "above";
+  createdAt: string;
+};
+
+function formatBRL(cents: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
+}
+
+export default function PriceAlertsPage() {
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [productName, setProductName] = useState("");
+  const [targetPrice, setTargetPrice] = useState("");
+  const [condition, setCondition] = useState<"below" | "above">("below");
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const items = await fetchPriceAlerts();
+      setAlerts(items);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  function parseBRLToCents(value: string): number {
+    const cleaned = value.replace(/[.\s]/g, "").replace(",", ".");
+    return Math.round(parseFloat(cleaned) * 100) || 0;
+  }
+
+  function formatInputBRL(value: string): string {
+    const digits = value.replace(/\D/g, "");
+    if (!digits) return "";
+    const padded = digits.padStart(3, "0");
+    const intPart = padded.slice(0, -2);
+    const decPart = padded.slice(-2);
+    return `${parseInt(intPart, 10).toLocaleString("pt-BR")},${decPart}`;
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setFormError(null);
+    const cents = parseBRLToCents(targetPrice);
+    if (!productName.trim()) {
+      setFormError("Informe o nome do produto.");
+      return;
+    }
+    if (cents <= 0) {
+      setFormError("Informe um preço alvo válido.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await createPriceAlert({ productName: productName.trim(), targetPriceCents: cents, condition });
+      setProductName("");
+      setTargetPrice("");
+      await load();
+    } catch (err) {
+      setFormError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-dvh flex-col bg-bg">
+      <StatusBar />
+      <main className="flex flex-1 flex-col pb-[var(--tab-bar-height)]">
+        <PageHeader title="Alertas de Preço" />
+        <div className="px-5">
+          <form onSubmit={handleSubmit} className="mb-6 rounded-[16px] border border-border bg-surface p-4 shadow-card">
+            <h2 className="mb-3 text-[14px] font-bold text-text-primary">Novo alerta</h2>
+            <div className="flex flex-col gap-3">
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-text-muted">Produto</span>
+                <input
+                  value={productName}
+                  onChange={(e) => setProductName(e.target.value)}
+                  placeholder="Ex: Arroz 5kg"
+                  className="rounded-[10px] border border-border bg-transparent px-3 py-2.5 text-[13px] font-semibold text-text-primary outline-none focus:border-primary"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-text-muted">Preço alvo (R$)</span>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[14px] font-semibold text-text-secondary">R$</span>
+                  <input
+                    value={targetPrice}
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(/\D/g, "");
+                      if (raw.length > 12) return;
+                      setTargetPrice(formatInputBRL(raw));
+                    }}
+                    placeholder="0,00"
+                    inputMode="numeric"
+                    className="w-full rounded-[10px] border border-border bg-transparent py-2.5 pl-11 pr-3.5 font-mono text-[14px] font-semibold text-text-primary outline-none focus:border-primary"
+                  />
+                </div>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-text-muted">Condição</span>
+                <select
+                  value={condition}
+                  onChange={(e) => setCondition(e.target.value as "below" | "above")}
+                  className="rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] font-semibold text-text-primary outline-none focus:border-primary"
+                >
+                  <option value="below">Avisar quando ficar abaixo</option>
+                  <option value="above">Avisar quando ficar acima</option>
+                </select>
+              </label>
+              {formError && <div className="rounded-[10px] bg-danger-tint px-3 py-2 text-[12px] font-semibold text-danger">{formError}</div>}
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-full rounded-[14px] bg-primary py-[13px] text-center text-[14px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                {saving ? "Salvando..." : "Criar alerta"}
+              </button>
+            </div>
+          </form>
+
+          {loading ? (
+            <div className="py-10 text-center text-[13px] font-semibold text-text-muted">Carregando...</div>
+          ) : error ? (
+            <div className="rounded-[12px] bg-danger-tint px-4 py-3 text-[12px] font-semibold text-danger">{error}</div>
+          ) : alerts.length === 0 ? (
+            <div className="py-10 text-center">
+              <div className="text-[14px] font-semibold text-text-muted">Nenhum alerta</div>
+              <div className="mt-1 text-[12px] text-text-muted">Crie seu primeiro alerta de preço acima.</div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <h3 className="text-[11px] font-bold uppercase tracking-wide text-text-muted">Alertas ({alerts.length})</h3>
+              {alerts.map((a) => (
+                <div key={a.id} className="rounded-[14px] border border-border bg-surface px-4 py-3">
+                  <div className="text-[13px] font-bold text-text-primary">{a.productName}</div>
+                  <div className="mt-1 flex items-center gap-2 text-[12px] text-text-muted">
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${a.condition === "below" ? "bg-primary-tint text-primary" : "bg-warning-tint text-warning"}`}>
+                      {a.condition === "below" ? "abaixo de" : "acima de"}
+                    </span>
+                    <span className="font-mono font-semibold text-text-primary">{formatBRL(a.targetPriceCents)}</span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-text-muted">{new Date(a.createdAt).toLocaleDateString("pt-BR")}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}

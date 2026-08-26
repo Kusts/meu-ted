@@ -73,6 +73,8 @@ import type { WorkspaceStore } from "../auth/workspaces-http.js";
 
 import type { WorkspaceAccessStore } from "../auth/workspace-access.js";
 import { getBetterAuthSessionContext } from "../auth/better-auth.js";
+import { createInMemoryPriceAlertStore, type PriceAlertStore } from "../price-alerts/store.js";
+import { registerPriceAlertRoutes } from "./price-alerts.js";
 
 export type RouteDeps = {
   store: ReadModelStore;
@@ -109,6 +111,7 @@ export type RouteDeps = {
   disableDeviceRegistration?: boolean;
   approvalPolicy?: import('../approvals/policy.js').ApprovalPolicy;
   clock?: () => Date;
+  priceAlertStore?: PriceAlertStore;
 };
 
 
@@ -355,6 +358,11 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       ...(deps.adoptionStore ? { adoption: deps.adoptionStore } : {}),
     });
   }
+  // Price alerts — always registered (in-memory default, household-isolated)
+  registerPriceAlertRoutes(app, {
+    priceAlertStore: deps.priceAlertStore ?? createInMemoryPriceAlertStore(),
+    resolveToken,
+  });
   registerAuditRoutes(app, {
     auditLogs: deps.auditLogs ?? createInMemoryAuditLogStore(),
     resolveToken,

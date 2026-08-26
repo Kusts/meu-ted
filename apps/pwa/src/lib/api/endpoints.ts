@@ -515,3 +515,40 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
   return apiFetch<DashboardSummary>("/dashboard/summary");
 }
 
+// ─── Price Alerts ────────────────────────────────────────────
+
+export type PriceAlert = {
+  id: string;
+  householdId: string;
+  productName: string;
+  targetPriceCents: number;
+  condition: "below" | "above";
+  createdAt: string;
+};
+
+export async function fetchPriceAlerts(): Promise<PriceAlert[]> {
+  const res = await apiFetch<{ items: PriceAlert[]; total: number }>("/alerts/price");
+  return res.items;
+}
+
+export async function createPriceAlert(input: {
+  productName: string;
+  targetPriceCents: number;
+  condition: "below" | "above";
+}): Promise<PriceAlert> {
+  return apiFetch<PriceAlert>("/alerts/price", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function checkPriceAlertsApi(input?: {
+  productName?: string;
+  currentPriceCents?: number;
+}): Promise<{ notifications: { alertId: string; productName: string; triggered: boolean; message: string }[]; total: number }> {
+  return apiFetch("/alerts/price/check", {
+    method: "POST",
+    body: JSON.stringify(input ?? {}),
+  });
+}
+
