@@ -75,6 +75,12 @@ import type { WorkspaceAccessStore } from "../auth/workspace-access.js";
 import { getBetterAuthSessionContext } from "../auth/better-auth.js";
 import { createInMemoryPriceAlertStore, type PriceAlertStore } from "../price-alerts/store.js";
 import { registerPriceAlertRoutes } from "./price-alerts.js";
+import { registerAgentAuthRoutes } from "./agent-auth.js";
+import { registerAdminAgentLlmConfigRoutes } from "./admin-agent-llm-config.js";
+import { registerInternalAgentLlmConfigRoutes } from "./internal-agent-llm-config.js";
+import { createInMemoryLlmConfigStore } from "../agent/llm-config-postgres.js";
+import type { LlmConfigStore } from "../agent/llm-config-postgres.js";
+import { createInMemoryAgentReplayStore, type AgentReplayStore } from "../auth/agent-connection-token-replay.js";
 
 export type RouteDeps = {
   store: ReadModelStore;
@@ -112,6 +118,14 @@ export type RouteDeps = {
   approvalPolicy?: import('../approvals/policy.js').ApprovalPolicy;
   clock?: () => Date;
   priceAlertStore?: PriceAlertStore;
+  llmConfigStore?: LlmConfigStore;
+  agentConnectionSecret?: string;
+  agentConfigToken?: string;
+  agentAuthServiceToken?: string;
+  agentReplayStore?: AgentReplayStore;
+  agentRuntimeOrigin?: string;
+  agentRuntimeAdminToken?: string;
+  trustedOrigins?: string[];
 };
 
 
@@ -174,6 +188,13 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       const requiredCapability = isRead ? "financial.read" : "financial.write";
       if (!claims.capabilities.includes(requiredCapability)) {
         return reply.code(403).send({ code: "auth.delegation_scope_forbidden", message: "Permissão insuficiente no token delegado." });
+      }
+
+      if (deps.workspaceAccess) {
+        const access = await deps.workspaceAccess.resolve(claims.sub, claims.workspace);
+        if (!access) {
+          return reply.code(403).send({ code: "auth.workspace_forbidden", message: "Acesso ao workspace revogado ou inexistente." });
+        }
       }
 
       request.authenticatedContext = {
@@ -371,6 +392,33 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   registerDuplicateDetectRoutes(app, { resolveToken });
   if (deps.ownershipTransferStore) {
     registerOwnershipTransferRoutes(app, deps.ownershipTransferStore);
+  }
+  const llmStore = deps.llmConfigStore ?? createInMemoryLlmConfigStore();
+  registerInternalAgentLlmConfigRoutes(app, {
+    store: llmStore,
+    configToken: deps.agentConfigToken ?? process.env.AGENT_CONFIG_TOKEN ?? 'dev-agent-config-token-32-chars-minimum!',
+  });
+
+  const replayStore = deps.agentReplayStore ?? createInMemoryAgentReplayStore();
+  const agentServiceToken = deps.agentAuthServiceToken ?? process.env.AGENT_AUTH_SERVICE_TOKEN ?? 'dev-agent-auth-service-token-32-chars!';
+
+  registerAgentAuthRoutes(app, {
+    auth: deps.auth,
+    workspaceAccess: deps.workspaceAccess,
+    connectionSecret: deps.agentConnectionSecret ?? process.env.AGENT_CONNECTION_TOKEN_SECRET ?? 'dev-agent-connection-secret-at-least-32-chars!',
+    agentAuthServiceToken: agentServiceToken,
+    replayStore,
+  });
+
+  if (deps.auth) {
+    registerAdminAgentLlmConfigRoutes(app, {
+      auth: deps.auth,
+      store: llmStore,
+      adminEmails: deps.adminEmails ?? ['walissonead@gmail.com'],
+      agentRuntimeOrigin: deps.agentRuntimeOrigin ?? 'https://pi-finance-agent.walissonead.workers.dev',
+      agentRuntimeToken: deps.agentRuntimeAdminToken ?? 'dev-agent-runtime-admin-token-32-chars!',
+      ...(deps.trustedOrigins ? { trustedOrigins: deps.trustedOrigins } : {}),
+    });
   }
   if (deps.auth) {
     registerBetterAuthRoutes(app, deps.auth);

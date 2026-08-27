@@ -7,6 +7,8 @@ interface PageHeaderProps {
   action?: ReactNode;
 }
 
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+
 export default function PageHeader({
   title,
   subtitle,
@@ -24,7 +26,10 @@ export default function PageHeader({
           </p>
         )}
       </div>
-      {action && <div className="ml-3 flex-none">{action}</div>}
+      <div className="ml-3 flex flex-none items-center gap-2">
+        <WorkspaceSwitcher compact />
+        {action && <div>{action}</div>}
+      </div>
     </div>
   );
 }

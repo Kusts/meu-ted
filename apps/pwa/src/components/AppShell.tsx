@@ -12,6 +12,7 @@ import { useAppState } from "@/lib/state/app-state-context";
 import { useSheet } from "@/lib/sheet-context";
 import { useUnsavedChangesSafe } from "@/lib/unsaved-changes";
 import { recordAdoptionEvent } from "@/lib/api/adoption";
+import { TedChatLauncher } from "@/features/ted/TedChatLauncher";
 
 interface AppShellProps {
   children: ReactNode;
@@ -483,6 +484,7 @@ export default function AppShell({ children }: AppShellProps) {
           setPendingNav(null);
         }}
       />
+      <TedChatLauncher />
     </div>
   );
 }

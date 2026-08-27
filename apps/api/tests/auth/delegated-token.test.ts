@@ -36,4 +36,30 @@ describe('G5.2.2 API delegated token validation', () => {
     expect(scopeResponse.statusCode).toBe(403);
     expect(scopeResponse.json().code).toBe('auth.delegation_scope_forbidden');
   });
+
+  it('rejects delegated token when workspace membership was revoked server-side', async () => {
+    const token = await createDelegatedTokenForTest(
+      { actorId: 'user-1', workspaceId: HOUSEHOLD_A, role: 'member', capabilities: ['financial.read'], requestId: 'turn-1' },
+      'test-secret',
+      Date.now(),
+    );
+    // workspaceAccess returns undefined (simulating revoked membership)
+    const revokedWorkspaceAccess = { resolve: async () => undefined };
+    const { app } = buildTestApp(
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      revokedWorkspaceAccess,
+      undefined,
+      undefined,
+      'test-secret',
+    );
+    await app.ready();
+    const response = await app.inject({ method: 'GET', url: '/accounts', headers: { authorization: `Bearer ${token}` } });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().code).toBe('auth.workspace_forbidden');
+  });
 });

@@ -1,6 +1,6 @@
 # PI Financeiro — Arquitetura Atual
 
-**Last verified:** 2026-08-23  
+**Last verified:** 2026-08-26  
 **Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)  
 
 ## 1. Visão Geral da Topologia
@@ -30,10 +30,10 @@ graph TD
   - Tela de autenticação baseada em credenciais (email e senha), persistência síncrona de token e emissão subordinada de dispositivo.
   - Comunicação HTTP autoritativa direta com a API (`https://api.synkroo.com.br`).
 - **`apps/agent` (Cloudflare Workers + Agents SDK + Durable Objects):**
-  - Assistente conversacional inteligente (TED) com persistência de estado em SQLite local no Durable Object.
-  - Execução de ferramentas financeiras geradas via OpenAPI e autenticação por tokens delegados de curta duração (`POST /auth/bridge-context`).
-- **`apps/whatsapp-bridge` (Node.js + Fastify + Evolution API):**
-  - Bridge transitório de mensageria em fase final de desligamento (Fase P3 / checkpoint T+36h do gate de 48h).
+  - `FinanceChatAgent extends AIChatAgent` com binding `FINANCE_CHAT_AGENT` (migration v2) e `WorkspaceAgent` legado preservado (v1) para rollback.
+  - Chat TED global por workspace via `useAgent` + `useAgentChat`, autenticação por `POST /auth/agent-token` (TTL 120s, anti-replay JTI) e tokens delegados por turno.
+  - Configuração LLM global (`agent_llm_providers`/`agent_llm_models`/`agent_llm_runtime_config`, V034) com providers `opencode-zen`/`opencode-go`/`openai-api` e candidato `openai-codex-subscription` (`experimental_blocked`).
+  - Tools geradas em `apps/agent/src/generated/http-tools.ts` a partir de OpenAPI, com `intentionId` ledger e `securityEpoch` por intenção.
 
 ## 3. Segurança, Identidade & Migrações Recentes
 

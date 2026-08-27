@@ -2,6 +2,7 @@ packages:
   - 'apps/pwa'
   - 'apps/api'
   - 'apps/agent'
+  - 'apps/codex-broker'
 
 ignoredBuiltDependencies:
   - sharp

@@ -41,7 +41,7 @@ describe('API route authz inventory', () => {
       const [file, symbol] = handler.split(':');
       return existsSync(resolve(apiRoot, file!)) && new RegExp(`(?:export const|export function|function) ${symbol}\\b`).test(readFileSync(resolve(apiRoot, file!), 'utf8'));
     })).toBe(true);
-    expect(ROUTE_INVENTORY.every(({ auth }) => ['public', 'public-denied', 'device', 'workspace', 'session'].includes(auth))).toBe(true);
+    expect(ROUTE_INVENTORY.every(({ auth }) => ['public', 'public-denied', 'device', 'workspace', 'session', 'admin', 'internal'].includes(auth))).toBe(true);
   });
 
   it.each(ROUTE_INVENTORY.filter(({ auth }) => auth === 'device'))('requires device authentication: $method $path', async (entry) => {
@@ -101,10 +101,18 @@ describe('API route authz inventory', () => {
     await testApp.app.close();
   });
 
-  it.each(ROUTE_INVENTORY.filter(({ auth }) => auth === 'session'))('requires session authentication: $method $path', async (entry) => {
-    const testApp = buildTestApp({}, undefined, undefined, missingSessionAuth, fakeInviteService, allowInviteCreate, undefined, fakeOwnershipTransfers);
+  it.each(ROUTE_INVENTORY.filter(({ auth }) => auth === 'session' || auth === 'admin'))('requires session or admin authentication: $method $path', async (entry) => {
+    const testApp = buildTestApp({}, undefined, undefined, missingSessionAuth, fakeInviteService, allowInviteCreate, { resolve: async () => undefined }, fakeOwnershipTransfers);
     await testApp.app.ready();
     const response = await testApp.app.inject({ method: entry.method as 'POST', url: pathFor(entry), payload: { toUserId: 'target' } });
+    expect(response.statusCode).toBe(401);
+    await testApp.app.close();
+  });
+
+  it.each(ROUTE_INVENTORY.filter(({ auth }) => auth === 'internal'))('requires internal token authentication: $method $path', async (entry) => {
+    const testApp = buildTestApp();
+    await testApp.app.ready();
+    const response = await testApp.app.inject({ method: entry.method as 'GET', url: pathFor(entry) });
     expect(response.statusCode).toBe(401);
     await testApp.app.close();
   });
@@ -122,6 +130,16 @@ describe('route composition invariant (P0.2)', () => {
     'workspace-members-list',
     'workspace-member-remove',
     'workspace-leave',
+    'admin-agent-llm-config',
+    'admin-agent-llm-sync',
+    'admin-agent-llm-provider-toggle',
+    'admin-agent-llm-model-toggle',
+    'admin-agent-llm-models-create',
+    'admin-agent-llm-activate',
+    'admin-agent-llm-rollout',
+    'admin-agent-llm-security-epoch',
+    'admin-agent-llm-test',
+    'auth-agent-token',
   ]);
   const SAMPLE_ID = '00000000-0000-4000-8000-000000000001';
 

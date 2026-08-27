@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { clearActiveWorkspaceId, setActiveWorkspaceId } from "@/lib/api/client";
+import { isApiConfigured, clearActiveWorkspaceId, setActiveWorkspaceId } from "@/lib/api/client";
 import { clearSensitiveSession } from "@/lib/session";
 import { closeAllSockets } from "./socket-registry";
 import {
@@ -15,6 +15,13 @@ import {
   type Workspace,
   type WorkspaceMember,
 } from "@/lib/api/workspaces";
+
+const MOCK_DEFAULT_WORKSPACE: Workspace = {
+  id: "mock-workspace",
+  name: "Minhas Finanças",
+  kind: "personal",
+  role: "owner",
+};
 
 export interface WorkspaceContextValue {
   workspaces: Workspace[];
@@ -36,15 +43,28 @@ export interface WorkspaceContextValue {
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string>();
-  const activeWorkspaceIdRef = useRef<string | undefined>(undefined);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>(() =>
+    isApiConfigured() ? [] : [MOCK_DEFAULT_WORKSPACE],
+  );
+  const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string | undefined>(() =>
+    isApiConfigured() ? undefined : MOCK_DEFAULT_WORKSPACE.id,
+  );
+  const activeWorkspaceIdRef = useRef<string | undefined>(
+    isApiConfigured() ? undefined : MOCK_DEFAULT_WORKSPACE.id,
+  );
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => isApiConfigured());
   const [membersLoading, setMembersLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refreshWorkspaces = useCallback(async () => {
+    if (!isApiConfigured()) {
+      setWorkspaces([MOCK_DEFAULT_WORKSPACE]);
+      setActiveWorkspaceIdState(MOCK_DEFAULT_WORKSPACE.id);
+      activeWorkspaceIdRef.current = MOCK_DEFAULT_WORKSPACE.id;
+      setLoading(false);
+      return;
+    }
     try {
       const next = await fetchWorkspaces();
       setError(null);
@@ -69,6 +89,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!isApiConfigured()) {
+      return;
+    }
     let cancelled = false;
     async function load() {
       try {
@@ -107,7 +130,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   );
 
   const refreshMembers = useCallback(async () => {
-    if (!activeWorkspace) {
+    if (!activeWorkspace || !isApiConfigured()) {
       setMembers([]);
       return;
     }
@@ -124,7 +147,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    if (!activeWorkspace) {
+    if (!activeWorkspace || !isApiConfigured()) {
+      setMembers([]);
       return () => {
         cancelled = true;
       };

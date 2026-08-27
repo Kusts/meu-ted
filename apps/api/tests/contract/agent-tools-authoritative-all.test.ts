@@ -14,6 +14,7 @@ import { transactionFiltersSchema } from '../../src/types/transactions.js';
 import { createAccountInputSchema, createCategoryInputSchema, createExpenseInputSchema, createIncomeInputSchema, createTransferInputSchema, updateTransactionInputSchema, updateAccountInputSchema, updateCategoryInputSchema } from '../../src/writes/types.js';
 
 import { pendingIdentitySchema } from '../../src/routes/pending-operations.js';
+import { detectSchema } from '../../src/routes/duplicate-detect.js';
 
 const document = JSON.parse(readFileSync(new URL('../../openapi/agent-tools.openapi.json', import.meta.url), 'utf8'));
 const tools = new Map<string, { parameters: Array<{ name: string; in: string; required?: boolean; schema: Record<string, unknown> }> }>();
@@ -36,6 +37,7 @@ const authoritativeSchemas = {
   list_categories: categoryQuerySchema,
   get_month_summary: monthSummaryQuerySchema,
   list_recent_transactions: transactionFiltersSchema,
+  detect_duplicate: detectSchema,
   create_account: createAccountInputSchema,
   create_category: createCategoryInputSchema,
   create_expense: createExpenseInputSchema,

@@ -16,10 +16,11 @@ import { recordAdoptionEvent } from "@/lib/api/adoption";
 import { useEffectiveProfile } from "./hooks";
 export { AgentTranscript } from "./AgentTranscript";
 
-type ProfileSheet = "edit" | "chat" | "notifications" | null;
+import { AgentLlmSettingsSheet } from "./AgentLlmSettingsSheet";
 
+type ProfileSheet = "edit" | "chat" | "notifications" | "llm-admin" | null;
 
-const PROFILE_ITEMS = [
+const BASE_PROFILE_ITEMS = [
   {
     key: "edit" as const,
     label: "Editar perfil",
@@ -32,7 +33,7 @@ const PROFILE_ITEMS = [
   },
   {
     key: "chat" as const,
-    label: "Chat com Pi (WhatsApp)",
+    label: "Assistente TED",
     icon: <Icon name="info" size={17} />,
   },
 ];
@@ -54,12 +55,31 @@ export default function ProfilePage() {
   const { saveProfile } = useAppState();
   const { expireSession } = useSession();
 
+  const isAdminUser = Boolean(
+    (profile as unknown as { isAdmin?: boolean; role?: string }).isAdmin ||
+      (profile as unknown as { isAdmin?: boolean; role?: string }).role === "admin",
+  );
+
+  const items = [
+    ...BASE_PROFILE_ITEMS,
+    ...(isAdminUser
+      ? [
+          {
+            key: "llm-admin" as const,
+            label: "Configuração LLM (Admin)",
+            icon: <Icon name="shield" size={17} />,
+          },
+        ]
+      : []),
+  ];
+
   function handleItem(key: string) {
     if (key === "edit") {
       setOpen("edit");
       setEditKey((k) => k + 1);
     } else if (key === "chat") setOpen("chat");
     else if (key === "notifications") setOpen("notifications");
+    else if (key === "llm-admin") setOpen("llm-admin");
   }
 
   async function handleLogout() {
@@ -89,13 +109,13 @@ export default function ProfilePage() {
         </div>
 
         <div className="rounded-[16px] bg-fill-light px-4 py-1">
-          {PROFILE_ITEMS.map((item, idx) => (
+          {items.map((item, idx) => (
             <button
               key={item.key}
               type="button"
               onClick={() => handleItem(item.key)}
               className={`flex w-full items-center gap-3 py-3 ${
-                idx < PROFILE_ITEMS.length - 1 ? "border-b border-border" : ""
+                idx < items.length - 1 ? "border-b border-border" : ""
               }`}
             >
               {item.icon}
@@ -143,6 +163,10 @@ export default function ProfilePage() {
         onClose={() => setOpen(null)}
       />
       <ChatSheet open={open === "chat"} onClose={() => setOpen(null)} />
+      <AgentLlmSettingsSheet
+        open={open === "llm-admin"}
+        onClose={() => setOpen(null)}
+      />
     </div>
   );
 }

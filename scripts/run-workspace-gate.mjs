@@ -1,15 +1,16 @@
 import { spawnSync } from 'node:child_process';
 
 const gate = process.argv[2];
-const allPackages = ['pi-finance-api', '@pi-financeiro/whatsapp-bridge', 'pwa'];
+const allPackages = ['pi-finance-api', 'pwa', 'pi-finance-agent', 'pi-finance-codex-broker'];
 const requestedFilter = process.argv[3] === '--filter' ? process.argv[4] : undefined;
 const aliases = {
   api: 'pi-finance-api',
   'pi-finance-api': 'pi-finance-api',
-  bridge: '@pi-financeiro/whatsapp-bridge',
-  'whatsapp-bridge': '@pi-financeiro/whatsapp-bridge',
   pwa: 'pwa',
   agent: 'pi-finance-agent',
+  'pi-finance-agent': 'pi-finance-agent',
+  broker: 'pi-finance-codex-broker',
+  'pi-finance-codex-broker': 'pi-finance-codex-broker',
 };
 const packages = requestedFilter ? [aliases[requestedFilter] ?? requestedFilter] : allPackages;
 const allowed = new Set(['lint', 'typecheck', 'test', 'build']);

@@ -7,32 +7,32 @@ import { AppStateProvider } from "@/lib/state/app-state-context";
 import { SheetProvider } from "@/lib/sheet-context";
 import { UnsavedChangesProvider } from "@/lib/unsaved-changes";
 import { SWCoordinator } from "@/lib/sw-coordinator";
+import { WorkspaceProvider } from "@/lib/auth/workspace-context";
 import { initRUM } from "@/lib/observability/web-vitals";
 
 /**
- * Provider tree (design Task 8):
- *   UnsavedChangesProvider > SWCoordinator > AppStateProvider > SheetProvider
- *
- * AuthGate wraps the tree when API is configured (session gate).
+ * Provider tree (agents-sdk: AuthGate > WorkspaceProvider > AppStateProvider)
  */
 export function RootProviders({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     initRUM();
   }, []);
 
-  const tree = (
+  const inner = (
     <UnsavedChangesProvider>
       <SWCoordinator>
-        <AppStateProvider>
-          <SheetProvider>{children}</SheetProvider>
-        </AppStateProvider>
+        <WorkspaceProvider>
+          <AppStateProvider>
+            <SheetProvider>{children}</SheetProvider>
+          </AppStateProvider>
+        </WorkspaceProvider>
       </SWCoordinator>
     </UnsavedChangesProvider>
   );
 
   if (!isApiConfigured()) {
-    return tree;
+    return inner;
   }
 
-  return <AuthGate>{tree}</AuthGate>;
+  return <AuthGate>{inner}</AuthGate>;
 }

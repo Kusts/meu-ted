@@ -52,6 +52,11 @@ export type AppConfig = {
   disableSignUp: boolean;
   disableDeviceRegistration: boolean;
   adminEmails: string[];
+  agentConnectionSecret: string;
+  agentConfigToken: string;
+  agentAuthServiceToken: string;
+  agentRuntimeOrigin: string;
+  agentRuntimeAdminToken: string;
 };
 
 export const loadConfig = (): AppConfig => {
@@ -88,5 +93,10 @@ export const loadConfig = (): AppConfig => {
     disableSignUp,
     disableDeviceRegistration,
     adminEmails,
+    agentConnectionSecret: process.env.AGENT_CONNECTION_TOKEN_SECRET?.trim() || 'dev-agent-connection-secret-at-least-32-chars!',
+    agentConfigToken: process.env.AGENT_CONFIG_TOKEN?.trim() || 'dev-agent-config-token-32-chars-minimum!',
+    agentAuthServiceToken: process.env.AGENT_AUTH_SERVICE_TOKEN?.trim() || 'dev-agent-auth-service-token-32-chars!',
+    agentRuntimeOrigin: process.env.AGENT_RUNTIME_ORIGIN?.trim() || 'https://pi-finance-agent.walissonead.workers.dev',
+    agentRuntimeAdminToken: process.env.AGENT_RUNTIME_ADMIN_TOKEN?.trim() || 'dev-agent-runtime-admin-token-32-chars!',
   };
 };

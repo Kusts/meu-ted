@@ -1,6 +1,6 @@
 # PI Financeiro — Visão de Produto
 
-**Last verified:** 2026-08-23  
+**Last verified:** 2026-08-26  
 **Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)  
 
 ## 1. Propósito e Visão
@@ -26,4 +26,5 @@ O **PI Financeiro** é uma plataforma de gestão financeira pessoal e familiar p
 3. **Contas a Pagar & Notificações Push:** Controle de liquidação, agendamento de vencimentos e lembretes proativos via Web Push Notification.
 4. **Metas & Orçamentos por Categoria:** Definição de limites orçamentários por categoria e acompanhamento de metas financeiras familiares.
 5. **Auditoria & Registro Imutável:** Rastreabilidade estrita de cada mutação financeira por ator, workspace e chave de idempotência com capacidade de reversão.
+6. **TED Chat Global (Agents SDK):** Widget flutuante global por workspace (fullscreen em iPhone, painel em desktop) sobre `FinanceChatAgent extends AIChatAgent`, com configuração LLM global (OpenCode Zen/Go, OpenAI API + candidato Codex subscription `experimental_blocked`) administrada exclusivamente por `ADMIN_EMAILS`.
 

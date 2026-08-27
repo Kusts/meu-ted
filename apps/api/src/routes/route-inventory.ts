@@ -1,5 +1,5 @@
 export type RouteMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'ALL';
-export type RouteAuth = 'public' | 'public-denied' | 'device' | 'workspace' | 'session';
+export type RouteAuth = 'public' | 'public-denied' | 'device' | 'workspace' | 'session' | 'admin' | 'internal';
 export type RouteOwnership = 'none' | 'membership' | 'owner';
 
 export type RouteInventoryEntry = {
@@ -80,7 +80,7 @@ export const ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
   { id: 'pending-operations-approve-dual', method: 'POST', path: '/pending-operations/approve', auth: 'workspace', ownership: 'membership' },
   { id: 'pending-operations-approve', method: 'POST', path: '/pending-operations/:id/approve', auth: 'workspace', ownership: 'membership' },
   { id: 'pending-operations-reject-dual', method: 'POST', path: '/pending-operations/reject', auth: 'workspace', ownership: 'membership' },
-{ id: 'pending-operations-reject', method: 'POST', path: '/pending-operations/:id/reject', auth: 'workspace', ownership: 'membership' },
+  { id: 'pending-operations-reject', method: 'POST', path: '/pending-operations/:id/reject', auth: 'workspace', ownership: 'membership' },
   { id: 'pending-operations-undo', method: 'POST', path: '/pending-operations/undo', auth: 'workspace', ownership: 'membership' },
   { id: 'notifications-create', method: 'POST', path: '/notifications', auth: 'workspace', ownership: 'membership' },
   { id: 'adoption-events-create', method: 'POST', path: '/observability/adoption-events', auth: 'workspace', ownership: 'membership' },
@@ -107,6 +107,19 @@ export const ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
   { id: 'shadow-divergence-record', method: 'POST', path: '/observability/shadow-divergence', auth: 'workspace', ownership: 'membership' },
   { id: 'shadow-divergence-summary', method: 'GET', path: '/observability/shadow-divergence/summary', auth: 'workspace', ownership: 'membership' },
   { id: 'shadow-divergence-events', method: 'GET', path: '/observability/shadow-divergence/events', auth: 'workspace', ownership: 'membership' },
+  { id: 'admin-agent-llm-config', method: 'GET', path: '/admin/agent/llm-config', auth: 'admin', ownership: 'none' },
+  { id: 'admin-agent-llm-sync', method: 'POST', path: '/admin/agent/llm-config/sync-catalog', auth: 'admin', ownership: 'none' },
+  { id: 'admin-agent-llm-provider-toggle', method: 'POST', path: '/admin/agent/llm-config/providers/:id/toggle', auth: 'admin', ownership: 'none' },
+  { id: 'admin-agent-llm-model-toggle', method: 'POST', path: '/admin/agent/llm-config/models/:id/toggle', auth: 'admin', ownership: 'none' },
+  { id: 'admin-agent-llm-models-create', method: 'POST', path: '/admin/agent/llm-config/models', auth: 'admin', ownership: 'none' },
+  { id: 'admin-agent-llm-activate', method: 'POST', path: '/admin/agent/llm-config/activate', auth: 'admin', ownership: 'none' },
+  { id: 'admin-agent-llm-rollout', method: 'POST', path: '/admin/agent/llm-config/rollout', auth: 'admin', ownership: 'none' },
+  { id: 'admin-agent-llm-security-epoch', method: 'POST', path: '/admin/agent/llm-config/security-epoch', auth: 'admin', ownership: 'none' },
+  { id: 'admin-agent-llm-test', method: 'POST', path: '/admin/agent/llm-config/test-connection', auth: 'admin', ownership: 'none' },
+  { id: 'internal-agent-llm-config', method: 'GET', path: '/internal/agent/llm-config', auth: 'internal', ownership: 'none' },
+  { id: 'auth-agent-token', method: 'POST', path: '/auth/agent-token', auth: 'session', ownership: 'membership' },
+  { id: 'auth-agent-token-consume', method: 'POST', path: '/auth/agent-token/consume', auth: 'internal', ownership: 'none' },
+  { id: 'internal-agent-consume-token', method: 'POST', path: '/internal/agent/consume-token', auth: 'internal', ownership: 'none' },
   { id: 'health', method: 'GET', path: '/health', auth: 'public', ownership: 'none' },
 ] as const;
 
@@ -123,6 +136,9 @@ export const ROUTE_COVERAGE_IDS = [
   'payables-reminders', 'notifications-list', 'pending-operations-list', 'pending-operations-details-dual', 'pending-operations-details', 'pending-operations-approve-dual', 'pending-operations-approve', 'pending-operations-reject-dual', 'pending-operations-reject', 'pending-operations-undo', 'notifications-create', 'adoption-events-create', 'adoption-funnel-get', 'insights-quick', 'insights-spending', 'profile-get',
   'profile-update', 'push-vapid-public-key', 'push-subscriptions-create', 'push-notifications-send', 'push-subscriptions-delete', 'subscriptions-list', 'subscriptions-create', 'subscriptions-cancel', 'subscriptions-update', 'transactions-list',
   'transactions-expense-create', 'transactions-income-create', 'transfers-create', 'transactions-update', 'transactions-delete', 'transactions-detect-duplicate',
-  'shadow-divergence-record', 'shadow-divergence-summary', 'shadow-divergence-events', 'health',
+  'shadow-divergence-record', 'shadow-divergence-summary', 'shadow-divergence-events',
+  'admin-agent-llm-config', 'admin-agent-llm-sync', 'admin-agent-llm-provider-toggle', 'admin-agent-llm-model-toggle', 'admin-agent-llm-models-create', 'admin-agent-llm-activate', 'admin-agent-llm-rollout', 'admin-agent-llm-security-epoch', 'admin-agent-llm-test',
+  'internal-agent-llm-config', 'auth-agent-token', 'auth-agent-token-consume', 'internal-agent-consume-token', 'health',
 ] as const;
+
 

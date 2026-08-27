@@ -87,9 +87,9 @@ describe("ProfilePage", () => {
     expect(screen.getByText("Editar perfil")).toBeInTheDocument();
   });
 
-  it("renders Chat com Pi (WhatsApp) item", () => {
+  it("renders Assistente TED item", () => {
     render(<ProfilePage />);
-    expect(screen.getByText("Chat com Pi (WhatsApp)")).toBeInTheDocument();
+    expect(screen.getByText("Assistente TED")).toBeInTheDocument();
   });
 
   it("renders Sair da conta button", () => {

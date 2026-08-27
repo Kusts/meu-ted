@@ -137,6 +137,7 @@ export function collectWriteSurface(root = ROOT) {
   const endpointsPath = path.join(root, 'apps', 'pwa', 'src', 'lib', 'api', 'endpoints.ts');
   const routeRoot = path.join(root, 'apps', 'api', 'src', 'routes');
   const toolRoot = path.join(root, '.pi', 'extensions', 'financial-tools', 'tools');
+  const canonicalToolRoot = path.join(root, 'apps', 'agent', 'src', 'generated');
   const pwaRouteRoot = path.join(root, 'apps', 'pwa', 'src', 'app');
   const bridgeServerPath = path.join(root, 'apps', 'whatsapp-bridge', 'src', 'server.ts');
   const surface = [
@@ -149,16 +150,23 @@ export function collectWriteSurface(root = ROOT) {
   for (const filePath of walkFiles(pwaRouteRoot, (file) => file.endsWith('/route.ts') || file.endsWith('\\route.ts'))) {
     surface.push(...discoverNextRouteWrites(fs.readFileSync(filePath, 'utf8'), relativeToRoot(filePath)));
   }
-  surface.push(...discoverApiRoutes(fs.readFileSync(bridgeServerPath, 'utf8'), relativeToRoot(bridgeServerPath)).map((item) => ({
-    ...item,
-    id: item.id.replace('api.route.', 'bridge.route.'),
-    layer: 'bridge-route',
-  })));
-  for (const filePath of walkFiles(toolRoot, (file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))) {
-    surface.push(...discoverPiToolWrites(fs.readFileSync(filePath, 'utf8'), relativeToRoot(filePath)));
+  if (fs.existsSync(bridgeServerPath)) {
+    surface.push(...discoverApiRoutes(fs.readFileSync(bridgeServerPath, 'utf8'), relativeToRoot(bridgeServerPath)).map((item) => ({
+      ...item,
+      id: item.id.replace('api.route.', 'bridge.route.'),
+      layer: 'bridge-route',
+    })));
   }
+  if (fs.existsSync(toolRoot)) {
+    for (const filePath of walkFiles(toolRoot, (file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))) {
+      surface.push(...discoverPiToolWrites(fs.readFileSync(filePath, 'utf8'), relativeToRoot(filePath)));
+    }
+  }
+  const canonicalGenerated = path.join(canonicalToolRoot, 'http-tools.ts');
   const generatedToolPath = path.join(root, '.pi', 'extensions', 'financial-tools', 'generated', 'http-tools.ts');
-  if (fs.existsSync(generatedToolPath)) {
+  if (fs.existsSync(canonicalGenerated)) {
+    surface.push(...discoverPiToolWrites(fs.readFileSync(canonicalGenerated, 'utf8'), relativeToRoot(canonicalGenerated)));
+  } else if (fs.existsSync(generatedToolPath)) {
     surface.push(...discoverPiToolWrites(fs.readFileSync(generatedToolPath, 'utf8'), relativeToRoot(generatedToolPath)));
   }
   return surface;

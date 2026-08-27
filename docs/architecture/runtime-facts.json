@@ -19,14 +19,16 @@
     },
     "agent": {
       "name": "pi-finance-agent",
-      "framework": "Cloudflare Workers / Agents SDK",
-      "runtime": "Cloudflare Workers / Durable Objects"
+      "framework": "Cloudflare Workers / Agents SDK (FinanceChatAgent extends AIChatAgent)",
+      "runtime": "Cloudflare Workers / Durable Objects (v2 FinanceChatAgent)",
+      "bindings": ["AGENT (WorkspaceAgent v1)", "FINANCE_CHAT_AGENT (FinanceChatAgent v2)"],
+      "llmConfig": "V034 global, providers opencode-zen/go, openai-api, openai-codex-subscription experimental_blocked"
     }
   },
   "counts": {
-    "apiRoutes": 98,
-    "databaseMigrations": 33,
-    "latestMigration": "V033__card_purchase_cancellation.sql",
+    "apiRoutes": 104,
+    "databaseMigrations": 35,
+    "latestMigration": "V035__agent_connection_token_replay.sql",
     "capabilitiesTotal": 72,
     "capabilitiesInApiMode": 52,
     "pwaRoutes": 3,

@@ -1,16 +1,18 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "pi-finance-agent",
-  "main": "src/index.ts",
+  "main": "src/worker.ts",
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
     "bindings": [
-      { "name": "AGENT", "class_name": "WorkspaceAgent" }
+      { "name": "AGENT", "class_name": "WorkspaceAgent" },
+      { "name": "FINANCE_CHAT_AGENT", "class_name": "FinanceChatAgent" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["WorkspaceAgent"] }
+    { "tag": "v1", "new_sqlite_classes": ["WorkspaceAgent"] },
+    { "tag": "v2", "new_sqlite_classes": ["FinanceChatAgent"] }
   ],
   "vars": {
     "API_ORIGIN": "https://api.synkroo.com.br"

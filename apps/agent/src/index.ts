@@ -434,6 +434,29 @@ export class WorkspaceAgent {
     return Response.json({ turnId, intentionId: turn.intention_id ?? turnId, status: "queued", attempts: turn.attempts });
   }
 
+  async exportFullWorkspaceHistory(workspaceId = 'workspace'): Promise<{
+    version: number;
+    workspaceId: string;
+    turns: Array<{ id: string; intention_id?: string; actor_id: string; status: string; attempts: number; tokens_used: number; input_json?: string; output_json?: string }>;
+    messages: Array<{ id: string; actor_id: string; role: string; content_json: string; created_at: string }>;
+    hasInFlightTurns: boolean;
+  }> {
+    const turns = [...this.state.storage.sql.exec<TurnRow>(
+      "SELECT id, intention_id, status, attempts, tokens_used, input_json, output_json, actor_id FROM turn_queue ORDER BY created_at ASC",
+    )];
+    const messages = [...this.state.storage.sql.exec<MessageRow>(
+      "SELECT id, actor_id, role, content_json, created_at FROM messages ORDER BY created_at ASC",
+    )];
+    const hasInFlightTurns = turns.some((t) => t.status === "queued" || t.status === "running");
+    return {
+      version: WORKSPACE_AGENT_SCHEMA_VERSION,
+      workspaceId,
+      turns,
+      messages,
+      hasInFlightTurns,
+    };
+  }
+
   get storage(): DurableObjectState["storage"] {
     return this.state.storage;
   }
@@ -447,7 +470,7 @@ export type WorkspaceAuthorization = { actorId: string; role: DelegatedRole; wor
 
 export async function authorizeWorkspaceMembership(
   request: Request,
-  env: Env,
+  env: { API_ORIGIN: string },
   workspaceId: string,
 ): Promise<Response | WorkspaceAuthorization> {
   const apiUrl = new URL(`/workspaces/${encodeURIComponent(workspaceId)}/members`, env.API_ORIGIN);

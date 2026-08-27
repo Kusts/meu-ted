@@ -6,7 +6,7 @@ import type { Pool } from "pg";
 import { findDuplicate } from "../transactions/duplicate-detector.js";
 import { createPool } from "../db/pool.js";
 
-const detectSchema = z.object({
+export const detectSchema = z.object({
   kind: z.enum(["expense", "income", "transfer"]),
   description: z.string().min(1),
   amountCents: z.number().int().min(1),
