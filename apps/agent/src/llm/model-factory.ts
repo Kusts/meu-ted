@@ -26,11 +26,18 @@ const PROVIDER_SECRET_MAP: Record<string, SecretAlias> = {
 
 export const createSafeFetch = (customFetch = fetch): typeof fetch => {
   return async (input: RequestInfo | URL, init?: RequestInit) => {
+    // Cloudflare Workers does not implement redirect: "error" (it throws
+    // "Invalid redirect value"). Use "manual" at the edge and reject any
+    // redirect response here — SSRF guard stays, with runtime compatibility.
     const options: RequestInit = {
       ...init,
-      redirect: 'error',
+      redirect: 'manual',
     };
-    return customFetch(input, options);
+    const response = await customFetch(input, options);
+    if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+      throw new TypeError('redirected request rejected by safe fetch');
+    }
+    return response;
   };
 };
 
@@ -101,13 +108,12 @@ export const createLanguageModel = (
     }
     case 'responses':
     default: {
-      const compatible = createOpenAICompatible({
-        name: providerKind,
+      const openai = createOpenAI({
         baseURL: baseUrl,
         apiKey,
         fetch: safeFetch,
       });
-      model = compatible(modelId);
+      model = openai(modelId);
       break;
     }
   }

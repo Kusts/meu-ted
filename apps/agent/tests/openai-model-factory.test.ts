@@ -44,7 +44,7 @@ describe('AI SDK Model Factory (Task 5)', () => {
     ).toThrow(/missing required secret/);
   });
 
-  it('enforces redirect: "error" in safe fetch wrapper', async () => {
+  it('enforces manual redirect + rejection of 3xx in safe fetch wrapper', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response('ok', { status: 200 }));
     const safeFetch = createSafeFetch(fetchMock);
 
@@ -53,8 +53,15 @@ describe('AI SDK Model Factory (Task 5)', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.openai.com/v1/chat/completions',
       expect.objectContaining({
-        redirect: 'error',
+        redirect: 'manual',
       }),
     );
+  });
+
+  it('rejects redirect responses in safe fetch wrapper', async () => {
+    const redirectMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: 'https://evil.example' } }));
+    const safeFetch = createSafeFetch(redirectMock);
+
+    await expect(safeFetch('https://api.openai.com/v1/models', { method: 'GET' })).rejects.toThrow(/redirected request rejected/);
   });
 });

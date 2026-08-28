@@ -32,7 +32,7 @@ describe('Provider Probe (Task 5)', () => {
       headers: expect.objectContaining({
         authorization: 'Bearer test-key-123',
       }),
-      redirect: 'error',
+      redirect: 'manual',
     }));
   });
 

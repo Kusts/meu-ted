@@ -32,13 +32,34 @@ export const fetchRuntimeConfig = async (
 
   const data = (await res.json()) as Record<string, unknown>;
   const runtime = (data.runtime as Record<string, unknown>) ?? data;
+  const model = (data.model as Record<string, unknown>) ?? null;
+
+  const providerId = typeof runtime.activeProviderId === 'string'
+    ? runtime.activeProviderId
+    : typeof runtime.providerId === 'string'
+      ? runtime.providerId
+      : null;
+  const rawModelId = typeof runtime.activeModelId === 'string'
+    ? runtime.activeModelId
+    : typeof runtime.modelId === 'string'
+      ? runtime.modelId
+      : null;
+  // Prefer the pure model ID from the catalog record over the composite
+  // "<providerId>:<modelId>" DB key when both are present.
+  const modelId = typeof model?.modelId === 'string' ? model.modelId : rawModelId;
 
   return {
     version: typeof runtime.version === 'number' ? runtime.version : 1,
-    activeProviderId: typeof runtime.activeProviderId === 'string' ? runtime.activeProviderId : null,
-    activeModelId: typeof runtime.activeModelId === 'string' ? runtime.activeModelId : null,
-    activeProtocol: typeof runtime.activeProtocol === 'string' ? runtime.activeProtocol : null,
-    activeRolloutPercentage: typeof runtime.activeRolloutPercentage === 'number' ? runtime.activeRolloutPercentage : 100,
+    activeProviderId: providerId,
+    activeModelId: modelId,
+    activeProtocol: typeof model?.protocol === 'string'
+      ? model.protocol
+      : typeof runtime.activeProtocol === 'string'
+        ? runtime.activeProtocol
+        : null,
+    activeRolloutPercentage: typeof runtime.activeRolloutPercentage === 'number'
+      ? runtime.activeRolloutPercentage
+      : typeof runtime.activeRolloutPercentage === 'number' ? runtime.activeRolloutPercentage : 100,
     securityEpoch: typeof runtime.securityEpoch === 'number' ? runtime.securityEpoch : 1,
     catalogVersion: typeof runtime.catalogVersion === 'number' ? runtime.catalogVersion : undefined,
   };

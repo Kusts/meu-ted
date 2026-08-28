@@ -117,6 +117,7 @@ export const ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
   { id: 'admin-agent-llm-security-epoch', method: 'POST', path: '/admin/agent/llm-config/security-epoch', auth: 'admin', ownership: 'none' },
   { id: 'admin-agent-llm-test', method: 'POST', path: '/admin/agent/llm-config/test-connection', auth: 'admin', ownership: 'none' },
   { id: 'internal-agent-llm-config', method: 'GET', path: '/internal/agent/llm-config', auth: 'internal', ownership: 'none' },
+  { id: 'internal-agent-llm-relay', method: 'POST', path: '/internal/agent/llm-relay', auth: 'internal', ownership: 'none' },
   { id: 'auth-agent-token', method: 'POST', path: '/auth/agent-token', auth: 'session', ownership: 'membership' },
   { id: 'auth-agent-token-consume', method: 'POST', path: '/auth/agent-token/consume', auth: 'internal', ownership: 'none' },
   { id: 'internal-agent-consume-token', method: 'POST', path: '/internal/agent/consume-token', auth: 'internal', ownership: 'none' },
@@ -138,7 +139,7 @@ export const ROUTE_COVERAGE_IDS = [
   'transactions-expense-create', 'transactions-income-create', 'transfers-create', 'transactions-update', 'transactions-delete', 'transactions-detect-duplicate',
   'shadow-divergence-record', 'shadow-divergence-summary', 'shadow-divergence-events',
   'admin-agent-llm-config', 'admin-agent-llm-sync', 'admin-agent-llm-provider-toggle', 'admin-agent-llm-model-toggle', 'admin-agent-llm-models-create', 'admin-agent-llm-activate', 'admin-agent-llm-rollout', 'admin-agent-llm-security-epoch', 'admin-agent-llm-test',
-  'internal-agent-llm-config', 'auth-agent-token', 'auth-agent-token-consume', 'internal-agent-consume-token', 'health',
+  'internal-agent-llm-config', 'internal-agent-llm-relay', 'auth-agent-token', 'auth-agent-token-consume', 'internal-agent-consume-token', 'health',
 ] as const;
 
 

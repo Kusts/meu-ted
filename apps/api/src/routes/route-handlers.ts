@@ -107,6 +107,7 @@ export const ROUTE_HANDLER_MAP: Readonly<Record<string, string>> = {
   'admin-agent-llm-security-epoch': 'src/routes/admin-agent-llm-config.ts:registerAdminAgentLlmConfigRoutes',
   'admin-agent-llm-test': 'src/routes/admin-agent-llm-config.ts:registerAdminAgentLlmConfigRoutes',
   'internal-agent-llm-config': 'src/routes/internal-agent-llm-config.ts:registerInternalAgentLlmConfigRoutes',
+  'internal-agent-llm-relay': 'src/routes/internal-agent-llm-relay.ts:registerAgentLlmRelayRoutes',
   'auth-agent-token': 'src/routes/agent-auth.ts:registerAgentAuthRoutes',
   'auth-agent-token-consume': 'src/routes/agent-auth.ts:registerAgentAuthRoutes',
   'internal-agent-consume-token': 'src/routes/agent-auth.ts:registerAgentAuthRoutes',

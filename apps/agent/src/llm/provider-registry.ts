@@ -1,6 +1,6 @@
 export const FIXED_ENDPOINTS: Record<string, string> = {
-  'opencode-zen': 'https://zen.opencode.ai/v1',
-  'opencode-go': 'https://go.opencode.ai/v1',
+  'opencode-zen': 'https://opencode.ai/zen/v1',
+  'opencode-go': 'https://opencode.ai/zen/go/v1',
   'openai-api': 'https://api.openai.com/v1',
 };
 

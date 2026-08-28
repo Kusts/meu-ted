@@ -8,8 +8,8 @@ import {
 
 describe('Provider Registry & Protocol (Task 5)', () => {
   it('maps providers to fixed authoritative endpoints', () => {
-    expect(getProviderEndpoint('opencode-zen')).toBe('https://zen.opencode.ai/v1');
-    expect(getProviderEndpoint('opencode-go')).toBe('https://go.opencode.ai/v1');
+    expect(getProviderEndpoint('opencode-zen')).toBe('https://opencode.ai/zen/v1');
+    expect(getProviderEndpoint('opencode-go')).toBe('https://opencode.ai/zen/go/v1');
     expect(getProviderEndpoint('openai-api')).toBe('https://api.openai.com/v1');
     expect(() => getProviderEndpoint('untrusted-provider')).toThrow(/unknown or unconfigured provider/);
   });

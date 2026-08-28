@@ -78,6 +78,7 @@ import { registerPriceAlertRoutes } from "./price-alerts.js";
 import { registerAgentAuthRoutes } from "./agent-auth.js";
 import { registerAdminAgentLlmConfigRoutes } from "./admin-agent-llm-config.js";
 import { registerInternalAgentLlmConfigRoutes } from "./internal-agent-llm-config.js";
+import { registerAgentLlmRelayRoutes } from "./internal-agent-llm-relay.js";
 import { createInMemoryLlmConfigStore } from "../agent/llm-config-postgres.js";
 import type { LlmConfigStore } from "../agent/llm-config-postgres.js";
 import { createInMemoryAgentReplayStore, type AgentReplayStore } from "../auth/agent-connection-token-replay.js";
@@ -417,6 +418,11 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     connectionSecret: deps.agentConnectionSecret ?? process.env.AGENT_CONNECTION_TOKEN_SECRET ?? 'dev-agent-connection-secret-at-least-32-chars!',
     agentAuthServiceToken: agentServiceToken,
     replayStore,
+  });
+
+  registerAgentLlmRelayRoutes(app, {
+    adminToken: deps.agentRuntimeAdminToken ?? process.env.AGENT_RUNTIME_ADMIN_TOKEN ?? 'dev-agent-runtime-admin-token-32-chars!',
+    ...(process.env.OPENCODE_ZEN_API_KEY ? { zenApiKey: process.env.OPENCODE_ZEN_API_KEY } : {}),
   });
 
   if (deps.auth) {

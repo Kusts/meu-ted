@@ -1,5 +1,5 @@
 import { AIChatAgent } from "agents/ai-chat-agent";
-import { streamText } from "ai";
+import { streamText, generateText } from "ai";
 import { fetchRuntimeConfig, type RuntimeSnapshot } from "./llm/runtime-config-client.js";
 import { createLanguageModel } from "./llm/model-factory.js";
 import type { Protocol } from "./llm/provider-registry.js";
@@ -186,5 +186,84 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       return;
     }
     await super.onMessage(connection, message);
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === "/rpc/chat" && request.method === "POST") {
+      const actorId = request.headers.get("x-agent-actor") ?? "anonymous";
+      const workspaceId = request.headers.get("x-agent-workspace") ?? "";
+      let body: { text?: unknown; intentionId?: unknown };
+      try {
+        body = await request.json() as { text?: unknown; intentionId?: unknown };
+      } catch {
+        return Response.json({ code: "agent.invalid_message" }, { status: 400 });
+      }
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      if (!text) return Response.json({ code: "agent.invalid_message" }, { status: 400 });
+      const intentionId = typeof body.intentionId === "string" ? body.intentionId : `intent-${Date.now()}`;
+
+      const snapshot = await this.resolveIntentionSnapshot(intentionId);
+      if (!snapshot) {
+        return Response.json({ code: "agent.provider_not_configured", message: "Nenhum provedor de IA ativo configurado." }, { status: 503 });
+      }
+
+      if (this.state?.storage?.sql) {
+        const budgetCheck = checkUsageLimit(this.state.storage.sql, actorId, estimateTokens(text));
+        if (!budgetCheck.allowed) {
+          return Response.json({ code: "agent.usage_limit", message: budgetCheck.reason }, { status: 429 });
+        }
+      }
+
+      try {
+        // Edge-safe: route inference through the API LLM relay on the VPS —
+        // OpenCode Zen free models rate-limit Cloudflare datacenter egress,
+        // and the Hostinger VPS egress is not blocked. Direct createLanguageModel
+        // remains for providers without egress restrictions.
+        const relayOrigin = this.env?.API_ORIGIN ?? "https://api.synkroo.com.br";
+        const adminToken = this.env?.AGENT_RUNTIME_ADMIN_TOKEN ?? "";
+        const relayRes = await fetch(`${relayOrigin.replace(/\/$/, "")}/internal/agent/llm-relay`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-agent-runtime-admin-token": adminToken,
+          },
+          body: JSON.stringify({
+            provider: snapshot.provider_id,
+            model: snapshot.model_id,
+            prompt: text,
+            system: TED_SYSTEM_PROMPT,
+          }),
+        });
+        const relayRaw = await relayRes.text().catch(() => "");
+        let relayBody: { text?: string; code?: string; message?: string } = {};
+        try { relayBody = JSON.parse(relayRaw || "{}") as { text?: string; code?: string; message?: string }; } catch { relayBody = {}; }
+        if (!relayRes.ok || typeof relayBody.text !== "string" || !relayBody.text) {
+          return Response.json(
+            { code: relayBody.code ?? "agent.inference_error", message: relayBody.message ?? "Falha ao processar a inferência.", provider: snapshot.provider_id, model: snapshot.model_id, relayStatus: relayRes.status, relayRaw: String(relayRaw).slice(0, 200) },
+            { status: relayRes.status >= 400 && relayRes.status < 600 ? relayRes.status : 502 },
+          );
+        }
+        const output = relayBody.text;
+
+        if (this.state?.storage?.sql) {
+          recordUsage(this.state.storage.sql, actorId, intentionId, estimateTokens(text), estimateTokens(output));
+        }
+
+        return Response.json({
+          turnId: intentionId,
+          intentionId,
+          status: "completed",
+          output: redactTranscript(output),
+          workspaceId,
+          provider: snapshot.provider_id,
+          model: snapshot.model_id,
+        });
+      } catch (err) {
+        const message = (err as Error)?.message ?? "Erro desconhecido ao processar inferência.";
+        return Response.json({ code: "agent.inference_error", message: redactTranscript(message) }, { status: 502 });
+      }
+    }
+    return new Response("Not found", { status: 404 });
   }
 }

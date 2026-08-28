@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { apiFetch, isApiConfigured } from "./client";
+import { fetchAgentConnectionToken } from "./agent-auth";
 
 const historySchema = z.object({
   items: z.array(z.object({
@@ -65,11 +66,17 @@ async function parseJson<T>(response: Response): Promise<T> {
   return await response.json() as T;
 }
 
+async function agentAuthHeaders(workspaceId: string): Promise<Record<string, string>> {
+  const token = await fetchAgentConnectionToken(workspaceId).catch(() => undefined);
+  return token ? { "x-agent-connection-token": token } : {};
+}
+
 export async function sendAgentMessage(workspaceId: string, content: string): Promise<AgentTurn> {
+  const authHeaders = await agentAuthHeaders(workspaceId);
   const response = await fetch(agentRequestUrl(workspaceId, ""), {
     method: "POST",
     credentials: "include",
-    headers: { "content-type": "application/json", "X-Workspace-Id": workspaceId },
+    headers: { "content-type": "application/json", "X-Workspace-Id": workspaceId, ...authHeaders },
     body: JSON.stringify({ content }),
   });
   return parseJson<AgentTurn>(response);

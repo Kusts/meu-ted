@@ -15,6 +15,7 @@ declare module "agents" {
 }
 declare module "ai" {
   export function streamText(...args: unknown[]): unknown;
+  export function generateText(...args: unknown[]): Promise<{ text: string; usage?: unknown; finishReason?: string }>;
   export type LanguageModel = unknown;
 }
 declare module "@cloudflare/ai-chat" {

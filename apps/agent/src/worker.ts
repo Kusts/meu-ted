@@ -92,7 +92,7 @@ export default {
     const financeMatch = url.pathname.match(/^\/agents\/finance-chat-agent\/([^/]+)/);
     if (financeMatch) {
       const workspaceId = decodeURIComponent(financeMatch[1]!);
-      const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string }, workspaceId);
+      const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string }, workspaceId);
       if (auth instanceof Response) return auth;
       // Route via agents SDK official router
       const routed = await routeAgentRequest(request, env as unknown as Record<string, AgentNamespace<FinanceChatAgent>>);
@@ -109,8 +109,39 @@ export default {
     const legacyMatch = url.pathname.match(/^\/agents\/workspace\/([^/]+)/);
     if (legacyMatch) {
       const workspaceId = decodeURIComponent(legacyMatch[1]!);
-      const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string }, workspaceId);
+      const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string }, workspaceId);
       if (auth instanceof Response) return auth;
+      // For new message turns, route to the real FinanceChatAgent RPC when a
+      // runtime provider is configured; fall back to the legacy WorkspaceAgent
+      // only for history/export/stream operations that still live there.
+      const isNewMessage = request.method === "POST" && url.pathname.endsWith("/message");
+      if (isNewMessage) {
+        const { fetchRuntimeConfig } = await import("./llm/runtime-config-client.js");
+        let configured = false;
+        try {
+          const config = await fetchRuntimeConfig(env.API_ORIGIN, env.AGENT_CONFIG_TOKEN ?? "");
+          configured = Boolean(config.activeProviderId && config.activeModelId);
+        } catch {
+          configured = false;
+        }
+        if (configured) {
+          const headers = new Headers(request.headers);
+          headers.set("x-agent-actor", auth.actorId);
+          headers.set("x-agent-role", auth.role);
+          headers.set("x-agent-workspace", auth.workspaceId);
+          const rpcUrl = new URL(request.url);
+          rpcUrl.pathname = "/rpc/chat";
+          let rpcBody = await request.text();
+          try {
+            const parsed = JSON.parse(rpcBody) as { content?: unknown; text?: unknown; intentionId?: unknown };
+            rpcBody = JSON.stringify({ text: typeof parsed.text === "string" ? parsed.text : parsed.content, intentionId: typeof parsed.intentionId === "string" ? parsed.intentionId : undefined });
+          } catch {
+            // pass through original body
+          }
+          return env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(workspaceId)).fetch(new Request(rpcUrl, { method: "POST", headers, body: rpcBody }));
+        }
+        return Response.json({ code: "agent.provider_not_configured", message: "Nenhum provedor de IA ativo configurado." }, { status: 503 });
+      }
       const headers = new Headers(request.headers);
       headers.set("x-agent-actor", auth.actorId);
       headers.set("x-agent-role", auth.role);

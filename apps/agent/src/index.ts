@@ -470,9 +470,25 @@ export type WorkspaceAuthorization = { actorId: string; role: DelegatedRole; wor
 
 export async function authorizeWorkspaceMembership(
   request: Request,
-  env: { API_ORIGIN: string },
+  env: { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string },
   workspaceId: string,
 ): Promise<Response | WorkspaceAuthorization> {
+  // Preferred path: short-lived connection token (JWT) issued by the API —
+  // browsers cannot forward the api.synkroo.com.br session cookie cross-site
+  // to the Worker, so cookie fallback below only serves same-origin clients.
+  const connectionToken = request.headers.get("x-agent-connection-token")?.trim();
+  if (connectionToken && env.AGENT_CONNECTION_TOKEN_SECRET) {
+    const { verifyAgentConnectionToken } = await import("./auth/connection-token.js");
+    try {
+      const claims = await verifyAgentConnectionToken(connectionToken, env.AGENT_CONNECTION_TOKEN_SECRET, workspaceId);
+      if (claims.workspace !== workspaceId) return Response.json({ code: "agent.workspace_forbidden" }, { status: 403 });
+      const role = claims.role === "owner" ? "owner" as DelegatedRole : "member" as DelegatedRole;
+      return { actorId: claims.sub, role, workspaceId };
+    } catch {
+      return Response.json({ code: "agent.workspace_forbidden" }, { status: 403 });
+    }
+  }
+
   const apiUrl = new URL(`/workspaces/${encodeURIComponent(workspaceId)}/members`, env.API_ORIGIN);
   const headers = new Headers();
   const cookie = request.headers.get("cookie");
