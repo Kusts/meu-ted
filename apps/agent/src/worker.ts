@@ -47,12 +47,37 @@ export default {
   async fetch(request: Request, env: Env, _ctx?: unknown): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === "/health/agent") {
-      return Response.json({ status: "ready", binding: "FINANCE_CHAT_AGENT" });
+    const ALLOWED_ORIGINS = [
+      "https://pi-finance-pwa.walissonead.workers.dev",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+      "http://localhost:3001",
+      "http://127.0.0.1:3001",
+    ];
+    const requestOrigin = request.headers.get("origin") ?? "";
+    const isAllowedOrigin = ALLOWED_ORIGINS.includes(requestOrigin);
+    const corsHeaders = (): Record<string, string> => ({
+      "access-control-allow-origin": isAllowedOrigin ? requestOrigin : "null",
+      "access-control-allow-credentials": "true",
+      "access-control-allow-methods": "GET, POST, OPTIONS, DELETE",
+      "access-control-allow-headers": "content-type, x-workspace-id, x-agent-connection-token, authorization",
+      "access-control-max-age": "600",
+    });
+
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders(),
+      });
     }
-    if (url.pathname === "/health") {
-      return Response.json({ status: "ready", schemaVersion: 5 });
-    }
+
+    const handle = async (): Promise<Response> => {
+      if (url.pathname === "/health/agent") {
+        return Response.json({ status: "ready", binding: "FINANCE_CHAT_AGENT" });
+      }
+      if (url.pathname === "/health") {
+        return Response.json({ status: "ready", schemaVersion: 5 });
+      }
 
     // Internal admin routes: Catalog & Provider Probe
     if (url.pathname === "/internal/agent/catalog") {
@@ -150,5 +175,11 @@ export default {
     }
 
     return new Response("Not found", { status: 404 });
+    };
+
+    const response = await handle();
+    const headers = new Headers(response.headers);
+    Object.entries(corsHeaders()).forEach(([k, v]) => headers.set(k, v));
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   },
 } satisfies ExportedHandler<Env, unknown>;

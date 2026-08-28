@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { approvePendingOperation, cancelAgentTurn, deleteAgentHistory, exportAgentHistory, fetchPendingOperations, processAgentTurn, reconnectAgentTurn, rejectPendingOperation, retryAgentTurn, sendAgentMessage } from "./agent-client";
+import * as agentAuth from "./agent-auth";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
@@ -53,6 +54,7 @@ describe("agent client turn lifecycle", () => {
 
   it("sends, reconnects with cursor, cancels and retries through the workspace route", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("test-connection-token");
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify({ turnId: "t1", status: "queued" }), { status: 202 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ turnId: "t1", status: "completed", output: "done" }), { status: 200 }))

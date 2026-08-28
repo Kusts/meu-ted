@@ -7,6 +7,9 @@
 /** Production API origin used in CSP connect-src */
 export const PRODUCTION_API_ORIGIN = "https://api.synkroo.com.br";
 
+/** Production Agent (TED chat) origin used in CSP connect-src */
+export const PRODUCTION_AGENT_ORIGIN = "https://pi-finance-agent.walissonead.workers.dev";
+
 /** Canonical security headers applied to every response. */
 export const SECURITY_HEADERS: Record<string, string> = {
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
@@ -45,7 +48,7 @@ export function buildCspValue(nonce: string): string {
     `script-src 'self' 'nonce-${nonce}'`,
     "style-src 'self' 'unsafe-inline'",
     "worker-src 'self'",
-    `connect-src 'self' ${PRODUCTION_API_ORIGIN}`,
+    `connect-src 'self' ${PRODUCTION_API_ORIGIN} ${PRODUCTION_AGENT_ORIGIN}`,
     "frame-ancestors 'none'",
     "base-uri 'self'",
   ].join("; ");
