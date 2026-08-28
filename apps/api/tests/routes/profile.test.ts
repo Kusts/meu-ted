@@ -70,7 +70,7 @@ describe('PATCH /profile', () => {
       url: '/profile',
       headers: { 'x-device-token': TOKEN_A },
     });
-    expect(getRes.json().profile).toEqual(profile);
+    expect(getRes.json().profile).toEqual({ ...profile, isAdmin: false });
   });
 
   it('upserts partial fields without clobbering existing ones', async () => {

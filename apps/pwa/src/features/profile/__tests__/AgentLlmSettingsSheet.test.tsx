@@ -50,8 +50,10 @@ describe("AgentLlmSettingsSheet Component (Task 11)", () => {
   it("renders active config, providers, and models", async () => {
     render(<AgentLlmSettingsSheet open={true} onClose={onCloseMock} />);
 
-    expect(await screen.findByText(/Configuração Ativa \(v1\)/i)).toBeInTheDocument();
-    expect(screen.getByText("OpenCode Zen (opencode-zen)")).toBeInTheDocument();
+    expect(await screen.findByText(/Runtime Ativo/i)).toBeInTheDocument();
+    expect(screen.getByText(/v1/)).toBeInTheDocument();
+    expect(screen.getByText("OpenCode Zen")).toBeInTheDocument();
+    expect(screen.getAllByText("opencode-zen").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("OPENCODE_ZEN_API_KEY")).toBeInTheDocument();
     expect(screen.getAllByText("gpt-4o").length).toBeGreaterThanOrEqual(1);
   });

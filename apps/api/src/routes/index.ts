@@ -327,6 +327,15 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     registerProfileRoutes(app, {
       resolveToken,
       profileStore: deps.profileStore,
+      ...(deps.adminEmails ? { adminEmails: deps.adminEmails } : {}),
+      ...(deps.auth
+? {
+              resolveSessionEmail: async (headers: Headers) => {
+                const session = await getBetterAuthSessionContext(deps.auth as BetterAuth, headers).catch(() => undefined);
+                return session?.email;
+              },
+            }
+        : {}),
     });
   }
   if (deps.cardStore) {

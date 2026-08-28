@@ -1,0 +1,173 @@
+import type { Pool } from 'pg';
+import { withTransaction, queryInTransaction } from '../db/pool.js';
+import type { WorkspaceKind, WorkspaceMember, WorkspaceRole, WorkspaceStore, WorkspaceSummary } from './workspaces-http.js';
+import { WorkspaceError } from './workspaces-http.js';
+
+type Row = Record<string, unknown>;
+
+export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
+  const assertMembership = async (authUserId: string, householdId: string): Promise<{ userId: string; role: WorkspaceRole }> => {
+    const result = await queryInTransaction<Row>(
+      pool,
+      `SELECT u.id AS user_id, m.role
+         FROM users u
+         JOIN memberships m ON m.user_id = u.id AND m.household_id = $2 AND m.status = 'active'
+        WHERE u.auth_user_id = $1 AND u.status = 'active'`,
+      [authUserId, householdId],
+    );
+    const row = result.rows[0];
+    if (!row) throw new WorkspaceError('workspace.forbidden', 403, 'Usuário não é membro deste workspace.');
+    return { userId: row['user_id'] as string, role: row['role'] as WorkspaceRole };
+  };
+
+  const assertActiveMembershipRole = async (authUserId: string, householdId: string, allowed: WorkspaceRole[]): Promise<{ userId: string; role: WorkspaceRole }> => {
+    const membership = await assertMembership(authUserId, householdId);
+    if (!allowed.includes(membership.role)) {
+      throw new WorkspaceError('workspace.forbidden', 403, 'Ação requer permissão de owner.');
+    }
+    return membership;
+  };
+
+  return {
+    async list(authUserId) {
+      const result = await queryInTransaction<Row>(
+        pool,
+        `SELECT h.id AS id, h.name AS name, h.kind AS kind, m.role AS role
+           FROM memberships m
+           JOIN households h ON h.id = m.household_id
+           JOIN users u ON u.id = m.user_id
+          WHERE u.auth_user_id = $1
+            AND u.status = 'active'
+            AND m.status = 'active'
+          ORDER BY (h.kind = 'personal') DESC, h.created_at ASC`,
+        [authUserId],
+      );
+      return result.rows.map((row) => ({
+        id: row['id'] as string,
+        name: row['name'] as string,
+        kind: row['kind'] as WorkspaceKind,
+        role: row['role'] as WorkspaceRole,
+      }));
+    },
+
+    async create({ authUserId, name, kind }) {
+      const userResult = await queryInTransaction<Row>(
+        pool,
+        `SELECT id FROM users WHERE auth_user_id = $1 AND status = 'active'`,
+        [authUserId],
+      );
+      const userRow = userResult.rows[0];
+      if (!userRow) throw new WorkspaceError('workspace.invalid', 400, 'Usuário ativo não encontrado.');
+
+      return withTransaction(pool, async (client) => {
+        const householdResult = await client.query<Row>(
+          `INSERT INTO households (name, kind, owner_user_id)
+           VALUES ($1, $2, $3)
+           RETURNING id, name, kind`,
+          [name, kind, kind === 'personal' ? userRow['id'] : null],
+        );
+        const household = householdResult.rows[0]!;
+        if (kind === 'shared') {
+          await client.query(
+            `INSERT INTO memberships (user_id, household_id, role, status)
+             VALUES ($1, $2, 'owner', 'active')`,
+            [userRow['id'], household['id']],
+          );
+        }
+        // Personal workspaces create the owner membership via V021 trigger.
+        return {
+          id: household['id'] as string,
+          name: household['name'] as string,
+          kind: household['kind'] as WorkspaceKind,
+          role: 'owner' as WorkspaceRole,
+        };
+      });
+    },
+
+    async listMembers({ authUserId, householdId }) {
+      await assertMembership(authUserId, householdId);
+      const result = await queryInTransaction<Row>(
+        pool,
+        `SELECT u.id AS user_id, COALESCE(u.name, u.email) AS name, u.email AS email, m.role AS role
+           FROM memberships m
+           JOIN users u ON u.id = m.user_id
+          WHERE m.household_id = $1 AND m.status = 'active'
+          ORDER BY (m.role = 'owner') DESC, u.name ASC`,
+        [householdId],
+      );
+      return result.rows.map((row) => ({
+        userId: row['user_id'] as string,
+        name: row['name'] as string,
+        email: row['email'] as string,
+        role: row['role'] as WorkspaceMember['role'],
+      }));
+    },
+
+    async removeMember({ authUserId, householdId, memberUserId }) {
+      const { role } = await assertActiveMembershipRole(authUserId, householdId, ['owner']);
+      if (role !== 'owner') {
+        throw new WorkspaceError('workspace.forbidden', 403, 'Somente o owner pode remover membros.');
+      }
+      await withTransaction(pool, async (client) => {
+        const householdResult = await client.query<Row>(
+          `SELECT kind, owner_user_id FROM households WHERE id = $1`,
+          [householdId],
+        );
+        const household = householdResult.rows[0];
+        if (!household) throw new WorkspaceError('workspace.not_found', 404, 'Workspace não encontrado.');
+        if (household['kind'] === 'personal') {
+          throw new WorkspaceError('workspace.personal', 400, 'Workspace pessoal não permite remoção de membros.');
+        }
+        const ownerResult = await client.query<Row>(
+          `SELECT COUNT(*)::int AS count FROM memberships WHERE household_id = $1 AND role = 'owner' AND status = 'active'`,
+          [householdId],
+        );
+        const ownerCount = (ownerResult.rows[0]!['count'] as number) ?? 0;
+        if (household['owner_user_id'] === memberUserId || ownerCount <= 1) {
+          const target = await client.query<Row>(
+            `SELECT role FROM memberships WHERE household_id = $1 AND user_id = $2 AND status = 'active'`,
+            [householdId, memberUserId],
+          );
+          if (target.rows[0]?.['role'] === 'owner') {
+            throw new WorkspaceError('workspace.last_owner', 400, 'Não é possível remover o último owner do workspace.');
+          }
+        }
+        await client.query(
+          `UPDATE memberships SET status = 'removed' WHERE household_id = $1 AND user_id = $2`,
+          [householdId, memberUserId],
+        );
+      });
+    },
+
+    async leave({ authUserId, householdId }) {
+      const { userId, role } = await assertMembership(authUserId, householdId);
+      await withTransaction(pool, async (client) => {
+        const householdResult = await client.query<Row>(
+          `SELECT kind, owner_user_id FROM households WHERE id = $1`,
+          [householdId],
+        );
+        const household = householdResult.rows[0];
+        if (!household) throw new WorkspaceError('workspace.not_found', 404, 'Workspace não encontrado.');
+        if (household['kind'] === 'personal' && household['owner_user_id'] === userId) {
+          throw new WorkspaceError('workspace.personal', 400, 'O owner não pode sair do workspace pessoal.');
+        }
+        if (role === 'owner') {
+          const ownerResult = await client.query<Row>(
+            `SELECT COUNT(*)::int AS count FROM memberships WHERE household_id = $1 AND role = 'owner' AND status = 'active'`,
+            [householdId],
+          );
+          const ownerCount = (ownerResult.rows[0]!['count'] as number) ?? 0;
+          if (ownerCount <= 1) {
+            throw new WorkspaceError('workspace.last_owner', 400, 'O último owner não pode sair do workspace.');
+          }
+        }
+        await client.query(
+          `UPDATE memberships SET status = 'removed' WHERE household_id = $1 AND user_id = $2`,
+          [householdId, userId],
+        );
+      });
+    },
+  };
+};
+
+export type { WorkspaceSummary };

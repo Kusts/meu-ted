@@ -164,6 +164,7 @@ export interface Profile {
   avatarColor: string;
   greetingStyle: "auto" | "minimal" | "verbose";
   updatedAt: string;
+  isAdmin?: boolean;
 }
 
 // ── Pending Operations (approvals) ───────────────────────────────

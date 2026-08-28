@@ -10,6 +10,8 @@ import { createLegacyPostgresCardStore } from "../cards/legacy-postgres.js";
 import { createPostgresCardStore } from "../cards/postgres.js";
 import { createPool } from "../db/pool.js";
 import { createPostgresContextTokenReplayGuard } from "../auth/context-token-replay-postgres.js";
+import { createPostgresWorkspaceAccessStore } from "../auth/workspace-access.js";
+import { createPostgresWorkspaceStore } from "../auth/workspaces-postgres.js";
 import { createPostgresAdoptionStore } from "../observability/adoption.js";
 import { loadConfig } from "../env.js";
 import { createInMemoryGoalStore } from "../goals/in-memory.js";
@@ -141,6 +143,8 @@ const start = async (): Promise<void> => {
         priceAlertStore: createInMemoryPriceAlertStore(),
         auth,
         adminEmails: cfg.adminEmails,
+        workspaceAccess: createPostgresWorkspaceAccessStore(pool),
+        workspaceStore: createPostgresWorkspaceStore(pool),
         llmConfigStore: createPostgresLlmConfigStore(pool),
         agentConnectionSecret: cfg.agentConnectionSecret,
         agentConfigToken: cfg.agentConfigToken,
@@ -229,6 +233,8 @@ const start = async (): Promise<void> => {
         adoptionStore,
         auth,
         adminEmails: cfg.adminEmails,
+        workspaceAccess: createPostgresWorkspaceAccessStore(pool),
+        workspaceStore: createPostgresWorkspaceStore(pool),
         llmConfigStore: createPostgresLlmConfigStore(pool),
         agentConnectionSecret: cfg.agentConnectionSecret,
         agentConfigToken: cfg.agentConfigToken,

@@ -70,7 +70,7 @@ describe("TedChat Component (Task 10)", () => {
     expect(await screen.findByText("Olá TED")).toBeInTheDocument();
     expect(await screen.findByText("Olá! Como posso ajudar hoje?")).toBeInTheDocument();
 
-    const input = screen.getByPlaceholderText("Digite sua mensagem para o TED…");
+    const input = screen.getByPlaceholderText("Pergunte sobre gastos, metas ou pagamentos…");
     await user.type(input, "Qual meu saldo?");
     await user.click(screen.getByRole("button", { name: /enviar mensagem/i }));
 

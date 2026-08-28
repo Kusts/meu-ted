@@ -55,10 +55,10 @@ export default function ProfilePage() {
   const { saveProfile } = useAppState();
   const { expireSession } = useSession();
 
-  const isAdminUser = Boolean(
-    (profile as unknown as { isAdmin?: boolean; role?: string }).isAdmin ||
-      (profile as unknown as { isAdmin?: boolean; role?: string }).role === "admin",
-  );
+const isAdminUser = Boolean(
+  profile.isAdmin ||
+    (profile as unknown as { isAdmin?: boolean; role?: string }).role === "admin",
+);
 
   const items = [
     ...BASE_PROFILE_ITEMS,

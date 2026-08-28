@@ -17,7 +17,7 @@ const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
 export const registerProfileRoutes = (
   app: FastifyInstance,
-  opts: { resolveToken: AuthResolver; profileStore: ProfileStore; idempotency?: IdempotencyStore },
+  opts: { resolveToken: AuthResolver; profileStore: ProfileStore; idempotency?: IdempotencyStore; adminEmails?: string[]; resolveSessionEmail?: (headers: Headers) => Promise<string | undefined> },
 ): void => {
   app.get('/profile', async (req, reply) => {
     const token = req.headers[DEVICE_TOKEN_HEADER];
@@ -33,7 +33,16 @@ export const registerProfileRoutes = (
       });
     }
     const existing = await opts.profileStore.get(ctx.householdId);
-    return reply.code(200).send({ profile: existing });
+    let email: string | undefined;
+    if (opts.resolveSessionEmail) {
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(',') : String(value));
+      }
+      email = await opts.resolveSessionEmail(headers).catch(() => undefined);
+    }
+    const isAdmin = Boolean(opts.adminEmails?.some((admin) => admin.toLowerCase() === (email ?? '').toLowerCase()));
+    return reply.code(200).send({ profile: existing ? { ...existing, isAdmin } : null });
   });
 
   app.patch('/profile', async (req, reply) => {
