@@ -39,4 +39,28 @@ describe("same-origin backend proxy", () => {
     expect(headers.get("cookie")).toBe("better-auth.session_token=old");
     expect(headers.get("origin")).toBe("https://pwa.example");
   });
+
+  it("rewrites localhost origin to the trusted production PWA origin", async () => {
+    const upstream = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const request = new Request("http://localhost:3000/api/backend/auth/sign-in/email", {
+      method: "POST",
+      headers: {
+        origin: "http://localhost:3000",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ email: "user@example.com", password: "secret" }),
+    });
+
+    await POST(request, { params: Promise.resolve({ path: ["auth", "sign-in", "email"] }) });
+
+    const [, init] = upstream.mock.calls[0] ?? [];
+    const headers = init?.headers as Headers;
+    expect(headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
+  });
 });

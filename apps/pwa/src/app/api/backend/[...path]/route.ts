@@ -21,14 +21,35 @@ function upstreamUrl(path: string[], search: string): string {
 function forwardHeaders(request: Request): Headers {
   const headers = new Headers();
   for (const name of [
-    "accept", "content-type", "cookie", "origin", "authorization",
+    "accept", "content-type", "cookie", "authorization",
     "x-device-token",
     "cache-control", "x-workspace-id", "idempotency-key",
   ]) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
+  // Spoof origin to production PWA host so upstream Better-Auth trustedOrigins check passes
+  // when testing locally via /api/backend proxy (bypasses browser CORS and origin allowlist).
+  // The proxy itself is same-origin, so browser CORS is not involved.
+  const origin = request.headers.get("origin");
+  if (origin && isLocalOrigin(origin)) {
+    headers.set("origin", "https://pi-finance-pwa.walissonead.workers.dev");
+  } else if (origin) {
+    headers.set("origin", origin);
+  }
   return headers;
+}
+
+function isLocalOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1")
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function proxy(request: Request, context: RouteContext): Promise<NextResponse> {

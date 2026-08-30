@@ -27,7 +27,9 @@ export function isStandalonePwa(): boolean {
 async function getRegistration(): Promise<ServiceWorkerRegistration | null> {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return null;
   const existing = await navigator.serviceWorker.getRegistration();
-  const registration = existing ?? await navigator.serviceWorker.register("/sw.js");
+  if (!existing) {
+    await navigator.serviceWorker.register("/sw.js");
+  }
   return navigator.serviceWorker.ready;
 }
 

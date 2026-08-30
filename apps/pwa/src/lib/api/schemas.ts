@@ -285,6 +285,7 @@ export const workspaceSchema = z.object({
   name: z.string(),
   kind: z.enum(["personal", "shared"]),
   role: z.enum(["owner", "member"]),
+  status: z.enum(["active", "archived"]).default("active"),
 });
 export const workspaceListSchema = listResponse(workspaceSchema);
 export const workspaceMemberSchema = z.object({

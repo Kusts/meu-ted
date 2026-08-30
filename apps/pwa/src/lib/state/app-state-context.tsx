@@ -424,37 +424,44 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       const token = getAuthToken();
       if (!token) return;
 
-      // 1. Migrate v1 → v2 (reads v1 localStorage, writes v2 IndexedDB, deletes v1)
-      await migrateV1toV2(token);
-
-      // 2. Preload existing v2 snapshot for offline fallback
-      const snapshotPreload = await preloadSnapshot(token);
-
-      // 3. Run bootstrap with preloaded snapshot data
-      await runBootstrap(token, bootstrapDispatch, expireSession, snapshotPreload);
-
-      if (cancelled) return;
-
-      // Profile and insights are fetched inside runBootstrap but
-      // handled separately by the provider (not in reducer).
-      // Refresh them after bootstrap completes.
       try {
-        const profileResult = await endpoints.fetchProfile();
-        setProfile(profileResult);
-      } catch {
-        // profile failure is non-fatal
-      }
-      try {
-        const insights = await endpoints.fetchQuickInsights();
-        setQuickInsights(insights);
-      } catch {
-        setQuickInsights([]);
-      }
-      try {
-        const summary = await endpoints.fetchDashboardSummary();
-        setDashboardSummary(summary);
-      } catch {
-        setDashboardSummary(null);
+        // 1. Migrate v1 → v2 (reads v1 localStorage, writes v2 IndexedDB, deletes v1)
+        await migrateV1toV2(token).catch(() => {});
+
+        // 2. Preload existing v2 snapshot for offline fallback
+        const snapshotPreload = await preloadSnapshot(token).catch(() => ({}));
+
+        // 3. Run bootstrap with preloaded snapshot data
+        await runBootstrap(token, bootstrapDispatch, expireSession, snapshotPreload);
+
+        if (cancelled) return;
+
+        // Profile and insights are fetched inside runBootstrap but
+        // handled separately by the provider (not in reducer).
+        // Refresh them after bootstrap completes.
+        try {
+          const profileResult = await endpoints.fetchProfile();
+          if (!cancelled) setProfile(profileResult);
+        } catch {
+          // profile failure is non-fatal
+        }
+        try {
+          const insights = await endpoints.fetchQuickInsights();
+          if (!cancelled) setQuickInsights(insights);
+        } catch {
+          if (!cancelled) setQuickInsights([]);
+        }
+        try {
+          const summary = await endpoints.fetchDashboardSummary();
+          if (!cancelled) setDashboardSummary(summary);
+        } catch {
+          if (!cancelled) setDashboardSummary(null);
+        }
+      } catch (cause) {
+        if (!cancelled) {
+          setLoading(false);
+          setError(cause instanceof Error ? cause.message : "Erro ao carregar dados.");
+        }
       }
     };
 

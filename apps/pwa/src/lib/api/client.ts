@@ -57,6 +57,8 @@ export function getAuthToken(): string | undefined {
   }
 }
 
+export const DEFAULT_API_TIMEOUT_MS = 15_000;
+
 export interface ApiClientOptions extends RequestInit {
   /** X-Device-Token header override (takes precedence over env) */
   token?: string;
@@ -64,6 +66,8 @@ export interface ApiClientOptions extends RequestInit {
   idempotencyKey?: string;
   /** Optional runtime response validation for protected API boundaries. */
   responseSchema?: ZodType<unknown>;
+  /** Request timeout in milliseconds. Set to 0 to disable. Defaults to 15000ms. */
+  timeoutMs?: number;
 }
 
 export class ApiError extends Error {
@@ -81,7 +85,15 @@ export async function apiFetch<T>(
   path: string,
   options: ApiClientOptions = {},
 ): Promise<T> {
-  const { headers: optsHeaders, token, idempotencyKey, responseSchema, ...rest } = options;
+  const {
+    headers: optsHeaders,
+    token,
+    idempotencyKey,
+    responseSchema,
+    timeoutMs = DEFAULT_API_TIMEOUT_MS,
+    signal: callerSignal,
+    ...rest
+  } = options;
   const resolvedToken = token ?? getAuthToken();
 
   const requestHeaders: Record<string, string> = {
@@ -96,41 +108,65 @@ export async function apiFetch<T>(
     requestHeaders["idempotency-key"] = idempotencyKey;
   }
 
-  const res = await fetch(`${baseUrl() ?? ""}${path}`, {
-    ...rest,
-    // Better-Auth sets a SameSite=None session cookie; the auth endpoints
-    // (/auth/sign-in, /auth/devices/register) require it to identify the
-    // logged-in session. Without credentials:'include' the cookie never goes
-    // cross-origin and register stays blocked (403) even after a valid login.
-    credentials: "include",
-    headers: requestHeaders,
-  });
-
-  if (res.status === 401) {
-    let body: Record<string, unknown> = {};
-    try { body = await res.json(); } catch { /* noop */ }
-    closeAllSockets("session expired");
-    throw new ApiError(
-      401,
-      (body.code as string) ?? "auth.error",
-      (body.message as string) ?? "Token inválido",
-    );
+  const controller = new AbortController();
+  let callerAbortHandler: (() => void) | undefined;
+  if (callerSignal) {
+    callerAbortHandler = () => controller.abort();
+    if (callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener("abort", callerAbortHandler, { once: true });
   }
 
-  if (res.status === 204) return undefined as T;
+  const request = async (): Promise<T> => {
+    const res = await fetch(`${baseUrl() ?? ""}${path}`, {
+      ...rest,
+      signal: controller.signal,
+      credentials: "include",
+      headers: requestHeaders,
+    });
 
-  if (!res.ok) {
-    let body: Record<string, unknown> = {};
-    try { body = await res.json(); } catch { /* noop */ }
-    throw new ApiError(
-      res.status,
-      (body.code as string) ?? "error",
-      (body.message as string) ?? `HTTP ${res.status}`,
-    );
+    if (res.status === 401) {
+      let body: Record<string, unknown> = {};
+      try { body = await res.json(); } catch { /* noop */ }
+      closeAllSockets("session expired");
+      throw new ApiError(
+        401,
+        (body.code as string) ?? "auth.error",
+        (body.message as string) ?? "Token inválido",
+      );
+    }
+
+    if (res.status === 204) return undefined as T;
+
+    if (!res.ok) {
+      let body: Record<string, unknown> = {};
+      try { body = await res.json(); } catch { /* noop */ }
+      throw new ApiError(
+        res.status,
+        (body.code as string) ?? "error",
+        (body.message as string) ?? `HTTP ${res.status}`,
+      );
+    }
+
+    const payload: unknown = await res.json();
+    return (responseSchema ? responseSchema.parse(payload) : payload) as T;
+  };
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    if (timeoutMs <= 0) return await request();
+    return await new Promise<T>((resolve, reject) => {
+      timeoutId = setTimeout(() => {
+        controller.abort();
+        reject(new ApiError(408, "network.timeout", "Tempo limite de conexão excedido."));
+      }, timeoutMs);
+      void request().then(resolve, reject);
+    });
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (callerSignal && callerAbortHandler) {
+      callerSignal.removeEventListener("abort", callerAbortHandler);
+    }
   }
-
-  const payload: unknown = await res.json();
-  return (responseSchema ? responseSchema.parse(payload) : payload) as T;
 }
 
 /** Convenience: GET with explicit token */

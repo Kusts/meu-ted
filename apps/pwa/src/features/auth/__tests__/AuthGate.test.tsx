@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { AuthGate } from "../AuthGate";
 import { useSession } from "@/lib/auth/session-context";
-import { ApiError } from "@/lib/api/client";
 
 // ─── localStorage mock ──────────────────────────────────────────────────────
 const store: Record<string, string> = {};

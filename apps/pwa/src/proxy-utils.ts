@@ -37,18 +37,32 @@ export function generateNonce(): string {
  * Build the Content-Security-Policy value for a given nonce.
  *
  * - script-src: same-origin Next chunks + nonce-based inline scripts (no unsafe-inline)
+ *   and optional unsafe-eval for the webpack development runtime
  * - style-src: same-origin stylesheets + unsafe-inline for Tailwind-generated styles
  * - worker-src: same-origin service worker
- * - connect-src: self + production API (canonical)
+ * - connect-src: self + production API (canonical), plus local API origins in development
  * - frame-ancestors: none (equivalent to X-Frame-Options DENY)
  * - base-uri: self
  */
-export function buildCspValue(nonce: string): string {
-  return [
+export function buildCspValue(nonce: string, allowUnsafeEval = false): string {
+  const scriptSource = [
     `script-src 'self' 'nonce-${nonce}'`,
+    ...(allowUnsafeEval ? ["'unsafe-eval'"] : []),
+  ].join(" ");
+  const connectSources = [
+    "connect-src 'self'",
+    PRODUCTION_API_ORIGIN,
+    PRODUCTION_AGENT_ORIGIN,
+    ...(allowUnsafeEval
+      ? ["http://localhost:3001", "http://127.0.0.1:3001"]
+      : []),
+  ].join(" ");
+
+  return [
+    scriptSource,
     "style-src 'self' 'unsafe-inline'",
     "worker-src 'self'",
-    `connect-src 'self' ${PRODUCTION_API_ORIGIN} ${PRODUCTION_AGENT_ORIGIN}`,
+    connectSources,
     "frame-ancestors 'none'",
     "base-uri 'self'",
   ].join("; ");

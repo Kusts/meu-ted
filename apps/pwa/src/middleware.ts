@@ -37,11 +37,19 @@ export const runtime = "experimental-edge";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function middleware(request: NextRequest) {
   const nonce = generateNonce();
+  const csp = buildCspValue(nonce, process.env.NODE_ENV === "development");
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("Content-Security-Policy", csp);
 
-  const response = NextResponse.next();
+  const response = NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
 
   // Set CSP with nonce
-  response.headers.set("Content-Security-Policy", buildCspValue(nonce));
+  response.headers.set("Content-Security-Policy", csp);
 
   // Expose nonce to client (React uses it for <script> nonce injection)
   response.headers.set("x-nonce", nonce);

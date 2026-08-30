@@ -8,7 +8,7 @@
  */
 import "fake-indexeddb/auto";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createCommands, OfflineWriteError, type Commands, type CommandsContext } from "../commands";
+import { createCommands, OfflineWriteError, type CommandsContext } from "../commands";
 import * as endpoints from "@/lib/api/endpoints";
 import type { AppStateAction } from "../state-reducer";
 import { ApiError } from "@/lib/api/client";

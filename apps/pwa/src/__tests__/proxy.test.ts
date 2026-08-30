@@ -55,6 +55,18 @@ describe("buildCspValue", () => {
     expect(csp).toContain(`script-src 'self' 'nonce-${nonce}'`);
   });
 
+  it("allows webpack eval only when explicitly enabled for development", () => {
+    const developmentCsp = buildCspValue(nonce, true);
+    const productionCsp = buildCspValue(nonce, false);
+
+    expect(developmentCsp).toContain("'unsafe-eval'");
+    expect(developmentCsp).toContain("http://localhost:3001");
+    expect(developmentCsp).toContain("http://127.0.0.1:3001");
+    expect(productionCsp).not.toContain("'unsafe-eval'");
+    expect(productionCsp).not.toContain("http://localhost:3001");
+    expect(productionCsp).not.toContain("http://127.0.0.1:3001");
+  });
+
   it("includes connect-src with self and production API", () => {
     const csp = buildCspValue(nonce);
     expect(csp).toContain("connect-src");

@@ -18,7 +18,6 @@ import {
 STORE_NAME,
   V2_ENVELOPE_KEY,
 } from "../snapshot-db";
-import type { DomainKey } from "../snapshot-store";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -176,6 +175,55 @@ describe("PWA State Snapshot DB — snapshot-db.ts", () => {
       const serialized = JSON.stringify(raw);
       expect(serialized).not.toContain(TEST_TOKEN);
       expect((raw as { ownerFingerprint?: string } | null)?.ownerFingerprint).not.toBe(TEST_TOKEN);
+    });
+
+    it("3.5 rejects when an IndexedDB transaction never completes", async () => {
+      vi.useFakeTimers();
+      vi.spyOn(crypto.subtle, "digest").mockResolvedValue(new ArrayBuffer(32));
+      const db = {
+        objectStoreNames: { contains: () => true },
+        transaction: vi.fn(() => ({
+          objectStore: vi.fn(() => ({
+            get: vi.fn(() => ({})),
+            put: vi.fn(),
+          })),
+          oncomplete: null,
+          onerror: null,
+          onabort: null,
+        })),
+        close: vi.fn(),
+      } as unknown as IDBDatabase;
+
+      vi.spyOn(indexedDB, "open").mockImplementation(() => {
+        const request = {
+          result: db,
+          onupgradeneeded: null,
+          onsuccess: null,
+          onerror: null,
+          onblocked: null,
+        } as unknown as IDBOpenDBRequest;
+        queueMicrotask(() => request.onsuccess?.(new Event("success")));
+        return request;
+      });
+
+      const pending = writeV2Snapshot(TEST_TOKEN, "accounts", [] as never);
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.runAllTicks();
+      await vi.advanceTimersByTimeAsync(0);
+      const testTimeout = Symbol("test-timeout");
+      const observed = Promise.race([
+        pending.then(() => "resolved").catch((error) => error),
+        new Promise<typeof testTimeout>((resolve) => {
+          setTimeout(() => resolve(testTimeout), 6000);
+        }),
+      ]);
+
+      await vi.advanceTimersByTimeAsync(6000);
+      const result = await observed;
+      expect(result).not.toBe(testTimeout);
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error).message).toContain("timed out");
     });
   });
 });

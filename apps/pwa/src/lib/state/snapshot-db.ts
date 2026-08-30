@@ -39,6 +39,7 @@ export interface SnapshotDomains {
 export const DB_NAME = "pi-finance-snapshot";
 export const STORE_NAME = "snapshots";
 export const V2_ENVELOPE_KEY = "v2";
+export const SNAPSHOT_OPERATION_TIMEOUT_MS = 5_000;
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -51,18 +52,41 @@ interface V2Envelope {
 
 // ── Database lifecycle ─────────────────────────────────────────────
 
-/** Open (or create) the IndexedDB snapshot database. */
-export function openSnapshotDb(): Promise<IDBDatabase> {
+/** Open (or create) the IndexedDB snapshot database with safety timeout. */
+export function openSnapshotDb(timeoutMs = 5000): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("IndexedDB is not supported"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      reject(new Error("IndexedDB open timed out"));
+    }, timeoutMs);
+
+    try {
+      const request = indexedDB.open(DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME);
+        }
+      };
+      request.onsuccess = () => {
+        clearTimeout(timer);
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        clearTimeout(timer);
+        reject(request.error);
+      };
+      request.onblocked = () => {
+        clearTimeout(timer);
+        reject(new Error("IndexedDB database blocked"));
+      };
+    } catch (err) {
+      clearTimeout(timer);
+      reject(err);
+    }
   });
 }
 
@@ -81,27 +105,66 @@ async function fingerprint(token: string): Promise<string> {
 
 async function readV2Envelope(): Promise<V2Envelope | null> {
   const db = await openSnapshotDb();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      db.close();
+      reject(new Error("IndexedDB transaction timed out"));
+    }, SNAPSHOT_OPERATION_TIMEOUT_MS);
+    const finish = (value: V2Envelope | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const fail = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
     const tx = db.transaction(STORE_NAME, "readonly");
     const store = tx.objectStore(STORE_NAME);
     const req = store.get(V2_ENVELOPE_KEY);
     req.onsuccess = () => {
       const envelope = req.result as V2Envelope | undefined;
-      resolve(envelope ?? null);
+      finish(envelope ?? null);
     };
-    req.onerror = () => resolve(null);
+    req.onerror = () => finish(null);
     tx.oncomplete = () => db.close();
+    tx.onerror = () => fail(tx.error ?? new Error("IndexedDB transaction failed"));
+    tx.onabort = () => fail(tx.error ?? new Error("IndexedDB transaction aborted"));
   });
 }
 
 async function writeV2Envelope(env: V2Envelope): Promise<void> {
   const db = await openSnapshotDb();
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      db.close();
+      reject(new Error("IndexedDB transaction timed out"));
+    }, SNAPSHOT_OPERATION_TIMEOUT_MS);
+    const finish = (error?: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
     const tx = db.transaction(STORE_NAME, "readwrite");
     const store = tx.objectStore(STORE_NAME);
-    store.put(env, V2_ENVELOPE_KEY);
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
+    try {
+      store.put(env, V2_ENVELOPE_KEY);
+      tx.oncomplete = () => { db.close(); finish(); };
+      tx.onerror = () => { db.close(); finish(tx.error); };
+      tx.onabort = () => { db.close(); finish(tx.error); };
+    } catch (error) {
+      db.close();
+      finish(error);
+    }
   });
 }
 
@@ -109,11 +172,29 @@ async function writeV2Envelope(env: V2Envelope): Promise<void> {
 export async function deleteV2Snapshot(): Promise<void> {
   const db = await openSnapshotDb();
   return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      db.close();
+      resolve();
+    }, SNAPSHOT_OPERATION_TIMEOUT_MS);
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
     const tx = db.transaction(STORE_NAME, "readwrite");
     const store = tx.objectStore(STORE_NAME);
-    store.delete(V2_ENVELOPE_KEY);
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); resolve(); }; // swallow
+    try {
+      store.delete(V2_ENVELOPE_KEY);
+      tx.oncomplete = () => { db.close(); finish(); };
+      tx.onerror = () => { db.close(); finish(); }; // swallow
+      tx.onabort = () => { db.close(); finish(); }; // swallow
+    } catch {
+      db.close();
+      finish();
+    }
   });
 }
 

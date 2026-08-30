@@ -34,6 +34,23 @@ describe("middleware", () => {
     expect(csp).toContain(`'nonce-${nonce}'`);
   });
 
+  it("forwards the nonce and CSP to the rendered request", () => {
+    const spy = vi.spyOn(NextResponse, "next");
+
+    middleware(mockRequest());
+
+    const options = spy.mock.calls[0]?.[0] as {
+      request?: { headers?: Headers };
+    };
+    const requestHeaders = options.request?.headers;
+    const nonce = requestHeaders?.get("x-nonce");
+
+    expect(nonce).toMatch(/^[0-9a-f]{32}$/);
+    expect(requestHeaders?.get("Content-Security-Policy")).toContain(
+      `'nonce-${nonce}'`,
+    );
+  });
+
   it("sets all SECURITY_HEADERS on response", () => {
     const response = middleware(mockRequest());
     for (const [key, value] of Object.entries(SECURITY_HEADERS)) {

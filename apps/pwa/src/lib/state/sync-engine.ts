@@ -151,7 +151,7 @@ export async function runBootstrap(
 
   // Await all v2 snapshot writes before signalling completion.
   // This guarantees snapshot is consistent when UI loads.
-  await Promise.all(savePromises);
+  await Promise.allSettled(savePromises);
 
   dispatch({ type: "BOOTSTRAP_COMPLETE" });
 }

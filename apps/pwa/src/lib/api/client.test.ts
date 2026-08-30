@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { apiFetch, apiGet, apiPost, getAuthToken, isApiConfigured } from "./client";
+import { apiFetch, apiGet, apiPost, getAuthToken, isApiConfigured, ApiError } from "./client";
 
 describe("apiFetch JSON content-type", () => {
   afterEach(() => {
@@ -74,8 +74,9 @@ describe("api client base URL resolution", () => {
   });
 });
 
-describe("apiFetch error and edge handling", () => {
+describe("apiFetch error, timeout and edge handling", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
@@ -113,6 +114,51 @@ describe("apiFetch error and edge handling", () => {
       new Response("plain text", { status: 503, headers: { "Content-Type": "text/plain" } }),
     );
     await expect(apiFetch("/x")).rejects.toMatchObject({ status: 503, code: "error", message: "HTTP 503" });
+  });
+
+  it("times out and throws 408 ApiError when fetch hangs beyond timeoutMs", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_input, init) => new Promise((_resolve, reject) => {
+        if (init?.signal) {
+          init.signal.addEventListener("abort", () => {
+            const err = new DOMException("The operation was aborted.", "AbortError");
+            reject(err);
+          });
+        }
+      }),
+    );
+
+    await expect(apiFetch("/hanging-endpoint", { timeoutMs: 50 })).rejects.toThrow(ApiError);
+    await expect(apiFetch("/hanging-endpoint", { timeoutMs: 50 })).rejects.toMatchObject({
+      status: 408,
+      code: "network.timeout",
+    });
+  });
+
+  it("times out when the response body never resolves", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    const response = {
+      status: 200,
+      ok: true,
+      json: vi.fn(() => new Promise<never>(() => {})),
+    } as unknown as Response;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+
+    const pending = apiFetch("/hanging-body", { timeoutMs: 50 });
+    const testTimeout = Symbol("test-timeout");
+    const observed = Promise.race([
+      pending.then(() => "resolved").catch((error) => error),
+      new Promise<typeof testTimeout>((resolve) => {
+        setTimeout(() => resolve(testTimeout), 100);
+      }),
+    ]);
+
+    await vi.advanceTimersByTimeAsync(100);
+    const result = await observed;
+    expect(result).not.toBe(testTimeout);
+    expect(result).toMatchObject({ status: 408, code: "network.timeout" });
   });
 
   it("sets idempotency-key header when provided", async () => {

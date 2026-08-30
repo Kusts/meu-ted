@@ -13,9 +13,8 @@ import {
   type AppStateSnapshot,
   ALL_DOMAIN_KEYS,
   ESSENTIAL_DOMAIN_KEYS,
-  type DomainKey,
 } from "../state-reducer";
-import type { Account, Category } from "../types";
+import type { Account } from "../types";
 
 function startState(): AppStateSnapshot {
   return appStateReducer(undefined, { type: "BOOTSTRAP_START" });
