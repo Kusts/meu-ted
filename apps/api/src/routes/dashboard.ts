@@ -14,10 +14,15 @@ export const registerDashboardRoutes = (
   app: FastifyInstance,
   opts: { store: ReadModelStore; resolveToken: AuthResolver; clock?: () => Date },
 ): void => {
-  app.get('/dashboard/month-summary', async (req, reply) => {
+  const resolve = async (req: import('fastify').FastifyRequest) => {
+    if (req.authenticatedContext) return req.authenticatedContext;
     const token = req.headers[DEVICE_TOKEN_HEADER];
+    return opts.resolveToken(Array.isArray(token) ? token[0] : token);
+  };
+
+  app.get('/dashboard/month-summary', async (req, reply) => {
     let ctx;
-    try { ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token); }
+    try { ctx = await resolve(req); }
     catch (e) {
       const err = e as { statusCode?: number; code?: string; message?: string };
       return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.error', message: err.message ?? 'unauthorized' });
@@ -48,9 +53,8 @@ export const registerDashboardRoutes = (
   });
 
   app.get('/dashboard/summary', async (req, reply) => {
-    const token = req.headers[DEVICE_TOKEN_HEADER];
     let ctx;
-    try { ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token); }
+    try { ctx = await resolve(req); }
     catch (e) {
       const err = e as { statusCode?: number; code?: string; message?: string };
       return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.error', message: err.message ?? 'unauthorized' });

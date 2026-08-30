@@ -23,6 +23,9 @@ export const ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
   { id: 'auth-devices-revoke', method: 'POST', path: '/auth/devices/revoke', auth: 'device', ownership: 'none' },
   { id: 'workspaces-list', method: 'GET', path: '/workspaces', auth: 'session', ownership: 'none' },
   { id: 'workspaces-create', method: 'POST', path: '/workspaces', auth: 'session', ownership: 'none' },
+  { id: 'workspace-lifecycle-rename', method: 'PATCH', path: '/workspaces/:householdId', auth: 'session', ownership: 'owner' },
+  { id: 'workspace-lifecycle-archive', method: 'POST', path: '/workspaces/:householdId/archive', auth: 'session', ownership: 'owner' },
+  { id: 'workspace-lifecycle-restore', method: 'POST', path: '/workspaces/:householdId/restore', auth: 'session', ownership: 'owner' },
   { id: 'workspace-members-list', method: 'GET', path: '/workspaces/:householdId/members', auth: 'session', ownership: 'membership' },
   { id: 'workspace-member-remove', method: 'DELETE', path: '/workspaces/:householdId/members/:userId', auth: 'session', ownership: 'owner' },
   { id: 'workspace-leave', method: 'POST', path: '/workspaces/:householdId/leave', auth: 'session', ownership: 'membership' },
@@ -126,7 +129,7 @@ export const ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
 
 export const ROUTE_COVERAGE_IDS = [
   'auth-provider', 'auth-bridge-context', 'auth-invites-create', 'auth-invites-accept', 'auth-reconnect', 'auth-reconnect-token', 'auth-devices-me', 'auth-devices-register', 'auth-devices-revoke',
-  'workspaces-list', 'workspaces-create', 'workspace-members-list', 'workspace-member-remove', 'workspace-leave',
+  'workspaces-list', 'workspaces-create', 'workspace-lifecycle-rename', 'workspace-lifecycle-archive', 'workspace-lifecycle-restore', 'workspace-members-list', 'workspace-member-remove', 'workspace-leave',
   'ownership-transfer-create', 'ownership-transfer-accept', 'accounts-list', 'accounts-details', 'accounts-create', 'accounts-update', 'accounts-deactivate',
   'audit-logs-list', 'budgets-list', 'budgets-create', 'budgets-update', 'budgets-check', 'budgets-trends', 'cards-accounts',
   'cards-statements', 'cards-statement-details', 'cards-purchases-create', 'cards-installments-create', 'cards-recurring-list', 'cards-recurring-create',
@@ -141,5 +144,3 @@ export const ROUTE_COVERAGE_IDS = [
   'admin-agent-llm-config', 'admin-agent-llm-sync', 'admin-agent-llm-provider-toggle', 'admin-agent-llm-model-toggle', 'admin-agent-llm-models-create', 'admin-agent-llm-activate', 'admin-agent-llm-rollout', 'admin-agent-llm-security-epoch', 'admin-agent-llm-test',
   'internal-agent-llm-config', 'internal-agent-llm-relay', 'auth-agent-token', 'auth-agent-token-consume', 'internal-agent-consume-token', 'health',
 ] as const;
-
-

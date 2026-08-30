@@ -89,6 +89,28 @@ describe('CORS', () => {
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
   });
 
+  it('allows local PWA origins by default in development', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'development';
+    delete process.env.CORS_ORIGIN;
+
+    try {
+      for (const origin of ['http://localhost:3000', 'http://127.0.0.1:3000']) {
+        const app = buildTestApp().app;
+        const res = await app.inject({
+          method: 'GET',
+          url: '/health',
+          headers: { origin },
+        });
+        expect(res.headers['access-control-allow-origin']).toBe(origin);
+        expect(res.headers['access-control-allow-credentials']).toBe('true');
+      }
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
   it('returns 204 for preflight requests with matching origin', async () => {
     process.env.CORS_ORIGIN = 'https://pi.example.com';
     const app = buildTestApp().app;

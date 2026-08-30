@@ -44,6 +44,14 @@ describe('API route authz inventory', () => {
     expect(ROUTE_INVENTORY.every(({ auth }) => ['public', 'public-denied', 'device', 'workspace', 'session', 'admin', 'internal'].includes(auth))).toBe(true);
   });
 
+  it('declares workspace lifecycle mutations as owner-only session routes', () => {
+    expect(ROUTE_INVENTORY.filter(({ id }) => id.startsWith('workspace-lifecycle-'))).toEqual([
+      { id: 'workspace-lifecycle-rename', method: 'PATCH', path: '/workspaces/:householdId', auth: 'session', ownership: 'owner' },
+      { id: 'workspace-lifecycle-archive', method: 'POST', path: '/workspaces/:householdId/archive', auth: 'session', ownership: 'owner' },
+      { id: 'workspace-lifecycle-restore', method: 'POST', path: '/workspaces/:householdId/restore', auth: 'session', ownership: 'owner' },
+    ]);
+  });
+
   it.each(ROUTE_INVENTORY.filter(({ auth }) => auth === 'device'))('requires device authentication: $method $path', async (entry) => {
     const testApp = buildTestApp();
     await testApp.app.ready();
@@ -82,6 +90,8 @@ describe('API route authz inventory', () => {
     await testApp.app.ready();
     const payload = entry.path === '/auth/invites'
       ? { householdId: HOUSEHOLD_A, email: 'target@example.test', role: 'member', expiresAt: '2030-01-01T00:00:00.000Z' }
+      : entry.path === '/workspaces/:householdId'
+        ? { name: 'Renamed workspace' }
       : { toUserId: 'target' };
     const response = await testApp.app.inject({
       method: entry.method as 'POST',
@@ -130,6 +140,9 @@ describe('route composition invariant (P0.2)', () => {
     'workspace-members-list',
     'workspace-member-remove',
     'workspace-leave',
+    'workspace-lifecycle-rename',
+    'workspace-lifecycle-archive',
+    'workspace-lifecycle-restore',
     'admin-agent-llm-config',
     'admin-agent-llm-sync',
     'admin-agent-llm-provider-toggle',

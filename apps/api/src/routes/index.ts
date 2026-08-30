@@ -177,6 +177,21 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       const authHeader = request.headers.authorization;
       if (!authHeader || !authHeader.startsWith("Bearer ")) return;
       const token = authHeader.slice("Bearer ".length).trim();
+      // Only treat as delegated when the payload declares the delegation
+      // issuer; session tokens from Better Auth must keep flowing to the
+      // normal session/device resolution path.
+      let headerPayload: string | undefined;
+      try {
+        const [, payload] = token.split(".");
+        if (payload) {
+          const json = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { iss?: string };
+          if (json.iss === "pi-agent") headerPayload = payload;
+        }
+      } catch {
+        headerPayload = undefined;
+      }
+      if (!headerPayload) return;
+
       let claims: import("../auth/delegated-token.js").DelegatedTurnClaims;
       try {
         const { verifyDelegatedTurnToken } = await import("../auth/delegated-token.js");
@@ -455,6 +470,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       registerWorkspaceRoutes(app, {
         auth: deps.auth,
         store: deps.workspaceStore,
+        idempotency,
         ...(deps.workspaceAccess ? { workspaceAccess: deps.workspaceAccess } : {}),
       });
     }

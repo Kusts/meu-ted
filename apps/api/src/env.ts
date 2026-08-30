@@ -57,6 +57,8 @@ export type AppConfig = {
   agentAuthServiceToken: string;
   agentRuntimeOrigin: string;
   agentRuntimeAdminToken: string;
+  inviteDeliveryUrl: string | null;
+  inviteDeliveryToken: string | null;
 };
 
 export const loadConfig = (): AppConfig => {
@@ -98,5 +100,7 @@ export const loadConfig = (): AppConfig => {
     agentAuthServiceToken: process.env.AGENT_AUTH_SERVICE_TOKEN?.trim() || 'dev-agent-auth-service-token-32-chars!',
     agentRuntimeOrigin: process.env.AGENT_RUNTIME_ORIGIN?.trim() || 'https://pi-finance-agent.walissonead.workers.dev',
     agentRuntimeAdminToken: process.env.AGENT_RUNTIME_ADMIN_TOKEN?.trim() || 'dev-agent-runtime-admin-token-32-chars!',
+    inviteDeliveryUrl: process.env.INVITE_DELIVERY_URL?.trim() || null,
+    inviteDeliveryToken: process.env.INVITE_DELIVERY_TOKEN?.trim() || null,
   };
 };

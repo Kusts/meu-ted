@@ -1,51 +1,44 @@
-import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { Pool } from 'pg';
 import { getBetterAuthSessionContext, type createBetterAuth } from './better-auth.js';
-import { withTransaction, queryInTransaction } from '../db/pool.js';
 import './request-context.js';
 import type { ReconnectTokenStore } from './reconnect-tokens.js';
 import type { ReconnectSocketRegistry } from './reconnect-sockets.js';
 import type { WorkspaceAccessStore } from './workspace-access.js';
+import { DomainError } from '../writes/errors.js';
+import { createInMemoryIdempotencyStore, requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
 
+
+export type {
+  WorkspaceKind,
+  WorkspaceMember,
+  WorkspaceRole,
+  WorkspaceStatus,
+  WorkspaceStore,
+  WorkspaceSummary,
+} from './workspaces-store.js';
+export {
+  WorkspaceError,
+  createInMemoryWorkspaceStore,
+} from './workspaces-store.js';
+import {
+  type WorkspaceStore,
+  type WorkspaceStatus,
+  WorkspaceError,
+} from './workspaces-store.js';
 
 type BetterAuth = ReturnType<typeof createBetterAuth>;
-export type WorkspaceKind = 'personal' | 'shared';
-export type WorkspaceRole = 'owner' | 'member';
 
-export type WorkspaceSummary = {
-  id: string;
-  name: string;
-  kind: WorkspaceKind;
-  role: WorkspaceRole;
+const WORKSPACE_CREATE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
+
+// Workspace creation does not have a persistent workspace ID yet, but the
+// Postgres idempotency store requires a valid UUID for operation_records.workspace_id.
+// Derive a deterministic synthetic UUID from the authenticated user and creation namespace.
+const getCreationSyntheticWorkspaceId = (authUserId: string): string => {
+  const hash = createHash('sha256').update(`${WORKSPACE_CREATE_NAMESPACE}:workspace.create:${authUserId}`).digest('hex');
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 };
-
-export type WorkspaceMember = {
-  userId: string;
-  name: string;
-  email: string;
-  role: WorkspaceRole;
-};
-
-export type WorkspaceStore = {
-  list(authUserId: string): Promise<WorkspaceSummary[]>;
-  create(input: { authUserId: string; name: string; kind: WorkspaceKind }): Promise<WorkspaceSummary>;
-  listMembers(input: { authUserId: string; householdId: string }): Promise<WorkspaceMember[]>;
-  removeMember(input: { authUserId: string; householdId: string; memberUserId: string }): Promise<void>;
-  leave(input: { authUserId: string; householdId: string }): Promise<void>;
-};
-
-export class WorkspaceError extends Error {
-  constructor(
-    readonly code: 'workspace.not_found' | 'workspace.forbidden' | 'workspace.personal' | 'workspace.last_owner' | 'workspace.invalid',
-    readonly statusCode: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'WorkspaceError';
-  }
-}
 
 const workspaceId = z.string().uuid();
 const workspaceParams = z.object({ householdId: workspaceId });
@@ -61,7 +54,10 @@ export const registerWorkspaceRoutes = (app: FastifyInstance, opts: {
   workspaceAccess?: WorkspaceAccessStore;
   reconnectTokens?: ReconnectTokenStore;
   reconnectSockets?: ReconnectSocketRegistry;
+  idempotency?: IdempotencyStore;
 }): void => {
+
+  const idempotency = opts.idempotency ?? createInMemoryIdempotencyStore();
 
   const session = async (request: FastifyRequest, reply: FastifyReply): Promise<{ userId: string; sessionId: string } | undefined> => {
     try {
@@ -74,6 +70,52 @@ export const registerWorkspaceRoutes = (app: FastifyInstance, opts: {
     } catch {
       await reply.code(401).send({ code: 'auth.invalid_session', message: 'authenticated session required' });
       return undefined;
+    }
+  };
+
+  const requireOwnerAccess = async (userId: string, householdId: string, reply: FastifyReply): Promise<boolean> => {
+    if (!opts.workspaceAccess) return true;
+    const access = await opts.workspaceAccess.resolve(userId, householdId);
+    if (!access || access.role !== 'owner') {
+      await reply.code(403).send({ code: 'workspace.forbidden', message: 'only an owner can manage this workspace' });
+      return false;
+    }
+    return true;
+  };
+
+  const runIdempotent = async <T>(input: {
+    request: FastifyRequest;
+    reply: FastifyReply;
+    userId: string;
+    householdId: string;
+    operation: string;
+    payload: unknown;
+    status: number;
+    producer: () => Promise<T>;
+  }): Promise<FastifyReply | undefined> => {
+    let key: string;
+    try {
+      key = requireIdempotencyKey(input.request.headers);
+    } catch (error) {
+      return sendWorkspaceError(input.reply, error);
+    }
+
+    try {
+      const result = await idempotency.lookupOrRecord(
+        {
+          workspaceId: input.householdId,
+          actorType: 'user',
+          actorId: input.userId,
+          operation: input.operation,
+          key,
+        },
+        input.payload,
+        async () => ({ status: input.status, body: await input.producer() }),
+      );
+      if (result.replayed) input.reply.header('Idempotent-Replayed', 'true');
+      return input.reply.code(result.response.status).send(result.response.body);
+    } catch (error) {
+      return sendWorkspaceError(input.reply, error);
     }
   };
 
@@ -90,12 +132,61 @@ export const registerWorkspaceRoutes = (app: FastifyInstance, opts: {
     const authUserId = authSession.userId;
     const parsed = workspaceBody.safeParse(request.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    try {
-      return reply.code(201).send(await opts.store.create({ authUserId, ...parsed.data }));
-    } catch (error) {
-      return sendWorkspaceError(reply, error);
-    }
+    return runIdempotent({
+      request,
+      reply,
+      userId: authUserId,
+      householdId: getCreationSyntheticWorkspaceId(authUserId),
+      operation: 'workspace.create',
+      payload: parsed.data,
+      status: 201,
+      producer: () => opts.store.create({ authUserId, ...parsed.data }),
+    });
   });
+
+  app.patch('/workspaces/:householdId', async (request, reply) => {
+    const authSession = await session(request, reply);
+    if (!authSession) return;
+    const parsedParams = workspaceParams.safeParse(request.params);
+    const parsedBody = z.object({ name: z.string().trim().min(1).max(120) }).safeParse(request.body ?? {});
+    if (!parsedParams.success || !parsedBody.success) {
+      return reply.code(400).send({ code: 'validation.error', issues: [...(parsedParams.success ? [] : parsedParams.error.issues), ...(parsedBody.success ? [] : parsedBody.error.issues)] });
+    }
+    if (!await requireOwnerAccess(authSession.userId, parsedParams.data.householdId, reply)) return;
+    return runIdempotent({
+      request,
+      reply,
+      userId: authSession.userId,
+      householdId: parsedParams.data.householdId,
+      operation: 'workspace.rename',
+      payload: { householdId: parsedParams.data.householdId, ...parsedBody.data },
+      status: 200,
+      producer: () => opts.store.rename({ authUserId: authSession.userId, householdId: parsedParams.data.householdId, name: parsedBody.data.name }),
+    });
+  });
+
+  const registerStatusRoute = (status: WorkspaceStatus, operation: string) => {
+    app.post(`/workspaces/:householdId/${status === 'archived' ? 'archive' : 'restore'}`, async (request, reply) => {
+      const authSession = await session(request, reply);
+      if (!authSession) return;
+      const parsed = workspaceParams.safeParse(request.params);
+      if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+      if (!await requireOwnerAccess(authSession.userId, parsed.data.householdId, reply)) return;
+      return runIdempotent({
+        request,
+        reply,
+        userId: authSession.userId,
+        householdId: parsed.data.householdId,
+        operation,
+        payload: { householdId: parsed.data.householdId, status },
+        status: 200,
+        producer: () => opts.store.setStatus({ authUserId: authSession.userId, householdId: parsed.data.householdId, status }),
+      });
+    });
+  };
+
+  registerStatusRoute('archived', 'workspace.archive');
+  registerStatusRoute('active', 'workspace.restore');
 
   app.get('/workspaces/:householdId/members', async (request, reply) => {
     const authSession = await session(request, reply);
@@ -123,15 +214,21 @@ export const registerWorkspaceRoutes = (app: FastifyInstance, opts: {
       }
     }
 
-    try {
-      await opts.store.removeMember({ authUserId, householdId: parsed.data.householdId, memberUserId: parsed.data.userId });
-      const removedSessions = opts.reconnectTokens?.sessionsForUser(parsed.data.userId) ?? [];
-      opts.reconnectTokens?.invalidateUser(parsed.data.userId);
-      opts.reconnectSockets?.closeSessions(removedSessions, 'workspace membership revoked');
-      return reply.code(204).send();
-    } catch (error) {
-      return sendWorkspaceError(reply, error);
-    }
+    return runIdempotent({
+      request,
+      reply,
+      userId: authUserId,
+      householdId: parsed.data.householdId,
+      operation: 'workspace.remove_member',
+      payload: { householdId: parsed.data.householdId, memberUserId: parsed.data.userId },
+      status: 204,
+      producer: async () => {
+        await opts.store.removeMember({ authUserId, householdId: parsed.data.householdId, memberUserId: parsed.data.userId });
+        const removedSessions = opts.reconnectTokens?.sessionsForUser(parsed.data.userId) ?? [];
+        opts.reconnectTokens?.invalidateUser(parsed.data.userId);
+        opts.reconnectSockets?.closeSessions(removedSessions, 'workspace membership revoked');
+      },
+    });
   });
 
 
@@ -141,146 +238,28 @@ export const registerWorkspaceRoutes = (app: FastifyInstance, opts: {
     const authUserId = authSession.userId;
     const parsed = workspaceParams.safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    try {
-      await opts.store.leave({ authUserId, householdId: parsed.data.householdId });
-      opts.reconnectTokens?.invalidateSession(authSession.sessionId);
-      opts.reconnectTokens?.invalidateUser(authUserId);
-      opts.reconnectSockets?.closeSession(authSession.sessionId, 'workspace membership revoked');
-      return reply.code(204).send();
-    } catch (error) {
-      return sendWorkspaceError(reply, error);
-    }
+    return runIdempotent({
+      request,
+      reply,
+      userId: authUserId,
+      householdId: parsed.data.householdId,
+      operation: 'workspace.leave',
+      payload: { householdId: parsed.data.householdId },
+      status: 204,
+      producer: async () => {
+        await opts.store.leave({ authUserId, householdId: parsed.data.householdId });
+        opts.reconnectTokens?.invalidateSession(authSession.sessionId);
+        opts.reconnectTokens?.invalidateUser(authUserId);
+        opts.reconnectSockets?.closeSession(authSession.sessionId, 'workspace membership revoked');
+      },
+    });
   });
 };
 
 const sendWorkspaceError = (reply: FastifyReply, error: unknown) => {
   if (error instanceof WorkspaceError) return reply.code(error.statusCode).send({ code: error.code, message: error.message });
+  if (error instanceof DomainError) return reply.code(error.statusCode).send({ code: error.code, message: error.message });
   throw error;
 };
 
-type Row = Record<string, unknown>;
-const toSummary = (row: Row): WorkspaceSummary => ({
-  id: row['id'] as string,
-  name: row['name'] as string,
-  kind: row['kind'] as WorkspaceKind,
-  role: row['role'] as WorkspaceRole,
-});
-
-const getUserId = async (pool: Pool, authUserId: string): Promise<string> => {
-  const result = await queryInTransaction<Row>(pool, `SELECT id FROM users WHERE auth_user_id = $1 AND status = 'active'`, [authUserId]);
-  const userId = result.rows[0]?.['id'];
-  if (typeof userId !== 'string') throw new WorkspaceError('workspace.forbidden', 403, 'user is not active');
-  return userId;
-};
-
-export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => ({
-  async list(authUserId) {
-    const result = await queryInTransaction<Row>(pool,
-      `SELECT h.id, h.name, h.kind, m.role
-         FROM users u JOIN memberships m ON m.user_id = u.id JOIN households h ON h.id = m.household_id
-        WHERE u.auth_user_id = $1 AND u.status = 'active' AND m.status = 'active'
-        ORDER BY h.kind = 'personal' DESC, h.name, h.id`,
-      [authUserId],
-    );
-    return result.rows.map(toSummary);
-  },
-
-  async create({ authUserId, name, kind }) {
-    return withTransaction(pool, async () => {
-      const userId = await getUserId(pool, authUserId);
-      if (kind === 'personal') {
-        const existing = await queryInTransaction<Row>(pool,
-          `SELECT h.id, h.name, h.kind, m.role FROM households h JOIN memberships m ON m.household_id = h.id
-             WHERE h.owner_user_id = $1 AND h.kind = 'personal' AND m.user_id = $1 AND m.status = 'active'`,
-          [userId],
-        );
-        if (existing.rows[0]) throw new WorkspaceError('workspace.invalid', 409, 'user already has a personal workspace');
-      }
-      const result = await queryInTransaction<Row>(pool,
-        `INSERT INTO households (name, kind, owner_user_id) VALUES ($1, $2, $3) RETURNING id, name, kind`,
-        [name, kind, userId],
-      );
-      const workspace = result.rows[0];
-      if (!workspace) throw new WorkspaceError('workspace.invalid', 500, 'workspace was not created');
-      return { ...toSummary({ ...workspace, role: 'owner' }) };
-    });
-  },
-
-  async listMembers({ authUserId, householdId }) {
-    const result = await queryInTransaction<Row>(pool,
-      `SELECT u.id AS user_id, u.name, u.email, m.role
-         FROM users actor JOIN memberships access ON access.user_id = actor.id
-         JOIN memberships m ON m.household_id = access.household_id AND m.status = 'active'
-         JOIN users u ON u.id = m.user_id
-        WHERE actor.auth_user_id = $1 AND actor.status = 'active'
-          AND access.household_id = $2 AND access.status = 'active'
-        ORDER BY m.role DESC, u.name, u.id`,
-      [authUserId, householdId],
-    );
-    if (!result.rows.length) throw new WorkspaceError('workspace.forbidden', 403, 'active workspace membership required');
-    return result.rows.map((row) => ({ userId: row['user_id'] as string, name: row['name'] as string, email: row['email'] as string, role: row['role'] as WorkspaceRole }));
-  },
-
-  async removeMember({ authUserId, householdId, memberUserId }) {
-    await withTransaction(pool, async () => {
-      const actor = await getUserId(pool, authUserId);
-      const result = await queryInTransaction<Row>(pool,
-        `UPDATE memberships target SET status = 'removed'
-            FROM households h
-           WHERE target.user_id = $1 AND target.household_id = $2 AND target.status = 'active'
-             AND h.id = target.household_id AND h.kind = 'shared'
-             AND EXISTS (SELECT 1 FROM memberships owner WHERE owner.user_id = $3 AND owner.household_id = $2 AND owner.role = 'owner' AND owner.status = 'active')
-           RETURNING target.user_id`,
-        [memberUserId, householdId, actor],
-      );
-      if (result.rowCount !== 1) throw new WorkspaceError('workspace.forbidden', 403, 'only an owner can remove an active member');
-    });
-  },
-
-  async leave({ authUserId, householdId }) {
-    await withTransaction(pool, async () => {
-      const actor = await getUserId(pool, authUserId);
-      const result = await queryInTransaction<Row>(pool,
-        `UPDATE memberships m SET status = 'removed'
-            FROM households h
-           WHERE m.user_id = $1 AND m.household_id = $2 AND m.status = 'active' AND h.id = m.household_id AND h.kind = 'shared'
-           RETURNING m.user_id`,
-        [actor, householdId],
-      );
-      if (result.rowCount !== 1) throw new WorkspaceError('workspace.last_owner', 409, 'you cannot leave this workspace without another active owner');
-    });
-  },
-});
-
-export const createInMemoryWorkspaceStore = (): WorkspaceStore => {
-  const workspaces: WorkspaceSummary[] = [];
-  const members: Array<{ householdId: string; member: WorkspaceMember }> = [];
-  return {
-    async list() {
-      return workspaces;
-    },
-    async create(input) {
-      const summary: WorkspaceSummary = {
-        id: randomUUID(),
-        name: input.name,
-        kind: input.kind,
-        role: 'owner',
-      };
-
-      workspaces.push(summary);
-      return summary;
-    },
-    async listMembers(input) {
-      return members.filter((m) => m.householdId === input.householdId).map((m) => m.member);
-    },
-    async removeMember(input) {
-      const idx = members.findIndex((m) => m.householdId === input.householdId && m.member.userId === input.memberUserId);
-      if (idx !== -1) members.splice(idx, 1);
-    },
-    async leave(input) {
-      const idx = members.findIndex((m) => m.householdId === input.householdId && m.member.userId === input.authUserId);
-      if (idx !== -1) members.splice(idx, 1);
-    },
-  };
-};
-
+export { createPostgresWorkspaceStore } from './workspaces-postgres.js';

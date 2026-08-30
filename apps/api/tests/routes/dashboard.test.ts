@@ -1,5 +1,8 @@
+import Fastify from 'fastify';
 import { describe, it, expect } from 'vitest';
 import { buildTestApp, TOKEN_A } from '../test-app.js';
+import { registerDashboardRoutes } from '../../src/routes/dashboard.js';
+import { createInMemoryReadModelStore } from '../../src/read-models/store.js';
 import {
   ACCOUNT_A1,
   ACCOUNT_A2,
@@ -7,6 +10,8 @@ import {
   CATEGORY_FOOD_A,
   CATEGORY_RENT_A,
   CATEGORY_FOOD_B,
+  HOUSEHOLD_A,
+  HOUSEHOLD_B,
   TRANSACTIONS,
 } from '../fixtures/seed.js';
 
@@ -85,6 +90,38 @@ describe('GET /dashboard/summary', () => {
     expect(body.topExpenses).not.toContainEqual(expect.objectContaining({ description: 'Mercado B' }));
   });
 
+  it('prefers the authenticated selected workspace over the device token household', async () => {
+    const app = Fastify({ logger: false });
+    app.addHook('preHandler', async (request) => {
+      request.authenticatedContext = {
+        householdId: HOUSEHOLD_B,
+        actorId: 'user-b',
+        authUserId: 'auth-user-b',
+        actorType: 'user',
+        deviceId: '',
+        role: 'owner',
+      };
+    });
+    registerDashboardRoutes(app, {
+      store: createInMemoryReadModelStore(seed),
+      resolveToken: async () => ({ deviceId: 'device-a', householdId: HOUSEHOLD_A }),
+      clock: () => new Date('2026-06-15T12:00:00Z'),
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/dashboard/summary',
+      headers: { 'x-device-token': TOKEN_A, 'x-workspace-id': HOUSEHOLD_B },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      householdId: HOUSEHOLD_B,
+      totalBalanceCents: ACCOUNT_B1.balanceCents,
+    });
+    await app.close();
+  });
+
   it('requires auth', async () => {
     const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({ method: 'GET', url: '/dashboard/summary' });
@@ -111,5 +148,41 @@ describe('GET /dashboard/summary', () => {
     const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({ method: 'GET', url: '/dashboard/summary', headers: { 'x-device-token': TOKEN_A } });
     expect(Array.isArray(res.json().alerts)).toBe(true);
+  });
+});
+
+describe('GET /dashboard/month-summary', () => {
+  it('prefers the authenticated selected workspace over the device token household', async () => {
+    const app = Fastify({ logger: false });
+    app.addHook('preHandler', async (request) => {
+      request.authenticatedContext = {
+        householdId: HOUSEHOLD_B,
+        actorId: 'user-b',
+        authUserId: 'auth-user-b',
+        actorType: 'user',
+        deviceId: '',
+        role: 'owner',
+      };
+    });
+    registerDashboardRoutes(app, {
+      store: createInMemoryReadModelStore(seed),
+      resolveToken: async () => ({ deviceId: 'device-a', householdId: HOUSEHOLD_A }),
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/dashboard/month-summary?yearMonth=2026-06',
+      headers: { 'x-device-token': TOKEN_A, 'x-workspace-id': HOUSEHOLD_B },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      yearMonth: '2026-06',
+      incomeCents: 0,
+      expenseCents: 200_00,
+      balanceCents: -200_00,
+      transactionCount: 1,
+    });
+    await app.close();
   });
 });

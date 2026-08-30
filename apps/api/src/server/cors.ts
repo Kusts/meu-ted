@@ -3,6 +3,8 @@ import type { FastifyInstance } from 'fastify';
 const parseOrigins = (env: string): string[] =>
   env.split(',').map((s) => s.trim()).filter(Boolean);
 
+const LOCAL_DEVELOPMENT_ORIGINS = 'http://localhost:3000,http://127.0.0.1:3000';
+
 const isOriginAllowed = (requestOrigin: string | undefined, allowed: string[]): string | null => {
   if (!requestOrigin) return null;
   const match = allowed.find((o) => o === requestOrigin);
@@ -10,7 +12,10 @@ const isOriginAllowed = (requestOrigin: string | undefined, allowed: string[]): 
 };
 
 export const registerCors = (app: FastifyInstance): void => {
-  const raw = process.env.CORS_ORIGIN;
+  const raw = process.env.CORS_ORIGIN ??
+    (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'
+      ? LOCAL_DEVELOPMENT_ORIGINS
+      : undefined);
   if (!raw) return;
   const allowed = parseOrigins(raw);
   if (allowed.length === 0) return;

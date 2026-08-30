@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { createPostgresDeviceTokenStore } from "../auth/device-token.js";
-import type { InviteDelivery } from "../auth/invites.js";
+import type { InviteDelivery, InviteService } from "../auth/invites.js";
 import { createPostgresBudgetStore } from "../budgets/postgres.js";
 import { createLegacyPostgresCardStore } from "../cards/legacy-postgres.js";
 import { createPostgresCardStore } from "../cards/postgres.js";
@@ -26,9 +26,40 @@ import {
 import { createLegacyPostgresAuditLogStore, createPostgresAuditLogStore } from "../audit/store.js";
 import { createInviteService } from "../auth/invites.js";
 import { createPostgresInviteStore } from "../auth/invites-postgres.js";
+import { createPostgresWorkspaceStore } from "../auth/workspaces-postgres.js";
+import { createPostgresWorkspaceAccessStore } from "../auth/workspace-access.js";
+import { createPostgresOwnershipTransferStore } from "../auth/ownership-transfers-postgres.js";
 import type { createBetterAuth } from "../auth/better-auth.js";
+import type { WorkspaceAccessStore } from "../auth/workspace-access.js";
 
 type BetterAuth = ReturnType<typeof createBetterAuth>;
+
+export type PostgresInviteRuntime = {
+  inviteService?: InviteService;
+  authorizeInviteCreate?: (input: { userId: string; householdId: string }) => Promise<boolean>;
+};
+
+export const createPostgresInviteRuntime = (input: {
+  pool: Pool;
+  workspaceAccess?: WorkspaceAccessStore | undefined;
+  delivery?: InviteDelivery | undefined;
+}): PostgresInviteRuntime => {
+  const { workspaceAccess, delivery } = input;
+  if (!workspaceAccess || !delivery) return {};
+
+  const inviteService = createInviteService({
+    store: createPostgresInviteStore(input.pool),
+    deliver: delivery,
+  });
+
+  return {
+    inviteService,
+    authorizeInviteCreate: async ({ userId, householdId }) => {
+      const access = await workspaceAccess.resolve(userId, householdId);
+      return access?.kind === "shared" && access.role === "owner";
+    },
+  };
+};
 
 export const registerPostgresProductionRoutes = (
   app: FastifyInstance,
@@ -45,18 +76,18 @@ export const registerPostgresProductionRoutes = (
     : undefined;
   const vapidPublicKey = vapid?.publicKey;
 
-  const inviteService = betterAuth && inviteDelivery
-    ? createInviteService({ store: createPostgresInviteStore(pool), deliver: inviteDelivery })
-    : undefined;
-  const authorizeInviteCreate = betterAuth
-    ? async (_input: { userId: string; householdId: string }) => true
-    : undefined;
+  const workspaceAccess = betterAuth ? createPostgresWorkspaceAccessStore(pool) : undefined;
+  const workspaceStore = betterAuth ? createPostgresWorkspaceStore(pool) : undefined;
+  const ownershipTransferStore = betterAuth ? createPostgresOwnershipTransferStore(pool) : undefined;
+  const inviteRuntime = betterAuth
+    ? createPostgresInviteRuntime({ pool, workspaceAccess, delivery: inviteDelivery })
+    : {};
 
   if (legacy) {
     const store = createLegacyPostgresReadModelStore({ pool });
     const writes = createLegacyPostgresWriteStore({ pool });
     const tokenStore = createPostgresDeviceTokenStore(pool);
-    const idempotency = createPostgresIdempotencyStore({ pool });
+    const idempotency = createPostgresIdempotencyStore({ pool, legacy: true });
     const cardStore = createLegacyPostgresCardStore(pool);
     const payableStore = createLegacyPostgresPayableStore(pool);
     const budgetStore = createPostgresBudgetStore(pool);
@@ -80,8 +111,10 @@ export const registerPostgresProductionRoutes = (
       auditLogs,
       disableDeviceRegistration: true,
       ...(betterAuth ? { auth: betterAuth } : {}),
-      ...(inviteService ? { inviteService } : {}),
-      ...(authorizeInviteCreate ? { authorizeInviteCreate } : {}),
+      ...(workspaceAccess ? { workspaceAccess } : {}),
+      ...(workspaceStore ? { workspaceStore } : {}),
+      ...(ownershipTransferStore ? { ownershipTransferStore } : {}),
+      ...inviteRuntime,
       ...(pushDelivery ? { pushDelivery } : {}),
       ...(vapidPublicKey ? { vapidPublicKey } : {}),
     });
@@ -115,8 +148,10 @@ export const registerPostgresProductionRoutes = (
     auditLogs,
     disableDeviceRegistration: true,
     ...(betterAuth ? { auth: betterAuth } : {}),
-    ...(inviteService ? { inviteService } : {}),
-    ...(authorizeInviteCreate ? { authorizeInviteCreate } : {}),
+    ...(workspaceAccess ? { workspaceAccess } : {}),
+    ...(workspaceStore ? { workspaceStore } : {}),
+    ...(ownershipTransferStore ? { ownershipTransferStore } : {}),
+    ...inviteRuntime,
     ...(pushDelivery ? { pushDelivery } : {}),
     ...(vapidPublicKey ? { vapidPublicKey } : {}),
   });

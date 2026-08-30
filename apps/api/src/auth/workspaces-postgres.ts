@@ -1,9 +1,17 @@
 import type { Pool } from 'pg';
 import { withTransaction, queryInTransaction } from '../db/pool.js';
-import type { WorkspaceKind, WorkspaceMember, WorkspaceRole, WorkspaceStore, WorkspaceSummary } from './workspaces-http.js';
-import { WorkspaceError } from './workspaces-http.js';
+import type { WorkspaceKind, WorkspaceMember, WorkspaceRole, WorkspaceStatus, WorkspaceStore, WorkspaceSummary } from './workspaces-store.js';
+import { WorkspaceError } from './workspaces-store.js';
 
 type Row = Record<string, unknown>;
+
+const mapWorkspace = (row: Row): WorkspaceSummary => ({
+  id: row['id'] as string,
+  name: row['name'] as string,
+  kind: row['kind'] as WorkspaceKind,
+  role: row['role'] as WorkspaceRole,
+  status: (row['status'] as WorkspaceStatus | undefined) ?? 'active',
+});
 
 export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
   const assertMembership = async (authUserId: string, householdId: string): Promise<{ userId: string; role: WorkspaceRole }> => {
@@ -32,7 +40,7 @@ export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
     async list(authUserId) {
       const result = await queryInTransaction<Row>(
         pool,
-        `SELECT h.id AS id, h.name AS name, h.kind AS kind, m.role AS role
+        `SELECT h.id AS id, h.name AS name, h.kind AS kind, h.status AS status, m.role AS role
            FROM memberships m
            JOIN households h ON h.id = m.household_id
            JOIN users u ON u.id = m.user_id
@@ -42,12 +50,7 @@ export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
           ORDER BY (h.kind = 'personal') DESC, h.created_at ASC`,
         [authUserId],
       );
-      return result.rows.map((row) => ({
-        id: row['id'] as string,
-        name: row['name'] as string,
-        kind: row['kind'] as WorkspaceKind,
-        role: row['role'] as WorkspaceRole,
-      }));
+      return result.rows.map(mapWorkspace);
     },
 
     async create({ authUserId, name, kind }) {
@@ -58,29 +61,69 @@ export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
       );
       const userRow = userResult.rows[0];
       if (!userRow) throw new WorkspaceError('workspace.invalid', 400, 'Usuário ativo não encontrado.');
+      const userId = userRow['id'] as string;
+
+      if (kind === 'personal') {
+        const existing = await queryInTransaction<Row>(
+          pool,
+          `SELECT h.id FROM households h JOIN memberships m ON m.household_id = h.id
+            WHERE h.owner_user_id = $1 AND h.kind = 'personal' AND m.user_id = $1 AND m.status = 'active'`,
+          [userId],
+        );
+        if (existing.rows[0]) throw new WorkspaceError('workspace.invalid', 409, 'user already has a personal workspace');
+      }
 
       return withTransaction(pool, async (client) => {
         const householdResult = await client.query<Row>(
           `INSERT INTO households (name, kind, owner_user_id)
            VALUES ($1, $2, $3)
-           RETURNING id, name, kind`,
-          [name, kind, kind === 'personal' ? userRow['id'] : null],
+           RETURNING id, name, kind, status`,
+          [name, kind, userId],
         );
         const household = householdResult.rows[0]!;
         if (kind === 'shared') {
           await client.query(
-            `INSERT INTO memberships (user_id, household_id, role, status)
-             VALUES ($1, $2, 'owner', 'active')`,
-            [userRow['id'], household['id']],
+            `INSERT INTO memberships (user_id, household_id, role, kind, status)
+             VALUES ($1, $2, 'owner', 'shared', 'active')
+             ON CONFLICT (user_id, household_id) DO UPDATE SET role = 'owner', kind = 'shared', status = 'active'`,
+            [userId, household['id']],
           );
         }
         // Personal workspaces create the owner membership via V021 trigger.
-        return {
-          id: household['id'] as string,
-          name: household['name'] as string,
-          kind: household['kind'] as WorkspaceKind,
-          role: 'owner' as WorkspaceRole,
-        };
+        return mapWorkspace({ ...household, role: 'owner' });
+      });
+    },
+
+    async rename({ authUserId, householdId, name }) {
+      await assertActiveMembershipRole(authUserId, householdId, ['owner']);
+      return withTransaction(pool, async (client) => {
+        const result = await client.query<Row>(
+          `UPDATE households
+              SET name = $1
+            WHERE id = $2
+            RETURNING id, name, kind, status`,
+          [name, householdId],
+        );
+        const workspace = result.rows[0];
+        if (!workspace) throw new WorkspaceError('workspace.not_found', 404, 'Workspace não encontrado.');
+        return mapWorkspace({ ...workspace, role: 'owner' });
+      });
+    },
+
+    async setStatus({ authUserId, householdId, status }) {
+      await assertActiveMembershipRole(authUserId, householdId, ['owner']);
+      return withTransaction(pool, async (client) => {
+        const result = await client.query<Row>(
+          `UPDATE households
+              SET status = $1,
+                  archived_at = CASE WHEN $1 = 'archived' THEN COALESCE(archived_at, NOW()) ELSE NULL END
+            WHERE id = $2
+            RETURNING id, name, kind, status`,
+          [status, householdId],
+        );
+        const workspace = result.rows[0];
+        if (!workspace) throw new WorkspaceError('workspace.not_found', 404, 'Workspace não encontrado.');
+        return mapWorkspace({ ...workspace, role: 'owner' });
       });
     },
 
@@ -88,7 +131,7 @@ export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
       await assertMembership(authUserId, householdId);
       const result = await queryInTransaction<Row>(
         pool,
-        `SELECT u.id AS user_id, COALESCE(u.name, u.email) AS name, u.email AS email, m.role AS role
+        `SELECT u.auth_user_id AS user_id, COALESCE(u.name, u.email) AS name, u.email AS email, m.role AS role
            FROM memberships m
            JOIN users u ON u.id = m.user_id
           WHERE m.household_id = $1 AND m.status = 'active'
@@ -118,15 +161,23 @@ export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
         if (household['kind'] === 'personal') {
           throw new WorkspaceError('workspace.personal', 400, 'Workspace pessoal não permite remoção de membros.');
         }
+        // memberUserId is the Better Auth user id (auth_user_id); resolve to users.id
+        const targetResult = await client.query<Row>(
+          `SELECT id, auth_user_id FROM users WHERE auth_user_id = $1 OR id::text = $1`,
+          [memberUserId],
+        );
+        const targetUser = targetResult.rows[0];
+        if (!targetUser) throw new WorkspaceError('workspace.not_found', 404, 'Membro não encontrado.');
+        const targetUsersId = targetUser['id'] as string;
         const ownerResult = await client.query<Row>(
           `SELECT COUNT(*)::int AS count FROM memberships WHERE household_id = $1 AND role = 'owner' AND status = 'active'`,
           [householdId],
         );
         const ownerCount = (ownerResult.rows[0]!['count'] as number) ?? 0;
-        if (household['owner_user_id'] === memberUserId || ownerCount <= 1) {
+        if (household['owner_user_id'] === targetUsersId || ownerCount <= 1) {
           const target = await client.query<Row>(
             `SELECT role FROM memberships WHERE household_id = $1 AND user_id = $2 AND status = 'active'`,
-            [householdId, memberUserId],
+            [householdId, targetUsersId],
           );
           if (target.rows[0]?.['role'] === 'owner') {
             throw new WorkspaceError('workspace.last_owner', 400, 'Não é possível remover o último owner do workspace.');
@@ -134,7 +185,7 @@ export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
         }
         await client.query(
           `UPDATE memberships SET status = 'removed' WHERE household_id = $1 AND user_id = $2`,
-          [householdId, memberUserId],
+          [householdId, targetUsersId],
         );
       });
     },
