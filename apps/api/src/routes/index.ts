@@ -463,6 +463,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
         auth: deps.auth,
         service: deps.inviteService,
         authorizeCreate: deps.authorizeInviteCreate,
+        idempotency,
       });
     }
     if (deps.workspaceStore) {

@@ -59,4 +59,93 @@ describe('Postgres invite store', () => {
     expect(queries.some((query) => query.includes('email_normalized'))).toBe(true);
     expect(queries.some((query) => query.includes('FOR UPDATE'))).toBe(true);
   });
+
+  it('lists pending invites and revokes an invite in postgres store', async () => {
+    const queries: string[] = [];
+    const client = {
+      query: async (text: string) => {
+        queries.push(text);
+        if (text.includes('UPDATE invites') && text.includes('revoked_at')) {
+          return { rows: [{ id: record.id, household_id: record.householdId, revoked_at: new Date('2029-01-01T00:00:00.000Z') }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      release: () => undefined,
+    };
+    const pool = {
+      query: async (text: string) => {
+        queries.push(text);
+        if (text.includes('SELECT id, household_id, email_normalized')) {
+          return {
+            rows: [{
+              id: record.id,
+              household_id: record.householdId,
+              email_normalized: record.email,
+              role: record.role,
+              expires_at: record.expiresAt,
+              created_at: new Date('2028-01-01T00:00:00.000Z'),
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      connect: async () => client,
+    } as unknown as Pool;
+    const store = createPostgresInviteStore(pool);
+
+    const pending = await store.listPendingInvites!(record.householdId, new Date('2029-01-01T00:00:00.000Z'));
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.id).toBe(record.id);
+    expect(pending[0]!.email).toBe(record.email);
+
+    const revoked = await store.revokeInvite!({
+      householdId: record.householdId,
+      inviteId: record.id,
+      now: new Date('2029-01-01T00:00:00.000Z'),
+    });
+    expect(revoked.id).toBe(record.id);
+    expect(revoked.householdId).toBe(record.householdId);
+    expect(revoked.revokedAt).toEqual(new Date('2029-01-01T00:00:00.000Z'));
+    expect(queries.some((q) => q.includes('revoked_at IS NULL'))).toBe(true);
+    expect(queries.some((q) => q.includes('UPDATE invites') && q.includes('SET revoked_at'))).toBe(true);
+  });
+
+  it('preserves existing revoked_at monotonically when revoking an already-revoked invite in postgres store', async () => {
+    const originalRevokedAt = new Date('2029-01-01T00:00:00.000Z');
+    const client = {
+      query: async (text: string) => {
+        if (text.includes('UPDATE invites')) {
+          // Already revoked: rowCount 0 because revoked_at IS NULL is false
+          return { rows: [], rowCount: 0 };
+        }
+        if (text.includes('SELECT id, consumed_at, revoked_at FROM invites')) {
+          return {
+            rows: [{
+              id: record.id,
+              consumed_at: null,
+              revoked_at: originalRevokedAt,
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      release: () => undefined,
+    };
+    const pool = {
+      connect: async () => client,
+    } as unknown as Pool;
+    const store = createPostgresInviteStore(pool);
+
+    const reRevoked = await store.revokeInvite!({
+      householdId: record.householdId,
+      inviteId: record.id,
+      now: new Date('2029-08-01T00:00:00.000Z'),
+    });
+
+    expect(reRevoked.id).toBe(record.id);
+    expect(reRevoked.householdId).toBe(record.householdId);
+    expect(reRevoked.revokedAt).toEqual(originalRevokedAt);
+  });
 });

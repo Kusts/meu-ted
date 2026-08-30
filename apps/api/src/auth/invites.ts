@@ -15,7 +15,18 @@ export type InviteRecord = {
   tokenHash: string;
   expiresAt: Date;
   acceptedAt?: Date;
+  revokedAt?: Date;
   invitedByUserId: string;
+  createdAt?: Date;
+};
+
+export type PendingInviteSummary = {
+  id: string;
+  householdId: string;
+  email: string;
+  role: InviteRole;
+  expiresAt: Date;
+  createdAt?: Date;
 };
 
 export type InviteDeliveryMessage = {
@@ -42,6 +53,8 @@ export type InviteStore = {
     userEmail: string;
     now: Date;
   }): Promise<{ invite: InviteRecord; membership: InviteMembership }>;
+  listPendingInvites(householdId: string, now?: Date): Promise<PendingInviteSummary[]>;
+  revokeInvite(input: { householdId: string; inviteId: string; now?: Date }): Promise<{ id: string; householdId: string; revokedAt: Date }>;
 };
 
 export type CreateInviteInput = {
@@ -55,7 +68,7 @@ export type CreateInviteInput = {
 export class InviteError extends Error {
   constructor(
     message: string,
-    readonly code: 'invite.invalid_email' | 'invite.not_found' | 'invite.expired' | 'invite.already_used' | 'invite.user_not_found' | 'invite.email_mismatch',
+    readonly code: 'invite.invalid_email' | 'invite.not_found' | 'invite.expired' | 'invite.already_used' | 'invite.revoked' | 'invite.user_not_found' | 'invite.email_mismatch',
     readonly statusCode = 400,
   ) {
     super(message);
@@ -112,6 +125,14 @@ export const createInviteService = (deps: {
     });
     return { inviteId: result.invite.id, membership: result.membership };
   },
+
+  async listPendingInvites(input: { householdId: string; now?: Date }): Promise<PendingInviteSummary[]> {
+    return deps.store.listPendingInvites(input.householdId, input.now);
+  },
+
+  async revokeInvite(input: { householdId: string; inviteId: string; now?: Date }): Promise<{ id: string; householdId: string; revokedAt: Date }> {
+    return deps.store.revokeInvite(input);
+  },
 });
 
 export type InviteService = ReturnType<typeof createInviteService>;
@@ -135,6 +156,7 @@ export const createInMemoryInviteStore = (input: { users: InviteUser[] }): InMem
     async acceptInvite({ tokenHash, userId, userEmail, now }) {
       const invite = [...invites.values()].find((candidate) => candidate.tokenHash === tokenHash);
       if (!invite) throw new InviteError('invite was not found', 'invite.not_found', 404);
+      if (invite.revokedAt) throw new InviteError('invite was revoked', 'invite.revoked', 410);
       if (invite.acceptedAt) throw new InviteError('invite was already used', 'invite.already_used', 409);
       if (invite.expiresAt.getTime() <= now.getTime()) throw new InviteError('invite expired', 'invite.expired', 410);
 
@@ -153,6 +175,37 @@ export const createInMemoryInviteStore = (input: { users: InviteUser[] }): InMem
       memberships.set(membershipKey, membership);
       invite.acceptedAt = new Date(now);
       return { invite: { ...invite }, membership };
+    },
+
+    async listPendingInvites(householdId, now = new Date()) {
+      return [...invites.values()]
+        .filter((candidate) => candidate.householdId === householdId && !candidate.acceptedAt && !candidate.revokedAt && candidate.expiresAt.getTime() > now.getTime())
+        .map((candidate) => ({
+          id: candidate.id,
+          householdId: candidate.householdId,
+          email: candidate.email,
+          role: candidate.role,
+          expiresAt: candidate.expiresAt,
+          ...(candidate.createdAt ? { createdAt: candidate.createdAt } : {}),
+        }));
+    },
+
+    async revokeInvite({ householdId, inviteId, now = new Date() }) {
+      const invite = invites.get(inviteId);
+      if (!invite || invite.householdId !== householdId) {
+        throw new InviteError('invite was not found', 'invite.not_found', 404);
+      }
+      if (invite.acceptedAt) {
+        throw new InviteError('invite was already used', 'invite.already_used', 409);
+      }
+      if (!invite.revokedAt) {
+        invite.revokedAt = new Date(now);
+      }
+      return {
+        id: invite.id,
+        householdId: invite.householdId,
+        revokedAt: invite.revokedAt,
+      };
     },
 
     getRawInvite(id) {

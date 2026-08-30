@@ -30,6 +30,8 @@ const mapInvite = (row: Row): InviteRecord => ({
   tokenHash: row['token_hash'] as string,
   expiresAt: row['expires_at'] as Date,
   ...(row['consumed_at'] ? { acceptedAt: row['consumed_at'] as Date } : {}),
+  ...(row['revoked_at'] ? { revokedAt: row['revoked_at'] as Date } : {}),
+  ...(row['created_at'] ? { createdAt: row['created_at'] as Date } : {}),
   invitedByUserId: row['invited_by'] as string,
 });
 
@@ -67,7 +69,7 @@ export const createPostgresInviteStore = (pool: Pool): InviteStore => ({
   async acceptInvite({ tokenHash, userId, userEmail, now }) {
     return withTransaction(pool, async (client) => {
       const inviteResult = await client.query<Row>(
-        `SELECT id, household_id, email_normalized, role, token_hash, expires_at, consumed_at, invited_by
+        `SELECT id, household_id, email_normalized, role, token_hash, expires_at, consumed_at, revoked_at, invited_by
            FROM invites
           WHERE token_hash = $1
           FOR UPDATE`,
@@ -75,6 +77,7 @@ export const createPostgresInviteStore = (pool: Pool): InviteStore => ({
       );
       if (inviteResult.rowCount === 0) throw new InviteError('invite was not found', 'invite.not_found', 404);
       const invite = mapInvite(inviteResult.rows[0]!);
+      if (invite.revokedAt) throw new InviteError('invite was revoked', 'invite.revoked', 410);
       if (invite.acceptedAt) throw new InviteError('invite was already used', 'invite.already_used', 409);
       if (invite.expiresAt.getTime() <= now.getTime()) throw new InviteError('invite expired', 'invite.expired', 410);
 
@@ -115,6 +118,60 @@ export const createPostgresInviteStore = (pool: Pool): InviteStore => ({
           householdId: membership['household_id'] as string,
           role: membership['role'] as InviteRecord['role'],
         },
+      };
+    });
+  },
+
+  async listPendingInvites(householdId, now = new Date()) {
+    const result = await queryInTransaction<Row>(pool,
+      `SELECT id, household_id, email_normalized, role, expires_at, created_at
+         FROM invites
+        WHERE household_id = $1
+          AND consumed_at IS NULL
+          AND revoked_at IS NULL
+          AND expires_at > $2
+        ORDER BY created_at ASC`,
+      [householdId, now],
+    );
+    return result.rows.map((row) => ({
+      id: row['id'] as string,
+      householdId: row['household_id'] as string,
+      email: row['email_normalized'] as string,
+      role: row['role'] as InviteRecord['role'],
+      expiresAt: row['expires_at'] as Date,
+      ...(row['created_at'] ? { createdAt: row['created_at'] as Date } : {}),
+    }));
+  },
+
+  async revokeInvite({ householdId, inviteId, now = new Date() }) {
+    return withTransaction(pool, async (client) => {
+      const result = await client.query<Row>(
+        `UPDATE invites
+            SET revoked_at = $3
+          WHERE id = $1
+            AND household_id = $2
+            AND consumed_at IS NULL
+            AND revoked_at IS NULL
+          RETURNING id, household_id, revoked_at`,
+        [inviteId, householdId, now],
+      );
+      if (result.rowCount === 0) {
+        const check = await client.query<Row>(
+          `SELECT id, consumed_at, revoked_at FROM invites WHERE id = $1 AND household_id = $2`,
+          [inviteId, householdId],
+        );
+        if (check.rowCount === 0) throw new InviteError('invite was not found', 'invite.not_found', 404);
+        if (check.rows[0]?.['consumed_at']) throw new InviteError('invite was already used', 'invite.already_used', 409);
+        return {
+          id: inviteId,
+          householdId,
+          revokedAt: check.rows[0]?.['revoked_at'] as Date,
+        };
+      }
+      return {
+        id: result.rows[0]!['id'] as string,
+        householdId: result.rows[0]!['household_id'] as string,
+        revokedAt: result.rows[0]!['revoked_at'] as Date,
       };
     });
   },
