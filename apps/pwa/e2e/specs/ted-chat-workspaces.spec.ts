@@ -24,7 +24,7 @@ test.afterEach(async ({ page }) => {
 test.describe("TED Chat & Workspaces", () => {
   test("opens TED chat launcher, displays conversation interface and allows sending messages", async ({ page }) => {
     const id = tid();
-    const guard = await prepareSpec(page, id, {
+    await prepareSpec(page, id, {
       authenticatedUser: {
         id: "usr-ted-1",
         email: "user@pi-finance.test",

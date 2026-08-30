@@ -5,7 +5,6 @@
  */
 
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
-import { FIXTURE_URL } from "../support/reset";
 import { applyCspRewrite, resetFixture, authenticate } from "../support/harness";
 
 const FIXED_CLOCK = "2026-07-17T12:00:00.000Z";

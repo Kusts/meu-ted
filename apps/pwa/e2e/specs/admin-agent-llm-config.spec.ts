@@ -23,7 +23,7 @@ test.afterEach(async ({ page }) => {
 test.describe("Admin Agent LLM Configuration", () => {
   test("admin user accesses LLM settings and views runtime status", async ({ page }) => {
     const id = tid();
-    const guard = await prepareSpec(page, id, {
+    await prepareSpec(page, id, {
       authenticatedUser: {
         id: "usr-admin-1",
         email: "admin@pi-finance.test",
