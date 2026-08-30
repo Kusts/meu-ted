@@ -12,6 +12,9 @@ import {
   fetchWorkspaces,
   leaveWorkspace,
   removeWorkspaceMember,
+  renameWorkspace as renameWorkspaceRequest,
+  archiveWorkspace as archiveWorkspaceRequest,
+  restoreWorkspace as restoreWorkspaceRequest,
   type Workspace,
   type WorkspaceMember,
 } from "@/lib/api/workspaces";
@@ -21,6 +24,7 @@ const MOCK_DEFAULT_WORKSPACE: Workspace = {
   name: "Minhas Finanças",
   kind: "personal",
   role: "owner",
+  status: "active",
 };
 
 export interface WorkspaceContextValue {
@@ -34,6 +38,9 @@ export interface WorkspaceContextValue {
   refreshWorkspaces: () => Promise<void>;
   refreshMembers: () => Promise<void>;
   createWorkspace: (input: { name: string; kind: "personal" | "shared" }) => Promise<Workspace>;
+  renameWorkspace: (workspaceId: string, name: string) => Promise<void>;
+  archiveWorkspace: (workspaceId: string) => Promise<void>;
+  restoreWorkspace: (workspaceId: string) => Promise<void>;
   inviteMember: (email: string) => Promise<void>;
   acceptInvite: (token: string) => Promise<void>;
   removeMember: (userId: string) => Promise<void>;
@@ -70,7 +77,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setError(null);
       setWorkspaces(next);
       const current = activeWorkspaceIdRef.current;
-      const selected = next.some((workspace) => workspace.id === current) ? current : next[0]?.id;
+       const selected = next.some((workspace) => workspace.id === current && workspace.status !== "archived")
+         ? current
+         : next.find((workspace) => workspace.status !== "archived")?.id;
       if (current && selected !== current) {
         setLoading(true);
         closeAllSockets("workspace access revoked");
@@ -99,7 +108,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setWorkspaces(next);
         const current = activeWorkspaceIdRef.current;
-        const selected = next.some((workspace) => workspace.id === current) ? current : next[0]?.id;
+         const selected = next.some((workspace) => workspace.id === current && workspace.status !== "archived")
+           ? current
+           : next.find((workspace) => workspace.status !== "archived")?.id;
         if (current && selected !== current) {
           setLoading(true);
           closeAllSockets("workspace access revoked");
@@ -138,8 +149,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     try {
       const nextMembers = await fetchWorkspaceMembers(activeWorkspace.id);
       setMembers(nextMembers);
-    } catch {
-      setMembers([]);
+    } catch (cause) {
+      throw cause;
     } finally {
       setMembersLoading(false);
     }
@@ -148,6 +159,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     if (!activeWorkspace || !isApiConfigured()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMembers([]);
       return () => {
         cancelled = true;
@@ -158,7 +170,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const nextMembers = await fetchWorkspaceMembers(workspaceId);
         if (!cancelled) setMembers(nextMembers);
       } catch {
-        if (!cancelled) setMembers([]);
+        if (!cancelled) {
+          // Do not overwrite members on transient errors
+        }
       }
     }
     void loadMembers(activeWorkspace.id);
@@ -168,7 +182,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [activeWorkspace]);
 
   const selectWorkspace = useCallback(async (workspaceId: string) => {
-    if (!workspaces.some((workspace) => workspace.id === workspaceId)) return;
+    const nextWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
+    if (!nextWorkspace || nextWorkspace.status === "archived") return;
     const current = activeWorkspaceIdRef.current;
     if (current === workspaceId) return;
     setLoading(true);
@@ -181,6 +196,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setActiveWorkspaceId(workspaceId);
     setLoading(false);
   }, [workspaces]);
+
+  const renameWorkspace = useCallback(async (workspaceId: string, name: string) => {
+    await renameWorkspaceRequest(workspaceId, name);
+    await refreshWorkspaces();
+  }, [refreshWorkspaces]);
+
+  const archiveWorkspace = useCallback(async (workspaceId: string) => {
+    await archiveWorkspaceRequest(workspaceId);
+    await refreshWorkspaces();
+  }, [refreshWorkspaces]);
+
+  const restoreWorkspace = useCallback(async (workspaceId: string) => {
+    await restoreWorkspaceRequest(workspaceId);
+    await refreshWorkspaces();
+  }, [refreshWorkspaces]);
 
   const createWorkspace = useCallback(async (input: { name: string; kind: "personal" | "shared" }) => {
     const created = await createWorkspaceRequest(input);
@@ -222,11 +252,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     refreshWorkspaces,
     refreshMembers,
     createWorkspace,
+    renameWorkspace,
+    archiveWorkspace,
+    restoreWorkspace,
     inviteMember,
     acceptInvite,
     removeMember,
     leave,
-  }), [workspaces, activeWorkspace, members, loading, membersLoading, error, selectWorkspace, refreshWorkspaces, refreshMembers, createWorkspace, inviteMember, acceptInvite, removeMember, leave]);
+  }), [workspaces, activeWorkspace, members, loading, membersLoading, error, selectWorkspace, refreshWorkspaces, refreshMembers, createWorkspace, renameWorkspace, archiveWorkspace, restoreWorkspace, inviteMember, acceptInvite, removeMember, leave]);
 
   if (loading) return <main className="flex h-dvh items-center justify-center text-text-secondary">Carregando workspaces…</main>;
   return (

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { useState } from "react";
 import "fake-indexeddb/auto";
 import { render, screen } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
@@ -7,7 +8,11 @@ import { saveSnapshotDomain, loadSnapshotDomain } from "@/lib/state/snapshot-sto
 
 const api = vi.hoisted(() => ({
   fetchWorkspaces: vi.fn(),
+  fetchWorkspaceMembers: vi.fn(),
   createWorkspace: vi.fn(),
+  renameWorkspace: vi.fn(),
+  archiveWorkspace: vi.fn(),
+  restoreWorkspace: vi.fn(),
   closeAllSockets: vi.fn(),
 }));
 vi.mock("@/lib/api/workspaces", () => api);
@@ -21,9 +26,23 @@ vi.mock("@/lib/api/client", () => ({
 }));
 
 function Probe() {
-  const { activeWorkspace, workspaces, selectWorkspace } = useWorkspace();
+  const { activeWorkspace, workspaces, selectWorkspace, error, members, refreshMembers, renameWorkspace, archiveWorkspace, restoreWorkspace } = useWorkspace();
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   return <>
     <div data-testid="active">{activeWorkspace?.name ?? "none"}</div>
+    <div data-testid="error">{error ?? "no-error"}</div>
+    <div data-testid="refresh-error">{refreshError ?? "no-refresh-error"}</div>
+    <div data-testid="members-count">{members.length}</div>
+    <button onClick={() => void renameWorkspace("workspace-1", "Casa renomeada")}>Rename</button>
+    <button onClick={() => void archiveWorkspace("workspace-1")}>Archive</button>
+    <button onClick={() => void restoreWorkspace("workspace-2")}>Restore</button>
+    <button onClick={async () => {
+      try {
+        await refreshMembers();
+      } catch (e: any) {
+        setRefreshError(e.message);
+      }
+    }}>Refresh Members</button>
     {workspaces.map((workspace) => <button key={workspace.id} onClick={() => selectWorkspace(workspace.id)}>{workspace.name}</button>)}
   </>;
 }
@@ -36,6 +55,7 @@ describe("WorkspaceProvider", () => {
       { id: "workspace-1", name: "Casa", kind: "personal", role: "owner" },
       { id: "workspace-2", name: "Equipe", kind: "shared", role: "member" },
     ]);
+    api.fetchWorkspaceMembers.mockResolvedValue([]);
   });
 
   it("selects the first authorized workspace and switches only to listed workspaces", async () => {
@@ -52,14 +72,10 @@ describe("WorkspaceProvider", () => {
   it("ignores requests to select unlisted/unauthorized workspace IDs", async () => {
     render(<WorkspaceProvider><Probe /></WorkspaceProvider>);
     expect(await screen.findByTestId("active")).toHaveTextContent("Casa");
-    
-    // Attempting to select an invalid workspace ID does not switch active workspace
-    // (active remains Casa)
     expect(screen.getByTestId("active")).toHaveTextContent("Casa");
   });
 
   it("throws an error when useWorkspace is rendered outside WorkspaceProvider", () => {
-    // Suppress console.error during expected throw
     const originalError = console.error;
     console.error = vi.fn();
     try {
@@ -68,5 +84,51 @@ describe("WorkspaceProvider", () => {
       console.error = originalError;
     }
   });
-});
 
+  it("propagates error when refreshMembers fails instead of converting it to silent empty list", async () => {
+    api.fetchWorkspaceMembers.mockRejectedValue(new Error("Network failure fetching members"));
+    const user = userEvent.setup();
+    render(<WorkspaceProvider><Probe /></WorkspaceProvider>);
+    expect(await screen.findByTestId("active")).toHaveTextContent("Casa");
+
+    await user.click(screen.getByRole("button", { name: "Refresh Members" }));
+    expect(await screen.findByTestId("refresh-error")).toHaveTextContent("Network failure fetching members");
+  });
+
+  it("does not stay in infinite loading when fetchWorkspaces fails", async () => {
+    api.fetchWorkspaces.mockRejectedValue(new Error("API offline"));
+    render(<WorkspaceProvider><Probe /></WorkspaceProvider>);
+
+    expect(await screen.findByTestId("error")).toHaveTextContent("API offline");
+    expect(screen.queryByText("Carregando workspaces…")).not.toBeInTheDocument();
+  });
+
+  it("keeps archived workspaces visible but never selects one as active", async () => {
+    api.fetchWorkspaces.mockResolvedValue([
+      { id: "workspace-1", name: "Casa", kind: "personal", role: "owner", status: "archived" },
+      { id: "workspace-2", name: "Equipe", kind: "shared", role: "member", status: "active" },
+    ]);
+    render(<WorkspaceProvider><Probe /></WorkspaceProvider>);
+
+    expect(await screen.findByTestId("active")).toHaveTextContent("Equipe");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Casa" }));
+    expect(screen.getByTestId("active")).toHaveTextContent("Equipe");
+  });
+
+  it("refreshes the authorized list after lifecycle operations", async () => {
+    api.renameWorkspace.mockResolvedValue({ id: "workspace-1", name: "Casa renomeada", kind: "personal", role: "owner", status: "active" });
+    api.archiveWorkspace.mockResolvedValue({ id: "workspace-1", name: "Casa", kind: "personal", role: "owner", status: "archived" });
+    api.restoreWorkspace.mockResolvedValue({ id: "workspace-2", name: "Equipe", kind: "shared", role: "member", status: "active" });
+    const user = userEvent.setup();
+    render(<WorkspaceProvider><Probe /></WorkspaceProvider>);
+    expect(await screen.findByTestId("active")).toHaveTextContent("Casa");
+
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+    await user.click(screen.getByRole("button", { name: "Restore" }));
+
+    expect(api.renameWorkspace).toHaveBeenCalledWith("workspace-1", "Casa renomeada");
+    expect(api.archiveWorkspace).toHaveBeenCalledWith("workspace-1");
+    expect(api.restoreWorkspace).toHaveBeenCalledWith("workspace-2");
+  });
+});

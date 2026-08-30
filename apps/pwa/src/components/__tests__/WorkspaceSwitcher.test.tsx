@@ -86,4 +86,66 @@ describe("WorkspaceSwitcher Component (Task 9)", () => {
     await user.click(screen.getByRole("option", { name: /Empresa LTDA/i }));
     expect(mockContext.value.selectWorkspace).toHaveBeenCalledWith("ws-2");
   });
+
+  it("keeps archived workspaces out of quick selection and links to management", async () => {
+    const user = userEvent.setup();
+    mockContext.value = {
+      ...mockContext.value,
+      workspaces: [
+        { id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner", status: "active" as const },
+        { id: "ws-2", name: "Empresa Arquivada", kind: "shared" as const, role: "owner", status: "archived" as const },
+      ],
+      activeWorkspace: { id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner", status: "active" as const },
+    };
+
+    render(<WorkspaceSwitcher compact />);
+    await user.click(screen.getByRole("button", { name: /selecionar workspace/i }));
+
+    expect(screen.queryByRole("option", { name: /Empresa Arquivada/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Gerenciar workspaces" })).toHaveAttribute("href", "/workspaces");
+  });
+
+  it("renders default variant with surface-1 styling by default", () => {
+    render(<WorkspaceSwitcher compact />);
+    const trigger = screen.getByRole("button", { name: /selecionar workspace/i });
+    expect(trigger.className).toContain("bg-surface-1");
+    expect(trigger.className).toContain("border-border-subtle");
+    expect(trigger).toHaveAttribute("data-variant", "default");
+  });
+
+  it("renders hero variant with translucent styling and white text", () => {
+    render(<WorkspaceSwitcher variant="hero" compact />);
+    const trigger = screen.getByRole("button", { name: /selecionar workspace/i });
+    expect(trigger).toHaveAttribute("data-variant", "hero");
+    expect(trigger.className).toContain("bg-white/[0.14]");
+    expect(trigger.className).toContain("border-white/15");
+    expect(trigger.querySelector(".text-white")).toBeInTheDocument();
+  });
+
+  it("renders hero loading state with translucent styling", () => {
+    mockContext.value = {
+      ...mockContext.value,
+      loading: true,
+      workspaces: [],
+      activeWorkspace: null,
+    };
+
+    render(<WorkspaceSwitcher variant="hero" compact />);
+    const loadingEl = screen.getByText("Carregando…").closest("div");
+    expect(loadingEl).toHaveAttribute("data-variant", "hero");
+    expect(loadingEl?.className).toContain("bg-white/[0.14]");
+    expect(loadingEl?.className).toContain("border-white/15");
+  });
+
+  it("supports opening and selecting workspace in hero variant", async () => {
+    const user = userEvent.setup();
+    render(<WorkspaceSwitcher variant="hero" compact />);
+    const trigger = screen.getByRole("button", { name: /selecionar workspace/i });
+
+    await user.click(trigger);
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("option", { name: /Empresa LTDA/i }));
+    expect(mockContext.value.selectWorkspace).toHaveBeenCalledWith("ws-2");
+  });
 });

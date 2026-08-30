@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "./client";
-import { acceptWorkspaceInvite, createWorkspace, createWorkspaceInvite, fetchWorkspaceMembers, fetchWorkspaces, leaveWorkspace, removeWorkspaceMember } from "./workspaces";
+import { acceptWorkspaceInvite, archiveWorkspace, createWorkspace, createWorkspaceInvite, fetchWorkspaceMembers, fetchWorkspaces, leaveWorkspace, removeWorkspaceMember, renameWorkspace, restoreWorkspace } from "./workspaces";
 
 vi.mock("./client", () => ({ apiFetch: vi.fn() }));
 const mocked = vi.mocked(apiFetch);
@@ -35,5 +35,20 @@ describe("workspace API", () => {
     expect(mocked.mock.calls[0][0]).toBe("/auth/invites");
     expect(mocked.mock.calls[1][0]).toBe("/auth/invites/accept");
     expect(String(mocked.mock.calls[1][0])).not.toContain("a".repeat(64));
+  });
+
+  it("uses idempotent requests for workspace lifecycle mutations", async () => {
+    await renameWorkspace("workspace-1", "Novo nome");
+    await archiveWorkspace("workspace-1");
+    await restoreWorkspace("workspace-1");
+
+    expect(mocked.mock.calls.map(([path]) => path)).toEqual([
+      "/workspaces/workspace-1",
+      "/workspaces/workspace-1/archive",
+      "/workspaces/workspace-1/restore",
+    ]);
+    for (const [, options] of mocked.mock.calls) {
+      expect(options).toEqual(expect.objectContaining({ idempotencyKey: expect.any(String) }));
+    }
   });
 });
