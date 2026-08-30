@@ -20,7 +20,7 @@ export const registerAdminInviteRoutes = (
   opts: {
     auth: BetterAuth;
     adminEmails: string[];
-    delivery: AdminInviteDelivery;
+    delivery?: AdminInviteDelivery | undefined;
   },
 ): void => {
   app.post('/admin/invite', async (request, reply) => {
@@ -42,6 +42,13 @@ export const registerAdminInviteRoutes = (
 
     if (!isUserAdmin(session.email, opts.adminEmails)) {
       return reply.code(403).send({ code: 'admin.forbidden', message: 'Apenas administradores podem enviar convites.' });
+    }
+
+    if (!opts.delivery) {
+      return reply.code(503).send({
+        code: 'admin.invite_delivery_not_configured',
+        message: 'Serviço de entrega de convite não configurado.',
+      });
     }
 
     const parsed = inviteInputSchema.safeParse(request.body ?? {});

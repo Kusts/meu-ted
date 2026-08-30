@@ -8,12 +8,6 @@ export type AdminInviteDeliveryMessage = {
 
 export type AdminInviteDelivery = (message: AdminInviteDeliveryMessage) => Promise<void> | void;
 
-export const createConsoleAdminInviteDelivery = (): AdminInviteDelivery => {
-  return async (message) => {
-    // Intentionally log invite credentials when console logger is active for admin invite dispatch
-    console.log(`[INVITE EMAIL] To: ${message.email} | Temporary Password: ${message.password} | Invited by: ${message.invitedBy}`);
-  };
-};
 
 export const generateRandomPassword = (length = 16): string => {
   const chars = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*';

@@ -66,7 +66,7 @@ import { registerBetterAuthRoutes } from "../auth/better-auth-http.js";
 import { registerInviteRoutes } from "../auth/invites-http.js";
 import { registerWorkspaceRoutes } from "../auth/workspaces-http.js";
 import { registerAdminInviteRoutes } from "./admin-invites.js";
-import { createConsoleAdminInviteDelivery, type AdminInviteDelivery } from "../auth/admin-invite-service.js";
+import type { AdminInviteDelivery } from "../auth/admin-invite-service.js";
 import type { BetterAuth } from "../auth/better-auth.js";
 import type { InviteService } from "../auth/invites.js";
 import type { WorkspaceStore } from "../auth/workspaces-http.js";
@@ -453,11 +453,10 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   if (deps.auth) {
     registerBetterAuthRoutes(app, deps.auth);
     const adminEmails = deps.adminEmails ?? ['walissonead@gmail.com'];
-    const adminDelivery = deps.adminInviteDelivery ?? createConsoleAdminInviteDelivery();
     registerAdminInviteRoutes(app, {
       auth: deps.auth,
       adminEmails,
-      delivery: adminDelivery,
+      delivery: deps.adminInviteDelivery,
     });
     if (deps.inviteService && deps.authorizeInviteCreate) {
       registerInviteRoutes(app, {
