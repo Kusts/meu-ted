@@ -1,19 +1,31 @@
 import { describe, expect, it, vi } from "vitest";
 import worker, { FinanceChatAgent } from "../src/worker.js";
 
+type WorkerEnv = Parameters<typeof worker.fetch>[1];
+
 describe("FinanceChatAgent & Worker Integration (Task 4)", () => {
   const API_ORIGIN = "https://api.example.test";
   const WORKSPACE_ID = "workspace-integration-test-1";
 
-  const mockEnv = {
+  const mockEnv: WorkerEnv = {
     API_ORIGIN,
     AGENT: {
-      idFromName: vi.fn((name: string) => ({ name })),
-      get: vi.fn(() => ({ fetch: vi.fn(async () => new Response("legacy agent")) })),
-    } as unknown as DurableObjectNamespace,
-    FINANCE_CHAT_AGENT: {
-      idFromName: vi.fn((name: string) => ({ name })),
+      idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
       get: vi.fn(() => ({
+        exportFullWorkspaceHistory: vi.fn(async () => ({
+          version: 1,
+          workspaceId: WORKSPACE_ID,
+          turns: [],
+          messages: [],
+          hasInFlightTurns: false,
+        })),
+        fetch: vi.fn(async () => new Response("legacy agent")),
+      })),
+    },
+    FINANCE_CHAT_AGENT: {
+      idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
+      get: vi.fn(() => ({
+        importLegacyHistory: vi.fn(async () => ({ success: true, importedCount: 0, skipped: true })),
         fetch: vi.fn(async (req: Request) => {
           const url = new URL(req.url);
           if (url.pathname.includes("/message")) {
@@ -25,7 +37,7 @@ describe("FinanceChatAgent & Worker Integration (Task 4)", () => {
           return new Response("finance-chat-agent ok", { status: 200 });
         }),
       })),
-    } as unknown as DurableObjectNamespace,
+    },
   };
 
   it("exposes /health/agent and returns binding FINANCE_CHAT_AGENT", async () => {
@@ -35,13 +47,13 @@ describe("FinanceChatAgent & Worker Integration (Task 4)", () => {
     expect(body).toEqual({ status: "ready", binding: "FINANCE_CHAT_AGENT" });
   });
 
-  it("routes /agents/finance-chat-agent/:workspaceId after validating workspace membership", async () => {
+  it("routes /agents/finance-chat-agent/:workspaceId/rpc/history after validating workspace membership", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ userId: "user-1", role: "member" }] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ user: { id: "user-1" } }), { status: 200 }));
 
     const res = await worker.fetch(
-      new Request(`https://agent.example.test/agents/finance-chat-agent/${WORKSPACE_ID}`, {
+      new Request(`https://agent.example.test/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/history`, {
         headers: {
           cookie: "better-auth.session_token=test-session",
           origin: "https://pwa.example.test",

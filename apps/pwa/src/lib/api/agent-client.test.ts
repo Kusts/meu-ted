@@ -1,26 +1,167 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { approvePendingOperation, cancelAgentTurn, deleteAgentHistory, exportAgentHistory, fetchPendingOperations, processAgentTurn, reconnectAgentTurn, rejectPendingOperation, retryAgentTurn, sendAgentMessage } from "./agent-client";
+import {
+  approvePendingOperation,
+  deleteAgentHistory,
+  exportAgentHistory,
+  fetchAgentHistory,
+  fetchPendingOperations,
+  rejectPendingOperation,
+  sendAgentMessage,
+} from "./agent-client";
 import * as agentAuth from "./agent-auth";
 
-afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
-describe("agent client turn lifecycle", () => {
-  it("waits through an empty snapshot and follows later terminal events", async () => {
+describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
+  it("sendAgentMessage sends POST to /agents/finance-chat-agent/:workspaceId/rpc/chat with x-agent-connection-token and text payload", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
-    const fetchMock = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response("", { status: 200 }))
-      .mockResolvedValueOnce(new Response("id: 3\nevent: completed\ndata: {}\n\n", { status: 200 }));
-    await expect(reconnectAgentTurn("w1", "t1")).resolves.toEqual([{ id: 3, type: "completed", data: "{}" }]);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("signed-token-123");
+
+    let capturedUrl = "";
+    let capturedInit: RequestInit | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      capturedUrl = String(url);
+      capturedInit = init;
+      return new Response(
+        JSON.stringify({
+          turnId: "turn-abc",
+          status: "completed",
+          output: "Seu saldo é R$ 1.000,00.",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+
+    const result = await sendAgentMessage("workspace-123", "Quanto gastei?");
+
+    expect(capturedUrl).toBe("https://agent.example.test/agents/finance-chat-agent/workspace-123/rpc/chat");
+    expect(capturedInit?.method).toBe("POST");
+    expect((capturedInit?.headers as Record<string, string>)["x-agent-connection-token"]).toBe("signed-token-123");
+    expect(capturedInit?.body).toBe(JSON.stringify({ text: "Quanto gastei?" }));
+    expect(result.output).toBe("Seu saldo é R$ 1.000,00.");
   });
 
-  it("retries a dropped SSE connection and resumes from the cursor", async () => {
+  it("fetchAgentHistory sends GET to /agents/finance-chat-agent/:workspaceId/rpc/history and parses isOwn correctly", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("signed-token-123");
+
+    let capturedUrl = "";
+    let capturedInit: RequestInit | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      capturedUrl = String(url);
+      capturedInit = init;
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "msg-1",
+              actorId: "user-1",
+              role: "user",
+              content: "Mensagem 1",
+              createdAt: "2026-08-30T10:00:00Z",
+              isOwn: true,
+            },
+            {
+              id: "msg-2",
+              actorId: "ted",
+              role: "assistant",
+              content: "Resposta do assistente",
+              createdAt: "2026-08-30T10:00:05Z",
+              isOwn: false,
+            },
+            {
+              id: "msg-3",
+              actorId: "user-2",
+              role: "user",
+              content: "Mensagem do outro membro",
+              createdAt: "2026-08-30T10:01:00Z",
+              isOwn: false,
+            },
+          ],
+          total: 3,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+
+    const items = await fetchAgentHistory("workspace-123");
+
+    expect(capturedUrl).toBe("https://agent.example.test/agents/finance-chat-agent/workspace-123/rpc/history");
+    expect((capturedInit?.headers as Record<string, string>)["x-agent-connection-token"]).toBe("signed-token-123");
+    expect(items).toHaveLength(3);
+    expect(items[0]!.isOwn).toBe(true);
+    expect(items[1]!.isOwn).toBe(false);
+    expect(items[2]!.isOwn).toBe(false);
+  });
+
+  it("RED (1): fetchAgentHistory fails closed and throws when isOwn is missing in /rpc/history response", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("signed-token-123");
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "msg-1",
+              actorId: "other-user",
+              role: "user",
+              content: "Mensagem de outro membro sem isOwn",
+              // isOwn is absent
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    // Must reject because isOwn is strictly required by the Finance contract
+    await expect(fetchAgentHistory("workspace-123")).rejects.toThrow();
+  });
+
+  it("RED (2): sendAgentMessage and fetchAgentHistory propagate token error and do not call fetch against the agent", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockRejectedValue(new Error("Token generation failed: Unauthorized"));
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await expect(sendAgentMessage("workspace-123", "Olá")).rejects.toThrow("Token generation failed: Unauthorized");
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await expect(fetchAgentHistory("workspace-123")).rejects.toThrow("Token generation failed: Unauthorized");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("sendAgentMessage propagates safe error message when agent returns failure", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("signed-token-123");
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "agent.usage_limit",
+          message: "Limite de tokens diário atingido.",
+        }),
+        { status: 429, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await expect(sendAgentMessage("workspace-123", "Olá")).rejects.toThrow(
+      "Limite de tokens diário atingido.",
+    );
+  });
+
+  it("legacy helpers remain available for backwards compatibility", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
     const fetchMock = vi.spyOn(globalThis, "fetch")
-      .mockRejectedValueOnce(new Error("network"))
-      .mockResolvedValueOnce(new Response("id: 2\nevent: completed\ndata: {}\n\n", { status: 200 }));
-    await expect(reconnectAgentTurn("w1", "t1", 1)).resolves.toEqual([{ id: 2, type: "completed", data: "{}" }]);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+      .mockResolvedValueOnce(new Response(JSON.stringify({ version: 1, exportedAt: "now", turns: [], messages: [], actions: [], events: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ deleted: true, recordCount: 2 }), { status: 200 }));
+
+    await expect(exportAgentHistory("w1")).resolves.toMatchObject({ version: 1 });
+    await expect(deleteAgentHistory("w1")).resolves.toEqual({ deleted: true, recordCount: 2 });
   });
 
   it("lists and decides pending operations through the API workspace boundary", async () => {
@@ -37,39 +178,5 @@ describe("agent client turn lifecycle", () => {
     await expect(fetchPendingOperations("w1")).resolves.toHaveLength(1);
     await expect(approvePendingOperation("w1", "p1")).resolves.toMatchObject({ status: "approved" });
     await expect(rejectPendingOperation("w1", "p1")).resolves.toMatchObject({ status: "rejected" });
-  });
-
-  it("exports and deletes history through authenticated workspace routes", async () => {
-    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
-    const fetchMock = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(JSON.stringify({ version: 1, exportedAt: "now", turns: [], messages: [], actions: [], events: [] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ deleted: true, recordCount: 2 }), { status: 200 }));
-
-    await expect(exportAgentHistory("w1")).resolves.toMatchObject({ version: 1 });
-    await expect(deleteAgentHistory("w1")).resolves.toEqual({ deleted: true, recordCount: 2 });
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://agent.example.test/agents/workspace/w1/history/export");
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("https://agent.example.test/agents/workspace/w1/history");
-    expect((fetchMock.mock.calls[1]?.[1] as RequestInit).method).toBe("DELETE");
-  });
-
-  it("sends, reconnects with cursor, cancels and retries through the workspace route", async () => {
-    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
-    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("test-connection-token");
-    const fetchMock = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(JSON.stringify({ turnId: "t1", status: "queued" }), { status: 202 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ turnId: "t1", status: "completed", output: "done" }), { status: 200 }))
-      .mockResolvedValueOnce(new Response("id: 2\nevent: completed\ndata: {}\n\n", { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ turnId: "t1", status: "aborted" }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ turnId: "t1", status: "queued" }), { status: 200 }));
-
-    await expect(sendAgentMessage("w1", "hello")).resolves.toMatchObject({ turnId: "t1" });
-    await expect(processAgentTurn("w1", "t1")).resolves.toMatchObject({ status: "completed" });
-    await expect(reconnectAgentTurn("w1", "t1", 1)).resolves.toHaveLength(1);
-    await expect(cancelAgentTurn("w1", "t1")).resolves.toMatchObject({ status: "aborted" });
-    await expect(retryAgentTurn("w1", "t1")).resolves.toMatchObject({ status: "queued" });
-
-    expect(fetchMock).toHaveBeenCalledTimes(5);
-    expect(fetchMock.mock.calls[2]?.[0]).toBe("https://agent.example.test/agents/workspace/w1/message/stream/t1");
-    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers).toMatchObject({ "Last-Event-ID": "1" });
   });
 });

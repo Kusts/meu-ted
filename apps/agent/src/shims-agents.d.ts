@@ -1,8 +1,30 @@
 declare module "agents/ai-chat-agent" {
+  export interface UIMessagePart {
+    type: string;
+    text?: string;
+    [key: string]: unknown;
+  }
+
+  export interface UIMessageMetadata {
+    actorId?: string;
+    workspaceId?: string;
+    createdAt?: string;
+    [key: string]: unknown;
+  }
+
+  export interface UIMessage {
+    id: string;
+    role: "user" | "assistant" | "system";
+    parts: UIMessagePart[];
+    metadata?: UIMessageMetadata;
+  }
+
   export class AIChatAgent<Env = unknown> {
     constructor(state: DurableObjectState, env: Env);
     state: DurableObjectState;
     env: Env;
+    messages?: UIMessage[];
+    persistMessages(messages: UIMessage[]): Promise<void> | void;
     onConnect?(connection: unknown, ctx: unknown): Promise<void>;
     onChatMessage?(msg: unknown, ...args: unknown[]): Promise<unknown>;
     onMessage(connection: unknown, message: string): Promise<void>;

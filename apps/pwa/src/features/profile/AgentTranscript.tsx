@@ -4,15 +4,10 @@ import { useEffect, useState } from "react";
 import BottomSheet from "@/components/BottomSheet";
 import {
   fetchAgentHistory,
-  exportAgentHistory,
-  deleteAgentHistory,
   fetchPendingOperations,
   approvePendingOperation,
   rejectPendingOperation,
   sendAgentMessage,
-  processAgentTurn,
-  reconnectAgentTurn,
-  retryAgentTurn,
   type AgentMessage,
   type PendingOperation,
 } from "@/lib/api/agent-client";
@@ -28,16 +23,35 @@ export function AgentTranscript({ open, workspaceId, onClose = () => {} }: Agent
   const [pendingOps, setPendingOps] = useState<PendingOperation[]>([]);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
-  const [failedTurnId, setFailedTurnId] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
+
+    setHistoryError(null);
+    setMessages([]);
+    setPendingOps([]);
     fetchAgentHistory(workspaceId)
-      .then((items) => setMessages(items))
-      .catch(() => {});
+      .then((items) => {
+        if (cancelled) return;
+        setMessages(items);
+        setHistoryError(null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setMessages([]);
+        setHistoryError("Não foi possível carregar o histórico.");
+      });
     fetchPendingOperations(workspaceId)
-      .then((ops) => setPendingOps(ops))
+      .then((ops) => {
+        if (!cancelled) setPendingOps(ops);
+      })
       .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
   }, [open, workspaceId]);
 
   const handleSend = async () => {
@@ -45,74 +59,26 @@ export function AgentTranscript({ open, workspaceId, onClose = () => {} }: Agent
     const text = inputText.trim();
     setInputText("");
     setLoading(true);
-    setFailedTurnId(null);
 
     try {
-      const turn = await sendAgentMessage(workspaceId, text);
-      let output: string | undefined;
-
-      try {
-        const processed = await processAgentTurn(workspaceId, turn.turnId);
-        if (processed.status === "failed") {
-          setFailedTurnId(turn.turnId);
-          await reconnectAgentTurn(workspaceId, turn.turnId);
-          return;
-        }
-        output = processed.output;
-      } catch {
-        // network loss -> recover via stream
-        const events = await reconnectAgentTurn(workspaceId, turn.turnId);
-        for (const ev of events) {
-          try {
-            const parsed = JSON.parse(ev.data);
-            if (parsed.output) output = parsed.output;
-          } catch {}
-        }
-      }
-
-      await reconnectAgentTurn(workspaceId, turn.turnId);
-
-      if (output) {
-        setMessages((prev) => [
-          ...prev,
-          { id: `turn-${Date.now()}`, actorId: "assistant", role: "assistant", content: output! },
-        ]);
-      }
+      await sendAgentMessage(workspaceId, text);
+      const [history, ops] = await Promise.all([
+        fetchAgentHistory(workspaceId),
+        fetchPendingOperations(workspaceId).catch(() => []),
+      ]);
+      setMessages(history);
+      setPendingOps(ops);
     } catch {
-      // ignore error in handler
+      try {
+        const history = await fetchAgentHistory(workspaceId);
+        setMessages(history);
+        setHistoryError(null);
+      } catch {
+        setMessages([]);
+        setHistoryError("Não foi possível carregar o histórico.");
+      }
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleRetry = async () => {
-    if (!failedTurnId) return;
-    const turnId = failedTurnId;
-    setLoading(true);
-    try {
-      await retryAgentTurn(workspaceId, turnId);
-      const processed = await processAgentTurn(workspaceId, turnId);
-      await reconnectAgentTurn(workspaceId, turnId);
-      if (processed.output) {
-        setMessages((prev) => [
-          ...prev,
-          { id: `turn-${Date.now()}`, actorId: "assistant", role: "assistant", content: processed.output! },
-        ]);
-        setFailedTurnId(null);
-      }
-    } catch {} finally {
-      setLoading(false);
-    }
-  };
-
-  const handleExport = async () => {
-    await exportAgentHistory(workspaceId);
-  };
-
-  const handleDelete = async () => {
-    if (window.confirm("Deseja realmente excluir seu histórico?")) {
-      await deleteAgentHistory(workspaceId);
-      setMessages([]);
     }
   };
 
@@ -128,45 +94,44 @@ export function AgentTranscript({ open, workspaceId, onClose = () => {} }: Agent
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Histórico do Assistente">
-      <div className="flex gap-2 mb-4">
-        <button onClick={handleExport} className="text-xs px-2 py-1 bg-fill-light rounded">
-          Exportar histórico
-        </button>
-        <button onClick={handleDelete} className="text-xs px-2 py-1 text-red-500 rounded">
-          Excluir meu histórico
-        </button>
-      </div>
-
       {pendingOps.map((op) => (
         <div key={op.id} className="p-3 mb-2 bg-amber-500/10 rounded-lg border border-amber-500/20">
           <p className="font-semibold text-sm">Aprovação necessária</p>
           <div className="flex gap-2 mt-2">
-            <button onClick={() => handleApprove(op.id)} className="px-3 py-1 bg-primary text-white text-xs rounded">
+            <button onClick={() => handleApprove(op.id)} className="px-3 py-1 bg-primary text-white text-xs rounded cursor-pointer">
               Aprovar
             </button>
-            <button onClick={() => handleReject(op.id)} className="px-3 py-1 bg-surface text-xs rounded">
+            <button onClick={() => handleReject(op.id)} className="px-3 py-1 bg-surface text-xs rounded cursor-pointer">
               Rejeitar
             </button>
           </div>
         </div>
       ))}
 
-      <div className="space-y-3 my-4 max-h-80 overflow-y-auto">
-        {messages.map((m) => (
-          <div key={m.id} className={`p-2 rounded-lg ${m.role === "user" ? "bg-surface" : "bg-primary/10"}`}>
-            <span className="text-xs text-text-secondary font-mono">{m.actorId}</span>
-            <p className="text-sm text-text-primary">{m.content}</p>
-          </div>
-        ))}
-      </div>
-
-      {failedTurnId && (
-        <div className="my-2">
-          <button onClick={handleRetry} className="text-xs text-amber-500 underline">
-            Tentar novamente
-          </button>
-        </div>
+      {historyError && (
+        <p role="alert" className="rounded-[10px] bg-danger-tint px-3 py-2 text-[12px] font-semibold text-danger">
+          {historyError}
+        </p>
       )}
+
+      <div className="space-y-3 my-4 max-h-80 overflow-y-auto">
+        {messages.map((m) => {
+          const isCurrentUser = m.isOwn;
+          const isAssistant = m.role === "assistant";
+          const displayName = isCurrentUser ? "Você" : isAssistant ? "TED" : "Membro";
+          return (
+            <div
+              key={m.id}
+              className={`p-2 rounded-lg ${
+                isCurrentUser ? "bg-surface" : isAssistant ? "bg-primary/10" : "bg-surface-2"
+              }`}
+            >
+              <span className="text-xs text-text-secondary font-semibold">{displayName}</span>
+              <p className="text-sm text-text-primary">{m.content}</p>
+            </div>
+          );
+        })}
+      </div>
 
       <div className="flex gap-2 mt-4">
         <input
@@ -180,7 +145,7 @@ export function AgentTranscript({ open, workspaceId, onClose = () => {} }: Agent
         <button
           onClick={handleSend}
           disabled={loading}
-          className="px-4 py-2 bg-primary text-white text-sm rounded-lg"
+          className="px-4 py-2 bg-primary text-white text-sm rounded-lg cursor-pointer disabled:opacity-50"
         >
           Enviar
         </button>

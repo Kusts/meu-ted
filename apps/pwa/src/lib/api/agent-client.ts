@@ -2,17 +2,29 @@ import { z } from "zod";
 import { apiFetch, isApiConfigured } from "./client";
 import { fetchAgentConnectionToken } from "./agent-auth";
 
+const historyItemSchema = z.object({
+  id: z.string(),
+  actorId: z.string().optional(),
+  role: z.string(),
+  content: z.string().optional(),
+  text: z.string().optional(),
+  createdAt: z.string().optional(),
+  isOwn: z.boolean(),
+}).transform((item) => ({
+  id: item.id,
+  actorId: item.actorId ?? (item.role === "assistant" ? "ted" : "unknown"),
+  role: item.role,
+  content: item.content ?? item.text ?? "",
+  createdAt: item.createdAt,
+  isOwn: item.isOwn,
+}));
+
 const historySchema = z.object({
-  items: z.array(z.object({
-    id: z.string(),
-    actorId: z.string(),
-    role: z.string(),
-    content: z.string(),
-    createdAt: z.string().optional(),
-  })),
+  items: z.array(historyItemSchema),
+  total: z.number().optional(),
 });
 
-export type AgentMessage = z.infer<typeof historySchema>["items"][number];
+export type AgentMessage = z.infer<typeof historyItemSchema>;
 
 function agentBaseUrl(): string | undefined {
   return process.env.NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL?.replace(/\/$/, "") || undefined;
@@ -62,24 +74,57 @@ function agentHistoryUrl(workspaceId: string, suffix: string): string {
 }
 
 async function parseJson<T>(response: Response): Promise<T> {
-  if (!response.ok) throw new Error("Operação do agente falhou.");
+  if (!response.ok) {
+    let errorMsg = "Operação do agente falhou.";
+    try {
+      const body = await response.json() as { message?: string };
+      if (body?.message) errorMsg = body.message;
+    } catch {
+      // fallback
+    }
+    throw new Error(errorMsg);
+  }
   return await response.json() as T;
 }
 
 async function agentAuthHeaders(workspaceId: string): Promise<Record<string, string>> {
-  const token = await fetchAgentConnectionToken(workspaceId).catch(() => undefined);
-  return token ? { "x-agent-connection-token": token } : {};
+  const token = await fetchAgentConnectionToken(workspaceId);
+  return { "x-agent-connection-token": token };
 }
 
 export async function sendAgentMessage(workspaceId: string, content: string): Promise<AgentTurn> {
+  const baseUrl = agentBaseUrl();
+  if (!baseUrl) throw new Error("Agent não configurado");
   const authHeaders = await agentAuthHeaders(workspaceId);
-  const response = await fetch(agentRequestUrl(workspaceId, ""), {
-    method: "POST",
-    credentials: "include",
-    headers: { "content-type": "application/json", "X-Workspace-Id": workspaceId, ...authHeaders },
-    body: JSON.stringify({ content }),
-  });
-  return parseJson<AgentTurn>(response);
+  const response = await fetch(
+    `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/chat`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "content-type": "application/json",
+        "X-Workspace-Id": workspaceId,
+        ...authHeaders,
+      },
+      body: JSON.stringify({ text: content }),
+    },
+  );
+  if (!response.ok) {
+    let errorMsg = "Operação do agente falhou.";
+    try {
+      const errBody = await response.json() as { message?: string; code?: string };
+      if (errBody?.message) errorMsg = errBody.message;
+    } catch {
+      // use default message
+    }
+    throw new Error(errorMsg);
+  }
+  const data = await response.json() as { turnId?: string; intentionId?: string; status?: string; output?: string };
+  return {
+    turnId: data.turnId ?? data.intentionId ?? `turn-${Date.now()}`,
+    status: data.status ?? "completed",
+    output: data.output,
+  };
 }
 
 export async function cancelAgentTurn(workspaceId: string, turnId: string): Promise<AgentTurn> {
@@ -200,10 +245,27 @@ export async function rejectPendingOperation(workspaceId: string, pendingOperati
 export async function fetchAgentHistory(workspaceId: string): Promise<AgentMessage[]> {
   const baseUrl = agentBaseUrl();
   if (!baseUrl) return [];
-  const response = await fetch(`${baseUrl}/agents/workspace/${encodeURIComponent(workspaceId)}/message`, {
-    credentials: "include",
-    headers: { "X-Workspace-Id": workspaceId },
-  });
-  if (!response.ok) throw new Error("Não foi possível carregar o histórico do agente.");
-  return historySchema.parse(await response.json()).items;
+  const authHeaders = await agentAuthHeaders(workspaceId);
+  const response = await fetch(
+    `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/history`,
+    {
+      credentials: "include",
+      headers: {
+        "X-Workspace-Id": workspaceId,
+        ...authHeaders,
+      },
+    },
+  );
+  if (!response.ok) {
+    let errorMsg = "Não foi possível carregar o histórico do agente.";
+    try {
+      const errBody = await response.json() as { message?: string; code?: string };
+      if (errBody?.message) errorMsg = errBody.message;
+    } catch {
+      // use default message
+    }
+    throw new Error(errorMsg);
+  }
+  const json = await response.json();
+  return historySchema.parse(json).items;
 }

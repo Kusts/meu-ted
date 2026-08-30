@@ -44,28 +44,28 @@ export function TedApprovalCard({ operation, workspaceId, onResolved }: TedAppro
 
   if (status !== "pending") {
     return (
-      <div className="my-2 rounded-xl border border-border bg-bg-surface p-3 text-xs text-text-secondary">
+      <div className="my-2 rounded-[14px] border border-border-subtle bg-surface-2 p-3 text-xs text-text-secondary">
         Operação {status === "approved" ? "✅ aprovada" : "❌ rejeitada"}: <strong className="text-text-primary">{operation.operation}</strong>
       </div>
     );
   }
 
   return (
-    <div className="my-2 rounded-xl border border-warning/40 bg-warning/5 p-3 text-xs">
-      <div className="font-semibold text-warning-dark">⚠️ Confirmação Necessária</div>
+    <div className="my-2 rounded-[16px] border border-warning/30 bg-warning-tint p-3.5 text-xs shadow-xs">
+      <div className="font-bold text-warning">⚠️ Confirmação Necessária</div>
       <div className="mt-1 text-text-primary">
         Ação: <strong>{operation.operation}</strong>
       </div>
       <div className="mt-0.5 text-text-muted">Motivo: {operation.reason === "high_value" ? "Valor elevado" : "Ação destrutiva"}</div>
 
-      {error && <div className="mt-1 text-danger">{error}</div>}
+      {error && <div className="mt-1 font-semibold text-danger">{error}</div>}
 
       <div className="mt-3 flex gap-2">
         <button
           type="button"
           disabled={loading}
           onClick={handleApprove}
-          className="rounded-lg bg-primary px-3 py-1.5 font-medium text-white transition hover:bg-primary-dark disabled:opacity-50"
+          className="rounded-[10px] bg-primary px-3.5 py-2 font-bold text-white shadow-xs transition-all hover:bg-primary-hover active:scale-95 disabled:opacity-50"
         >
           {loading ? "Processando…" : "Aprovar"}
         </button>
@@ -73,7 +73,7 @@ export function TedApprovalCard({ operation, workspaceId, onResolved }: TedAppro
           type="button"
           disabled={loading}
           onClick={handleReject}
-          className="rounded-lg border border-border bg-bg-surface px-3 py-1.5 font-medium text-text-secondary transition hover:bg-fill-light disabled:opacity-50"
+          className="rounded-[10px] border border-border-subtle bg-surface-1 px-3.5 py-2 font-bold text-text-secondary transition-all hover:bg-surface-2 active:scale-95 disabled:opacity-50"
         >
           Rejeitar
         </button>

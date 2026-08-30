@@ -1,16 +1,32 @@
-import { routeAgentRequest, type AgentNamespace } from "agents";
 import { FinanceChatAgent } from "./finance-chat-agent.js";
-import { authorizeWorkspaceMembership, getAgentByName, WorkspaceAgent } from "./index.js";
+import { authorizeWorkspaceMembership, WorkspaceAgent } from "./index.js";
 import { probeProvider } from "./llm/provider-probe.js";
 import { FIXED_ENDPOINTS } from "./llm/provider-registry.js";
+import type { LegacyFullExport, MigrationResult } from "./migration/legacy-history.js";
+import { redactTranscript } from "./transcript-safety.js";
 
 export { FinanceChatAgent, WorkspaceAgent };
 
 type ExportedHandler<E, U = unknown> = { fetch(request: Request, env: E, ctx?: unknown): Promise<Response> };
 
+type LegacyAgentStub = {
+  exportFullWorkspaceHistory?: (workspaceId: string) => Promise<LegacyFullExport>;
+  fetch: (request: Request) => Promise<Response>;
+};
+
+type FinanceAgentStub = {
+  importLegacyHistory?: (data: LegacyFullExport) => Promise<MigrationResult>;
+  fetch: (request: Request) => Promise<Response>;
+};
+
+type TypedAgentNamespace<T> = {
+  idFromName: (name: string) => DurableObjectId;
+  get: (id: DurableObjectId) => T;
+};
+
 type Env = {
-  AGENT: DurableObjectNamespace;
-  FINANCE_CHAT_AGENT: DurableObjectNamespace;
+  AGENT: TypedAgentNamespace<LegacyAgentStub>;
+  FINANCE_CHAT_AGENT: TypedAgentNamespace<FinanceAgentStub>;
   API_ORIGIN: string;
   AGENT_CONNECTION_TOKEN_SECRET?: string;
   AGENT_DELEGATION_SECRET?: string;
@@ -19,6 +35,61 @@ type Env = {
   OPENCODE_ZEN_API_KEY?: string;
   OPENCODE_GO_API_KEY?: string;
   OPENAI_API_KEY?: string;
+};
+
+const syncLegacyHistory = async (
+  env: Env,
+  workspaceId: string,
+  financeAgent: FinanceAgentStub,
+): Promise<Response | null> => {
+  try {
+    if (!env.AGENT || typeof env.AGENT.idFromName !== "function" || typeof env.AGENT.get !== "function") {
+      return Response.json(
+        { code: "agent.history_migration_failed", message: "Legacy agent namespace is not configured" },
+        { status: 503 },
+      );
+    }
+
+    const legacyStub = env.AGENT.get(env.AGENT.idFromName(workspaceId));
+    if (!legacyStub || typeof legacyStub.exportFullWorkspaceHistory !== "function") {
+      return Response.json(
+        { code: "agent.history_migration_failed", message: "Legacy agent does not support history export" },
+        { status: 503 },
+      );
+    }
+
+    if (!financeAgent || typeof financeAgent.importLegacyHistory !== "function") {
+      return Response.json(
+        { code: "agent.history_migration_failed", message: "Target FinanceChatAgent does not support history import" },
+        { status: 503 },
+      );
+    }
+
+    const exportData = await legacyStub.exportFullWorkspaceHistory(workspaceId);
+    const importRes = await financeAgent.importLegacyHistory(exportData);
+    if (!importRes.success) {
+      if (importRes.reason?.includes("migration_blocked_turns_in_flight")) {
+        return Response.json(
+          { code: "agent.history_migration_pending", message: "Histórico em migração ou com turnos em voo." },
+          { status: 409 },
+        );
+      }
+      const safeReason = redactTranscript(importRes.reason ?? "Falha ao migrar histórico legado.");
+      return Response.json(
+        { code: "agent.history_migration_failed", message: safeReason },
+        { status: 503 },
+      );
+    }
+
+    return null;
+  } catch (err) {
+    const rawMsg = (err as Error)?.message ?? "Falha ao migrar histórico legado.";
+    const safeMsg = redactTranscript(rawMsg);
+    return Response.json(
+      { code: "agent.history_migration_failed", message: safeMsg },
+      { status: 503 },
+    );
+  }
 };
 
 const verifyAdminToken = (request: Request, adminToken?: string): boolean => {
@@ -119,15 +190,28 @@ export default {
       const workspaceId = decodeURIComponent(financeMatch[1]!);
       const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string }, workspaceId);
       if (auth instanceof Response) return auth;
-      // Route via agents SDK official router
-      const routed = await routeAgentRequest(request, env as unknown as Record<string, AgentNamespace<FinanceChatAgent>>);
-      if (routed) return routed;
-      // Fallback: direct DO fetch with auth headers
-      const headers = new Headers(request.headers);
-      headers.set("x-agent-actor", auth.actorId);
-      headers.set("x-agent-role", auth.role);
-      headers.set("x-agent-workspace", auth.workspaceId);
-      return env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(workspaceId)).fetch(new Request(request, { headers }));
+
+      const subPath = url.pathname.slice(financeMatch[0].length);
+      const isRestRpc = subPath === "/rpc/chat" || subPath === "/rpc/history";
+
+      if (isRestRpc) {
+        const financeAgent = env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(workspaceId));
+        const syncError = await syncLegacyHistory(env, workspaceId, financeAgent);
+        if (syncError) return syncError;
+
+        const headers = new Headers(request.headers);
+        headers.set("x-agent-actor", auth.actorId);
+        headers.set("x-agent-role", auth.role);
+        headers.set("x-agent-workspace", auth.workspaceId);
+        const rpcUrl = new URL(request.url);
+        rpcUrl.pathname = subPath;
+        return financeAgent.fetch(
+          new Request(rpcUrl, { method: request.method, headers, body: request.body }),
+        );
+      }
+
+      // Block all non-RPC routes to FinanceChatAgent to prevent unauthenticated/spoofed SDK routing
+      return new Response("Not found", { status: 404 });
     }
 
     // Legacy route kept during migration
@@ -150,6 +234,10 @@ export default {
           configured = false;
         }
         if (configured) {
+          const financeAgent = env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(workspaceId));
+          const syncError = await syncLegacyHistory(env, workspaceId, financeAgent);
+          if (syncError) return syncError;
+
           const headers = new Headers(request.headers);
           headers.set("x-agent-actor", auth.actorId);
           headers.set("x-agent-role", auth.role);
@@ -163,7 +251,7 @@ export default {
           } catch {
             // pass through original body
           }
-          return env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(workspaceId)).fetch(new Request(rpcUrl, { method: "POST", headers, body: rpcBody }));
+          return financeAgent.fetch(new Request(rpcUrl, { method: "POST", headers, body: rpcBody }));
         }
         return Response.json({ code: "agent.provider_not_configured", message: "Nenhum provedor de IA ativo configurado." }, { status: 503 });
       }
@@ -171,7 +259,7 @@ export default {
       headers.set("x-agent-actor", auth.actorId);
       headers.set("x-agent-role", auth.role);
       headers.set("x-agent-workspace", auth.workspaceId);
-      return getAgentByName(env.AGENT, workspaceId).fetch(new Request(request, { headers }));
+      return env.AGENT.get(env.AGENT.idFromName(workspaceId)).fetch(new Request(request, { headers }));
     }
 
     return new Response("Not found", { status: 404 });

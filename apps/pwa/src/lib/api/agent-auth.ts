@@ -30,6 +30,9 @@ export const fetchAgentConnectionToken = async (
 
   const response = await apiFetch<AgentConnectionTokenResponse>("/auth/agent-token", {
     method: "POST",
+    headers: {
+      "X-Workspace-Id": workspaceId,
+    },
   });
 
   const ttlMs = Math.min((response.expiresIn ?? 120) * 1000, 90_000); // 90s cache TTL limit

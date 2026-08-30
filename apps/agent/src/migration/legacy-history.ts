@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { sanitizeForPersistence } from '../privacy/history.js';
+import { redactTranscript } from '../transcript-safety.js';
 
 export type LegacyMessage = {
   id: string;
@@ -28,12 +29,15 @@ export type LegacyFullExport = {
   hasInFlightTurns: boolean;
 };
 
-export type TransformedMessage = {
+export type SdkUIMessage = {
   id: string;
   role: 'user' | 'assistant' | 'system';
-  content: string;
-  actorId: string;
-  createdAt: string;
+  parts: Array<{ type: 'text'; text: string }>;
+  metadata: {
+    actorId: string;
+    workspaceId: string;
+    createdAt: string;
+  };
 };
 
 export type MigrationResult = {
@@ -45,11 +49,17 @@ export type MigrationResult = {
 };
 
 export const computeHistoryHash = (messages: LegacyMessage[]): string => {
-  const normalized = messages.map((m) => `${m.id}:${m.actor_id}:${m.role}:${m.created_at}`).join('|');
-  return createHash('sha256').update(normalized).digest('hex');
+  const structured = messages.map((m) => ({
+    id: m.id,
+    actor_id: m.actor_id,
+    role: m.role,
+    created_at: m.created_at,
+    content_json: m.content_json,
+  }));
+  return createHash('sha256').update(JSON.stringify(structured)).digest('hex');
 };
 
-export const transformLegacyMessages = (messages: LegacyMessage[]): TransformedMessage[] => {
+export const transformLegacyMessages = (messages: LegacyMessage[], workspaceId = ''): SdkUIMessage[] => {
   return messages.map((msg) => {
     let parsedContent = '';
     try {
@@ -59,16 +69,20 @@ export const transformLegacyMessages = (messages: LegacyMessage[]): TransformedM
       parsedContent = msg.content_json;
     }
 
-    const sanitized = sanitizeForPersistence(parsedContent);
+    const sanitized = redactTranscript(sanitizeForPersistence(parsedContent));
     const validRole: 'user' | 'assistant' | 'system' =
       msg.role === 'assistant' ? 'assistant' : msg.role === 'system' ? 'system' : 'user';
+    const actorId = validRole === 'assistant' ? 'ted' : msg.actor_id;
 
     return {
       id: msg.id,
       role: validRole,
-      content: sanitized,
-      actorId: msg.actor_id,
-      createdAt: msg.created_at,
+      parts: [{ type: 'text', text: sanitized }],
+      metadata: {
+        actorId,
+        workspaceId,
+        createdAt: msg.created_at,
+      },
     };
   });
 };
@@ -81,21 +95,14 @@ export const initializeMigrationSchema = (sql: { exec(query: string): unknown })
       imported_count INTEGER NOT NULL,
       migrated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
-    CREATE TABLE IF NOT EXISTS migrated_messages (
-      id TEXT PRIMARY KEY,
-      workspace_id TEXT NOT NULL,
-      actor_id TEXT NOT NULL,
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
   `);
 };
 
-export const migrateLegacyHistory = (
+export const migrateLegacyHistory = async (
   exportData: LegacyFullExport,
   sql: { exec<T = Record<string, unknown>>(query: string, ...params: unknown[]): Iterable<T> },
-): MigrationResult => {
+  persistCallback?: (messages: SdkUIMessage[]) => Promise<void> | void,
+): Promise<MigrationResult> => {
   if (exportData.hasInFlightTurns) {
     return {
       success: false,
@@ -109,7 +116,7 @@ export const migrateLegacyHistory = (
 
   const migrationHash = computeHistoryHash(exportData.messages);
 
-  // Check if already migrated
+  // Check if already migrated with exact hash
   const existing = [...sql.exec<{ migration_hash: string; imported_count: number }>(
     `SELECT migration_hash, imported_count FROM _history_migration_marker WHERE workspace_id = ?`,
     exportData.workspaceId,
@@ -125,21 +132,18 @@ export const migrateLegacyHistory = (
     };
   }
 
-  const transformed = transformLegacyMessages(exportData.messages);
+  const transformed = transformLegacyMessages(exportData.messages, exportData.workspaceId);
 
-  // Save messages atomically
-  for (const msg of transformed) {
-    sql.exec(
-      `INSERT INTO migrated_messages (id, workspace_id, actor_id, role, content, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (id) DO UPDATE SET content = excluded.content`,
-      msg.id,
-      exportData.workspaceId,
-      msg.actorId,
-      msg.role,
-      msg.content,
-      msg.createdAt,
-    );
+  if (transformed.length > 0) {
+    if (typeof persistCallback !== 'function') {
+      return {
+        success: false,
+        importedCount: 0,
+        skipped: false,
+        reason: 'missing_persist_callback: cannot mark migration without persisting messages',
+      };
+    }
+    await persistCallback(transformed);
   }
 
   sql.exec(

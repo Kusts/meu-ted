@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@/lib/test-utils";
+import { render, screen, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import { TedChat } from "../TedChat";
 import * as agentAuth from "@/lib/api/agent-auth";
@@ -8,9 +8,12 @@ import * as agentClient from "@/lib/api/agent-client";
 vi.mock("@/lib/auth/workspace-context", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/auth/workspace-context")>();
   const mockWs = {
-    workspaces: [{ id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner" }],
-    activeWorkspace: { id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner" },
-    members: [],
+    workspaces: [{ id: "ws-1", name: "Minhas Finanças", kind: "shared" as const, role: "owner" }],
+    activeWorkspace: { id: "ws-1", name: "Minhas Finanças", kind: "shared" as const, role: "owner" },
+    members: [
+      { userId: "user-1", name: "Walisson", email: "walisson@example.com", role: "owner" },
+      { userId: "user-2", name: "Fernanda", email: "fernanda@example.com", role: "member" },
+    ],
     loading: false,
     membersLoading: false,
     error: null,
@@ -34,27 +37,30 @@ vi.mock("@/lib/api/agent-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/agent-client")>();
   return {
     ...actual,
-    fetchAgentHistory: vi.fn().mockResolvedValue([
-      { id: "msg-1", actorId: "user-1", role: "user", content: "Olá TED" },
-      { id: "msg-2", actorId: "agent", role: "assistant", content: "Olá! Como posso ajudar hoje?" },
-    ]),
-    sendAgentMessage: vi.fn().mockResolvedValue({
-      turnId: "turn-new",
-      status: "completed",
-      output: "Seu saldo atual é R$ 2.000,00.",
-    }),
+    fetchAgentHistory: vi.fn(),
+    sendAgentMessage: vi.fn(),
     fetchPendingOperations: vi.fn().mockResolvedValue([]),
-    exportAgentHistory: vi.fn().mockResolvedValue({ version: 1, exportedAt: "now", turns: [], messages: [], actions: [], events: [] }),
-    deleteAgentHistory: vi.fn().mockResolvedValue({ deleted: true, recordCount: 2 }),
+    exportAgentHistory: vi.fn(),
+    deleteAgentHistory: vi.fn(),
   };
 });
 
-describe("TedChat Component (Task 10)", () => {
+describe("TedChat Component – Canonical FinanceChatAgent REST", () => {
   const onCloseMock = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("mock-connection-token");
+    vi.mocked(agentClient.fetchAgentHistory).mockResolvedValue([
+      { id: "msg-1", actorId: "user-1", role: "user", content: "Olá TED, meu saldo?", isOwn: true },
+      { id: "msg-2", actorId: "ted", role: "assistant", content: "Seu saldo é R$ 2.000,00.", isOwn: false },
+      { id: "msg-3", actorId: "user-2", role: "user", content: "Quanto temos na poupança?", isOwn: false },
+    ]);
+    vi.mocked(agentClient.sendAgentMessage).mockResolvedValue({
+      turnId: "turn-new",
+      status: "completed",
+      output: "Você tem R$ 5.000,00 na poupança.",
+    });
   });
 
   it("does not render dialog when open is false", () => {
@@ -62,20 +68,69 @@ describe("TedChat Component (Task 10)", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("renders messages and allows sending new message", async () => {
+  it("renders messages using server isOwn, displays member name for other users and hides raw ID", async () => {
+    render(<TedChat open={true} onClose={onCloseMock} />);
+
+    expect(await screen.findByText("Olá TED, meu saldo?")).toBeInTheDocument();
+    expect(await screen.findByText("Seu saldo é R$ 2.000,00.")).toBeInTheDocument();
+    expect(await screen.findByText("Quanto temos na poupança?")).toBeInTheDocument();
+
+    // User-1 is current user (isOwn=true) -> Display name is "Você"
+    expect(screen.getByText("Você")).toBeInTheDocument();
+
+    // User-2 is another member in workspace -> Display name is resolved to "Fernanda", NEVER raw "user-2"
+    expect(screen.getByText("Fernanda")).toBeInTheDocument();
+    expect(screen.queryByText("user-2")).not.toBeInTheDocument();
+  });
+
+  it("does not render export or delete controls without Finance contract", async () => {
+    render(<TedChat open={true} onClose={onCloseMock} />);
+
+    expect(await screen.findByText("Olá TED, meu saldo?")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /exportar histórico/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /limpar meu histórico/i })).not.toBeInTheDocument();
+  });
+
+  it("shows a safe error when canonical history cannot be loaded", async () => {
+    vi.mocked(agentClient.fetchAgentHistory).mockRejectedValueOnce(new Error("upstream token detail"));
+
+    render(<TedChat open={true} onClose={onCloseMock} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível carregar o histórico.");
+    expect(screen.queryByText("upstream token detail")).not.toBeInTheDocument();
+  });
+
+  it("sends message and reloads canonical history from server instead of fabricating persistent local authorship", async () => {
     const user = userEvent.setup();
 
     render(<TedChat open={true} onClose={onCloseMock} />);
 
-    expect(await screen.findByText("Olá TED")).toBeInTheDocument();
-    expect(await screen.findByText("Olá! Como posso ajudar hoje?")).toBeInTheDocument();
+    expect(await screen.findByText("Olá TED, meu saldo?")).toBeInTheDocument();
 
     const input = screen.getByPlaceholderText("Pergunte sobre gastos, metas ou pagamentos…");
-    await user.type(input, "Qual meu saldo?");
+    await user.type(input, "Quanto temos na poupança?");
     await user.click(screen.getByRole("button", { name: /enviar mensagem/i }));
 
-    expect(agentClient.sendAgentMessage).toHaveBeenCalledWith("ws-1", "Qual meu saldo?");
-    expect(await screen.findByText("Seu saldo atual é R$ 2.000,00.")).toBeInTheDocument();
+    expect(agentClient.sendAgentMessage).toHaveBeenCalledWith("ws-1", "Quanto temos na poupança?");
+
+    // Verifies loadHistory was called after sendAgentMessage to retrieve canonical server state
+    await waitFor(() => {
+      expect(agentClient.fetchAgentHistory).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("shows a safe error when sending a message fails", async () => {
+    const user = userEvent.setup();
+    vi.mocked(agentClient.sendAgentMessage).mockRejectedValueOnce(new Error("upstream token detail"));
+
+    render(<TedChat open={true} onClose={onCloseMock} />);
+    await screen.findByText("Olá TED, meu saldo?");
+
+    await user.type(screen.getByPlaceholderText("Pergunte sobre gastos, metas ou pagamentos…"), "Olá");
+    await user.click(screen.getByRole("button", { name: /enviar mensagem/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível enviar a mensagem.");
+    expect(screen.queryByText("upstream token detail")).not.toBeInTheDocument();
   });
 
   it("calls onClose when close button is clicked", async () => {

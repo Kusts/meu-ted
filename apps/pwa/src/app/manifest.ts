@@ -14,7 +14,7 @@ export default function manifest(): CaptureManifest {
   return {
     name: "Pi Financeiro",
     short_name: "Pi Financeiro",
-    description: "Controle financeiro pessoal via WhatsApp",
+    description: "Controle financeiro pessoal inteligente com assistente IA TED",
     start_url: "/",
     share_target: {
       action: "/capture",
