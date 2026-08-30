@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import BottomSheet from "@/components/BottomSheet";
 import PushNotificationsCard from "./PushNotificationsCard";
 import { useAppState } from "@/lib/state/app-state-context";
+import { useWorkspaceSafe } from "@/lib/auth/workspace-context";
 
 interface NotificationsSheetProps {
   open: boolean;
@@ -49,6 +50,7 @@ export default function NotificationsSheet({
 }: NotificationsSheetProps) {
   const router = useRouter();
   const { payables, budgets, transactions, accounts, cardStatements, goals } = useAppState();
+  const workspace = useWorkspaceSafe();
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -222,7 +224,7 @@ export default function NotificationsSheet({
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Notificações">
-      <PushNotificationsCard workspaceId={workspaceId ?? "device"} />
+      <PushNotificationsCard workspaceId={workspaceId ?? workspace?.activeWorkspace?.id} />
       <div className="mb-4 rounded-[18px] bg-fill-light p-4">
         <div className="mb-1 text-[15px] font-bold text-text-primary">
           Alertas do Pi

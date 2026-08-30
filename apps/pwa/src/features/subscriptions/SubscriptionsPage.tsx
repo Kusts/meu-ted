@@ -10,6 +10,7 @@ import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
 import { useFormDirtySafe } from "@/lib/unsaved-changes";
+import { Plus, ChevronRight } from "lucide-react";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -43,8 +44,6 @@ function subColor(name: string): string {
   }
   return "#3E6FB0";
 }
-
-
 
 const SERVICE_PRESETS = [
   { name: "Netflix" },
@@ -120,7 +119,7 @@ function NewSubscriptionSheet({
     <BottomSheet open={open} onClose={onClose} title="Nova assinatura">
       <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <div>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Serviço
           </label>
           <div className="flex flex-wrap gap-2">
@@ -133,10 +132,10 @@ function NewSubscriptionSheet({
                   setService(p.name);
                   setName(p.name);
                 }}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition-colors ${
+                className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-bold transition-all ${
                   service === p.name
-                    ? "bg-primary text-white"
-                    : "bg-fill-light text-text-secondary"
+                    ? "bg-primary text-white shadow-xs"
+                    : "bg-surface-2 text-text-secondary hover:bg-surface-3"
                 }`}
               >
                 {p.name}
@@ -146,7 +145,7 @@ function NewSubscriptionSheet({
         </div>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Nome
           </label>
           <input
@@ -154,16 +153,16 @@ function NewSubscriptionSheet({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Ex: Netflix"
-            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none transition-colors focus:border-primary"
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none transition-colors focus:border-primary"
           />
         </fieldset>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Valor
           </label>
           <div className="relative">
-            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-semibold text-text-secondary">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-bold text-text-muted">
               R$
             </span>
             <input
@@ -176,25 +175,25 @@ function NewSubscriptionSheet({
                 setAmount(formatInputBRL(raw));
               }}
               placeholder="0,00"
-              className="w-full rounded-[13px] border border-border bg-transparent py-3 pl-11 pr-3.5 font-mono text-[16px] font-semibold text-text-primary outline-none transition-colors focus:border-primary"
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-11 pr-3.5 font-mono tabular-nums text-[16px] font-bold text-text-primary outline-none transition-colors focus:border-primary"
             />
           </div>
         </fieldset>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Ciclo
           </label>
-          <div className="flex gap-1 rounded-xl bg-fill-light p-1">
+          <div className="flex gap-1 rounded-[14px] bg-surface-2 p-1 border border-border-subtle">
             {CYCLE_OPTIONS.map((c) => (
               <button
                 key={c.value}
                 type="button"
                 onClick={() => { markDirty(); setCycle(c.value); }}
-                className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-colors ${
+                className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-all ${
                   cycle === c.value
-                    ? "bg-surface text-text-primary shadow-sm"
-                    : "text-text-muted"
+                    ? "bg-surface-1 text-text-primary shadow-sm"
+                    : "text-text-muted hover:text-text-secondary"
                 }`}
               >
                 {c.label}
@@ -204,7 +203,7 @@ function NewSubscriptionSheet({
         </fieldset>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Cobrado via
           </label>
           <div className="flex flex-wrap gap-1.5">
@@ -213,10 +212,10 @@ function NewSubscriptionSheet({
                 key={p.value}
                 type="button"
                 onClick={() => { markDirty(); setPayment(p.value); }}
-                className={`rounded-[100px] px-3 py-1.5 text-[11px] font-bold transition-colors ${
+                className={`rounded-full px-3.5 py-1.5 text-[11px] font-bold transition-all ${
                   payment === p.value
-                    ? "bg-primary text-white"
-                    : "bg-fill-light text-text-secondary"
+                    ? "bg-primary text-white shadow-xs"
+                    : "bg-surface-2 text-text-secondary hover:bg-surface-3"
                 }`}
               >
                 {p.label}
@@ -226,7 +225,7 @@ function NewSubscriptionSheet({
         </fieldset>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Dia da cobrança
           </label>
           <input
@@ -236,14 +235,14 @@ function NewSubscriptionSheet({
             value={day}
             onChange={(e) => setDay(e.target.value)}
             placeholder="1 a 31"
-            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none transition-colors focus:border-primary"
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none transition-colors focus:border-primary"
           />
         </fieldset>
 
         <button
           type="button"
           onClick={handleSave}
-          className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90"
+          className="mt-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]"
         >
           Salvar assinatura
         </button>
@@ -285,9 +284,7 @@ function SubscriptionDetailSheet({
       setEditMode(false);
       markClean();
     }
-    // `markClean` changes identity whenever context state changes. Depending on it
-    // here re-enters the effect and resets editMode immediately after Edit is clicked.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subscription, open]);
 
   if (!subscription) return null;
@@ -325,27 +322,27 @@ function SubscriptionDetailSheet({
       {editMode ? (
         <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
           <fieldset>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nome</label>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Nome</label>
             <input type="text" value={name} onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
           </fieldset>
 
           <fieldset>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Valor</label>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Valor</label>
             <div className="relative">
-              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-semibold text-text-secondary">R$</span>
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-bold text-text-muted">R$</span>
               <input type="text" inputMode="numeric" value={amountDisplay}
                 onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setAmountDisplay(formatInputBRL(raw)); }}
-                className="w-full rounded-[13px] border border-border bg-transparent py-3 pl-11 pr-3.5 font-mono text-[16px] font-semibold text-text-primary outline-none focus:border-primary" />
+                className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-11 pr-3.5 font-mono tabular-nums text-[16px] font-bold text-text-primary outline-none focus:border-primary" />
             </div>
           </fieldset>
 
           <fieldset>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Ciclo</label>
-            <div className="flex gap-1 rounded-xl bg-fill-light p-1">
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Ciclo</label>
+            <div className="flex gap-1 rounded-[14px] bg-surface-2 p-1 border border-border-subtle">
               {CYCLE_OPTIONS.map((c) => (
                 <button key={c.value} type="button" onClick={() => { markDirty(); setCycle(c.value); }}
-                  className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-colors ${cycle === c.value ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"}`}>
+                  className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-all ${cycle === c.value ? "bg-surface-1 text-text-primary shadow-sm" : "text-text-muted"}`}>
                   {c.label}
                 </button>
               ))}
@@ -353,11 +350,11 @@ function SubscriptionDetailSheet({
           </fieldset>
 
           <fieldset>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Cobrado via</label>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Cobrado via</label>
             <div className="flex flex-wrap gap-1.5">
               {PAYMENT_OPTIONS.map((p) => (
                 <button key={p.value} type="button" onClick={() => { markDirty(); setPayment(p.value); }}
-                  className={`rounded-[100px] px-3 py-1.5 text-[11px] font-bold transition-colors ${payment === p.value ? "bg-primary text-white" : "bg-fill-light text-text-secondary"}`}>
+                  className={`rounded-full px-3.5 py-1.5 text-[11px] font-bold transition-all ${payment === p.value ? "bg-primary text-white shadow-xs" : "bg-surface-2 text-text-secondary hover:bg-surface-3"}`}>
                   {p.label}
                 </button>
               ))}
@@ -365,40 +362,40 @@ function SubscriptionDetailSheet({
           </fieldset>
 
           <fieldset>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Dia da cobrança</label>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Dia da cobrança</label>
             <input type="number" min={1} max={31} value={day} onChange={(e) => setDay(e.target.value)}
-              className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
           </fieldset>
 
           <button type="button" onClick={handleSaveEdit}
             disabled={!name.trim()}
-            className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50">
+            className="mt-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98] disabled:opacity-50">
             Salvar alterações
           </button>
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 rounded-[16px] border border-border-subtle bg-surface-2 p-3.5">
             <Badge label={subscription.name} color={subColor(subscription.name)} size="md" />
-            <div className="flex-1">
-              <div className="text-[14px] font-semibold text-text-primary">{subscription.name}</div>
-              <div className="text-[11px] text-text-muted">
+            <div className="flex-1 min-w-0">
+              <div className="truncate text-[14px] font-bold text-text-primary">{subscription.name}</div>
+              <div className="text-[11px] font-medium text-text-muted">
                 {subscription.cycle === "monthly" ? "Mensal" : subscription.cycle === "yearly" ? "Anual" : "Semanal"} · dia {subscription.day}
               </div>
             </div>
           </div>
 
-          <div className="rounded-[13px] bg-fill-light px-4 py-3.5">
-            <div className="text-[11px] text-text-muted">Valor</div>
-            <div className="font-mono text-[22px] font-semibold text-text-primary">{formatBRL(subscription.amountCents)}</div>
+          <div className="rounded-[16px] bg-surface-2 px-4 py-3.5 border border-border-subtle">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-text-muted">Valor</div>
+            <div className="font-mono tabular-nums text-[24px] font-bold text-text-primary">{formatBRL(subscription.amountCents)}</div>
           </div>
 
           <div className="flex items-center gap-2">
             <span
               className="rounded-full px-3 py-1 text-[11px] font-bold"
               style={{
-                color: isActive ? "#0E8C5A" : "#98A29A",
-                background: isActive ? "#0E8C5A1A" : "#98A29A1A",
+                color: isActive ? "var(--color-primary)" : "var(--color-text-muted)",
+                background: isActive ? "var(--color-primary-tint)" : "var(--surface-2)",
               }}
             >
               {isActive ? "Ativa" : "Cancelada"}
@@ -408,7 +405,7 @@ function SubscriptionDetailSheet({
           <button
             type="button"
             onClick={() => setEditMode(true)}
-            className="w-full rounded-[14px] bg-fill-light py-[14px] text-center text-[14px] font-bold text-text-primary"
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3.5 text-center text-[14px] font-bold text-text-primary hover:bg-surface-3 transition-colors"
           >
             Editar
           </button>
@@ -417,7 +414,7 @@ function SubscriptionDetailSheet({
             <button
               type="button"
               onClick={() => onCancel(subscription.id, subscription.name)}
-              className="w-full rounded-[14px] bg-danger-tint py-[14px] text-center text-[14px] font-bold text-danger"
+              className="w-full rounded-[14px] bg-danger-tint border border-danger/20 py-3.5 text-center text-[14px] font-bold text-danger hover:bg-danger-tint/80 transition-colors"
             >
               Cancelar assinatura
             </button>
@@ -439,10 +436,10 @@ export default function SubscriptionsPage() {
     refreshSubscriptions,
   } = useAppState();
 
-  // Lazy-load subscriptions on mount (not fetched during global bootstrap)
   useEffect(() => {
     refreshSubscriptions();
   }, [refreshSubscriptions]);
+
   const [tab, setTab] = useState<"active" | "cancelled">("active");
   const [createOpen, setCreateOpen] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState<{ id: string; name: string } | null>(null);
@@ -451,7 +448,6 @@ export default function SubscriptionsPage() {
   const active = subscriptions.filter((s) => s.status === "active");
   const cancelled = subscriptions.filter((s) => s.status === "cancelled");
 
-  // Monthly total — yearly subscriptions counted as monthly
   const monthlyTotal = subscriptions
     .filter((s) => s.status === "active")
     .reduce((s, sub) => {
@@ -470,11 +466,9 @@ export default function SubscriptionsPage() {
             <button
               type="button"
               onClick={() => setCreateOpen(true)}
-              className="flex items-center gap-1.5 rounded-full bg-primary px-[15px] py-[9px] text-[12px] font-bold text-white"
+              className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-[12px] font-bold text-white shadow-sm hover:bg-primary-hover active:scale-95 transition-all"
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
+              <Plus size={15} strokeWidth={2.4} />
               Nova
             </button>
           }
@@ -484,76 +478,76 @@ export default function SubscriptionsPage() {
 
         <StaleBanner domains={["subscriptions"]} />
 
-        {/* Monthly total hero */}
-        <div
-          className="mx-5 mb-4 overflow-hidden rounded-[16px] px-4 py-4 text-white shadow-card"
-          style={{ background: "linear-gradient(165deg, #0F6B45, #0A3A28)" }}
-        >
-          <div className="mb-1 text-[12px] text-white/70">
-            Custo mensal recorrente
-          </div>
-          <div className="mb-1 font-mono text-[26px] font-semibold tracking-tight text-white">
-            {formatBRL(Math.round(monthlyTotal))}
-          </div>
-          <div className="text-[11px] text-white/70">
-            {active.length} ativa{active.length !== 1 ? "s" : ""}
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="mx-5 mb-4 flex gap-1.5 rounded-[13px] border border-border bg-surface p-1">
-          {(["active", "cancelled"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`flex-1 rounded-[10px] py-2 text-[13px] font-semibold transition-colors ${
-                tab === t
-                  ? "bg-primary text-white"
-                  : "bg-transparent text-text-muted"
-              }`}
-            >
-              {t === "active" ? "Ativas" : "Canceladas"}
-            </button>
-          ))}
-        </div>
-
-        {/* List */}
-        <div className="flex flex-col gap-2.5 px-5">
-          {displayed.length === 0 ? (
-            <div className="py-8 text-center text-[14px] text-text-muted">
-              Nenhuma assinatura {tab === "active" ? "ativa" : "cancelada"}
+        <div className="px-5 sm:px-8 lg:px-12">
+          {/* Monthly total hero */}
+          <div
+            className="mb-4 overflow-hidden rounded-[20px] px-5 py-5 text-white shadow-card"
+            style={{ background: "linear-gradient(165deg, #0F6B45, #0A3A28)" }}
+          >
+            <div className="mb-1 text-[11px] font-medium text-white/70">
+              Custo mensal recorrente
             </div>
-          ) : (
-            displayed.map((sub) => (
+            <div className="mb-1 font-mono tabular-nums text-[28px] font-bold tracking-tight text-white">
+              {formatBRL(Math.round(monthlyTotal))}
+            </div>
+            <div className="text-[11px] font-medium text-white/70">
+              {active.length} ativa{active.length !== 1 ? "s" : ""}
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="mb-4 flex gap-1.5 rounded-[14px] bg-surface-2 p-1 border border-border-subtle">
+            {(["active", "cancelled"] as const).map((t) => (
               <button
-                type="button"
-                key={sub.id}
-                onClick={() => setDetailSub(sub)}
-                className="relative w-full rounded-[15px] border border-border bg-surface px-4 py-3.5 pr-11 shadow-card text-left transition-colors hover:bg-fill-light"
+                key={t}
+                onClick={() => setTab(t)}
+                className={`flex-1 rounded-[10px] py-2.5 text-[13px] font-bold transition-all ${
+                  tab === t
+                    ? "bg-surface-1 text-text-primary shadow-sm"
+                    : "text-text-muted hover:text-text-secondary"
+                }`}
               >
-                <div className="flex items-center gap-3">
-                  <Badge label={sub.name} color={subColor(sub.name)} size="md" />
-                  <div className="flex-1">
-                    <div className="text-[14px] font-semibold text-text-primary">
-                      {sub.name}
-                    </div>
-                    <div className="text-[11px] text-text-muted">
-                      {sub.cycle === "monthly" ? "Mensal" : "Anual"} · dia {sub.day}
-                    </div>
-                  </div>
-                  <div className="font-mono text-[14px] font-semibold text-text-primary">
-                    {formatBRL(sub.amountCents)}
-                  </div>
-                </div>
-                {/* chevron */}
-                <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <path d="M9 18l6-6-6-6" />
-                  </svg>
-                </div>
+                {t === "active" ? "Ativas" : "Canceladas"}
               </button>
-            ))
-          )}
+            ))}
+          </div>
+
+          {/* List */}
+          <div className="flex flex-col gap-2.5">
+            {displayed.length === 0 ? (
+              <div className="py-8 text-center text-[13px] font-medium text-text-muted">
+                Nenhuma assinatura {tab === "active" ? "ativa" : "cancelada"}
+              </div>
+            ) : (
+              displayed.map((sub) => (
+                <button
+                  type="button"
+                  key={sub.id}
+                  onClick={() => setDetailSub(sub)}
+                  className="relative w-full rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-3.5 pr-11 shadow-card text-left transition-all hover:bg-surface-2/60"
+                >
+                  <div className="flex items-center gap-3">
+                    <Badge label={sub.name} color={subColor(sub.name)} size="md" />
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate text-[14px] font-bold text-text-primary">
+                        {sub.name}
+                      </div>
+                      <div className="text-[11px] font-medium text-text-muted">
+                        {sub.cycle === "monthly" ? "Mensal" : "Anual"} · dia {sub.day}
+                      </div>
+                    </div>
+                    <div className="font-mono tabular-nums text-[14px] font-bold text-text-primary">
+                      {formatBRL(sub.amountCents)}
+                    </div>
+                  </div>
+                  {/* chevron */}
+                  <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted">
+                    <ChevronRight size={16} />
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
         </div>
       </main>
 

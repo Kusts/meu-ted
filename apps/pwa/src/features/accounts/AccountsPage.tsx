@@ -10,6 +10,7 @@ import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
+import { Plus, ChevronRight, FileText } from "lucide-react";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -78,7 +79,7 @@ function AccountFormSheet({
     <BottomSheet open={open} onClose={onClose} title="Nova conta">
       <div className="flex flex-col gap-4">
         <div>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Banco / cor
           </label>
           <div className="flex flex-wrap gap-2">
@@ -87,14 +88,14 @@ function AccountFormSheet({
                 key={b.value}
                 type="button"
                 onClick={() => setBankColor(b.value)}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-colors ${
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-all ${
                   bankColor === b.value
-                    ? "bg-primary text-white"
-                    : "bg-fill-light text-text-secondary"
+                    ? "bg-primary text-white shadow-xs"
+                    : "bg-surface-2 text-text-secondary hover:bg-surface-3"
                 }`}
               >
                 <span
-                  className="h-2.5 w-2.5 rounded-full"
+                  className="h-2.5 w-2.5 rounded-full shadow-xs"
                   style={{ background: b.value }}
                 />
                 {b.label}
@@ -104,7 +105,7 @@ function AccountFormSheet({
         </div>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Nome
           </label>
           <input
@@ -112,24 +113,24 @@ function AccountFormSheet({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Ex: Nubank, Itaú..."
-            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none transition-colors focus:border-primary"
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none transition-colors focus:border-primary"
           />
         </fieldset>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Tipo
           </label>
-          <div className="flex gap-1 rounded-xl bg-fill-light p-1">
+          <div className="flex gap-1 rounded-[14px] bg-surface-2 p-1 border border-border-subtle">
             {ACCOUNT_KINDS.map((k) => (
               <button
                 key={k.value}
                 type="button"
                 onClick={() => setKind(k.value)}
-                className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-colors ${
+                className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-all ${
                   kind === k.value
-                    ? "bg-surface text-text-primary shadow-sm"
-                    : "text-text-muted"
+                    ? "bg-surface-1 text-text-primary shadow-sm"
+                    : "text-text-muted hover:text-text-secondary"
                 }`}
               >
                 {k.label}
@@ -139,11 +140,11 @@ function AccountFormSheet({
         </fieldset>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Saldo inicial
           </label>
           <div className="relative">
-            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-semibold text-text-secondary">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-bold text-text-muted">
               R$
             </span>
             <input
@@ -156,7 +157,7 @@ function AccountFormSheet({
                 setBalance(formatInputBRL(raw));
               }}
               placeholder="0,00"
-              className="w-full rounded-[13px] border border-border bg-transparent py-3 pl-11 pr-3.5 font-mono text-[16px] font-semibold text-text-primary outline-none transition-colors focus:border-primary"
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-11 pr-3.5 font-mono tabular-nums text-[16px] font-bold text-text-primary outline-none transition-colors focus:border-primary"
             />
           </div>
         </fieldset>
@@ -164,7 +165,7 @@ function AccountFormSheet({
         <button
           type="button"
           onClick={handleSave}
-          className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90"
+          className="mt-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]"
         >
           Salvar conta
         </button>
@@ -196,20 +197,20 @@ function AccountEditSheet({ open, account, onClose, onSave }: {
     <BottomSheet open={open} onClose={onClose} title="Editar conta">
       <div className="flex flex-col gap-4">
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Nome
           </label>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary"
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary"
           />
         </fieldset>
         <button
           type="button"
           onClick={handleSave}
-          className="w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90"
+          className="w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]"
         >
           Salvar
         </button>
@@ -251,80 +252,82 @@ function AccountDetailSheet({
     <BottomSheet open={open} onClose={onClose} title="Detalhes da conta">
       <div className="flex flex-col gap-4">
         {/* Header */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 rounded-[16px] border border-border-subtle bg-surface-2 p-3.5">
           <Badge label={account.name} color={account.color ?? "#4A5568"} size="md" />
-          <div className="flex-1">
-            <div className="text-[14px] font-semibold text-text-primary">{account.name}</div>
-            <div className="text-[11px] text-text-muted">{kindLabel(account.kind)}</div>
+          <div className="flex-1 min-w-0">
+            <div className="truncate text-[14px] font-bold text-text-primary">{account.name}</div>
+            <div className="text-[11px] font-medium text-text-muted">{kindLabel(account.kind)}</div>
           </div>
-          <div className="font-mono text-[14px] font-semibold text-text-primary">
+          <div className="font-mono tabular-nums text-[15px] font-bold text-text-primary">
             {formatBRL(account.balanceCents)}
           </div>
         </div>
 
         {/* Mini history */}
         {miniHistory.length > 0 && (
-          <div className="border-t border-fill-medium pt-3">
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+          <div className="border-t border-border-subtle pt-3">
+            <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-text-muted">
               Últimos lançamentos
             </div>
-            {miniHistory.map((tx) => {
-              const amountColor =
-                tx.kind === "expense"
-                  ? "var(--color-danger)"
-                  : tx.kind === "income"
-                    ? "var(--color-primary)"
-                    : "var(--color-info)";
-              const prefix =
-                tx.kind === "expense"
-                  ? "−"
-                  : tx.kind === "income"
-                    ? "+"
-                    : "";
-              return (
-                <div key={tx.id} className="flex items-center justify-between py-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[12px] text-text-primary">{tx.description}</span>
-                    <span className="text-[10px] text-text-muted">
-                      {new Date(tx.date + "T12:00:00").toLocaleDateString("pt-BR")}
+            <div className="space-y-1 rounded-[14px] border border-border-subtle bg-surface-2 p-2">
+              {miniHistory.map((tx) => {
+                const amountColor =
+                  tx.kind === "expense"
+                    ? "var(--color-danger)"
+                    : tx.kind === "income"
+                      ? "var(--color-primary)"
+                      : "var(--color-info)";
+                const prefix =
+                  tx.kind === "expense"
+                    ? "−"
+                    : tx.kind === "income"
+                      ? "+"
+                      : "";
+                return (
+                  <div key={tx.id} className="flex items-center justify-between py-1 px-2 border-b border-border-subtle/50 last:border-none">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[12px] font-medium text-text-primary">{tx.description}</span>
+                      <span className="text-[10px] text-text-muted">
+                        {new Date(tx.date + "T12:00:00").toLocaleDateString("pt-BR")}
+                      </span>
+                    </div>
+                    <span className="font-mono tabular-nums text-[12px] font-bold" style={{ color: amountColor }}>
+                      {prefix}
+                      {formatBRL(tx.amountCents)}
                     </span>
                   </div>
-                  <span className="font-mono text-[12px] font-semibold" style={{ color: amountColor }}>
-                    {prefix}
-                    {formatBRL(tx.amountCents)}
-                  </span>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
 
         {/* CTA to records */}
         <Link
           href={`/registros?accountId=${account.id}`}
-          className="flex items-center justify-center gap-2 rounded-[14px] bg-fill-light py-[14px] text-center text-[14px] font-bold text-text-primary transition-opacity hover:opacity-90"
+          className="flex items-center justify-center gap-2 rounded-[14px] border border-border-subtle bg-surface-2 py-3.5 text-center text-[14px] font-bold text-text-primary hover:bg-surface-3 transition-colors"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
-          </svg>
+          <FileText size={16} />
           Ver todos os registros
         </Link>
 
         {/* Actions */}
-        <button
-          type="button"
-          onClick={() => onEdit(account.id, account.name)}
-          className="w-full rounded-[14px] bg-fill-light py-[14px] text-center text-[14px] font-bold text-text-primary"
-        >
-          Editar conta
-        </button>
-        <button
-          type="button"
-          onClick={() => onDeactivate(account.id, account.name)}
-          className="w-full rounded-[14px] bg-danger-tint py-[14px] text-center text-[14px] font-bold text-danger"
-        >
-          Desativar conta
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => onEdit(account.id, account.name)}
+            className="flex-1 rounded-[14px] border border-border-subtle bg-surface-2 py-3 text-center text-[13px] font-bold text-text-primary hover:bg-surface-3 transition-colors"
+          >
+            Editar conta
+          </button>
+          <button
+            type="button"
+            onClick={() => onDeactivate(account.id, account.name)}
+            className="flex-1 rounded-[14px] bg-danger-tint border border-danger/20 py-3 text-center text-[13px] font-bold text-danger hover:bg-danger-tint/80 transition-colors"
+          >
+            Desativar conta
+          </button>
+        </div>
       </div>
     </BottomSheet>
   );
@@ -338,8 +341,6 @@ export default function AccountsPage() {
   const [confirmDeactivate, setConfirmDeactivate] = useState<{ id: string; name: string } | null>(null);
   const [editOpen, setEditOpen] = useState(false);
 
-  // Read ?accountId=<id> from the URL on mount. Used by the Home page to
-  // deep-link — opens the detail sheet for the matching account.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -362,7 +363,7 @@ export default function AccountsPage() {
         <StatusBar />
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-fill-medium border-t-primary" />
+            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-border-subtle border-t-primary" />
             <span className="text-[13px] font-semibold text-text-muted">Carregando...</span>
           </div>
         </div>
@@ -392,11 +393,9 @@ export default function AccountsPage() {
             <button
               type="button"
               onClick={() => setCreateOpen(true)}
-              className="flex items-center gap-1.5 rounded-full bg-primary px-[15px] py-[9px] text-[12px] font-bold text-white"
+              className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-[12px] font-bold text-white shadow-sm hover:bg-primary-hover active:scale-95 transition-all"
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
+              <Plus size={15} strokeWidth={2.4} />
               Nova
             </button>
           }
@@ -412,21 +411,21 @@ export default function AccountsPage() {
 
         <StaleBanner domains={["accounts", "transactions"]} />
 
-        <div className="px-5">
+        <div className="px-5 sm:px-8 lg:px-12">
           {/* Total balance card */}
           <div
-            className="mb-4 overflow-hidden rounded-[16px] px-4 py-4 text-white shadow-card"
+            className="mb-4 overflow-hidden rounded-[20px] px-5 py-5 text-white shadow-card"
             style={{
               background: "linear-gradient(165deg, #0F6B45, #0A3A28)",
             }}
           >
-            <div className="mb-1 text-[12px] text-white/70">
+            <div className="mb-1 text-[12px] font-medium text-white/70">
               Saldo somado
             </div>
-            <div className="mb-1 font-mono text-[26px] font-semibold tracking-tight text-white">
+            <div className="mb-1 font-mono tabular-nums text-[28px] font-bold tracking-tight text-white">
               {formatBRL(totalBalance)}
             </div>
-            <div className="text-[11px] text-white/70">
+            <div className="text-[11px] font-medium text-white/70">
               {checkingAccounts.length}{" "}
               {checkingAccounts.length === 1 ? "conta" : "contas"}
             </div>
@@ -442,19 +441,19 @@ export default function AccountsPage() {
                 data-account-id={acc.id}
                 data-highlighted={detailAccount?.id === acc.id ? "true" : "false"}
                 onClick={() => setDetailAccount(acc)}
-                className={`relative w-full rounded-[15px] border bg-surface px-4 py-3.5 pr-11 shadow-card transition-colors text-left ${
+                className={`relative w-full rounded-[18px] border bg-surface-1 px-4 py-3.5 pr-11 shadow-card transition-all text-left hover:bg-surface-2/60 ${
                   detailAccount?.id === acc.id
                     ? "border-primary ring-2 ring-primary/30"
-                    : "border-border"
+                    : "border-border-subtle"
                 }`}
               >
                 <div className="flex items-center gap-3">
                   <Badge label={acc.name} color={acc.color ?? "#4A5568"} size="md" />
-                  <div className="flex-1">
-                    <div className="text-[14px] font-semibold text-text-primary">
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate text-[14px] font-bold text-text-primary">
                       {acc.name}
                     </div>
-                    <div className="text-[11px] text-text-muted">
+                    <div className="text-[11px] font-medium text-text-muted">
                       {acc.kind === "credit_card"
                         ? "Cartão"
                         : acc.kind === "checking"
@@ -470,20 +469,18 @@ export default function AccountsPage() {
                                   : "Outro"}
                     </div>
                   </div>
-                  <div className="font-mono text-[14px] font-semibold text-text-primary">
+                  <div className="font-mono tabular-nums text-[14px] font-bold text-text-primary">
                     {formatBRL(acc.balanceCents)}
                   </div>
                 </div>
                 {/* chevron */}
                 <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <path d="M9 18l6-6-6-6" />
-                  </svg>
+                  <ChevronRight size={16} />
                 </div>
               </button>
             ))}
             {checkingAccounts.length === 0 && (
-              <div className="rounded-[16px] border border-dashed border-border bg-surface px-4 py-8 text-center text-[13px] text-text-muted">
+              <div className="rounded-[18px] border border-dashed border-border-subtle bg-surface-1 px-4 py-8 text-center text-[13px] text-text-muted">
                 Nenhuma conta cadastrada. Toque em Nova.
               </div>
             )}

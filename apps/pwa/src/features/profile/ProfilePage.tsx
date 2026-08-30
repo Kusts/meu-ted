@@ -6,16 +6,17 @@ import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
-import Icon from "@/components/ui/Icon";
 import Badge from "@/components/ui/Badge";
 import NotificationsSheet from "./NotificationsSheet";
 import { useAppState } from "@/lib/state/app-state-context";
 import { useSession } from "@/lib/auth/session-context";
 import { useFormDirtySafe } from "@/lib/unsaved-changes";
+import { useTheme } from "@/lib/theme/use-theme";
 import { recordAdoptionEvent } from "@/lib/api/adoption";
 import { useEffectiveProfile } from "./hooks";
-export { AgentTranscript } from "./AgentTranscript";
+import { Sun, Moon, Laptop, Sparkles, LogOut, ChevronRight, ChevronLeft, User, Bell, Bot, Shield, FolderOpen } from "lucide-react";
 
+export { AgentTranscript } from "./AgentTranscript";
 import { AgentLlmSettingsSheet } from "./AgentLlmSettingsSheet";
 
 type ProfileSheet = "edit" | "chat" | "notifications" | "llm-admin" | null;
@@ -24,17 +25,22 @@ const BASE_PROFILE_ITEMS = [
   {
     key: "edit" as const,
     label: "Editar perfil",
-    icon: <Icon name="user" size={17} />,
+    icon: <User size={18} className="text-text-muted" />,
   },
   {
     key: "notifications" as const,
     label: "Notificações",
-    icon: <Icon name="bell" size={17} />,
+    icon: <Bell size={18} className="text-text-muted" />,
   },
   {
     key: "chat" as const,
     label: "Assistente TED",
-    icon: <Icon name="info" size={17} />,
+    icon: <Bot size={18} className="text-primary" />,
+  },
+  {
+    key: "workspaces" as const,
+    label: "Workspaces",
+    icon: <FolderOpen size={18} className="text-text-muted" />,
   },
 ];
 
@@ -54,11 +60,12 @@ export default function ProfilePage() {
   const profile = useEffectiveProfile();
   const { saveProfile } = useAppState();
   const { expireSession } = useSession();
+  const { theme, setTheme } = useTheme();
 
-const isAdminUser = Boolean(
-  profile.isAdmin ||
-    (profile as unknown as { isAdmin?: boolean; role?: string }).role === "admin",
-);
+  const isAdminUser = Boolean(
+    profile.isAdmin ||
+      (profile as unknown as { isAdmin?: boolean; role?: string }).role === "admin",
+  );
 
   const items = [
     ...BASE_PROFILE_ITEMS,
@@ -67,7 +74,7 @@ const isAdminUser = Boolean(
           {
             key: "llm-admin" as const,
             label: "Configuração LLM (Admin)",
-            icon: <Icon name="shield" size={17} />,
+            icon: <Shield size={18} className="text-warning" />,
           },
         ]
       : []),
@@ -80,10 +87,10 @@ const isAdminUser = Boolean(
     } else if (key === "chat") setOpen("chat");
     else if (key === "notifications") setOpen("notifications");
     else if (key === "llm-admin") setOpen("llm-admin");
+    else if (key === "workspaces") router.push("/workspaces");
   }
 
   async function handleLogout() {
-    // expireSession clears token/snapshot AND flips AuthGate back to register.
     await expireSession();
     router.push("/");
   }
@@ -93,14 +100,15 @@ const isAdminUser = Boolean(
       <StatusBar />
       <PageHeader title="Perfil" />
 
-      <main className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-        <div className="flex items-center gap-3">
+      <main className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 py-4 sm:px-8 lg:px-12">
+        {/* User Card */}
+        <div className="flex items-center gap-3.5 rounded-[20px] border border-border-subtle bg-surface-1 p-4 shadow-card">
           <Badge label={profile.name} size="lg" color={profile.avatarColor} />
-          <div>
-            <div className="text-[18px] font-extrabold text-text-primary">
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[18px] font-bold text-text-primary">
               {profile.name}
             </div>
-            <div className="text-[13px] text-text-muted">
+            <div className="truncate text-[13px] font-medium text-text-muted">
               {profile.email ||
                 profile.phone ||
                 "Atualize seus dados de contato"}
@@ -108,32 +116,78 @@ const isAdminUser = Boolean(
           </div>
         </div>
 
-        <div className="rounded-[16px] bg-fill-light px-4 py-1">
+        {/* Theme Preference Card */}
+        <div className="rounded-[18px] border border-border-subtle bg-surface-1 p-4 shadow-card">
+          <div className="mb-2.5 text-[11px] font-bold uppercase tracking-wider text-text-muted">
+            Aparência
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => setTheme("dark")}
+              className={`flex flex-col items-center gap-1.5 rounded-[14px] border p-3 text-center transition-all ${
+                theme === "dark"
+                  ? "border-primary bg-primary-tint/30 text-primary font-bold shadow-xs"
+                  : "border-border-subtle bg-surface-2 text-text-secondary hover:bg-surface-3"
+              }`}
+            >
+              <Moon size={18} />
+              <span className="text-[12px]">Escuro</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTheme("light")}
+              className={`flex flex-col items-center gap-1.5 rounded-[14px] border p-3 text-center transition-all ${
+                theme === "light"
+                  ? "border-primary bg-primary-tint/30 text-primary font-bold shadow-xs"
+                  : "border-border-subtle bg-surface-2 text-text-secondary hover:bg-surface-3"
+              }`}
+            >
+              <Sun size={18} />
+              <span className="text-[12px]">Claro</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTheme("system")}
+              className={`flex flex-col items-center gap-1.5 rounded-[14px] border p-3 text-center transition-all ${
+                theme === "system"
+                  ? "border-primary bg-primary-tint/30 text-primary font-bold shadow-xs"
+                  : "border-border-subtle bg-surface-2 text-text-secondary hover:bg-surface-3"
+              }`}
+            >
+              <Laptop size={18} />
+              <span className="text-[12px]">Sistema</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Navigation items */}
+        <div className="rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-1 shadow-card">
           {items.map((item, idx) => (
             <button
               key={item.key}
               type="button"
               onClick={() => handleItem(item.key)}
-              className={`flex w-full items-center gap-3 py-3 ${
-                idx < items.length - 1 ? "border-b border-border" : ""
+              className={`flex w-full items-center gap-3 py-3.5 transition-colors hover:bg-surface-2/40 ${
+                idx < items.length - 1 ? "border-b border-border-subtle" : ""
               }`}
             >
               {item.icon}
-              <span className="flex-1 text-left text-[14px] font-semibold text-text-primary">
+              <span className="flex-1 text-left text-[14px] font-bold text-text-primary">
                 {item.label}
               </span>
-              <Icon name="chevron-right" size={15} />
+              <ChevronRight size={16} className="text-text-muted" />
             </button>
           ))}
         </div>
 
-        <div className="rounded-[16px] bg-fill-light px-4 py-1 opacity-50">
-          <div className="flex w-full items-center gap-3 py-3">
-            <Icon name="shield" size={17} />
+        <div className="rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-1 opacity-50 shadow-card">
+          <div className="flex w-full items-center gap-3 py-3.5">
+            <Shield size={18} className="text-text-muted" />
             <span className="flex-1 text-left text-[14px] font-semibold text-text-muted">
               Segurança
             </span>
-            <span className="text-[10px] font-bold text-text-muted">
+            <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[10px] font-bold text-text-muted">
               Em breve
             </span>
           </div>
@@ -142,8 +196,9 @@ const isAdminUser = Boolean(
         <button
           type="button"
           onClick={handleLogout}
-          className="w-full rounded-[13px] border border-border bg-surface px-4 py-[13px] text-[14px] font-semibold text-danger transition-opacity hover:opacity-80"
+          className="flex items-center justify-center gap-2 w-full rounded-[14px] border border-danger/30 bg-danger-tint px-4 py-3.5 text-[14px] font-bold text-danger transition-all hover:bg-danger-tint/80 active:scale-[0.98]"
         >
+          <LogOut size={16} />
           Sair da conta
         </button>
       </main>
@@ -177,10 +232,10 @@ function BackButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="bg-transparent p-1 text-text-primary"
+      className="rounded-full p-1.5 text-text-primary hover:bg-surface-2 transition-colors"
       aria-label="Voltar"
     >
-      <Icon name="chevron-left" size={20} />
+      <ChevronLeft size={20} />
     </button>
   );
 }
@@ -226,8 +281,6 @@ function EditProfileSheet({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Hydrate only when the sheet opens. Do NOT depend on markClean — it is
-  // recreated when dirty context updates, which would wipe in-progress edits.
   useEffect(() => {
     if (!open) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -242,7 +295,6 @@ function EditProfileSheet({
     );
     setError(null);
     markClean();
-    // Intentionally only [open]: parent remounts via key=editKey on each open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -263,12 +315,12 @@ function EditProfileSheet({
   return (
     <>
       <BottomSheet open={open} onClose={requestClose} title="Editar perfil">
-        <div className="flex items-center gap-3 pb-5">
+        <div className="flex items-center gap-3 pb-4">
           <BackButton onClick={requestClose} />
         </div>
         <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
-          <div>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <fieldset>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
               Nome
             </label>
             <input
@@ -276,12 +328,12 @@ function EditProfileSheet({
               value={name}
               onChange={(e) => setName(e.target.value)}
               maxLength={80}
-              className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none transition-colors focus:border-primary"
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none transition-colors focus:border-primary"
             />
-          </div>
+          </fieldset>
 
-          <div>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <fieldset>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
               E-mail
             </label>
             <input
@@ -289,12 +341,12 @@ function EditProfileSheet({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               maxLength={120}
-              className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none transition-colors focus:border-primary"
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none transition-colors focus:border-primary"
             />
-          </div>
+          </fieldset>
 
-          <div>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <fieldset>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
               Telefone
             </label>
             <input
@@ -302,12 +354,12 @@ function EditProfileSheet({
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               maxLength={40}
-              className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none transition-colors focus:border-primary"
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none transition-colors focus:border-primary"
             />
-          </div>
+          </fieldset>
 
-          <div>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <fieldset>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
               Cor do avatar
             </label>
             <div className="flex flex-wrap gap-2.5">
@@ -322,20 +374,20 @@ function EditProfileSheet({
                   }}
                   className={`h-9 w-9 rounded-full transition-transform ${
                     avatarColor === c
-                      ? "ring-2 ring-text-primary ring-offset-2 ring-offset-surface"
-                      : ""
+                      ? "ring-2 ring-primary ring-offset-2 ring-offset-surface-1 scale-105"
+                      : "hover:scale-105"
                   }`}
                   style={{ background: c }}
                 />
               ))}
             </div>
-          </div>
+          </fieldset>
 
           <fieldset>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
               Estilo da saudação
             </label>
-            <div className="flex gap-1 rounded-xl bg-fill-light p-1">
+            <div className="flex gap-1 rounded-[14px] bg-surface-2 p-1 border border-border-subtle">
               {(["auto", "minimal", "verbose"] as const).map((s) => (
                 <button
                   key={s}
@@ -344,10 +396,10 @@ function EditProfileSheet({
                     markDirty();
                     setGreetingStyle(s);
                   }}
-                  className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-colors ${
+                  className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-all ${
                     greetingStyle === s
-                      ? "bg-surface text-text-primary shadow-sm"
-                      : "text-text-muted"
+                      ? "bg-surface-1 text-text-primary shadow-sm"
+                      : "text-text-muted hover:text-text-secondary"
                   }`}
                 >
                   {s === "auto"
@@ -361,7 +413,7 @@ function EditProfileSheet({
           </fieldset>
 
           {error && (
-            <div className="rounded-[10px] bg-danger-tint px-3 py-2 text-[12px] font-semibold text-danger">
+            <div className="rounded-[12px] bg-danger-tint px-3 py-2 text-[12px] font-semibold text-danger">
               ⚠ {error}
             </div>
           )}
@@ -387,7 +439,7 @@ function EditProfileSheet({
                 setSubmitting(false);
               }
             }}
-            className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="mt-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98] disabled:opacity-50"
           >
             {submitting ? "Salvando…" : "Salvar alterações"}
           </button>
@@ -412,42 +464,40 @@ function ChatSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
     <BottomSheet
       open={open}
       onClose={onClose}
-      title="Pi — seu agente financeiro"
+      title="TED — Assistente Financeiro"
     >
-      <div className="flex items-center gap-3 pb-5">
+      <div className="flex items-center gap-3 pb-4">
         <BackButton onClick={onClose} />
       </div>
 
       <div
-        className="mb-4 rounded-[18px] p-5 text-center text-white"
+        className="mb-4 rounded-[20px] p-5 text-center text-white shadow-card"
         style={{ background: "linear-gradient(150deg, #0F6B45, #0A3A28)" }}
       >
-        <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-white/15 text-2xl">
-          🥇
+        <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-white/15 text-white shadow-xs">
+          <Sparkles size={28} />
         </div>
-        <div className="mb-1.5 text-[16px] font-bold">Pi está pronto</div>
-        <div className="text-[13px] text-white/80">
-          Fale com Pi pelo WhatsApp e ele fará registros, gerará insights e
-          responderá dúvidas sobre suas finanças.
+        <div className="mb-1.5 text-[16px] font-bold">TED está ativo</div>
+        <div className="text-[13px] text-white/80 leading-relaxed">
+          Seu assistente conversacional com inteligência artificial para registrar despesas, emitir diagnósticos e analisar seu fluxo de caixa.
         </div>
       </div>
 
-      <div className="mb-4 rounded-[16px] bg-fill-light px-4 py-3.5 text-[13px] text-text-secondary">
-        Número vinculado: <b className="text-text-primary">(11) 99999-9999</b>
+      <div className="mb-4 rounded-[16px] border border-border-subtle bg-surface-2 px-4 py-3.5 text-[13px] text-text-secondary">
+        Status: <b className="text-primary font-bold">Pronto para atendimento</b>
       </div>
 
-      <a
-        href="https://wa.me/5511999999999"
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={() => void recordAdoptionEvent("chat_used")}
-        className="flex items-center justify-center gap-2.5 rounded-[14px] bg-[#25D366] py-[15px] text-center text-[15px] font-bold text-white shadow-sm transition-opacity hover:opacity-90"
+      <button
+        type="button"
+        onClick={() => {
+          void recordAdoptionEvent("chat_used");
+          onClose();
+        }}
+        className="flex items-center justify-center gap-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]"
       >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
-        </svg>
-        Abrir no WhatsApp
-      </a>
+        <Bot size={18} />
+        Interagir com o TED
+      </button>
     </BottomSheet>
   );
 }

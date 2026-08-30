@@ -92,6 +92,14 @@ describe("ProfilePage", () => {
     expect(screen.getByText("Assistente TED")).toBeInTheDocument();
   });
 
+  it("links to workspace management", async () => {
+    const user = userEvent.setup();
+    render(<ProfilePage />);
+
+    await user.click(screen.getByText("Workspaces"));
+    expect(mockRouter.push).toHaveBeenCalledWith("/workspaces");
+  });
+
   it("renders Sair da conta button", () => {
     render(<ProfilePage />);
     expect(screen.getByText("Sair da conta")).toBeInTheDocument();

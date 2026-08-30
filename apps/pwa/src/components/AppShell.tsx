@@ -6,6 +6,8 @@ import BottomNav from "@/components/BottomNav";
 import BottomSheet from "@/components/BottomSheet";
 import NewTransactionSheet from "@/components/NewTransactionSheet";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
+import SidebarRail from "@/components/SidebarRail";
+import { Icon, type IconName } from "@/components/ui/Icon";
 import type { NavItem } from "@/components/BottomNav";
 import type { SaveData } from "@/components/NewTransactionSheet";
 import { useAppState } from "@/lib/state/app-state-context";
@@ -199,292 +201,115 @@ export default function AppShell({ children }: AppShellProps) {
         void recordAdoptionEvent("capture_completed", {
           flowId: captureFlowId,
         });
-      // In read-only mode the write guard rejected the action and set the
-      // "Backend indisponível — modo somente leitura." message, but returned
-      // without throwing; keep the sheet open so the human sees the message
-      // and their draft (never silently close on a blocked write).
       if (!readOnly) closeSheetLocal();
     } catch (e) {
-      // Keep sheet open so draft inputs survive API validation errors (422).
-      // Rethrow so the sheet keeps form dirty (markClean is skipped).
       throw e;
     }
   }
 
+  const moreItems: { label: string; route: string; icon: IconName }[] = [
+    { label: "Patrimônio", route: "/patrimonio", icon: "wallet" },
+    { label: "Contas", route: "/contas", icon: "home" },
+    { label: "Cartões", route: "/cartoes", icon: "credit-card" },
+    { label: "Assinaturas", route: "/assinaturas", icon: "tag" },
+    { label: "Orçamentos", route: "/orcamentos", icon: "chart" },
+    { label: "Metas & Dívidas", route: "/metas", icon: "target" },
+    { label: "Categorias", route: "/categorias", icon: "folder-open" },
+    { label: "Workspaces", route: "/workspaces", icon: "folder-open" },
+    { label: "Aprovações", route: "/pending", icon: "alert-triangle" },
+    { label: "Relatórios", route: "/relatorios", icon: "chart" },
+  ];
+
   return (
-    <div
-      data-shell="root"
-      className="relative mx-auto flex min-h-dvh w-full max-w-[var(--shell-max-w)] flex-col bg-bg"
-    >
-      {children}
+    <div className="flex min-h-dvh w-full bg-bg">
+      {/* Desktop Sidebar Rail */}
+      <SidebarRail onNewTransaction={() => openSheetLocal("new")} />
 
-      <BottomNav
-        active={activeNav}
-        onFabClick={() => openSheetLocal("new")}
-        onMoreClick={() => openSheetLocal("more")}
-        onNavClick={handleNavClick}
-      />
-
-      <BottomSheet
-        open={effectiveSheetOpen}
-        onClose={requestCloseSheet}
-        title={
-          effectiveSheetMode === "new"
-            ? "Novo lançamento"
-            : effectiveSheetMode === "preselected"
-              ? effectivePreselectedKind === "expense"
-                ? "Nova despesa"
-                : effectivePreselectedKind === "income"
-                  ? "Nova receita"
-                  : "Nova transferência"
-              : "Mais"
-        }
+      {/* Main Content Shell */}
+      <div
+        data-shell="root"
+        className="relative mx-auto flex min-h-dvh w-full max-w-[var(--shell-max-w)] lg:max-w-none flex-1 flex-col bg-bg transition-all"
       >
-        {effectiveSheetMode === "new" ||
-        effectiveSheetMode === "preselected" ? (
-          <NewTransactionSheet
-            key={effectivePreselectedKind}
-            accounts={accounts}
-            categories={categories}
-            onSave={handleSave}
-            onAddCategory={addCategory}
-            onAddAccount={addAccount}
-            onAddCard={addCard}
-            initialTab={effectivePreselectedKind}
-            initialDescription={initialDescription}
-          />
-        ) : (
-          <div className="grid grid-cols-3 gap-[11px]">
-            {[
-              {
-                label: "Patrimônio",
-                tint: "#E7F3EC",
-                color: "#0E8C5A",
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                  </svg>
-                ),
-              },
-              {
-                label: "Contas",
-                tint: "#EAF0EC",
-                color: "#2FA56F",
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                  </svg>
-                ),
-              },
-              {
-                label: "Cartões",
-                tint: "#EEE9F7",
-                color: "#820AD1",
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="2" y="5" width="20" height="14" rx="2.5" />
-                    <path d="M2 10h20" />
-                  </svg>
-                ),
-              },
-              {
-                label: "Assinaturas",
-                tint: "#E8EFF7",
-                color: "#3E6FB0",
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <rect x="2" y="4" width="20" height="16" rx="2" />
-                    <path d="M2 10h20" />
-                    <path d="M8 16h4" />
-                  </svg>
-                ),
-              },
-              {
-                label: "Orçamentos",
-                tint: "#E7F3EC",
-                color: "#0E8C5A",
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M12 3v9h9" />
-                  </svg>
-                ),
-              },
-              {
-                label: "Metas & Dívidas",
-                tint: "#FBF1E3",
-                color: "#B8791F",
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M3 3v18h18" />
-                    <path d="m19 9-5 5-4-4-3 3" />
-                  </svg>
-                ),
-              },
-              {
-                label: "Categorias",
-                tint: "#EAF0EC",
-                color: "#2FA56F",
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M7.5 3h9L21 9l-9 12L3 9z" />
-                    <path d="M3 9h18" />
-                  </svg>
-                ),
-              },
-              {
-                label: "Aprovações",
-                tint: "#FBF1E3",
-                color: "#B8791F",
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
-                    <path d="m9 12 2 2 4-4" />
-                  </svg>
-                ),
-              },
-              {
-                label: "Relatórios",
-                tint: "#E8EFF7",
-                color: "#3E6FB0",
-                icon: (
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M3 3v18h18" />
-                    <path d="M7 14l4-4 3 3 5-6" />
-                  </svg>
-                ),
-              },
-            ].map((item) => (
-              <button
-                key={item.label}
-                onClick={() => {
-                  closeSheetLocal();
-                  const routeMap: Record<string, string> = {
-                    Cartões: "/cartoes",
-                    Orçamentos: "/orcamentos",
-                    "Metas & Dívidas": "/metas",
-                    Relatórios: "/relatorios",
-                    Patrimônio: "/patrimonio",
-                    Contas: "/contas",
-                    Categorias: "/categorias",
-                    Assinaturas: "/assinaturas",
-                    Aprovações: "/pending",
-                  };
-                  const route = routeMap[item.label];
-                  if (route) router.push(route);
-                }}
-                className="flex flex-col items-center gap-2 rounded-[15px] border border-border bg-fill-light p-3.5 transition-colors"
-              >
-                <span
-                  className="flex h-[42px] w-[42px] items-center justify-center rounded-[12px]"
-                  style={{ background: item.tint, color: item.color }}
-                >
-                  {item.icon}
-                </span>
-                <span className="text-center text-[11.5px] font-semibold text-text-secondary">
-                  {item.label}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-      </BottomSheet>
+        <div className="flex-1 w-full max-w-7xl mx-auto">
+          {children}
+        </div>
 
-      <ConfirmActionDialog
-        open={discardOpen}
-        title="Descartar alterações?"
-        message="Você tem alterações não salvas. Deseja sair sem salvar?"
-        confirmLabel="Descartar"
-        cancelLabel="Continuar editando"
-        danger
-        onConfirm={confirmDiscard}
-        onCancel={() => {
-          setDiscardOpen(false);
-          setPendingNav(null);
-        }}
-      />
-      <TedChatLauncher />
+        {/* Mobile Bottom Navigation */}
+        <BottomNav
+          active={activeNav}
+          onFabClick={() => openSheetLocal("new")}
+          onMoreClick={() => openSheetLocal("more")}
+          onNavClick={handleNavClick}
+        />
+
+        {/* New Transaction / More Drawer */}
+        <BottomSheet
+          open={effectiveSheetOpen}
+          onClose={requestCloseSheet}
+          title={
+            effectiveSheetMode === "new"
+              ? "Novo lançamento"
+              : effectiveSheetMode === "preselected"
+                ? effectivePreselectedKind === "expense"
+                  ? "Nova despesa"
+                  : effectivePreselectedKind === "income"
+                    ? "Nova receita"
+                    : "Nova transferência"
+                : "Mais"
+          }
+        >
+          {effectiveSheetMode === "new" ||
+          effectiveSheetMode === "preselected" ? (
+            <NewTransactionSheet
+              key={effectivePreselectedKind}
+              accounts={accounts}
+              categories={categories}
+              onSave={handleSave}
+              onAddCategory={addCategory}
+              onAddAccount={addAccount}
+              onAddCard={addCard}
+              initialTab={effectivePreselectedKind}
+              initialDescription={initialDescription}
+            />
+          ) : (
+            <div className="grid grid-cols-3 gap-[11px]">
+              {moreItems.map((item) => (
+                <button
+                  key={item.label}
+                  onClick={() => {
+                    closeSheetLocal();
+                    router.push(item.route);
+                  }}
+                  className="flex flex-col items-center gap-2 rounded-[16px] border border-border-subtle bg-surface-2 p-3.5 transition-all hover:bg-surface-3 active:scale-[0.98]"
+                >
+                  <span className="flex h-11 w-11 items-center justify-center rounded-[12px] bg-primary-tint text-primary shadow-xs">
+                    <Icon name={item.icon} size={20} />
+                  </span>
+                  <span className="text-center text-[12px] font-semibold text-text-primary">
+                    {item.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </BottomSheet>
+
+        <ConfirmActionDialog
+          open={discardOpen}
+          title="Descartar alterações?"
+          message="Você tem alterações não salvas. Deseja sair sem salvar?"
+          confirmLabel="Descartar"
+          cancelLabel="Continuar editando"
+          danger
+          onConfirm={confirmDiscard}
+          onCancel={() => {
+            setDiscardOpen(false);
+            setPendingNav(null);
+          }}
+        />
+
+        <TedChatLauncher />
+      </div>
     </div>
   );
 }

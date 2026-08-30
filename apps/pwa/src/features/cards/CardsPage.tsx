@@ -10,6 +10,7 @@ import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { fetchStatementDetail, updateCardPurchase } from "@/lib/api/endpoints";
 import type { StatementDetail, StatementPurchase } from "@/lib/state/types";
 import { useAppState } from "@/lib/state/app-state-context";
+import { Plus, ChevronLeft, CreditCard as CreditCardIcon, Edit3 } from "lucide-react";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -93,8 +94,6 @@ const CARD_BRANDS = [
   { name: "Outro", color: "#4A5568" },
 ];
 
-// ── NewCardSheet ───────────────────────────────────────────────────────────
-
 function NewCardSheet({
   open,
   onClose,
@@ -138,7 +137,7 @@ function NewCardSheet({
       markClean();
       onClose();
     } catch {
-      // Save failed: keep dirty.
+      // Keep dirty
     }
   }
 
@@ -146,7 +145,7 @@ function NewCardSheet({
     <BottomSheet open={open} onClose={onClose} title="Novo cartão">
       <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <div>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Bandeira / banco
           </label>
           <div className="flex flex-wrap gap-2">
@@ -155,11 +154,13 @@ function NewCardSheet({
                 key={b.name}
                 type="button"
                 onClick={() => { markDirty(); setBrand(b.name); }}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-colors ${
-                  brand === b.name ? "bg-primary text-white" : "bg-fill-light text-text-secondary"
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-all ${
+                  brand === b.name
+                    ? "bg-primary text-white shadow-xs"
+                    : "bg-surface-2 text-text-secondary hover:bg-surface-3"
                 }`}
               >
-                <span className="h-2.5 w-2.5 rounded-full" style={{ background: b.color }} />
+                <span className="h-2.5 w-2.5 rounded-full shadow-xs" style={{ background: b.color }} />
                 {b.name}
               </button>
             ))}
@@ -167,41 +168,41 @@ function NewCardSheet({
         </div>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Apelido do cartão</label>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Apelido do cartão</label>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Ex: Nubank, Itaú..."
-            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary"
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary"
           />
         </fieldset>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Limite</label>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Limite</label>
           <div className="relative">
-            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-semibold text-text-secondary">R$</span>
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-bold text-text-muted">R$</span>
             <input
               type="text"
               inputMode="numeric"
               value={limit}
               onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setLimit(formatInputBRL(raw)); }}
               placeholder="0,00"
-              className="w-full rounded-[13px] border border-border bg-transparent py-3 pl-11 pr-3.5 font-mono text-[16px] font-semibold text-text-primary outline-none focus:border-primary"
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-11 pr-3.5 font-mono tabular-nums text-[16px] font-bold text-text-primary outline-none focus:border-primary"
             />
           </div>
         </fieldset>
 
         <div className="grid grid-cols-2 gap-2.5">
           <fieldset>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Dia de fechamento</label>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Dia de fechamento</label>
             <input type="number" min={1} max={31} value={closingDay} onChange={(e) => setClosingDay(e.target.value)}
-              className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
           </fieldset>
           <fieldset>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Dia de vencimento</label>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Dia de vencimento</label>
             <input type="number" min={1} max={31} value={dueDay} onChange={(e) => setDueDay(e.target.value)}
-              className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
           </fieldset>
         </div>
 
@@ -209,7 +210,7 @@ function NewCardSheet({
           type="button"
           onClick={handleSave}
           aria-label="Salvar cartão"
-          className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90"
+          className="mt-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]"
         >
           Salvar cartão
         </button>
@@ -217,8 +218,6 @@ function NewCardSheet({
     </BottomSheet>
   );
 }
-
-// ── PayStatementSheet ──────────────────────────────────────────────────────
 
 function PayStatementSheet({
   open,
@@ -263,37 +262,37 @@ function PayStatementSheet({
       markClean();
       onClose();
     } catch {
-      // Save failed: keep dirty.
+      // Keep dirty
     }
   }
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Pagar fatura">
       <div className="flex flex-col gap-5" onChangeCapture={markDirty}>
-        <div className="flex items-center gap-3 rounded-[14px] bg-fill-light px-3.5 py-3">
-          <div className="flex h-[44px] w-[70px] flex-none items-center justify-center rounded-[10px] font-mono text-[10px] font-bold text-white"
+        <div className="flex items-center gap-3 rounded-[16px] border border-border-subtle bg-surface-2 px-3.5 py-3">
+          <div className="flex h-[44px] w-[70px] flex-none items-center justify-center rounded-[10px] font-mono text-[11px] font-bold text-white shadow-xs"
             style={{ background: gradientFor(card.color) }}>
             {card.name.slice(0, 2).toUpperCase()}
           </div>
-          <div className="flex-1">
-            <div className="text-[14px] font-bold text-text-primary">{card.name}</div>
-            <div className="text-[11px] text-text-muted">Vence dia {card.dueDay}</div>
+          <div className="flex-1 min-w-0">
+            <div className="truncate text-[14px] font-bold text-text-primary">{card.name}</div>
+            <div className="text-[11px] font-medium text-text-muted">Vence dia {card.dueDay}</div>
           </div>
           <div className="text-right">
-            <div className="text-[10px] text-text-muted">Total</div>
-            <div className="font-mono text-[15px] font-bold text-text-primary">{formatBRL(fullAmountCents)}</div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Total</div>
+            <div className="font-mono tabular-nums text-[15px] font-bold text-text-primary">{formatBRL(fullAmountCents)}</div>
           </div>
         </div>
 
         <div>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo de pagamento</label>
-          <div className="flex gap-1 rounded-xl bg-fill-light p-1">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Tipo de pagamento</label>
+          <div className="flex gap-1 rounded-[14px] bg-surface-2 p-1 border border-border-subtle">
             <button type="button" onClick={() => { markDirty(); setMode("full"); }}
-              className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-colors ${mode === "full" ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"}`}>
+              className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-all ${mode === "full" ? "bg-surface-1 text-text-primary shadow-sm" : "text-text-muted"}`}>
               Total
             </button>
             <button type="button" onClick={() => { markDirty(); setMode("partial"); }}
-              className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-colors ${mode === "partial" ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"}`}>
+              className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-all ${mode === "partial" ? "bg-surface-1 text-text-primary shadow-sm" : "text-text-muted"}`}>
               Parcial
             </button>
           </div>
@@ -301,37 +300,37 @@ function PayStatementSheet({
 
         {mode === "partial" ? (
           <fieldset>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Valor a pagar</label>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Valor a pagar</label>
             <div className="relative">
-              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[18px] font-semibold text-text-secondary">R$</span>
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[18px] font-bold text-text-muted">R$</span>
               <input type="text" inputMode="numeric" value={partialDisplay}
                 onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setPartialDisplay(formatInputBRL(raw)); }}
                 placeholder="0,00"
-                className="w-full rounded-[13px] border border-border bg-transparent py-3.5 pl-11 pr-3.5 font-mono text-[18px] font-semibold text-text-primary outline-none focus:border-primary" />
+                className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3.5 pl-11 pr-3.5 font-mono tabular-nums text-[18px] font-bold text-text-primary outline-none focus:border-primary" />
             </div>
             {partialCents > 0 && partialCents < fullAmountCents && (
-              <div className="mt-1.5 text-[11px] text-text-muted">
-                Restante após pagar: <span className="font-mono font-bold text-danger">{formatBRL(remainingAfterPay)}</span>
+              <div className="mt-1.5 text-[11px] font-medium text-text-muted">
+                Restante após pagar: <span className="font-mono tabular-nums font-bold text-danger">{formatBRL(remainingAfterPay)}</span>
               </div>
             )}
           </fieldset>
         ) : (
-          <div className="rounded-[13px] bg-primary-tint px-4 py-3.5 text-center">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-primary">Valor a pagar</div>
-            <div className="font-mono text-[28px] font-extrabold text-primary">{formatBRL(fullAmountCents)}</div>
-            <div className="text-[10px] text-primary">Fatura integral</div>
+          <div className="rounded-[16px] border border-primary/20 bg-primary-tint px-4 py-3.5 text-center">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-primary">Valor a pagar</div>
+            <div className="font-mono tabular-nums text-[28px] font-bold text-primary">{formatBRL(fullAmountCents)}</div>
+            <div className="text-[10px] font-semibold text-primary">Fatura integral</div>
           </div>
         )}
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Pagar com a conta</label>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Pagar com a conta</label>
           {checkingAccounts.length === 0 ? (
-            <div className="rounded-[12px] bg-fill-light px-3 py-3 text-center text-[12px] text-text-muted">Nenhuma conta disponível.</div>
+            <div className="rounded-[14px] border border-border-subtle bg-surface-2 px-3 py-3 text-center text-[12px] text-text-muted">Nenhuma conta disponível.</div>
           ) : (
             <div className="flex flex-wrap gap-2">
               {checkingAccounts.map((acc) => (
                 <button key={acc.id} type="button" onClick={() => { markDirty(); setAccountId(acc.id === accountId ? "" : acc.id); }}
-                  className={`rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${accountId === acc.id ? "bg-primary text-white" : "bg-fill-light text-text-secondary"}`}>
+                  className={`rounded-full px-3.5 py-2 text-[12px] font-bold transition-all ${accountId === acc.id ? "bg-primary text-white shadow-xs" : "bg-surface-2 text-text-secondary hover:bg-surface-3"}`}>
                   {acc.name}
                 </button>
               ))}
@@ -343,7 +342,7 @@ function PayStatementSheet({
           type="button"
           onClick={handlePay}
           disabled={amountCents <= 0 || !accountId}
-          className="w-full rounded-[14px] bg-primary py-4 text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+          className="w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98] disabled:opacity-50"
         >
           {mode === "full" ? "Pagar fatura total" : "Pagar valor parcial"}
         </button>
@@ -351,8 +350,6 @@ function PayStatementSheet({
     </BottomSheet>
   );
 }
-
-// ── EditSheet ──────────────────────────────────────────────────────────────
 
 function EditSheet({
   open,
@@ -395,7 +392,7 @@ function EditSheet({
       markClean();
       onClose();
     } catch {
-      // Save failed: keep dirty.
+      // Keep dirty
     }
   }
 
@@ -403,32 +400,32 @@ function EditSheet({
     <BottomSheet open={open} onClose={onClose} title="Editar cartão">
       <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Apelido</label>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Apelido</label>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
         </fieldset>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Limite</label>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Limite</label>
           <div className="relative">
-            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-semibold text-text-secondary">R$</span>
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-bold text-text-muted">R$</span>
             <input type="text" inputMode="numeric" value={limit}
               onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setLimit(formatInputBRL(raw)); }}
               placeholder={card.creditLimitCents > 0 ? formatBRL(card.creditLimitCents).replace("R$\u00A0", "") : "0,00"}
-              className="w-full rounded-[13px] border border-border bg-transparent py-3 pl-11 pr-3.5 font-mono text-[16px] font-semibold text-text-primary outline-none focus:border-primary" />
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-11 pr-3.5 font-mono tabular-nums text-[16px] font-bold text-text-primary outline-none focus:border-primary" />
           </div>
         </fieldset>
 
         <div className="grid grid-cols-2 gap-2.5">
           <fieldset>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Fechamento</label>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Fechamento</label>
             <input type="number" min={1} max={31} value={closingDay} onChange={(e) => setClosingDay(e.target.value)}
-              className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
           </fieldset>
           <fieldset>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Vencimento</label>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Vencimento</label>
             <input type="number" min={1} max={31} value={dueDay} onChange={(e) => setDueDay(e.target.value)}
-              className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
           </fieldset>
         </div>
 
@@ -436,7 +433,7 @@ function EditSheet({
           type="button"
           onClick={handleSave}
           aria-label="Salvar edição do cartão"
-          className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90"
+          className="mt-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]"
         >
           Salvar alterações
         </button>
@@ -444,8 +441,6 @@ function EditSheet({
     </BottomSheet>
   );
 }
-
-// ── PurchaseEditSheet ────────────────────────────────────────────────────────
 
 function PurchaseEditSheet({
   purchase,
@@ -495,7 +490,7 @@ function PurchaseEditSheet({
       markClean();
       onClose();
     } catch {
-      // Save failed: keep dirty.
+      // Keep dirty
     }
   }
 
@@ -503,31 +498,31 @@ function PurchaseEditSheet({
     <BottomSheet open={open} onClose={handleClose} title="Editar compra">
       <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Descrição</label>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Descrição</label>
           <input type="text" value={description} onChange={(e) => setDescription(e.target.value)}
-            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
         </fieldset>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Valor</label>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Valor</label>
           <div className="relative">
-            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-semibold text-text-secondary">R$</span>
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-bold text-text-muted">R$</span>
             <input type="text" inputMode="numeric" value={amountDisplay}
               onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setAmountDisplay(formatInputBRL(raw)); }}
-              className="w-full rounded-[13px] border border-border bg-transparent py-3 pl-11 pr-3.5 font-mono text-[16px] font-semibold text-text-primary outline-none focus:border-primary" />
+              className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-11 pr-3.5 font-mono tabular-nums text-[16px] font-bold text-text-primary outline-none focus:border-primary" />
           </div>
         </fieldset>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Data</label>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Data</label>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
         </fieldset>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Categoria</label>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Categoria</label>
           <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
-            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary">
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary">
             <option value="">Sem categoria</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
@@ -537,15 +532,13 @@ function PurchaseEditSheet({
 
         <button type="button" onClick={handleSave}
           disabled={!description.trim() || !date}
-          className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50">
+          className="mt-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98] disabled:opacity-50">
           Salvar alterações
         </button>
       </div>
     </BottomSheet>
   );
 }
-
-// ── CardsPage ──────────────────────────────────────────────────────────────
 
 export default function CardsPage() {
   const { accounts, transactions, categories, cardStatements, loading, error,
@@ -559,8 +552,6 @@ export default function CardsPage() {
   const [editPurchase, setEditPurchase] = useState<StatementPurchase | null>(null);
   const [stmtRefreshKey, setStmtRefreshKey] = useState(0);
 
-  // Read ?cardId=<id> from the URL on mount. Used by the Home page to
-  // deep-link the user onto a specific card detail.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -612,7 +603,7 @@ export default function CardsPage() {
       await updateCardPurchase(editPurchase.id, input);
       setStmtRefreshKey((k) => k + 1);
     } catch {
-      // error handled by parent
+      // handled
     }
   }, [editPurchase]);
 
@@ -622,7 +613,7 @@ export default function CardsPage() {
         <StatusBar />
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-fill-medium border-t-primary" />
+            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-border-subtle border-t-primary" />
             <span className="text-[13px] font-semibold text-text-muted">Carregando...</span>
           </div>
         </div>
@@ -632,7 +623,6 @@ export default function CardsPage() {
 
   const creditCards = accounts.filter((a) => a.kind === "credit_card");
 
-  // Derive card-level data from statements when available, fallback to transactions
   const cardsData: CardData[] = creditCards.map((card) => {
     const txPurchases = transactions
       .filter((t) => t.accountId === card.id && t.kind === "expense")
@@ -645,7 +635,6 @@ export default function CardsPage() {
         categoryName: categories.find((c) => c.id === p.categoryId)?.name ?? "",
       }));
 
-    // Prefer statement total over transaction-based spentCents
     const stmts = cardStatements
       .filter((s) => s.accountId === card.id)
       .sort((a, b) => b.cycleYearMonth.localeCompare(a.cycleYearMonth));
@@ -669,9 +658,12 @@ export default function CardsPage() {
         <PageHeader
           title="Cartões"
           action={
-            <button type="button" onClick={() => setCreateOpen(true)}
-              className="flex items-center gap-1.5 rounded-full bg-primary px-[15px] py-[9px] text-[12px] font-bold text-white">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-[12px] font-bold text-white shadow-sm hover:bg-primary-hover active:scale-95 transition-all"
+            >
+              <Plus size={15} strokeWidth={2.4} />
               Novo
             </button>
           }
@@ -686,7 +678,7 @@ export default function CardsPage() {
         <StaleBanner domains={["accounts", "cardStatements", "transactions"]} />
 
         {!selectedCardId ? (
-          <div className="flex flex-col gap-5 px-5">
+          <div className="flex flex-col gap-5 px-5 sm:px-8 lg:px-12">
             {cardsData.length === 0 && (
               <div className="py-[50px] text-center text-text-muted">
                 <div className="text-[14px] font-semibold">Nenhum cartão</div>
@@ -698,22 +690,20 @@ export default function CardsPage() {
               const availCents = card.creditLimitCents - card.spentCents;
               return (
                 <div key={card.id} onClick={() => setSelectedCardId(card.id)} className="cursor-pointer">
-                  <div className="overflow-hidden rounded-[18px] p-5 text-white shadow-card" style={{ background: bgGrad, minHeight: 160 }}>
+                  <div className="overflow-hidden rounded-[22px] p-5 text-white shadow-elevated transition-transform duration-200 hover:scale-[1.01]" style={{ background: bgGrad, minHeight: 160 }}>
                     <div className="mb-[22px] flex items-start justify-between">
                       <div>
-                        <div className="text-[14px] font-bold">{card.name}</div>
-                        <div className="text-[11px] text-white/70">Fecha dia {card.closingDay} · vence dia {card.dueDay}</div>
+                        <div className="text-[15px] font-bold tracking-tight">{card.name}</div>
+                        <div className="text-[11px] font-medium text-white/70">Fecha dia {card.closingDay} · vence dia {card.dueDay}</div>
                       </div>
-                      <svg width="30" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.85)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="2" y="5" width="20" height="14" rx="2.5" /><path d="M2 10h20" />
-                      </svg>
+                      <CreditCardIcon size={26} className="text-white/85" />
                     </div>
-                    <div className="mb-[3px] text-[11px] text-white/70">Fatura atual</div>
-                    <div className="mb-3 font-mono text-[24px] font-semibold leading-none">{formatBRL(card.spentCents)}</div>
-                    <div className="mb-[7px] h-[6px] rounded-[4px] bg-white/22">
-                      <div className="h-full rounded-[4px] bg-white" style={{ width: `${card.pct}%` }} />
+                    <div className="mb-[3px] text-[11px] font-medium text-white/70">Fatura atual</div>
+                    <div className="mb-3 font-mono tabular-nums text-[26px] font-bold leading-none">{formatBRL(card.spentCents)}</div>
+                    <div className="mb-[7px] h-[6px] rounded-full bg-white/20 overflow-hidden">
+                      <div className="h-full rounded-full bg-white transition-all duration-300" style={{ width: `${card.pct}%` }} />
                     </div>
-                    <div className="flex justify-between text-[11px] text-white/80">
+                    <div className="flex justify-between font-mono tabular-nums text-[11px] font-semibold text-white/80">
                       <span>{formatPct(card.pct)} de {formatBRL(card.creditLimitCents)}</span>
                       <span>{formatBRL(availCents)} livre</span>
                     </div>
@@ -745,40 +735,36 @@ export default function CardsPage() {
             const availCents = card.creditLimitCents - detailSpent;
 
             return (
-              <div className="flex flex-col gap-4 px-5">
+              <div className="flex flex-col gap-4 px-5 sm:px-8 lg:px-12">
                 <div className="flex items-center justify-between">
-                  <button onClick={() => { setSelectedCardId(null); setSelectedStatementId(null); }} className="flex items-center gap-1.5 text-[14px] font-semibold text-primary">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="m15 18-6-6 6-6" />
-                    </svg>
+                  <button onClick={() => { setSelectedCardId(null); setSelectedStatementId(null); }} className="flex items-center gap-1.5 text-[14px] font-bold text-primary hover:underline">
+                    <ChevronLeft size={18} strokeWidth={2.4} />
                     Cartões
                   </button>
                   <button
                     onClick={() => setEditCard(card)}
-                    className="flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-[7px] text-[12px] font-semibold text-text-secondary"
+                    className="flex items-center gap-1.5 rounded-full border border-border-subtle bg-surface-1 px-3.5 py-1.5 text-[12px] font-bold text-text-secondary hover:bg-surface-2 transition-colors"
                   >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                    </svg>
+                    <Edit3 size={14} />
                     Editar
                   </button>
                 </div>
 
                 {/* Hero KPIs */}
-                <div className="rounded-[18px] p-[18px] text-white" style={{ background: bgGrad }}>
-                  <div className="mb-3.5 text-[14px] font-bold">{card.name}</div>
+                <div className="rounded-[22px] p-5 text-white shadow-elevated" style={{ background: bgGrad }}>
+                  <div className="mb-3.5 text-[15px] font-bold tracking-tight">{card.name}</div>
                   <div className="flex justify-between">
                     <div>
-                      <div className="text-[11px] text-white/70">Fatura</div>
-                      <div className="font-mono text-[18px] font-semibold">{formatBRL(detailSpent)}</div>
+                      <div className="text-[11px] font-medium text-white/70">Fatura</div>
+                      <div className="font-mono tabular-nums text-[18px] font-bold">{formatBRL(detailSpent)}</div>
                     </div>
                     <div>
-                      <div className="text-[11px] text-white/70">Vence dia</div>
-                      <div className="font-mono text-[18px] font-semibold">{detailDueDay}</div>
+                      <div className="text-[11px] font-medium text-white/70">Vence dia</div>
+                      <div className="font-mono tabular-nums text-[18px] font-bold">{detailDueDay}</div>
                     </div>
                     <div>
-                      <div className="text-[11px] text-white/70">Limite livre</div>
-                      <div className="font-mono text-[18px] font-semibold">{formatBRL(availCents)}</div>
+                      <div className="text-[11px] font-medium text-white/70">Limite livre</div>
+                      <div className="font-mono tabular-nums text-[18px] font-bold">{formatBRL(availCents)}</div>
                     </div>
                   </div>
                 </div>
@@ -788,7 +774,7 @@ export default function CardsPage() {
                   type="button"
                   onClick={() => setPayCard({ ...card, spentCents: detailSpent })}
                   disabled={detailSpent === 0 || selectedStmtSummary?.status === "paid"}
-                  className="w-full rounded-[13px] bg-primary py-[13px] text-[14px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                  className="w-full rounded-[14px] bg-primary py-3.5 text-[14px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98] disabled:opacity-50"
                 >
                   Pagar fatura
                 </button>
@@ -796,22 +782,22 @@ export default function CardsPage() {
                 {/* Compras da fatura */}
                 <div>
                   <div className="mb-2 text-[13px] font-bold text-text-primary">Compras da fatura</div>
-                  <div className="overflow-hidden rounded-[16px] border border-border bg-surface">
+                  <div className="overflow-hidden rounded-[18px] border border-border-subtle bg-surface-1 shadow-card">
                     {detailPurchases.length === 0 ? (
                       <div className="px-4 py-6 text-center text-[12px] text-text-muted">Nenhuma compra nesta fatura.</div>
                     ) : (
                       detailPurchases.map((p) => (
-                        <div key={p.id} onClick={() => setEditPurchase(p)} className="flex cursor-pointer items-center justify-between border-b border-fill-medium px-4 py-3 last:border-none active:bg-fill-light">
+                        <div key={p.id} onClick={() => setEditPurchase(p)} className="flex cursor-pointer items-center justify-between border-b border-border-subtle px-4 py-3.5 last:border-none hover:bg-surface-2/60 active:bg-surface-2 transition-colors">
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">
-                              <span className="text-[13px] font-semibold text-text-primary">{p.description}</span>
+                              <span className="text-[13px] font-bold text-text-primary">{p.description}</span>
                               {p.categoryName && (
-                                <span className="rounded-[5px] bg-primary-tint px-1.5 py-0.5 text-[9px] font-bold text-primary">{p.categoryName}</span>
+                                <span className="rounded-full bg-primary-tint px-2 py-0.5 text-[9px] font-bold text-primary">{p.categoryName}</span>
                               )}
                             </div>
-                            <div className="mt-0.5 text-[11px] text-text-muted">{new Date(p.date + "T12:00:00").toLocaleDateString("pt-BR")}</div>
+                            <div className="mt-0.5 text-[11px] font-medium text-text-muted">{new Date(p.date + "T12:00:00").toLocaleDateString("pt-BR")}</div>
                           </div>
-                          <div className="ml-3 flex-none font-mono text-[13px] font-semibold text-danger">{formatBRL(p.amountCents)}</div>
+                          <div className="ml-3 flex-none font-mono tabular-nums text-[13px] font-bold text-danger">{formatBRL(p.amountCents)}</div>
                         </div>
                       ))
                     )}
@@ -821,30 +807,30 @@ export default function CardsPage() {
                 {/* Histórico de faturas */}
                 <div>
                   <div className="mb-2 mt-2 text-[13px] font-bold text-text-primary">Histórico</div>
-                  <div className="overflow-hidden rounded-[16px] border border-border bg-surface">
+                  <div className="overflow-hidden rounded-[18px] border border-border-subtle bg-surface-1 shadow-card">
                     {cardStmts.length > 0 ? (
                       cardStmts.map((s) => {
                         const monthLabel = new Date(s.closingDate).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
                         const isPaid = s.status === "paid";
                         const isOverdue = s.status === "overdue";
                         const statusLabel = isPaid ? "Paga" : isOverdue ? "Atrasada" : s.status === "open" ? "Aberta" : s.status === "partial" ? "Parcial" : "Fechada";
-                        const statusColor = isPaid ? "#0E8C5A" : isOverdue ? "#C8483B" : "#5C665E";
-                        const statusTint = isPaid ? "#E7F3EC" : isOverdue ? "#F7E9E7" : "#F4F5F2";
+                        const statusColor = isPaid ? "var(--color-primary)" : isOverdue ? "var(--color-danger)" : "var(--color-text-secondary)";
+                        const statusTint = isPaid ? "var(--color-primary-tint)" : isOverdue ? "var(--color-danger-tint)" : "var(--surface-2)";
                         const isSelected = s.id === selectedStatementId;
                         return (
                           <button
                             key={s.id}
                             type="button"
                             onClick={() => setSelectedStatementId(s.id)}
-                            className={`flex w-full items-center justify-between border-b border-fill-medium px-4 py-3.5 text-left last:border-none ${isSelected ? "bg-primary-tint/40" : ""}`}
+                            className={`flex w-full items-center justify-between border-b border-border-subtle px-4 py-3.5 text-left last:border-none hover:bg-surface-2/60 transition-colors ${isSelected ? "bg-primary-tint/40" : ""}`}
                             aria-pressed={isSelected}
                             aria-label={`${monthLabel} ${statusLabel}`}
                           >
                             <div>
-                              <div className="text-[13px] font-semibold capitalize text-text-primary">{monthLabel}</div>
+                              <div className="text-[13px] font-bold capitalize text-text-primary">{monthLabel}</div>
                               <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: statusTint, color: statusColor }}>{statusLabel}</span>
                             </div>
-                            <span className="font-mono text-[14px] font-semibold text-danger">{formatBRL(s.totalCents)}</span>
+                            <span className="font-mono tabular-nums text-[14px] font-bold text-danger">{formatBRL(s.totalCents)}</span>
                           </button>
                         );
                       })

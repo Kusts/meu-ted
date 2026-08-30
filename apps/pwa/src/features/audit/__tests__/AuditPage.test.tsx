@@ -21,7 +21,7 @@ describe("AuditPage", () => {
     // Two households would have different workspace headers, but test verifies that fetchAuditLogs
     // sends correct query params and that component renders filtered results respecting household isolation.
     // Mock fetch to return workspace-isolated data and assert request contains filters.
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.includes("/audit-logs")) {
         const hasEntityType = url.includes("entityType=account");

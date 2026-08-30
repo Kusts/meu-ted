@@ -1,41 +1,64 @@
 @import "tailwindcss";
 
-/* ── Design Token Theme ── */
+/* ── Design Token Theme (Tailwind CSS v4) ── */
 @theme {
   /* Primárias */
-  --color-primary: #0E8C5A;
-  --color-primary-dark: #0A3A28;
-  --color-primary-mid: #0F6B45;
-  --color-primary-light: #2FA56F;
-  --color-primary-tint: #E7F3EC;
+  --color-primary: var(--primary);
+  --color-primary-dark: var(--primary-dark);
+  --color-primary-mid: var(--primary-mid);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-light: var(--primary-light);
+  --color-primary-glow: var(--primary-glow);
+  --color-primary-tint: var(--primary-tint);
+
+  /* Money Accent (Luminescente) */
+  --color-accent-money: var(--accent-money);
+  --color-accent-money-glow: var(--accent-money-glow);
 
   /* Semânticas */
-  --color-danger: #C8483B;
-  --color-danger-tint: #F7E9E7;
-  --color-warning: #B8791F;
-  --color-warning-tint: #FBF1E3;
-  --color-info: #3E6FB0;
-  --color-info-tint: #E8EFF7;
+  --color-danger: var(--danger);
+  --color-danger-tint: var(--danger-tint);
+  --color-warning: var(--warning);
+  --color-warning-tint: var(--warning-tint);
+  --color-info: var(--info);
+  --color-info-tint: var(--info-tint);
+  --color-success: var(--success);
+  --color-success-tint: var(--success-tint);
 
-  /* Neutros */
-  --color-bg: #F7F8F5;
-  --color-surface: #FFFFFF;
-  --color-border: #ECEEEA;
-  --color-border-strong: #E0E3DE;
-  --color-text-primary: #16201A;
-  --color-text-secondary: #5C665E;
-  --color-text-muted: #98A29A;
-  --color-fill-light: #F4F5F2;
-  --color-fill-medium: #F1F3EF;
+  /* Neutros & Superfícies */
+  --color-bg: var(--bg-canvas);
+  --color-bg-canvas: var(--bg-canvas);
+  --color-surface: var(--surface-1);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+
+  /* Bordas */
+  --color-border: var(--border-subtle);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-medium: var(--border-medium);
+  --color-border-strong: var(--border-strong);
+
+  /* Tipografia */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+
+  /* Fills legados (aliases) */
+  --color-fill-light: var(--surface-2);
+  --color-fill-medium: var(--surface-3);
 
   /* Fontes (loaded via next/font in layout.tsx) */
   --font-ui: var(--font-plus-jakarta-sans), "Plus Jakarta Sans", sans-serif;
   --font-mono: var(--font-space-grotesk), "Space Grotesk", monospace;
 
   /* Sombras */
-  --shadow-card: 0 1px 3px rgba(0,0,0,.06);
-  --shadow-sheet: 0 -4px 24px rgba(10,30,20,.12);
-  --shadow-fab: 0 4px 18px rgba(14,140,90,.35);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-card: var(--shadow-card);
+  --shadow-elevated: var(--shadow-elevated);
+  --shadow-sheet: var(--shadow-sheet);
+  --shadow-fab: var(--shadow-fab);
 
   /* Animações */
   --animate-sheet-up: sheetUp 0.28s cubic-bezier(.2,.8,.2,1);
@@ -53,8 +76,53 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Layout & Spacing Tokens ── */
+/* ── Light Mode (Default) ── */
 :root {
+  --bg-canvas: #F8F9FA;
+  --surface-1: #FFFFFF;
+  --surface-2: #F1F3EF;
+  --surface-3: #E9ECE5;
+  --surface-4: #E0E4DC;
+
+  --border-subtle: #ECEEEA;
+  --border-medium: #E0E3DE;
+  --border-strong: #CDD1CA;
+
+  --text-primary: #111814;
+  --text-secondary: #4B554E;
+  --text-muted: #828E85;
+
+  /* Primárias Esmeralda Light */
+  --primary: #0E8C5A;
+  --primary-dark: #0A3A28;
+  --primary-mid: #0F6B45;
+  --primary-hover: #0B734A;
+  --primary-light: #2FA56F;
+  --primary-glow: rgba(14, 140, 90, 0.15);
+  --primary-tint: #E7F3EC;
+
+  /* Money Accent (Luminescente) */
+  --accent-money: #10B981;
+  --accent-money-glow: rgba(16, 185, 129, 0.20);
+
+  /* Semânticas */
+  --danger: #C8483B;
+  --danger-tint: #FCECEB;
+  --warning: #B8791F;
+  --warning-tint: #FEF6EB;
+  --info: #3E6FB0;
+  --info-tint: #EFF4FA;
+  --success: #0E8C5A;
+  --success-tint: #E7F3EC;
+
+  /* Sombras Light */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05), 0 4px 12px rgba(0, 0, 0, 0.02);
+  --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
+  --shadow-sheet: 0 -4px 32px rgba(10, 30, 20, 0.12);
+  --shadow-fab: 0 4px 18px rgba(14, 140, 90, 0.35);
+
+  /* Layout & Spacing */
   --page-padding: 20px;
   --page-pt: 14px;
   --page-pb: 24px;
@@ -68,10 +136,55 @@
   --easing-standard: cubic-bezier(.2,.8,.2,1);
   --duration-standard: 0.28s;
 
-  /* Responsive shell width (mobile-first: 430px → tablet 640px → desktop 860px).
-     Used by both AppShell and BottomNav so the nav stays glued to the shell
-     column on wide viewports instead of stretching full-width. */
+  /* Responsive shell width */
   --shell-max-w: 430px;
+}
+
+/* ── Dark Mode (Titanium Velvet) ── */
+.dark {
+  --bg-canvas: #0B0F0E;
+  --surface-1: #131916;
+  --surface-2: #1A231F;
+  --surface-3: #222E29;
+  --surface-4: #2B3A34;
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-medium: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.18);
+
+  --text-primary: #F3F5F2;
+  --text-secondary: #9DA8A0;
+  --text-muted: #667269;
+
+  /* Primárias Esmeralda Dark */
+  --primary: #10B981;
+  --primary-dark: #059669;
+  --primary-mid: #0E8C5A;
+  --primary-hover: #059669;
+  --primary-light: #34D399;
+  --primary-glow: rgba(16, 185, 129, 0.25);
+  --primary-tint: rgba(16, 185, 129, 0.12);
+
+  /* Money Accent (Luminescente Dark) */
+  --accent-money: #00E599;
+  --accent-money-glow: rgba(0, 229, 153, 0.30);
+
+  /* Semânticas Dark */
+  --danger: #F87171;
+  --danger-tint: rgba(248, 113, 113, 0.14);
+  --warning: #FBBF24;
+  --warning-tint: rgba(251, 191, 36, 0.14);
+  --info: #60A5FA;
+  --info-tint: rgba(96, 165, 250, 0.14);
+  --success: #34D399;
+  --success-tint: rgba(52, 211, 153, 0.14);
+
+  /* Sombras Dark */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-sheet: 0 -4px 40px rgba(0, 0, 0, 0.7);
+  --shadow-fab: 0 4px 20px rgba(16, 185, 129, 0.40);
 }
 
 @media (min-width: 640px) {
@@ -90,10 +203,16 @@
 
 /* ── Body defaults ── */
 body {
-  background-color: var(--color-bg);
-  color: var(--color-text-primary);
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Tabular numbers for mono font ── */
+.font-mono, [data-tabular-nums="true"] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 
 /* ── Scrollbar hide (utility) ── */
@@ -109,4 +228,3 @@ body {
 body.overflow-hidden {
   overflow: hidden;
 }
-

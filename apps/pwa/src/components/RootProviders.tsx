@@ -8,10 +8,11 @@ import { SheetProvider } from "@/lib/sheet-context";
 import { UnsavedChangesProvider } from "@/lib/unsaved-changes";
 import { SWCoordinator } from "@/lib/sw-coordinator";
 import { WorkspaceProvider } from "@/lib/auth/workspace-context";
+import { ThemeProvider } from "@/lib/theme";
 import { initRUM } from "@/lib/observability/web-vitals";
 
 /**
- * Provider tree (agents-sdk: AuthGate > WorkspaceProvider > AppStateProvider)
+ * Provider tree (ThemeProvider > agents-sdk: AuthGate > WorkspaceProvider > AppStateProvider)
  */
 export function RootProviders({ children }: { children: React.ReactNode }) {
   useEffect(() => {
@@ -30,9 +31,7 @@ export function RootProviders({ children }: { children: React.ReactNode }) {
     </UnsavedChangesProvider>
   );
 
-  if (!isApiConfigured()) {
-    return inner;
-  }
+  const tree = isApiConfigured() ? <AuthGate>{inner}</AuthGate> : inner;
 
-  return <AuthGate>{inner}</AuthGate>;
+  return <ThemeProvider>{tree}</ThemeProvider>;
 }

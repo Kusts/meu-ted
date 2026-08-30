@@ -1,24 +1,24 @@
-/**
- * Tinted badge — identity chip for accounts, cards, and subscriptions.
- *
- * Usage: <Badge label="Nubank Crédito" color="#820AD1" size="sm" />
- *
- * Abbreviation rules (kept compact, max 2 chars):
- *   - 1 word  → first 2 chars uppercase ("Nubank" → "NU")
- *   - 2+ words → initials of the first two words ("Nubank Crédito" → "NC")
- *
- * The full label is exposed via the `title` attribute as a native tooltip
- * and for QA inspection. The element stays aria-hidden because the
- * surrounding UI (account name text) is the canonical accessible label.
- */
+"use client";
 
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
-interface BadgeProps {
-  label: string;
+export type BadgeVariant =
+  | "abbreviation"
+  | "success"
+  | "danger"
+  | "warning"
+  | "info"
+  | "neutral"
+  | "primary"
+  | "accent";
+
+export interface BadgeProps {
+  label?: string;
+  variant?: BadgeVariant;
   color?: string;
   size?: "sm" | "md" | "lg";
   className?: string;
+  children?: ReactNode;
 }
 
 function getAbbreviation(label: string): string {
@@ -44,14 +44,41 @@ const SIZE_MAP = {
   lg: { size: 52, fontSize: 18, radius: 14 },
 } as const;
 
-export default function Badge({
+const variantClasses: Record<Exclude<BadgeVariant, "abbreviation">, string> = {
+  success: "bg-success-tint text-success border border-success/20",
+  danger: "bg-danger-tint text-danger border border-danger/20",
+  warning: "bg-warning-tint text-warning border border-warning/20",
+  info: "bg-info-tint text-info border border-info/20",
+  neutral: "bg-surface-2 text-text-secondary border border-border-subtle",
+  primary: "bg-primary-tint text-primary border border-primary/20",
+  accent: "bg-accent-money-glow text-accent-money border border-accent-money/20",
+};
+
+export function Badge({
   label,
+  variant,
   color = "#0E8C5A",
   size = "md",
   className = "",
+  children,
 }: BadgeProps) {
+  // If variant is explicitly provided and not abbreviation, render as semantic pill badge
+  if (variant && variant !== "abbreviation") {
+    return (
+      <span
+        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold tracking-wide transition-colors ${
+          variantClasses[variant]
+        } ${className}`}
+        data-testid="badge"
+      >
+        {children || label}
+      </span>
+    );
+  }
+
+  // Otherwise, render as abbreviation identity chip (preserves full backward compatibility)
   const dims = SIZE_MAP[size];
-  const chars = getAbbreviation(label);
+  const chars = label ? getAbbreviation(label) : "";
 
   const style: CSSProperties = {
     width: dims.size,
@@ -82,3 +109,5 @@ export default function Badge({
     </span>
   );
 }
+
+export default Badge;

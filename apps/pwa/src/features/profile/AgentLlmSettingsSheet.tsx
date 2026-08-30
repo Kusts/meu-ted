@@ -11,6 +11,7 @@ import {
   type LlmModel,
   type LlmRuntime,
 } from "@/lib/api/admin-agent-llm-config";
+import { Cpu, CheckCircle2, AlertCircle } from "lucide-react";
 
 interface AgentLlmSettingsSheetProps {
   open: boolean;
@@ -42,6 +43,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
 
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       void loadConfig();
     }
   }, [open, loadConfig]);
@@ -89,75 +91,78 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Governança TED · LLM">
-      <div className="flex flex-col gap-6 pb-8">
-        {/* Runtime status — premium card with gradient */}
-        <div className="relative overflow-hidden rounded-2xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50 via-white to-teal-50/40 p-4 shadow-sm">
-          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-200/60 to-transparent" aria-hidden="true" />
+      <div className="flex flex-col gap-5 pb-8">
+        {/* Runtime status */}
+        <div className="relative overflow-hidden rounded-[20px] border border-border-subtle bg-surface-2 p-4 shadow-card">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-white shadow-sm">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                </svg>
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-white shadow-xs">
+                <Cpu size={16} />
               </span>
-              <span className="text-sm font-bold tracking-tight text-emerald-900">Runtime Ativo</span>
+              <span className="text-sm font-bold tracking-tight text-text-primary">Runtime Ativo</span>
             </div>
-            <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold tracking-wide text-emerald-700 shadow-sm ring-1 ring-emerald-200">
+            <span className="rounded-full bg-primary-tint px-2.5 py-1 text-[11px] font-bold tracking-wide text-primary">
               v{runtime?.version ?? 1} • Epoch {runtime?.securityEpoch ?? 1}
             </span>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            <div className="rounded-xl bg-white/80 p-3 shadow-sm ring-1 ring-black/5">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Provedor</div>
-              <div className="mt-1 truncate text-sm font-bold text-slate-900">{runtime?.activeProviderId ?? "— Nenhum"}</div>
+          <div className="mt-3 grid grid-cols-2 gap-2.5">
+            <div className="rounded-[14px] bg-surface-1 p-3 border border-border-subtle">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Provedor</div>
+              <div className="mt-1 truncate font-mono text-[13px] font-bold text-text-primary">{runtime?.activeProviderId ?? "— Nenhum"}</div>
             </div>
-            <div className="rounded-xl bg-white/80 p-3 shadow-sm ring-1 ring-black/5">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Modelo</div>
-              <div className="mt-1 truncate text-sm font-bold text-slate-900">{runtime?.activeModelId ?? "— Nenhum"}</div>
+            <div className="rounded-[14px] bg-surface-1 p-3 border border-border-subtle">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Modelo</div>
+              <div className="mt-1 truncate font-mono text-[13px] font-bold text-text-primary">{runtime?.activeModelId ?? "— Nenhum"}</div>
             </div>
           </div>
         </div>
 
         {error && (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs font-medium text-rose-800 shadow-sm">{error}</div>
+          <div className="flex items-center gap-2 rounded-[14px] border border-danger/30 bg-danger-tint px-3.5 py-2.5 text-xs font-semibold text-danger">
+            <AlertCircle size={15} />
+            {error}
+          </div>
         )}
         {actionSuccess && (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-medium text-emerald-800 shadow-sm">{actionSuccess}</div>
+          <div className="flex items-center gap-2 rounded-[14px] border border-primary/30 bg-primary-tint px-3.5 py-2.5 text-xs font-bold text-primary">
+            <CheckCircle2 size={15} />
+            {actionSuccess}
+          </div>
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-500">
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-600" />
+          <div className="flex items-center justify-center gap-2 py-8 text-sm font-medium text-text-muted">
+            <span className="h-5 w-5 animate-spin rounded-full border-2 border-border-subtle border-t-primary" />
             Carregando configuração…
           </div>
         ) : (
           <>
             {/* Providers */}
             <div>
-              <h3 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                <span className="h-1 w-6 rounded-full bg-emerald-500" />
+              <h3 className="mb-2.5 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-text-muted">
+                <span className="h-1 w-5 rounded-full bg-primary" />
                 Provedores
               </h3>
               <div className="flex flex-col gap-2.5">
                 {providers.map((p) => (
                   <div
                     key={p.id}
-                    className="group flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow-md"
+                    className="group flex items-center justify-between gap-3 rounded-[18px] border border-border-subtle bg-surface-1 p-4 shadow-card transition-all hover:bg-surface-2/50"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-bold tracking-tight text-slate-900">{p.name}</span>
-                        <span className="hidden sm:inline-flex rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-mono font-medium text-slate-600 ring-1 ring-slate-200">{p.id}</span>
+                        <span className="truncate text-[14px] font-bold tracking-tight text-text-primary">{p.name}</span>
+                        <span className="hidden sm:inline-flex rounded-full bg-surface-2 px-2 py-0.5 font-mono text-[10px] font-semibold text-text-secondary border border-border-subtle">{p.id}</span>
                       </div>
-                      <div className="mt-1 flex items-center gap-2">
-                        <code className="rounded-md bg-slate-50 px-1.5 py-0.5 text-[11px] font-mono text-slate-600 ring-1 ring-slate-200">{p.secretAlias || "—"}</code>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <code className="rounded-[8px] bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-text-secondary border border-border-subtle">{p.secretAlias || "—"}</code>
                         <span
-                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${
+                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
                             p.eligibility === "approved"
-                              ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                              ? "bg-primary-tint text-primary"
                               : p.eligibility === "candidate"
-                                ? "bg-amber-50 text-amber-700 ring-amber-200"
-                                : "bg-slate-100 text-slate-600 ring-slate-200"
+                                ? "bg-warning-tint text-warning"
+                                : "bg-surface-2 text-text-muted"
                           }`}
                         >
                           {p.eligibility}
@@ -167,13 +172,13 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                     <button
                       type="button"
                       onClick={() => void handleToggleProvider(p.id, p.enabled)}
-                      className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold shadow-sm ring-1 transition ${
+                      className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all active:scale-95 ${
                         p.enabled
-                          ? "bg-emerald-600 text-white shadow-emerald-600/20 ring-emerald-600 hover:bg-emerald-700"
-                          : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"
+                          ? "bg-primary text-white shadow-fab hover:bg-primary-hover"
+                          : "bg-surface-2 border border-border-subtle text-text-secondary hover:bg-surface-3"
                       }`}
                     >
-                      <span className={`h-1.5 w-1.5 rounded-full ${p.enabled ? "bg-white" : "bg-slate-400"}`} />
+                      <span className={`h-1.5 w-1.5 rounded-full ${p.enabled ? "bg-white" : "bg-text-muted"}`} />
                       {p.enabled ? "Ativo" : "Inativo"}
                     </button>
                   </div>
@@ -183,8 +188,8 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
 
             {/* Models */}
             <div>
-              <h3 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                <span className="h-1 w-6 rounded-full bg-violet-500" />
+              <h3 className="mb-2.5 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-text-muted">
+                <span className="h-1 w-5 rounded-full bg-accent-money" />
                 Modelos
               </h3>
               <div className="flex flex-col gap-2.5">
@@ -193,30 +198,30 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                   return (
                     <div
                       key={m.id}
-                      className={`flex flex-col gap-3 rounded-2xl border bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between ${
-                        isCurrentActive ? "border-emerald-200 bg-emerald-50/40 shadow-emerald-500/10" : "border-slate-200 hover:border-slate-300 hover:shadow-md"
+                      className={`flex flex-col gap-3 rounded-[18px] border p-4 shadow-card sm:flex-row sm:items-center sm:justify-between transition-all ${
+                        isCurrentActive ? "border-primary/40 bg-primary-tint/20" : "border-border-subtle bg-surface-1 hover:bg-surface-2/50"
                       }`}
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="truncate text-sm font-bold tracking-tight text-slate-900">{m.modelId}</span>
+                          <span className="truncate font-mono text-[13px] font-bold tracking-tight text-text-primary">{m.modelId}</span>
                           {isCurrentActive && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] font-bold text-white shadow-sm">
+                            <span className="inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-white shadow-xs">
                               <span className="h-1.5 w-1.5 rounded-full bg-white" /> Ativo
                             </span>
                           )}
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700 ring-1 ring-slate-200">{m.providerId}</span>
-                          <span className="rounded-full bg-violet-50 px-2 py-0.5 font-medium text-violet-700 ring-1 ring-violet-200">{m.protocol}</span>
+                          <span className="rounded-full bg-surface-2 px-2 py-0.5 font-medium text-text-secondary border border-border-subtle">{m.providerId}</span>
+                          <span className="rounded-full bg-surface-2 px-2 py-0.5 font-medium text-text-secondary border border-border-subtle">{m.protocol}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5 self-start sm:self-auto">
+                      <div className="flex items-center gap-2 self-start sm:self-auto">
                         <button
                           type="button"
                           onClick={() => void handleToggleModel(m.id, m.enabled)}
-                          className={`rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm ring-1 transition ${
-                            m.enabled ? "bg-white text-emerald-700 ring-emerald-200 hover:bg-emerald-50" : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50"
+                          className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-all active:scale-95 ${
+                            m.enabled ? "bg-surface-2 border border-primary/30 text-primary hover:bg-primary-tint" : "bg-surface-2 border border-border-subtle text-text-muted hover:bg-surface-3"
                           }`}
                         >
                           {m.enabled ? "Habilitado" : "Desabilitado"}
@@ -225,7 +230,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                           <button
                             type="button"
                             onClick={() => void handleActivate(m.providerId, m.modelId)}
-                            className="rounded-full bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-black"
+                            className="rounded-full bg-primary px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-primary-hover active:scale-95 transition-all"
                           >
                             Ativar Global
                           </button>

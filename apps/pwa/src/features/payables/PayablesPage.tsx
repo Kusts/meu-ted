@@ -10,6 +10,7 @@ import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
 import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import type { Payable } from "@/lib/state/types";
+import { Plus } from "lucide-react";
 
 function formatInputBRL(value: string): string {
   const digits = value.replace(/\D/g, "");
@@ -69,7 +70,7 @@ function NewPayableSheet({
       setDueDate("");
       onClose();
     } catch {
-      // Save failed: keep dirty so the user does not lose unsaved edits.
+      // Save failed: keep dirty.
     }
   }
 
@@ -89,31 +90,34 @@ function NewPayableSheet({
     <BottomSheet open={open} onClose={handleCancel} title="Nova conta a pagar">
       <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Descrição</label>
-          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: Aluguel, Netflix..." className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Descrição</label>
+          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: Aluguel, Netflix..." className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
         </fieldset>
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Valor (R$)</label>
-          <input type="text" inputMode="numeric" value={amountStr} onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setAmountStr(formatInputBRL(raw)); }} placeholder="0,00" className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 font-mono text-[16px] font-semibold text-text-primary outline-none focus:border-primary" />
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Valor (R$)</label>
+          <div className="relative">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-bold text-text-muted">R$</span>
+            <input type="text" inputMode="numeric" value={amountStr} onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setAmountStr(formatInputBRL(raw)); }} placeholder="0,00" className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-11 pr-3.5 font-mono tabular-nums text-[16px] font-bold text-text-primary outline-none focus:border-primary" />
+          </div>
         </fieldset>
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Vencimento</label>
-          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Vencimento</label>
+          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
         </fieldset>
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Conta</label>
-          <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Conta</label>
+          <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary">
             {accounts.map((a) => (<option key={a.id} value={a.id}>{a.name}</option>))}
           </select>
         </fieldset>
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Categoria</label>
-          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Categoria</label>
+          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary">
             <option value="">Sem categoria</option>
             {expenseCategories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
           </select>
         </fieldset>
-        <button type="button" onClick={handleSave} className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90">Salvar conta</button>
+        <button type="button" onClick={handleSave} className="mt-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]">Salvar conta</button>
       </div>
     </BottomSheet>
   );
@@ -213,45 +217,47 @@ function DetailSheet({
         {isCancelled ? (
           <>
             <div className="space-y-3">
-              <div className="flex justify-between rounded-[12px] bg-fill-light px-4 py-3">
+              <div className="flex justify-between rounded-[14px] bg-surface-2 px-4 py-3 border border-border-subtle">
                 <span className="text-[13px] text-text-secondary">Valor</span>
-                <span className="font-mono text-[14px] font-semibold text-text-primary">{formatBRL(payable.amountCents)}</span>
+                <span className="font-mono tabular-nums text-[14px] font-bold text-text-primary">{formatBRL(payable.amountCents)}</span>
               </div>
-              <div className="flex justify-between rounded-[12px] bg-fill-light px-4 py-3">
+              <div className="flex justify-between rounded-[14px] bg-surface-2 px-4 py-3 border border-border-subtle">
                 <span className="text-[13px] text-text-secondary">Vencimento</span>
                 <span className="text-[13px] font-semibold text-text-primary">{payable.dueDate}</span>
               </div>
-              <div className="flex justify-between rounded-[12px] bg-fill-light px-4 py-3">
+              <div className="flex justify-between rounded-[14px] bg-surface-2 px-4 py-3 border border-border-subtle">
                 <span className="text-[13px] text-text-secondary">Status</span>
-                <span className="text-[13px] font-semibold" style={{ color: "var(--color-text-muted)" }}>Cancelada</span>
+                <span className="text-[13px] font-semibold text-text-muted">Cancelada</span>
               </div>
             </div>
-            <button type="button" onClick={onClose} className="mt-2 w-full rounded-[12px] bg-primary py-3 text-[13px] font-bold text-white">Fechar</button>
+            <button type="button" onClick={onClose} className="mt-2 w-full rounded-[14px] bg-primary py-3.5 text-[14px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]">Fechar</button>
           </>
         ) : (
           <>
-            {/* Editable fields: pending, overdue, paid */}
             <fieldset>
-              <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Descrição</label>
-              <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} className="w-full rounded-[12px] border border-border bg-surface px-3.5 py-2.5 text-[13px] text-text-primary outline-none" />
+              <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Descrição</label>
+              <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
             </fieldset>
             <fieldset>
-              <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Valor (R$)</label>
-              <input type="text" inputMode="numeric" value={amountStr} onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setAmountStr(formatInputBRL(raw)); }} className="w-full rounded-[12px] border border-border bg-surface px-3.5 py-2.5 text-[13px] text-text-primary outline-none" />
+              <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Valor (R$)</label>
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-bold text-text-muted">R$</span>
+                <input type="text" inputMode="numeric" value={amountStr} onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setAmountStr(formatInputBRL(raw)); }} className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-11 pr-3.5 font-mono tabular-nums text-[16px] font-bold text-text-primary outline-none focus:border-primary" />
+              </div>
             </fieldset>
             <fieldset>
-              <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Vencimento</label>
-              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full rounded-[12px] border border-border bg-surface px-3.5 py-2.5 text-[13px] text-text-primary outline-none" />
+              <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Vencimento</label>
+              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
             </fieldset>
             <fieldset>
-              <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Conta</label>
-              <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="w-full rounded-[12px] border border-border bg-surface px-3.5 py-2.5 text-[13px] text-text-primary outline-none">
+              <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Conta</label>
+              <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary">
                 {accounts.map((a) => (<option key={a.id} value={a.id}>{a.kind === "credit_card" ? `Cartão • ${a.name}` : `Conta • ${a.name}`}</option>))}
               </select>
             </fieldset>
             <fieldset>
-              <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Categoria</label>
-              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full rounded-[12px] border border-border bg-surface px-3.5 py-2.5 text-[13px] text-text-primary outline-none">
+              <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Categoria</label>
+              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary">
                 <option value="">Sem categoria</option>
                 {expenseCategories.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
               </select>
@@ -259,7 +265,7 @@ function DetailSheet({
             <button
               type="button"
               onClick={handleSave}
-              className="w-full rounded-[12px] bg-primary py-3 text-[13px] font-bold text-white"
+              className="w-full rounded-[14px] bg-primary py-3.5 text-[14px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]"
             >
               Salvar alterações
             </button>
@@ -268,14 +274,14 @@ function DetailSheet({
                 <button
                   type="button"
                   onClick={() => { markClean(); onMarkPaid(payable.id); onClose(); }}
-                  className="w-full rounded-[12px] bg-[#0E8C5A] py-3 text-[13px] font-bold text-white"
+                  className="w-full rounded-[14px] bg-primary py-3.5 text-[14px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]"
                 >
                   Marcar como paga
                 </button>
                 <button
                   type="button"
                   onClick={() => { markClean(); onCancel(payable); onClose(); }}
-                  className="w-full rounded-[12px] border border-danger bg-surface py-3 text-[13px] font-bold text-danger"
+                  className="w-full rounded-[14px] border border-danger/30 bg-danger-tint py-3.5 text-[14px] font-bold text-danger hover:bg-danger-tint/80 transition-colors"
                 >
                   Cancelar conta
                 </button>
@@ -285,7 +291,7 @@ function DetailSheet({
               <button
                 type="button"
                 onClick={() => { markClean(); onUndoPay(payable.id); onClose(); }}
-                className="w-full rounded-[12px] border border-warning bg-surface py-3 text-[13px] font-bold text-warning"
+                className="w-full rounded-[14px] border border-warning/30 bg-warning-tint py-3.5 text-[14px] font-bold text-warning hover:bg-warning-tint/80 transition-colors"
               >
                 Desfazer pagamento
               </button>
@@ -363,7 +369,7 @@ export default function PayablesPage() {
         <StatusBar />
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-fill-medium border-t-primary" />
+            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-border-subtle border-t-primary" />
             <span className="text-[13px] font-semibold text-text-muted">Carregando...</span>
           </div>
         </div>
@@ -376,8 +382,8 @@ export default function PayablesPage() {
       <StatusBar />
       <main className="flex flex-1 flex-col pb-[var(--tab-bar-height)]">
         <PageHeader title="Contas a pagar" action={
-          <button type="button" onClick={() => setCreateOpen(true)} className="flex items-center gap-1.5 rounded-full bg-primary px-[15px] py-[9px] text-[12px] font-bold text-white">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          <button type="button" onClick={() => setCreateOpen(true)} className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-[12px] font-bold text-white shadow-sm hover:bg-primary-hover active:scale-95 transition-all">
+            <Plus size={15} strokeWidth={2.4} />
             Nova
           </button>
         } />
@@ -386,59 +392,58 @@ export default function PayablesPage() {
         <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
         <StaleBanner domains={["payables", "categories"]} />
 
-        <div className="px-5">
-          <div className="mb-4 overflow-hidden rounded-[16px] px-4 py-4 text-white shadow-card" style={{ background: "linear-gradient(165deg, #0F6B45, #0A3A28)" }}>
+        <div className="px-5 sm:px-8 lg:px-12">
+          <div className="mb-4 overflow-hidden rounded-[20px] px-5 py-5 text-white shadow-card" style={{ background: "linear-gradient(165deg, #0F6B45, #0A3A28)" }}>
             <div className="grid grid-cols-3 gap-2.5 text-center">
-              <div><div className="mb-1 text-[10px] text-white/70">Total</div><div className="font-mono text-[16px] font-semibold">{formatBRL(totalCents)}</div></div>
-              <div><div className="mb-1 text-[10px] text-white/70">Pago</div><div className="font-mono text-[16px] font-semibold text-[#7FE3B0]">{formatBRL(paidCents)}</div></div>
-              <div><div className="mb-1 text-[10px] text-white/70">A pagar</div><div className="font-mono text-[16px] font-semibold text-[#F9A8A2]">{formatBRL(pendingCents)}</div></div>
+              <div><div className="mb-1 text-[11px] font-medium text-white/70">Total</div><div className="font-mono tabular-nums text-[16px] font-bold text-white">{formatBRL(totalCents)}</div></div>
+              <div><div className="mb-1 text-[11px] font-medium text-white/70">Pago</div><div className="font-mono tabular-nums text-[16px] font-bold text-[#7FE3B0]">{formatBRL(paidCents)}</div></div>
+              <div><div className="mb-1 text-[11px] font-medium text-white/70">A pagar</div><div className="font-mono tabular-nums text-[16px] font-bold text-[#F9A8A2]">{formatBRL(pendingCents)}</div></div>
             </div>
           </div>
 
           <div className="mb-4 flex gap-2 overflow-x-auto scrollbar-hide">
             {filterChips.map((chip) => (
               <button key={chip.key} onClick={() => setStatusFilter(chip.key === statusFilter ? "all" : chip.key)}
-                className={`flex-none rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${statusFilter === chip.key ? "bg-primary text-white" : "bg-fill-light text-text-secondary"}`}
+                className={`flex-none rounded-full px-4 py-2 text-[12px] font-bold transition-all ${statusFilter === chip.key ? "bg-primary text-white shadow-xs" : "bg-surface-1 border border-border-subtle text-text-secondary hover:bg-surface-2"}`}
               >{chip.label}</button>
             ))}
           </div>
         </div>
 
-        <div className="flex flex-col gap-4 px-5">
+        <div className="flex flex-col gap-4 px-5 sm:px-8 lg:px-12">
           {groups.map((group) => (
             <div key={group.key}>
               <div className="mb-2.5 flex items-center gap-2">
                 <span className="h-[7px] w-[7px] flex-none rounded-full" style={{ background: group.color }} />
-                <span className="text-[11px] font-bold uppercase tracking-wide text-text-muted">{group.title}</span>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">{group.title}</span>
               </div>
               <div className="flex flex-col gap-2.5">
                 {group.items.map((p) => {
                   const dm = formatDayMonth(p.dueDate);
                   const isPaid = p.status === "paid" || p.status === "cancelled";
                   const isOverdue = p.derivedStatus === "overdue";
-                  const borderColor = isPaid ? "var(--color-border)" : isOverdue ? "var(--color-danger-tint)" : "var(--color-border)";
-                  const opacity = isPaid ? "0.6" : "1";
-                  const iconBg = isPaid ? "#E7F3EC" : isOverdue ? "#F7E9E7" : "#F4F5F2";
+                  const opacity = isPaid ? "0.65" : "1";
+                  const iconBg = isPaid ? "var(--color-primary-tint)" : isOverdue ? "var(--color-danger-tint)" : "var(--surface-2)";
                   const iconColor = isPaid ? "var(--color-primary)" : isOverdue ? "var(--color-danger)" : "var(--color-text-secondary)";
 
                   return (
                     <div
                       key={p.id}
                       onClick={() => openDetail(p)}
-                      className="flex cursor-pointer items-center gap-3 rounded-[14px] bg-surface px-4 py-3.5 shadow-card active:bg-fill-light"
-                      style={{ border: `1px solid ${borderColor}`, opacity }}
+                      className={`flex cursor-pointer items-center gap-3 rounded-[16px] bg-surface-1 px-4 py-3.5 shadow-card hover:bg-surface-2/60 active:scale-[0.99] transition-all border ${isOverdue ? "border-danger/30" : "border-border-subtle"}`}
+                      style={{ opacity }}
                     >
-                      <div className="flex h-[42px] w-[42px] flex-none flex-col items-center justify-center rounded-[12px] font-mono font-bold leading-none" style={{ background: iconBg, color: iconColor }}>
+                      <div className="flex h-[42px] w-[42px] flex-none flex-col items-center justify-center rounded-[12px] font-mono font-bold leading-none shadow-xs" style={{ background: iconBg, color: iconColor }}>
                         <span className="text-[14px]">{dm.day}</span>
-                        <span className="text-[8px] uppercase">{dm.mon}</span>
+                        <span className="text-[8px] uppercase font-bold">{dm.mon}</span>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="text-[13.5px] font-semibold text-text-primary">{p.description}</div>
-                        <div className="text-[11px]" style={{ color: isOverdue ? "var(--color-danger)" : "var(--color-text-muted)" }}>
+                        <div className="truncate text-[14px] font-bold text-text-primary">{p.description}</div>
+                        <div className="text-[11px] font-medium" style={{ color: isOverdue ? "var(--color-danger)" : "var(--color-text-muted)" }}>
                           {getCategory(p.categoryId)}{p.categoryId && " · "}{isOverdue ? `Venceu ${p.dueDate}` : `Vence ${p.dueDate}`}
                         </div>
                       </div>
-                      <div className="font-mono text-[14px] font-semibold text-text-primary">{formatBRL(p.amountCents)}</div>
+                      <div className="font-mono tabular-nums text-[14px] font-bold text-text-primary">{formatBRL(p.amountCents)}</div>
                     </div>
                   );
                 })}

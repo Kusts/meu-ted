@@ -8,6 +8,7 @@ import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 import { useFormDirtySafe } from "@/lib/unsaved-changes";
+import { Plus, ChevronRight, ChevronLeft } from "lucide-react";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -94,26 +95,22 @@ function NewBudgetSheet({
     <BottomSheet open={open} onClose={onClose} title={step === "choose" ? "Novo orçamento" : `Orçamento de ${budgetType === "expense" ? "despesa" : "receita"}`}>
       {step === "choose" ? (
         <div className="flex flex-col gap-4">
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => { markDirty(); setBudgetType("expense"); setStep("form"); }}
-              className="flex-1 rounded-[16px] border-2 border-border bg-surface p-5 text-center transition-colors hover:border-primary"
-            >
-              <div className="text-[16px] font-bold text-text-primary">Orçamento de despesa</div>
-              <div className="mt-1 text-[12px] text-text-muted">Defina um limite de gastos mensal por categoria.</div>
-            </button>
-          </div>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => { markDirty(); setBudgetType("income"); setStep("form"); }}
-              className="flex-1 rounded-[16px] border-2 border-border bg-surface p-5 text-center transition-colors hover:border-primary"
-            >
-              <div className="text-[16px] font-bold text-text-primary">Previsão de receita</div>
-              <div className="mt-1 text-[12px] text-text-muted">Acompanhe quanto espera receber por mês.</div>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => { markDirty(); setBudgetType("expense"); setStep("form"); }}
+            className="w-full rounded-[16px] border border-border-subtle bg-surface-2 p-5 text-center transition-all hover:border-primary hover:bg-surface-3 shadow-xs"
+          >
+            <div className="text-[16px] font-bold text-text-primary">Orçamento de despesa</div>
+            <div className="mt-1 text-[12px] text-text-muted">Defina um limite de gastos mensal por categoria.</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => { markDirty(); setBudgetType("income"); setStep("form"); }}
+            className="w-full rounded-[16px] border border-border-subtle bg-surface-2 p-5 text-center transition-all hover:border-primary hover:bg-surface-3 shadow-xs"
+          >
+            <div className="text-[16px] font-bold text-text-primary">Previsão de receita</div>
+            <div className="mt-1 text-[12px] text-text-muted">Acompanhe quanto espera receber por mês.</div>
+          </button>
         </div>
       ) : (
         <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
@@ -121,11 +118,9 @@ function NewBudgetSheet({
             <div className="flex flex-col gap-1">
               <button
                 onClick={() => setCategoryPage(false)}
-                className="mb-1 flex items-center gap-1 text-[12px] font-semibold text-primary"
+                className="mb-1 flex items-center gap-1 text-[12px] font-bold text-primary"
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="m15 18-6-6 6-6" />
-                </svg>
+                <ChevronLeft size={16} />
                 Voltar
               </button>
               {filteredCategories.map((c) => (
@@ -133,7 +128,7 @@ function NewBudgetSheet({
                   key={c.id}
                   onClick={() => { markDirty(); setCategoryId(c.id); setCategoryPage(false); }}
                   className={`w-full rounded-[10px] px-3 py-2.5 text-left text-[13px] font-semibold transition-colors ${
-                    categoryId === c.id ? "bg-primary-tint text-primary" : "text-text-primary hover:bg-fill-light"
+                    categoryId === c.id ? "bg-primary-tint text-primary font-bold" : "text-text-primary hover:bg-surface-2"
                   }`}
                 >
                   {c.name}
@@ -143,43 +138,41 @@ function NewBudgetSheet({
           ) : (
             <>
               <fieldset>
-                <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Categoria</label>
+                <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Categoria</label>
                 {filteredCategories.length === 0 ? (
-                  <div className="rounded-[12px] bg-fill-light px-3 py-3 text-center text-[12px] text-text-muted">
+                  <div className="rounded-[14px] border border-border-subtle bg-surface-2 px-3 py-3 text-center text-[12px] text-text-muted">
                     {budgetType === "expense" ? "Crie primeiro uma categoria de despesa." : "Crie primeiro uma categoria de receita."}
                   </div>
                 ) : (
                   <button
                     data-testid="category-selector-trigger"
                     onClick={() => setCategoryPage(true)}
-                    className="flex w-full items-center gap-2 rounded-[10px] border border-border bg-surface px-3 py-2.5 text-left text-[13px] font-semibold text-text-primary"
+                    className="flex w-full items-center gap-2 rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-left text-[13px] font-semibold text-text-primary hover:bg-surface-3 transition-colors"
                   >
                     {categoryId
                       ? categories.find((c) => c.id === categoryId)?.name ?? "Categoria"
                       : "Selecionar categoria"}
-                    <svg className="ml-auto" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                      <path d="m9 18 6-6-6-6" />
-                    </svg>
+                    <ChevronRight size={16} className="ml-auto text-text-muted" />
                   </button>
                 )}
               </fieldset>
 
               <fieldset>
-                <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+                <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
                   {budgetType === "expense" ? "Limite mensal" : "Previsão mensal"}
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-semibold text-text-secondary">R$</span>
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-bold text-text-muted">R$</span>
                   <input type="text" inputMode="numeric" value={amount}
                     onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setAmount(formatInputBRL(raw)); }}
                     placeholder="0,00"
-                    className="w-full rounded-[13px] border border-border bg-transparent py-3 pl-11 pr-3.5 font-mono text-[16px] font-semibold text-text-primary outline-none focus:border-primary" />
+                    className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-11 pr-3.5 font-mono tabular-nums text-[16px] font-bold text-text-primary outline-none focus:border-primary" />
                 </div>
               </fieldset>
 
               <button type="button" onClick={handleSave}
                 disabled={!categoryId || parseBRLToCents(amount) <= 0}
-                className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50">
+                className="mt-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98] disabled:opacity-50">
                 Salvar orçamento
               </button>
             </>
@@ -218,8 +211,6 @@ function BudgetDetailSheet({
       setEditMode(false);
       markClean();
     }
-  // `markClean` changes identity whenever context state changes. Depending on it
-  // here re-enters the effect and resets editMode immediately after Edit is clicked.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [budget, open]);
 
@@ -251,34 +242,34 @@ function BudgetDetailSheet({
       {editMode ? (
         <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
           <fieldset>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Limite mensal</label>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Limite mensal</label>
             <div className="relative">
-              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-semibold text-text-secondary">R$</span>
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-[16px] font-bold text-text-muted">R$</span>
               <input type="text" inputMode="numeric" value={amountDisplay}
                 onChange={(e) => { const raw = e.target.value.replace(/\D/g, ""); if (raw.length > 12) return; setAmountDisplay(formatInputBRL(raw)); }}
                 placeholder="0,00"
-                className="w-full rounded-[13px] border border-border bg-transparent py-3 pl-11 pr-3.5 font-mono text-[16px] font-semibold text-text-primary outline-none focus:border-primary" />
+                className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-11 pr-3.5 font-mono tabular-nums text-[16px] font-bold text-text-primary outline-none focus:border-primary" />
             </div>
           </fieldset>
           <button type="button" onClick={handleSave}
             disabled={parseBRLToCents(amountDisplay) <= 0}
-            className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50">
+            className="mt-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98] disabled:opacity-50">
             Salvar alterações
           </button>
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          <div className="text-[14px] font-semibold text-text-primary">{budget.name}</div>
-          <div className="h-2 rounded-full bg-fill-medium">
-            <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: barColor }} />
+          <div className="text-[15px] font-bold text-text-primary">{budget.name}</div>
+          <div className="h-2.5 rounded-full bg-surface-2 overflow-hidden">
+            <div className="h-full rounded-full transition-all duration-300" style={{ width: `${pct}%`, background: barColor }} />
           </div>
-          <div className="flex justify-between text-[13px] text-text-muted">
-            <span>Gasto: <b className="font-mono text-text-primary">{formatBRL(spent)}</b></span>
-            <span>Limite: <b className="font-mono text-text-primary">{formatBRL(budget.amountCents)}</b></span>
+          <div className="flex justify-between text-[13px] text-text-muted font-medium">
+            <span>Gasto: <b className="font-mono tabular-nums font-bold text-text-primary">{formatBRL(spent)}</b></span>
+            <span>Limite: <b className="font-mono tabular-nums font-bold text-text-primary">{formatBRL(budget.amountCents)}</b></span>
           </div>
-          <div className="text-center text-[20px] font-bold" style={{ color: barColor }}>{formatPct(pct)}</div>
+          <div className="text-center font-mono tabular-nums text-[22px] font-bold" style={{ color: barColor }}>{formatPct(pct)}</div>
           <button type="button" onClick={() => setEditMode(true)}
-            className="w-full rounded-[14px] bg-fill-light py-[14px] text-center text-[14px] font-bold text-text-primary">
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3.5 text-center text-[14px] font-bold text-text-primary hover:bg-surface-3 transition-colors">
             Editar
           </button>
         </div>
@@ -313,13 +304,11 @@ export default function BudgetsPage() {
 
   const visibleBudgets = tab === "expense" ? expenseBudgets : incomeBudgets;
 
-  // Current period for filtering transactions
   const currentPeriod = useMemo(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   }, []);
 
-  // Real spending from period-filtered transactions (avoids stale/zero spentCents)
   const realSpentByBudget = useMemo(() => {
     const expenseMap = new Map<string, number>();
     const incomeMap = new Map<string, number>();
@@ -391,7 +380,7 @@ export default function BudgetsPage() {
       DollarSign: "#E7F3EC",
       Laptop: "#E8EFF7",
     };
-    return map[getCategoryIcon(categoryId)] ?? "#F4F5F2";
+    return map[getCategoryIcon(categoryId)] ?? "var(--surface-2)";
   }
 
   const barColor = (pct: number) => {
@@ -406,7 +395,7 @@ export default function BudgetsPage() {
         <StatusBar />
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-fill-medium border-t-primary" />
+            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-border-subtle border-t-primary" />
             <span className="text-[13px] font-semibold text-text-muted">Carregando...</span>
           </div>
         </div>
@@ -424,11 +413,9 @@ export default function BudgetsPage() {
             <button
               type="button"
               onClick={() => setCreateOpen(true)}
-              className="flex items-center gap-1.5 rounded-full bg-primary px-[15px] py-[9px] text-[12px] font-bold text-white"
+              className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-[12px] font-bold text-white shadow-sm hover:bg-primary-hover active:scale-95 transition-all"
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
+              <Plus size={15} strokeWidth={2.4} />
               Novo
             </button>
           }
@@ -444,25 +431,25 @@ export default function BudgetsPage() {
 
         <StaleBanner domains={["budgets", "categories"]} />
 
-        <div className="px-5">
+        <div className="px-5 sm:px-8 lg:px-12">
           {/* Tabs */}
-          <div className="mb-[6px] flex gap-1.5 rounded-xl bg-fill-light p-1">
+          <div className="mb-[10px] flex gap-1.5 rounded-[14px] bg-surface-2 p-1 border border-border-subtle">
             <button
               onClick={() => setTab("expense")}
-              className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-colors ${
+              className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-all ${
                 tab === "expense"
-                  ? "bg-surface text-text-primary shadow-sm"
-                  : "text-text-muted"
+                  ? "bg-surface-1 text-text-primary shadow-sm"
+                  : "text-text-muted hover:text-text-secondary"
               }`}
             >
               Despesas
             </button>
             <button
               onClick={() => setTab("income")}
-              className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-colors ${
+              className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-all ${
                 tab === "income"
-                  ? "bg-surface text-text-primary shadow-sm"
-                  : "text-text-muted"
+                  ? "bg-surface-1 text-text-primary shadow-sm"
+                  : "text-text-muted hover:text-text-secondary"
               }`}
             >
               Receitas (previsão)
@@ -470,12 +457,12 @@ export default function BudgetsPage() {
           </div>
 
           {/* Summary */}
-          <div className="mb-4 text-[13px] text-text-secondary">
+          <div className="mb-4 text-[13px] text-text-secondary font-medium">
             {tab === "expense" ? (
               <>
                 Você usou{" "}
-                <b className="text-text-primary">{formatBRL(totalSpent)}</b> de{" "}
-                {formatBRL(totalLimit)}
+                <b className="font-mono tabular-nums text-text-primary">{formatBRL(totalSpent)}</b> de{" "}
+                <span className="font-mono tabular-nums">{formatBRL(totalLimit)}</span>
               </>
             ) : (
               <>
@@ -486,7 +473,7 @@ export default function BudgetsPage() {
         </div>
 
         {/* Budget cards */}
-        <div className="flex flex-col gap-3 px-5">
+        <div className="flex flex-col gap-3 px-5 sm:px-8 lg:px-12">
           {visibleBudgets.length === 0 ? (
             <div className="py-[50px] text-center text-text-muted">
               <div className="text-[14px] font-semibold">
@@ -513,22 +500,22 @@ export default function BudgetsPage() {
                   type="button"
                   key={b.id}
                   onClick={() => setDetailBudget({ id: b.id, name: b.name, amountCents: b.amountCents, categoryId: b.categoryId })}
-                  className="relative w-full rounded-[16px] border border-border bg-surface px-4 py-4 pr-11 shadow-card text-left transition-colors hover:bg-fill-light"
+                  className="relative w-full rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-4 pr-11 shadow-card text-left transition-all hover:bg-surface-2/60"
                 >
                   {/* Header */}
                   <div className="mb-[9px] flex items-center justify-between">
                     <div className="flex items-center gap-[9px]">
                       <div
-                        className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px]"
+                        className="flex h-[32px] w-[32px] items-center justify-center rounded-[10px] shadow-xs"
                         style={{ background: getCategoryTint(b.categoryId) }}
                       >
                         <svg
-                          width="15"
-                          height="15"
+                          width="16"
+                          height="16"
                           viewBox="0 0 24 24"
                           fill="none"
                           stroke={getCategoryColor(b.categoryId)}
-                          strokeWidth="1.9"
+                          strokeWidth="2"
                           strokeLinecap="round"
                           strokeLinejoin="round"
                         >
@@ -556,12 +543,12 @@ export default function BudgetsPage() {
                           )}
                         </svg>
                       </div>
-                      <span className="text-[14px] font-semibold text-text-primary">
+                      <span className="text-[14px] font-bold text-text-primary">
                         {b.name}
                       </span>
                     </div>
                     <span
-                      className="font-mono text-[13px] font-bold"
+                      className="font-mono tabular-nums text-[13px] font-bold"
                       style={{ color }}
                     >
                       {formatPct(pct)}
@@ -569,29 +556,27 @@ export default function BudgetsPage() {
                   </div>
 
                   {/* Progress bar */}
-                  <div className="mb-[9px] h-2 rounded-full bg-fill-medium">
+                  <div className="mb-[9px] h-2 rounded-full bg-surface-2 overflow-hidden">
                     <div
-                      className="h-full rounded-full transition-all"
+                      className="h-full rounded-full transition-all duration-300"
                       style={{ width: `${pct}%`, background: color }}
                     />
                   </div>
 
                   {/* Labels */}
-                  <div className="flex justify-between text-[11px] text-text-muted">
+                  <div className="flex justify-between text-[11px] font-medium text-text-muted">
                     <span>
-                      {formatBRL(realSpent)}{" "}
+                      <span className="font-mono tabular-nums">{formatBRL(realSpent)}</span>{" "}
                       {tab === "expense" ? "gasto" : "recebido"}
                     </span>
                     <span>
-                      de {formatBRL(b.amountCents)}{" "}
+                      de <span className="font-mono tabular-nums">{formatBRL(b.amountCents)}</span>{" "}
                       {tab === "income" ? "previsto" : ""}
                     </span>
                   </div>
                   {/* chevron */}
                   <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                      <path d="M9 18l6-6-6-6" />
-                    </svg>
+                    <ChevronRight size={16} />
                   </div>
                 </button>
               );

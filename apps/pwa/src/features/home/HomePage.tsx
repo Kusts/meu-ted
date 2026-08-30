@@ -14,6 +14,15 @@ import { dashboardSummaryGate } from "@/features/dashboard-summary-gate";
 import { fetchPendingOperations } from "@/lib/api/endpoints";
 import { isApiConfigured } from "@/lib/api/client";
 import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
+import {
+  Bell,
+  ArrowUpRight,
+  ArrowDownLeft,
+  ArrowLeftRight,
+  TrendingUp,
+  TrendingDown,
+  AlertCircle,
+} from "lucide-react";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -69,7 +78,7 @@ function LoadingScreen() {
           <Skeleton variant="card" height={72} />
         </div>
         {/* Account list skeleton */}
-        <div className="mb-[14px] flex flex-col gap-3 rounded-[16px] border border-border bg-surface p-4">
+        <div className="mb-[14px] flex flex-col gap-3 rounded-[18px] border border-border-subtle bg-surface-1 p-4">
           <Skeleton variant="text" width={120} height={14} />
           {[0, 1, 2].map((i) => (
             <div key={i} className="flex items-center gap-3">
@@ -146,7 +155,6 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   const handleNew = (kind: "expense" | "income" | "transfer") => {
     if (onNewTransaction) onNewTransaction(kind);
     else if (typeof window !== "undefined") {
-      // fallback: dispatch custom event
       window.dispatchEvent(
         new CustomEvent("pwa:open-tx", { detail: { kind } }),
       );
@@ -154,10 +162,6 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   };
 
   const incomeDeltaPct = useMemo(() => {
-    // Pick the most recent month that has at least one income transaction
-    // as the "current" reference, then compare against the calendar month
-    // immediately before it. Avoids the -100% trap when the wall clock is
-    // in a month with no data (e.g. July 2 with all transactions in June).
     const months = new Map<string, number>();
     for (const t of transactions) {
       if (t.kind !== "income") continue;
@@ -181,7 +185,6 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   }, [transactions]);
 
   const expenseDeltaPct = useMemo(() => {
-    // Same logic as above, but for expense transactions.
     const months = new Map<string, number>();
     for (const t of transactions) {
       if (t.kind !== "expense") continue;
@@ -204,24 +207,16 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
     return ((curr - prev) / prev) * 100;
   }, [transactions]);
 
-  // ── Donut: gastos por MACRO categoria (agregando subcategorias) ──
-  // Each transaction's categoryId is resolved to its macro name:
-  // - Categories with parentId → resolved to parent category name
-  // - Category name containing " > " → prefix before " > " is the macro
-  // - Standalone category → its own name is the macro
-  // This prevents the donut from showing "Moradia > Aluguel" alongside "Moradia".
   const totalExpensesForDonut = transactions
     .filter((t) => t.kind === "expense")
     .reduce((s, t) => s + t.amountCents, 0);
 
   const donutData = useMemo(() => {
-    // Build parent lookup for parentId resolution
     const parentById = new Map<string, string>();
     for (const c of categories) {
       parentById.set(c.id, c.name);
     }
 
-    // Resolve categoryId → macro name
     const idToMacro = new Map<string, string>();
     for (const c of categories) {
       if (c.parentId) {
@@ -231,10 +226,8 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
         const macro = c.name.split(" > ")[0]!.trim();
         idToMacro.set(c.id, macro);
       }
-      // Standalone categories are already their own macro — no entry needed
     }
 
-    // Aggregate: macro name → total cents
     const macroTotals = new Map<string, number>();
     for (const t of transactions) {
       if (t.kind !== "expense") continue;
@@ -261,7 +254,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
       parts.push(`${c.color} ${start}deg ${end}deg`);
       cumulative = end;
     }
-    parts.push(`#F1F3EF ${cumulative}deg 360deg`);
+    parts.push(`var(--surface-2) ${cumulative}deg 360deg`);
     return `conic-gradient(${parts.join(", ")})`;
   }, [donutData]);
 
@@ -290,13 +283,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
     ? (dashboardSummary?.monthNetCents ?? (totalIncome !== null && totalExpenses !== null ? totalIncome - totalExpenses : 0))
     : null;
 
-  // ── Donut: gastos por categoria (top 4) ──
-  // (hooked above before early return)
-
-  // ── Card spending from credit card accounts ──
   const cardSpending = creditCards.map((card) => {
-    // Prefer statement total over transaction-based (correct for live data;
-    // transactions filter is a fallback for mock/test without statements).
     const stmts = cardStatements
       .filter((s) => s.accountId === card.id)
       .sort((a, b) => b.cycleYearMonth.localeCompare(a.cycleYearMonth));
@@ -318,14 +305,11 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   const totalCardLimit = cardSpending.reduce((s, c) => s + c.limit, 0);
   const totalCardAvail = totalCardLimit - totalCardSpent;
 
-  // ── Payables summary ──
   const pendingPayables = payables.filter((p) => p.status === "pending" || p.status === "overdue");
   const totalPendingPayables = pendingPayables.reduce((s, p) => s + p.amountCents, 0);
 
-  // ── Insights ──
   const fallbackInsights: InsightItem[] = [];
 
-  // 1. Savings rate
   if (hasServerSummary && totalIncome !== null && totalIncome > 0 && totalExpenses !== null) {
     const savingsRate = ((totalIncome - totalExpenses) / totalIncome) * 100;
     const isGood = savingsRate >= 20;
@@ -343,8 +327,6 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
     });
   }
 
-  // 2. Top expense category — aggregated by MACRO (same logic as donut)
-  // so the insight says "Moradia" not "Moradia > Aluguel".
   {
     const parentById = new Map<string, string>();
     for (const c of categories) parentById.set(c.id, c.name);
@@ -377,8 +359,6 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
     }
   }
 
-  // 3. Budgets: check real spent from transactions when budget.spentCents
-  // is 0 (stale data). Skip the insight entirely when maxUsage === 0.
   {
     const effectiveUsage = budgets.map((b) => {
       if (b.amountCents <= 0) return { name: b.name, pct: 0 };
@@ -413,11 +393,9 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
           body: `O mais utilizado é ${maxEntry.name} (${formatPct(maxEntry.pct)}).`,
         });
       }
-      // If maxEntry.pct === 0, skip the insight (no representative data).
     }
   }
 
-  // 4. Next payable due
   const upcomingPayables = payables
     .filter((p) => p.status === "pending")
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
@@ -446,12 +424,6 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
     });
   }
 
-  // ── Insights: prefer specific over generic ──
-  // If quickInsights from the API are available, keep only those that
-  // mention a concrete financial amount (body contains "R$"). Generic
-  // items like "Mês equilibrado" (body has no R$) are dropped so they
-  // don't replace the more specific fallback insights (top category,
-  // next payable, budget pressure, etc.).
   const specificQuick = (quickInsights ?? []).filter(
     (item) => item.body && item.body.includes("R$"),
   );
@@ -503,7 +475,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                 type="button"
                 onClick={() => router.push("/perfil")}
                 aria-label="Abrir perfil"
-                className="flex h-[38px] w-[38px] cursor-pointer items-center justify-center rounded-full font-mono text-[15px] font-semibold text-white"
+                className="flex h-[38px] w-[38px] cursor-pointer items-center justify-center rounded-full font-mono text-[15px] font-semibold text-white shadow-sm ring-1 ring-white/10"
                 style={{ background: profile.avatarColor }}
               >
                 {(profile.name ?? "?").charAt(0).toUpperCase()}
@@ -518,38 +490,38 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                     return "Boa noite";
                   })()}
                 </div>
-                <div className="text-[15px] font-bold text-white">{profile.name}</div>
+                <div className="text-[15px] font-bold text-white tracking-tight">{profile.name}</div>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <WorkspaceSwitcher compact />
+              <div className="lg:hidden">
+                <WorkspaceSwitcher compact variant="hero" />
+              </div>
               <button
                 type="button"
                 aria-label="Notificações"
                 onClick={() => setNotificationsOpen(true)}
-                className="relative flex h-[38px] w-[38px] items-center justify-center rounded-full text-white"
+                className="relative flex h-[38px] w-[38px] items-center justify-center rounded-full text-white transition-all hover:bg-white/20 active:scale-95"
                 style={{ background: "rgba(255,255,255,.14)" }}
               >
-              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-                <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-              </svg>
-              <div className="absolute right-[9px] top-[8px] h-[7px] w-[7px] rounded-full border-[1.5px]"
-                style={{ background: "#E0A33E", borderColor: "#0C4430" }}
-              />
-            </button>
+                <Bell size={18} strokeWidth={2} />
+                <div
+                  className="absolute right-[9px] top-[8px] h-[7px] w-[7px] rounded-full border-[1.5px]"
+                  style={{ background: "#E0A33E", borderColor: "#0C4430" }}
+                />
+              </button>
+            </div>
           </div>
-        </div>
 
           {/* Page heading */}
-          <h1 className="mb-[3px] text-[10px] font-semibold uppercase tracking-wider text-white/50">
+          <h1 className="mb-[3px] text-[10px] font-bold uppercase tracking-wider text-white/60">
             Resumo financeiro
           </h1>
 
           {/* Saldo */}
-          <div className="mb-[5px] text-xs text-white/70">Saldo total · contas</div>
+          <div className="mb-[5px] text-xs font-medium text-white/80">Saldo total · contas</div>
           <div
-            className="mb-[18px] font-mono text-[40px] font-semibold text-white"
+            className="mb-[18px] font-mono tabular-nums text-[38px] sm:text-[44px] font-bold text-white tracking-tight"
             style={{ letterSpacing: "-0.02em", lineHeight: 1 }}
           >
             {totalBalance !== null ? formatBRL(totalBalance) : "—"}
@@ -557,27 +529,31 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
 
           {/* Mini-stats row */}
           <div className="flex gap-[9px]">
-            <div className="flex-1 rounded-[13px] p-[10px_12px]"
+            <div
+              className="flex-1 rounded-[14px] p-[10px_12px] border border-white/10"
               style={{ background: "rgba(255,255,255,.12)" }}
             >
-              <div className="mb-[3px] text-[11px] text-white/70">Receitas</div>
-              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[13px] font-semibold text-white">
+              <div className="mb-[3px] text-[11px] font-medium text-white/70">Receitas</div>
+              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-semibold text-white">
                 {totalIncome !== null ? formatBRL(totalIncome) : "—"}
               </div>
             </div>
-            <div className="flex-1 rounded-[13px] p-[10px_12px]"
+            <div
+              className="flex-1 rounded-[14px] p-[10px_12px] border border-white/10"
               style={{ background: "rgba(255,255,255,.12)" }}
             >
-              <div className="mb-[3px] text-[11px] text-white/70">Despesas</div>
-              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[13px] font-semibold text-white">
+              <div className="mb-[3px] text-[11px] font-medium text-white/70">Despesas</div>
+              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-semibold text-white">
                 {totalExpenses !== null ? formatBRL(totalExpenses) : "—"}
               </div>
             </div>
-            <div className="flex-1 rounded-[13px] p-[10px_12px]"
+            <div
+              className="flex-1 rounded-[14px] p-[10px_12px] border border-white/10"
               style={{ background: "rgba(255,255,255,.12)" }}
             >
-              <div className="mb-[3px] text-[11px] text-white/70">Resultado</div>
-              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[13px] font-semibold"
+              <div className="mb-[3px] text-[11px] font-medium text-white/70">Resultado</div>
+              <div
+                className="overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-semibold"
                 style={{
                   color:
                     netResult === null
@@ -594,70 +570,41 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
         </div>
 
         {/* Quick actions */}
-        <div className="px-5 pb-1 pt-2 sm:px-8 lg:px-12">
-          <div className="grid grid-cols-3 gap-2.5">
+        <div className="px-5 pb-1 pt-3 sm:px-8 lg:px-12">
+          <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
             <button
               type="button"
               onClick={() => handleNew("expense")}
-              className="flex flex-col items-center gap-1.5 rounded-[14px] border border-border bg-surface py-3"
+              className="flex flex-col items-center gap-1.5 rounded-[16px] border border-border-subtle bg-surface-1 py-3.5 shadow-card transition-all hover:bg-surface-2 active:scale-[0.98]"
             >
-              <svg
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="#C8483B"
-                strokeWidth="1.9"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <path d="M8 12h8" />
-              </svg>
-              <span className="text-[11px] font-semibold text-text-secondary">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-danger-tint text-danger">
+                <ArrowUpRight size={18} strokeWidth={2.4} />
+              </div>
+              <span className="text-[12px] font-semibold text-text-secondary">
                 Despesa
               </span>
             </button>
             <button
               type="button"
               onClick={() => handleNew("income")}
-              className="flex flex-col items-center gap-1.5 rounded-[14px] border border-border bg-surface py-3"
+              className="flex flex-col items-center gap-1.5 rounded-[16px] border border-border-subtle bg-surface-1 py-3.5 shadow-card transition-all hover:bg-surface-2 active:scale-[0.98]"
             >
-              <svg
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="#0E8C5A"
-                strokeWidth="1.9"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <path d="M8 12h8M12 8v8" />
-              </svg>
-              <span className="text-[11px] font-semibold text-text-secondary">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-tint text-primary">
+                <ArrowDownLeft size={18} strokeWidth={2.4} />
+              </div>
+              <span className="text-[12px] font-semibold text-text-secondary">
                 Receita
               </span>
             </button>
             <button
               type="button"
               onClick={() => handleNew("transfer")}
-              className="flex flex-col items-center gap-1.5 rounded-[14px] border border-border bg-surface py-3"
+              className="flex flex-col items-center gap-1.5 rounded-[16px] border border-border-subtle bg-surface-1 py-3.5 shadow-card transition-all hover:bg-surface-2 active:scale-[0.98]"
             >
-              <svg
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="#3E6FB0"
-                strokeWidth="1.9"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4" />
-              </svg>
-              <span className="text-[11px] font-semibold text-text-secondary">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-info-tint text-info">
+                <ArrowLeftRight size={18} strokeWidth={2.4} />
+              </div>
+              <span className="text-[12px] font-semibold text-text-secondary">
                 Transferir
               </span>
             </button>
@@ -671,9 +618,9 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
               type="button"
               onClick={() => router.push("/pending")}
               data-testid="pending-banner"
-              className="mb-[14px] flex w-full items-center justify-between rounded-[14px] border border-warning bg-warning-tint px-4 py-3 text-left"
+              className="mb-[14px] flex w-full items-center justify-between rounded-[16px] border border-warning/40 bg-warning-tint px-4 py-3 text-left shadow-card transition-all hover:bg-warning-tint/80"
             >
-              <span className="flex items-center gap-2 text-[13px] font-bold text-warning">
+              <span className="flex items-center gap-2.5 text-[13px] font-bold text-warning">
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-warning text-white text-[11px] font-bold">
                   {pendingCount}
                 </span>
@@ -682,16 +629,17 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
               <span className="text-[11px] font-bold text-warning">Ver →</span>
             </button>
           )}
+
           {/* KPI delta row */}
           <div
             data-testid="kpi-delta-row"
             className="mb-[14px] grid grid-cols-2 gap-2.5 sm:gap-4 lg:gap-6"
           >
-            <div className="rounded-[14px] border border-border bg-surface p-3 shadow-card">
-              <div className="mb-[2px] text-[11px] font-semibold text-text-primary">
+            <div className="rounded-[18px] border border-border-subtle bg-surface-1 p-3.5 shadow-card">
+              <div className="mb-[2px] text-[11px] font-bold uppercase tracking-wider text-text-muted">
                 Receitas
               </div>
-              <div className="mb-[6px] text-[10px] text-text-muted">
+              <div className="mb-[6px] text-[10px] text-text-muted font-medium">
                 vs mês anterior
               </div>
               <div
@@ -699,29 +647,17 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                 title="Variação de receitas do mês atual comparado ao mês anterior"
                 aria-label="Variação de receitas do mês atual comparado ao mês anterior"
               >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M23 6 13.5 15.5 8.5 10.5 1 18" />
-                  <path d="M17 6h6v6" />
-                </svg>
-                <span className="font-mono text-[17px] font-semibold">
+                <TrendingUp size={16} strokeWidth={2.4} />
+                <span className="font-mono tabular-nums text-[18px] font-bold">
                   {incomeDeltaPct === null ? "—" : `${incomeDeltaPct >= 0 ? "+" : ""}${incomeDeltaPct.toFixed(0)}%`}
                 </span>
               </div>
             </div>
-            <div className="rounded-[14px] border border-border bg-surface p-3 shadow-card">
-              <div className="mb-[2px] text-[11px] font-semibold text-text-primary">
+            <div className="rounded-[18px] border border-border-subtle bg-surface-1 p-3.5 shadow-card">
+              <div className="mb-[2px] text-[11px] font-bold uppercase tracking-wider text-text-muted">
                 Despesas
               </div>
-              <div className="mb-[6px] text-[10px] text-text-muted">
+              <div className="mb-[6px] text-[10px] text-text-muted font-medium">
                 vs mês anterior
               </div>
               <div
@@ -737,26 +673,12 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                         : "var(--color-danger)",
                 }}
               >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{
-                    transform:
-                      expenseDeltaPct !== null && expenseDeltaPct > 0
-                        ? "scaleY(-1)"
-                        : "none",
-                  }}
-                >
-                  <path d="M23 6 13.5 15.5 8.5 10.5 1 18" />
-                  <path d="M17 6h6v6" />
-                </svg>
-                <span className="font-mono text-[17px] font-semibold">
+                {expenseDeltaPct !== null && expenseDeltaPct > 0 ? (
+                  <TrendingDown size={16} strokeWidth={2.4} />
+                ) : (
+                  <TrendingUp size={16} strokeWidth={2.4} />
+                )}
+                <span className="font-mono tabular-nums text-[18px] font-bold">
                   {expenseDeltaPct === null
                     ? "—"
                     : `${expenseDeltaPct >= 0 ? "+" : ""}${expenseDeltaPct.toFixed(0)}%`}
@@ -766,12 +688,12 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
           </div>
 
           {/* Account list card */}
-          <div className="mb-[14px] overflow-hidden rounded-[16px] border border-border bg-surface px-4 py-[6px] shadow-card">
-            <div className="flex items-center justify-between py-2">
-              <span className="text-sm font-bold text-text-primary">Minhas contas</span>
+          <div className="mb-[14px] overflow-hidden rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-3 shadow-card">
+            <div className="flex items-center justify-between pb-2">
+              <span className="text-[14px] font-bold text-text-primary">Minhas contas</span>
               <Link
                 href="/contas"
-                className="text-[11px] font-semibold text-primary"
+                className="text-[11px] font-bold text-primary hover:underline"
               >
                 Ver tudo
               </Link>
@@ -782,12 +704,12 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                 type="button"
                 data-testid="account-row"
                 onClick={() => router.push(`/contas?accountId=${encodeURIComponent(acc.id)}`)}
-                className="flex w-full items-center gap-3 border-b border-fill-medium py-[10px] text-left last:border-none"
+                className="flex w-full items-center gap-3 border-b border-border-subtle py-2.5 text-left last:border-none hover:bg-surface-2/60 transition-colors rounded-[10px] px-1"
                 aria-label={`Abrir ${acc.name} em Contas`}
               >
                 <Badge label={acc.name} color={acc.color ?? "#4A5568"} size="sm" />
-                <div className="flex-1">
-                  <div className="text-[13px] font-semibold text-text-primary">{acc.name}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="truncate text-[13px] font-semibold text-text-primary">{acc.name}</div>
                   <div className="text-[11px] text-text-muted">
                     {acc.kind === "credit_card"
                       ? "Cartão"
@@ -804,49 +726,49 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                                 : "Outro"}
                   </div>
                 </div>
-                <div className="font-mono text-[13px] font-semibold" style={{ color: acc.balanceCents >= 0 ? "var(--color-text-primary)" : "var(--color-danger)" }}>
+                <div className="font-mono tabular-nums text-[13px] font-bold" style={{ color: acc.balanceCents >= 0 ? "var(--color-text-primary)" : "var(--color-danger)" }}>
                   {formatBRL(acc.balanceCents)}
                 </div>
               </button>
             ))}
           </div>
 
-          {/* Cartões card — rico: agregado + per-card com limite e fechamento/vencimento */}
+          {/* Cartões card */}
           {creditCards.length > 0 && (
-            <div className="mb-[14px] rounded-[16px] border border-border bg-surface px-4 py-4 shadow-card">
-              <div className="mb-[14px] flex items-center justify-between">
-                <span className="text-sm font-bold text-text-primary">Cartões de crédito</span>
+            <div className="mb-[14px] rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-4 shadow-card">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-[14px] font-bold text-text-primary">Cartões de crédito</span>
                 <Link
                   href="/cartoes"
-                  className="text-[11px] font-semibold text-primary"
+                  className="text-[11px] font-bold text-primary hover:underline"
                 >
                   Ver tudo
                 </Link>
               </div>
 
               {/* Aggregate: fatura / limite livre / limite total */}
-              <div className="mb-3 flex items-end justify-between rounded-[12px] bg-fill-light px-3 py-3">
+              <div className="mb-3 flex items-end justify-between rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3">
                 <div className="text-center">
-                  <div className="mb-[2px] text-[10px] font-semibold uppercase tracking-wide text-text-muted">Fatura atual</div>
-                  <div className="font-mono text-[22px] font-bold leading-none text-danger">
+                  <div className="mb-[2px] text-[10px] font-bold uppercase tracking-wider text-text-muted">Fatura atual</div>
+                  <div className="font-mono tabular-nums text-[20px] font-bold leading-none text-danger">
                     {formatBRL(totalCardSpent)}
                   </div>
                 </div>
                 <div className="text-center">
-                  <div className="mb-[2px] text-[10px] font-semibold uppercase tracking-wide text-text-muted">Limite total</div>
-                  <div className="font-mono text-[14px] font-semibold text-text-primary">
+                  <div className="mb-[2px] text-[10px] font-bold uppercase tracking-wider text-text-muted">Limite total</div>
+                  <div className="font-mono tabular-nums text-[13px] font-semibold text-text-primary">
                     {formatBRL(totalCardLimit)}
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="mb-[2px] text-[10px] font-semibold uppercase tracking-wide text-text-muted">Limite livre</div>
-                  <div className="font-mono text-[14px] font-semibold text-primary">
+                  <div className="mb-[2px] text-[10px] font-bold uppercase tracking-wider text-text-muted">Limite livre</div>
+                  <div className="font-mono tabular-nums text-[13px] font-bold text-primary">
                     {formatBRL(totalCardAvail)}
                   </div>
                 </div>
               </div>
 
-              {/* Per-card tiles — cada cartão com info completa */}
+              {/* Per-card tiles */}
               <div className="flex flex-col gap-2">
                 {cardSpending.map((c) => (
                   <button
@@ -855,28 +777,28 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                     data-testid="card-row"
                     onClick={() => router.push(`/cartoes?cardId=${encodeURIComponent(c.card.id)}`)}
                     aria-label={`Abrir ${c.card.name} em Cartões`}
-                    className="flex w-full items-center gap-3 rounded-[12px] bg-fill-light px-3 py-2.5 text-left transition-colors hover:bg-fill-medium"
+                    className="flex w-full items-center gap-3 rounded-[14px] border border-border-subtle bg-surface-2/60 px-3.5 py-2.5 text-left transition-colors hover:bg-surface-2"
                   >
                     <span
-                      className="flex h-9 w-9 flex-none items-center justify-center rounded-[8px] font-mono text-[11px] font-bold text-white"
+                      className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] font-mono text-[11px] font-bold text-white shadow-xs"
                       style={{ background: c.card.color ?? "#4A5568" }}
                     >
                       {(c.card.name ?? "?").charAt(0).toUpperCase()}
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="mb-1 flex items-center gap-2">
-                        <span className="truncate text-[13px] font-semibold text-text-primary">{c.card.name}</span>
-                        <span className="rounded-full bg-surface px-2 py-0.5 font-mono text-[10px] font-bold text-text-secondary">
+                        <span className="truncate text-[13px] font-bold text-text-primary">{c.card.name}</span>
+                        <span className="rounded-full bg-surface-1 border border-border-subtle px-2 py-0.5 font-mono text-[10px] font-bold text-text-secondary">
                           {c.pct.toFixed(0)}%
                         </span>
                       </div>
-                      <div className="h-[5px] rounded-[4px] bg-surface">
+                      <div className="h-[5px] rounded-full bg-surface-3 overflow-hidden">
                         <div
-                          className="h-full rounded-[4px] transition-all"
+                          className="h-full rounded-full transition-all duration-300"
                           style={{ width: `${c.pct}%`, background: c.barColor }}
                         />
                       </div>
-                      <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-text-muted">
+                      <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] font-medium text-text-muted">
                         {c.card.closingDay && (
                           <span>Fecha dia {c.card.closingDay}</span>
                         )}
@@ -887,40 +809,27 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                         <span>{formatBRL(c.limit - c.spent)} livre</span>
                       </div>
                     </div>
-                    <span className="font-mono text-[12px] font-semibold text-danger flex-none">{formatBRL(c.spent)}</span>
+                    <span className="font-mono tabular-nums text-[13px] font-bold text-danger flex-none">{formatBRL(c.spent)}</span>
                   </button>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Contas a pagar card (mock: border danger tint + lista) */}
+          {/* Contas a pagar card */}
           {payables.length > 0 && (
             <div
               onClick={() => router.push("/a-pagar")}
-              className="mb-[14px] cursor-pointer rounded-[16px] border bg-surface px-4 py-3.5 shadow-card"
-              style={{ borderColor: "#F0CFC9" }}
+              className="mb-[14px] cursor-pointer rounded-[18px] border border-danger/30 bg-surface-1 px-4 py-3.5 shadow-card hover:border-danger/50 transition-colors"
             >
               <div className="mb-2.5 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <svg
-                    width="15"
-                    height="15"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="var(--color-danger)"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="10" />
-                    <path d="M12 8v4M12 16h.01" />
-                  </svg>
+                  <AlertCircle size={16} className="text-danger flex-none" />
                   <span className="text-[12px] font-bold text-danger">
                     {`Contas a pagar · ${upcomingPayables.length} pendente${upcomingPayables.length !== 1 ? 's' : ''}`}
                   </span>
                 </div>
-                <span className="font-mono text-[13px] font-bold text-text-primary">
+                <span className="font-mono tabular-nums text-[13px] font-bold text-text-primary">
                   {formatBRL(totalPendingPayables)}
                 </span>
               </div>
@@ -928,7 +837,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
               {upcomingPayables.slice(0, 3).map((p) => (
                 <div
                   key={p.id}
-                  className="flex items-center justify-between py-1"
+                  className="flex items-center justify-between py-1 border-t border-border-subtle/50 first:border-none"
                 >
                   <div className="flex items-center gap-2">
                     <span
@@ -940,11 +849,11 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                             : "var(--color-warning)",
                       }}
                     />
-                    <span className="text-[13px] text-text-primary">
+                    <span className="text-[13px] font-medium text-text-primary">
                       {p.description}
                     </span>
                     <span
-                      className="text-[10px] font-semibold"
+                      className="text-[10px] font-bold"
                       style={{
                         color:
                           p.status === "overdue"
@@ -955,7 +864,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                       {p.status === "overdue" ? "Vencida" : p.dueDate}
                     </span>
                   </div>
-                  <span className="font-mono text-[13px] font-semibold text-text-primary">
+                  <span className="font-mono tabular-nums text-[13px] font-semibold text-text-primary">
                     {formatBRL(p.amountCents)}
                   </span>
                 </div>
@@ -964,12 +873,12 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
           )}
 
           {/* Gastos por categoria (donut + lista) */}
-          <div className="mb-[14px] rounded-[16px] border border-border bg-surface px-4 py-4 shadow-card">
+          <div className="mb-[14px] rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-4 shadow-card">
             <div className="mb-3.5 flex items-center justify-between">
               <span className="text-[13px] font-bold text-text-primary">
                 Gastos por categoria
               </span>
-              <span className="font-mono text-[12px] font-semibold text-text-primary">
+              <span className="font-mono tabular-nums text-[12px] font-semibold text-text-primary">
                 Total: {totalExpenses !== null ? formatBRL(totalExpenses) : "—"}
               </span>
             </div>
@@ -982,35 +891,35 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                 {/* Donut chart */}
                 <div
                   data-testid="category-donut"
-                  className="relative h-[104px] w-[104px] flex-none rounded-full"
+                  className="relative h-[104px] w-[104px] flex-none rounded-full shadow-inner"
                   style={{ background: donutBg }}
                 >
-                  <div className="absolute inset-[23px] flex flex-col items-center justify-center rounded-full bg-surface">
-                    <span className="text-[9px] text-text-muted">Total</span>
-                    <span className="font-mono text-[14px] font-semibold text-text-primary">
+                  <div className="absolute inset-[22px] flex flex-col items-center justify-center rounded-full bg-surface-1 border border-border-subtle shadow-xs">
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-text-muted">Total</span>
+                    <span className="font-mono tabular-nums text-[12px] font-bold text-text-primary">
                       {totalExpenses !== null ? formatBRL(totalExpenses) : "—"}
                     </span>
                   </div>
                 </div>
                 {/* Legend list */}
-                <div className="flex flex-1 flex-col gap-2">
+                <div className="flex flex-1 flex-col gap-1.5">
                   {donutData.map((c, i) => (
                     <div
                       key={`macro-${i}`}
                       data-testid="category-row"
-                      className="flex w-full items-center gap-2 rounded-md py-1 pl-1 pr-1"
+                      className="flex w-full items-center gap-2 rounded-md py-1 px-1"
                     >
                       <span
-                        className="h-[9px] w-[9px] flex-none rounded-[3px]"
+                        className="h-2.5 w-2.5 flex-none rounded-full"
                         style={{ background: c.color }}
                       />
-                      <span className="flex-1 text-[12px] text-text-secondary">
+                      <span className="flex-1 text-[12px] font-semibold text-text-secondary">
                         {c.name}
                       </span>
-                      <span className="font-mono text-[11px] font-semibold text-text-muted">
+                      <span className="font-mono tabular-nums text-[11px] font-semibold text-text-muted">
                         {c.pct.toFixed(0)}%
                       </span>
-                      <span className="font-mono text-[12px] font-semibold text-text-primary">
+                      <span className="font-mono tabular-nums text-[12px] font-bold text-text-primary">
                         {formatBRL(c.amountCents)}
                       </span>
                     </div>
@@ -1021,16 +930,16 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
           </div>
 
           {/* Insights card */}
-          <div className="rounded-[16px] border border-border bg-surface px-4 py-4 shadow-card">
+          <div className="rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-4 shadow-card">
             <div className="mb-3 text-[13px] font-bold text-text-primary">Insights</div>
             {insights.length === 0 ? (
               <div className="text-[12px] text-text-muted">Nenhum insight disponível ainda.</div>
             ) : (
               insights.map((insight, i) => (
-                <div key={i} className="flex gap-2.5 py-[7px]">
-                  <span className="mt-[6px] h-[7px] w-[7px] flex-none rounded-full" style={{ background: insight.color }} />
+                <div key={i} className="flex gap-2.5 py-[7px] border-t border-border-subtle/50 first:border-none">
+                  <span className="mt-[6px] h-2 w-2 flex-none rounded-full" style={{ background: insight.color }} />
                   <div className="flex-1">
-                    <div className="text-[13px] font-semibold text-text-primary">{insight.title}</div>
+                    <div className="text-[13px] font-bold text-text-primary">{insight.title}</div>
                     <div className="mt-[2px] text-[12px] leading-relaxed text-text-secondary">{insight.body}</div>
                   </div>
                 </div>
@@ -1047,4 +956,3 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
     </div>
   );
 }
-

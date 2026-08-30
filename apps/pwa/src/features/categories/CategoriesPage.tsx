@@ -9,6 +9,7 @@ import { CategoryBadge } from "@/components/ui/CategoryBadge";
 import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
+import { Plus } from "lucide-react";
 
 function NewCategorySheet({ open, onClose, onAdd }: { open: boolean; onClose: () => void; onAdd: (input: { name: string; kind: "expense" | "income"; parentId?: string }) => void }) {
   const [name, setName] = useState("");
@@ -25,17 +26,17 @@ function NewCategorySheet({ open, onClose, onAdd }: { open: boolean; onClose: ()
     <BottomSheet open={open} onClose={onClose} title="Nova categoria">
       <div className="flex flex-col gap-4">
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Nome</label>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Nome</label>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Alimentação, Salário..."
-            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary" />
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary" />
         </fieldset>
 
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo</label>
-          <div className="flex gap-1 rounded-xl bg-fill-light p-1">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Tipo</label>
+          <div className="flex gap-1 rounded-[14px] bg-surface-2 p-1 border border-border-subtle">
             {[{ v: "expense" as const, l: "Despesa" }, { v: "income" as const, l: "Receita" }].map((t) => (
               <button key={t.v} type="button" onClick={() => setKind(t.v)}
-                className={`flex-1 rounded-[10px] py-2 text-center text-[12px] font-bold transition-colors ${kind === t.v ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"}`}>
+                className={`flex-1 rounded-[10px] py-2.5 text-center text-[12px] font-bold transition-all ${kind === t.v ? "bg-surface-1 text-text-primary shadow-sm" : "text-text-muted hover:text-text-secondary"}`}>
                 {t.l}
               </button>
             ))}
@@ -43,7 +44,7 @@ function NewCategorySheet({ open, onClose, onAdd }: { open: boolean; onClose: ()
         </fieldset>
 
         <button type="button" onClick={handleSave}
-          className="mt-2 w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90">
+          className="mt-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]">
           Salvar categoria
         </button>
       </div>
@@ -70,26 +71,26 @@ function CategoryRow({ cat, onAddSub, onEdit, onDeactivate }: CategoryRowProps) 
   }
 
   return (
-    <div className="border-b border-fill-medium py-3 last:border-none">
-      <div className="flex items-center gap-2">
-        <div className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[10px] bg-fill-light">
+    <div className="border-b border-border-subtle py-3 last:border-none">
+      <div className="flex items-center gap-2.5">
+        <div className="flex h-[36px] w-[36px] flex-none items-center justify-center rounded-[10px] bg-surface-2 shadow-xs">
           <CategoryBadge name={cat.name} size={20} />
         </div>
-        <span className="flex-1 text-[13.5px] font-semibold text-text-primary">{cat.name}</span>
+        <span className="flex-1 text-[14px] font-bold text-text-primary">{cat.name}</span>
         <div className="flex items-center gap-1.5">
           <button type="button" onClick={() => setAdding(!adding)}
-            className="rounded-full bg-fill-light px-[9px] py-[3px] text-[10px] font-bold text-text-secondary hover:bg-fill-medium transition-colors">
+            className="rounded-full bg-surface-2 border border-border-subtle px-2.5 py-1 text-[10px] font-bold text-text-secondary hover:bg-surface-3 transition-colors">
             + Sub
           </button>
           {onEdit && (
             <button type="button" onClick={() => onEdit({ id: cat.id, name: cat.name })}
-              className="px-[7px] py-[3px] text-[10px] font-semibold text-text-secondary hover:text-text-primary transition-colors">
+              className="px-2 py-1 text-[11px] font-semibold text-text-muted hover:text-text-primary transition-colors">
               Editar
             </button>
           )}
           {onDeactivate && (
             <button type="button" onClick={() => onDeactivate({ id: cat.id, name: cat.name })}
-              className="px-[7px] py-[3px] text-[10px] font-semibold text-danger/70 hover:text-danger transition-colors">
+              className="px-2 py-1 text-[11px] font-semibold text-danger/70 hover:text-danger transition-colors">
               Desativar
             </button>
           )}
@@ -97,9 +98,9 @@ function CategoryRow({ cat, onAddSub, onEdit, onDeactivate }: CategoryRowProps) 
       </div>
 
       {cat.subcategories && cat.subcategories.length > 0 && (
-        <div className="ml-[46px] mt-[7px] flex flex-wrap gap-x-3 gap-y-1">
+        <div className="ml-[46px] mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
           {cat.subcategories.map((sub) => (
-            <span key={sub} className="text-[12px] text-text-muted before:mr-1.5 before:content-['·']">
+            <span key={sub} className="text-[12px] text-text-muted font-medium before:mr-1.5 before:content-['·']">
               {sub}
             </span>
           ))}
@@ -111,8 +112,8 @@ function CategoryRow({ cat, onAddSub, onEdit, onDeactivate }: CategoryRowProps) 
           <input type="text" value={newSub} onChange={(e) => setNewSub(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); if (e.key === "Escape") { setAdding(false); setNewSub(""); } }}
             placeholder="Nome da subcategoria…" autoFocus
-            className="h-9 flex-1 rounded-[10px] border-2 border-primary bg-surface px-3 text-[13px] text-text-primary outline-none placeholder:text-text-muted" />
-          <button type="button" onClick={handleAdd} className="h-9 flex-none rounded-[10px] bg-primary px-3.5 text-[12px] font-bold text-white">OK</button>
+            className="h-9 flex-1 rounded-[10px] border-2 border-primary bg-surface-1 px-3 text-[13px] text-text-primary outline-none placeholder:text-text-muted" />
+          <button type="button" onClick={handleAdd} className="h-9 flex-none rounded-[10px] bg-primary px-3.5 text-[12px] font-bold text-white shadow-xs">OK</button>
         </div>
       )}
     </div>
@@ -142,20 +143,20 @@ function CategoryEditSheet({ open, category, onClose, onSave }: {
     <BottomSheet open={open} onClose={onClose} title="Editar categoria">
       <div className="flex flex-col gap-4">
         <fieldset>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
             Nome
           </label>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary"
+            className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary"
           />
         </fieldset>
         <button
           type="button"
           onClick={handleSave}
-          className="w-full rounded-[14px] bg-primary py-[15px] text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90"
+          className="w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]"
         >
           Salvar
         </button>
@@ -176,7 +177,7 @@ export default function CategoriesPage() {
       <div className="flex min-h-dvh flex-col bg-bg"><StatusBar />
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-fill-medium border-t-primary" />
+            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-border-subtle border-t-primary" />
             <span className="text-[13px] font-semibold text-text-muted">Carregando...</span>
           </div>
         </div>
@@ -192,8 +193,8 @@ export default function CategoriesPage() {
       <main className="flex flex-1 flex-col pb-[var(--tab-bar-height)]">
         <PageHeader title="Categorias" action={
           <button type="button" onClick={() => setCreateOpen(true)}
-            className="flex items-center gap-1.5 rounded-full bg-primary px-[15px] py-[9px] text-[12px] font-bold text-white">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+            className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-[12px] font-bold text-white shadow-sm hover:bg-primary-hover active:scale-95 transition-all">
+            <Plus size={15} strokeWidth={2.4} />
             Nova
           </button>
         } />
@@ -206,15 +207,15 @@ export default function CategoriesPage() {
 
         <StaleBanner domains={["categories"]} />
 
-        <div className="flex flex-col gap-6 px-5 py-4">
+        <div className="flex flex-col gap-6 px-5 py-4 sm:px-8 lg:px-12">
           <section>
-            <div className="mb-3 rounded-[10px] bg-danger-tint/30 px-3 py-2">
-              <span className="text-[11px] font-bold uppercase tracking-wide text-danger">Despesas</span>
-              <span className="ml-2 text-[10px] text-text-muted">{expenseCategories.length} categoria{expenseCategories.length !== 1 ? "s" : ""}</span>
+            <div className="mb-2.5 flex items-center justify-between rounded-[12px] bg-danger-tint/30 px-3.5 py-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-danger">Despesas</span>
+              <span className="text-[10px] font-bold text-text-muted">{expenseCategories.length} categoria{expenseCategories.length !== 1 ? "s" : ""}</span>
             </div>
-            <div className="overflow-hidden rounded-[16px] border border-border bg-surface px-[14px]">
+            <div className="overflow-hidden rounded-[18px] border border-border-subtle bg-surface-1 px-4 shadow-card">
               {expenseCategories.length === 0 ? (
-                <div className="px-3 py-4 text-center text-[12px] text-text-muted">Nenhuma categoria de despesa.</div>
+                <div className="px-3 py-6 text-center text-[12px] text-text-muted">Nenhuma categoria de despesa.</div>
               ) : (
                 expenseCategories.map((cat) => (
                   <CategoryRow
@@ -232,13 +233,13 @@ export default function CategoriesPage() {
             </div>
           </section>
           <section>
-            <div className="mb-3 rounded-[10px] bg-primary-tint/30 px-3 py-2">
-              <span className="text-[11px] font-bold uppercase tracking-wide text-primary">Receitas</span>
-              <span className="ml-2 text-[10px] text-text-muted">{incomeCategories.length} categoria{incomeCategories.length !== 1 ? "s" : ""}</span>
+            <div className="mb-2.5 flex items-center justify-between rounded-[12px] bg-primary-tint/30 px-3.5 py-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-primary">Receitas</span>
+              <span className="text-[10px] font-bold text-text-muted">{incomeCategories.length} categoria{incomeCategories.length !== 1 ? "s" : ""}</span>
             </div>
-            <div className="overflow-hidden rounded-[16px] border border-border bg-surface px-[14px]">
+            <div className="overflow-hidden rounded-[18px] border border-border-subtle bg-surface-1 px-4 shadow-card">
               {incomeCategories.length === 0 ? (
-                <div className="px-3 py-4 text-center text-[12px] text-text-muted">Nenhuma categoria de receita.</div>
+                <div className="px-3 py-6 text-center text-[12px] text-text-muted">Nenhuma categoria de receita.</div>
               ) : (
                 incomeCategories.map((cat) => (
                   <CategoryRow

@@ -4,6 +4,7 @@ import Link from "next/link";
 import StatusBar from "@/components/StatusBar";
 import Badge from "@/components/ui/Badge";
 import { useAppState } from "@/lib/state/app-state-context";
+import { Plus } from "lucide-react";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -42,7 +43,7 @@ export default function WalletPage() {
         <StatusBar />
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-fill-medium border-t-primary" />
+            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-border-subtle border-t-primary" />
             <span className="text-[13px] font-semibold text-text-muted">Carregando...</span>
           </div>
         </div>
@@ -86,100 +87,101 @@ export default function WalletPage() {
           </div>
         )}
 
-        {/* Hero verde (mock spec) */}
+        {/* Hero Titanium */}
         <div
-          className="px-[22px] pt-2 pb-6 text-white"
-          style={{ background: "linear-gradient(165deg,#0F6B45,#0A3A28)" }}
+          className="px-5 pt-3 pb-6 text-white sm:px-8 lg:px-12"
+          style={{ background: "linear-gradient(165deg, #0F6B45, #0A3A28)" }}
         >
-          <div className="my-[18px] text-[20px] font-extrabold">Patrimônio</div>
-          <div className="mb-1 text-[12px] text-white/70">
+          <div className="my-4 text-[22px] font-bold tracking-tight text-white">Patrimônio</div>
+          <div className="mb-1 text-[11px] font-medium text-white/70">
             Patrimônio líquido
           </div>
           <div
-            className="mb-4 font-mono text-[32px] font-semibold text-white"
+            className="mb-4 font-mono tabular-nums text-[36px] sm:text-[42px] font-bold text-white tracking-tight"
             style={{ letterSpacing: "-0.02em" }}
           >
             {formatBRL(netWorth)}
           </div>
 
-          {/* 4 mini-stats (mock spec) */}
-          <div className="grid grid-cols-2 gap-[7px]">
+          {/* 4 mini-stats */}
+          <div className="grid grid-cols-2 gap-2.5">
             <div
-              className="rounded-[13px] p-[10px_12px]"
+              className="rounded-[14px] p-[10px_12px] border border-white/10"
               style={{ background: "rgba(255,255,255,.12)" }}
             >
-              <div className="mb-[3px] text-[10px] text-white/70">
+              <div className="mb-[3px] text-[10px] font-medium text-white/70">
                 Saldo em contas
               </div>
-              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[13px] font-semibold text-white">
+              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-bold text-white">
                 {formatBRL(totalBalance)}
               </div>
             </div>
             <div
-              className="rounded-[13px] p-[10px_12px]"
+              className="rounded-[14px] p-[10px_12px] border border-white/10"
               style={{ background: "rgba(255,255,255,.12)" }}
             >
-              <div className="mb-[3px] text-[10px] text-white/70">
+              <div className="mb-[3px] text-[10px] font-medium text-white/70">
                 Reservas / Metas
               </div>
-              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[13px] font-semibold text-white">
+              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-bold text-white">
                 {formatBRL(totalGoalsCurrent)}
               </div>
             </div>
             <div
-              className="rounded-[13px] p-[10px_12px]"
+              className="rounded-[14px] p-[10px_12px] border border-white/10"
               style={{ background: "rgba(255,255,255,.12)" }}
             >
-              <div className="mb-[3px] text-[10px] text-white/70">
+              <div className="mb-[3px] text-[10px] font-medium text-white/70">
                 Faturas abertas
               </div>
-              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[13px] font-semibold text-[#F9A8A2]">
+              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-bold text-[#F9A8A2]">
                 −{formatBRL(totalCardSpent)}
               </div>
             </div>
             <div
-              className="rounded-[13px] p-[10px_12px]"
+              className="rounded-[14px] p-[10px_12px] border border-white/10"
               style={{ background: "rgba(255,255,255,.12)" }}
             >
-              <div className="mb-[3px] text-[10px] text-white/70">Dívidas</div>
-              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[13px] font-semibold text-[#F9A8A2]">
+              <div className="mb-[3px] text-[10px] font-medium text-white/70">Dívidas</div>
+              <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-bold text-[#F9A8A2]">
                 −{formatBRL(totalDebtRemaining)}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Contas section */}
-        <div className="pt-[18px] px-5 pb-6">
-          <div className="mb-[10px] flex items-center justify-between">
-            <span className="text-[13px] font-bold text-text-primary">
+        {/* Content sections */}
+        <div className="pt-4 px-5 pb-6 sm:px-8 lg:px-12">
+          {/* Contas section */}
+          <div className="mb-2.5 flex items-center justify-between">
+            <span className="text-[14px] font-bold text-text-primary">
               Contas
             </span>
             <Link
               href="/contas"
-              className="text-[11px] font-semibold text-primary"
+              className="text-[11px] font-bold text-primary hover:underline"
             >
               Gerenciar
             </Link>
           </div>
 
-          <div className="mb-[22px] flex flex-col gap-[9px]">
+          <div className="mb-5 flex flex-col gap-2.5">
             {checkingAccounts.map((acc) => (
               <Link
                 key={acc.id}
                 href={`/contas?accountId=${acc.id}`}
-                className="flex cursor-pointer items-center gap-3 rounded-[15px] border border-border bg-surface px-[13px] py-[13px] shadow-card"
+                className="flex cursor-pointer items-center gap-3 rounded-[16px] border border-border-subtle bg-surface-1 px-3.5 py-3 shadow-card hover:bg-surface-2/60 transition-colors"
               >
                 <Badge label={acc.name} color={acc.color ?? "#4A5568"} size="md" />
-                <div className="flex-1">
-                  <div className="text-[14px] font-semibold text-text-primary">
+                <div className="flex-1 min-w-0">
+                  <div className="truncate text-[14px] font-bold text-text-primary">
                     {acc.name}
                   </div>
-                  <div className="text-[11px] text-text-muted">
+                  <div className="text-[11px] font-medium text-text-muted">
                     {accountKindLabel(acc.kind)}
                   </div>
                 </div>
-                <div className="font-mono text-[14px] font-semibold text-text-primary">
+                <div className="font-mono tabular-nums text-[14px] font-bold text-text-primary">
                   {formatBRL(acc.balanceCents)}
                 </div>
               </Link>
@@ -187,38 +189,27 @@ export default function WalletPage() {
 
             <Link
               href="/contas"
-              className="flex items-center justify-center gap-2 rounded-[15px] border-[1.5px] border-dashed px-3 py-[13px] text-[13px] font-semibold text-text-secondary"
-              style={{ borderColor: "#CBD3CB" }}
+              className="flex items-center justify-center gap-2 rounded-[16px] border border-dashed border-border-subtle bg-surface-1/40 px-3 py-3 text-[13px] font-bold text-text-secondary hover:bg-surface-2 transition-colors"
             >
-              <svg
-                width="17"
-                height="17"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-              >
-                <path d="M12 5v14M5 12h14" />
-              </svg>
+              <Plus size={16} strokeWidth={2.4} />
               Adicionar conta
             </Link>
           </div>
 
           {/* Cartões section */}
-          <div className="mb-[10px] flex items-center justify-between">
-            <span className="text-[13px] font-bold text-text-primary">
+          <div className="mb-2.5 flex items-center justify-between">
+            <span className="text-[14px] font-bold text-text-primary">
               Cartões
             </span>
             <Link
               href="/cartoes"
-              className="text-[11px] font-semibold text-primary"
+              className="text-[11px] font-bold text-primary hover:underline"
             >
               Gerenciar
             </Link>
           </div>
 
-          <div className="flex flex-col gap-[9px]">
+          <div className="flex flex-col gap-2.5">
             {cardSpending.map((card) => {
               const pct =
                 card.creditLimitCents && card.creditLimitCents > 0
@@ -232,23 +223,23 @@ export default function WalletPage() {
                 <Link
                   key={card.id}
                   href={`/cartoes?cardId=${card.id}`}
-                  className="cursor-pointer rounded-[15px] border border-border bg-surface px-[13px] py-[13px] shadow-card"
+                  className="cursor-pointer rounded-[16px] border border-border-subtle bg-surface-1 px-3.5 py-3 shadow-card hover:bg-surface-2/60 transition-colors"
                 >
-                  <div className="mb-[11px] flex items-center gap-3">
+                  <div className="mb-2.5 flex items-center gap-3">
                     <Badge label={card.name} color={card.color ?? "#4A5568"} size="md" />
-                    <div className="flex-1">
-                      <div className="text-[14px] font-semibold text-text-primary">
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate text-[14px] font-bold text-text-primary">
                         {card.name}
                       </div>
-                      <div className="text-[11px] text-text-muted">
+                      <div className="text-[11px] font-medium text-text-muted">
                         Vence dia {card.dueDay}
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="font-mono text-[14px] font-semibold text-danger">
+                      <div className="font-mono tabular-nums text-[14px] font-bold text-danger">
                         {formatBRL(card.spent)}
                       </div>
-                      <div className="text-[10px] text-text-muted">
+                      <div className="font-mono tabular-nums text-[10px] font-medium text-text-muted">
                         {formatBRL(
                           (card.creditLimitCents ?? 0) - card.spent,
                         )}{" "}
@@ -257,9 +248,9 @@ export default function WalletPage() {
                     </div>
                   </div>
 
-                  <div className="h-[6px] rounded-[4px] bg-fill-medium">
+                  <div className="h-[6px] rounded-full bg-surface-2 overflow-hidden">
                     <div
-                      className="h-full rounded-[4px] transition-all"
+                      className="h-full rounded-full transition-all duration-300"
                       style={{ width: `${pct}%`, background: cardBarColor(pct) }}
                     />
                   </div>
@@ -269,39 +260,28 @@ export default function WalletPage() {
 
             <Link
               href="/cartoes"
-              className="mt-[9px] flex w-full items-center justify-center gap-2 rounded-[15px] border-[1.5px] border-dashed px-3 py-[13px] text-[13px] font-semibold text-text-secondary"
-              style={{ borderColor: "#CBD3CB" }}
+              className="mt-1 flex w-full items-center justify-center gap-2 rounded-[16px] border border-dashed border-border-subtle bg-surface-1/40 px-3 py-3 text-[13px] font-bold text-text-secondary hover:bg-surface-2 transition-colors"
             >
-              <svg
-                width="17"
-                height="17"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-              >
-                <path d="M12 5v14M5 12h14" />
-              </svg>
+              <Plus size={16} strokeWidth={2.4} />
               Adicionar cartão
             </Link>
           </div>
 
-          {/* ── Reservas / Metas ───────────────────────────── */}
+          {/* Reservas / Metas */}
           {goals.length > 0 && (
             <>
-              <div className="mb-[10px] mt-6 flex items-center justify-between">
-                <span className="text-[13px] font-bold text-text-primary">
+              <div className="mb-2.5 mt-6 flex items-center justify-between">
+                <span className="text-[14px] font-bold text-text-primary">
                   Reservas / Metas
                 </span>
                 <Link
                   href="/metas"
-                  className="text-[11px] font-semibold text-primary"
+                  className="text-[11px] font-bold text-primary hover:underline"
                 >
                   Ver metas
                 </Link>
               </div>
-              <div className="mb-6 flex flex-col gap-[9px]">
+              <div className="mb-6 flex flex-col gap-2.5">
                 {goals.map((g) => {
                   const pct =
                     g.targetAmountCents > 0
@@ -314,24 +294,24 @@ export default function WalletPage() {
                     <Link
                       key={g.id}
                       href="/metas"
-                      className="flex items-center gap-3 rounded-[15px] border border-border bg-surface px-[13px] py-[13px] shadow-card"
+                      className="flex items-center gap-3 rounded-[16px] border border-border-subtle bg-surface-1 px-3.5 py-3 shadow-card hover:bg-surface-2/60 transition-colors"
                     >
-                      <div className="flex-1">
-                        <div className="mb-1 text-[14px] font-semibold text-text-primary">
+                      <div className="flex-1 min-w-0">
+                        <div className="mb-1 truncate text-[14px] font-bold text-text-primary">
                           {g.name}
                         </div>
-                        <div className="h-[6px] rounded-[4px] bg-fill-medium">
+                        <div className="h-[6px] rounded-full bg-surface-2 overflow-hidden">
                           <div
-                            className="h-full rounded-[4px] bg-primary transition-all"
+                            className="h-full rounded-full bg-primary transition-all duration-300"
                             style={{ width: `${pct}%` }}
                           />
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="font-mono text-[13px] font-semibold text-text-primary">
+                        <div className="font-mono tabular-nums text-[13px] font-bold text-text-primary">
                           {formatBRL(g.currentAmountCents)}
                         </div>
-                        <div className="text-[10px] text-text-muted">
+                        <div className="font-mono tabular-nums text-[10px] font-medium text-text-muted">
                           de {formatBRL(g.targetAmountCents)}
                         </div>
                       </div>
@@ -342,9 +322,8 @@ export default function WalletPage() {
             </>
           )}
 
-          {/* ── Faturas abertas ───────────────────────────── */}
+          {/* Faturas abertas */}
           {(() => {
-            // Same source-of-truth as hero: one open statement per card
             const openStatements: (typeof cardStatements)[0][] = creditCards
               .map((card) =>
                 cardStatements.find(
@@ -358,12 +337,12 @@ export default function WalletPage() {
             if (openStatements.length === 0) return null;
             return (
               <>
-                <div className="mb-[10px] mt-6 flex items-center justify-between">
-                  <span className="text-[13px] font-bold text-text-primary">
+                <div className="mb-2.5 mt-6 flex items-center justify-between">
+                  <span className="text-[14px] font-bold text-text-primary">
                     Faturas abertas
                   </span>
                 </div>
-                <div className="mb-6 flex flex-col gap-[9px]">
+                <div className="mb-6 flex flex-col gap-2.5">
                   {openStatements.map((s) => {
                     const card = creditCards.find(
                       (c) => c.id === s.accountId,
@@ -372,23 +351,23 @@ export default function WalletPage() {
                       <Link
                         key={s.id}
                         href={`/cartoes?cardId=${s.accountId}`}
-                        className="flex items-center gap-3 rounded-[15px] border border-border bg-surface px-[13px] py-[13px] shadow-card"
+                        className="flex items-center gap-3 rounded-[16px] border border-border-subtle bg-surface-1 px-3.5 py-3 shadow-card hover:bg-surface-2/60 transition-colors"
                       >
                         <Badge
                           label={card?.name ?? "Cartão"}
                           color={card?.color ?? "#4A5568"}
                           size="md"
                         />
-                        <div className="flex-1">
-                          <div className="text-[14px] font-semibold text-text-primary">
+                        <div className="flex-1 min-w-0">
+                          <div className="truncate text-[14px] font-bold text-text-primary">
                             {card?.name ?? "Cartão"}
                           </div>
-                          <div className="text-[11px] text-text-muted">
+                          <div className="text-[11px] font-medium text-text-muted">
                             Vence {s.dueDate.slice(-2)}/{s.dueDate.slice(5, 7)}
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="font-mono text-[14px] font-semibold text-danger">
+                          <div className="font-mono tabular-nums text-[14px] font-bold text-danger">
                             {formatBRL(s.totalCents)}
                           </div>
                         </div>
@@ -400,18 +379,18 @@ export default function WalletPage() {
             );
           })()}
 
-          {/* ── Dívidas ──────────────────────────────────────── */}
-          <div className="mb-[10px] mt-6 flex items-center justify-between">
-            <span className="text-[13px] font-bold text-text-primary">
+          {/* Dívidas */}
+          <div className="mb-2.5 mt-6 flex items-center justify-between">
+            <span className="text-[14px] font-bold text-text-primary">
               Dívidas
             </span>
           </div>
           {debts.length === 0 ? (
-            <div className="mb-6 rounded-[15px] border border-border bg-surface px-[13px] py-[16px] text-center text-[13px] text-text-muted">
+            <div className="mb-6 rounded-[16px] border border-border-subtle bg-surface-1 px-4 py-5 text-center text-[13px] font-medium text-text-muted">
               Nenhuma dívida registrada.
             </div>
           ) : (
-            <div className="mb-6 flex flex-col gap-[9px]">
+            <div className="mb-6 flex flex-col gap-2.5">
               {debts.map((d) => {
                 const remaining = d.totalAmountCents - d.paidAmountCents;
                 const pct =
@@ -421,15 +400,15 @@ export default function WalletPage() {
                 return (
                   <div
                     key={d.id}
-                    className="flex items-center gap-3 rounded-[15px] border border-border bg-surface px-[13px] py-[13px] shadow-card"
+                    className="flex items-center gap-3 rounded-[16px] border border-border-subtle bg-surface-1 px-3.5 py-3 shadow-card"
                   >
-                    <div className="flex-1">
-                      <div className="text-[14px] font-semibold text-text-primary">
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate text-[14px] font-bold text-text-primary">
                         {d.name}
                       </div>
-                      <div className="mt-[6px] h-[6px] rounded-[4px] bg-fill-medium">
+                      <div className="mt-1.5 h-[6px] rounded-full bg-surface-2 overflow-hidden">
                         <div
-                          className="h-full rounded-[4px] transition-all"
+                          className="h-full rounded-full transition-all duration-300"
                           style={{
                             width: `${pct}%`,
                             background: "var(--color-primary)",
@@ -438,10 +417,10 @@ export default function WalletPage() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="font-mono text-[14px] font-semibold text-danger">
+                      <div className="font-mono tabular-nums text-[14px] font-bold text-danger">
                         {formatBRL(remaining)}
                       </div>
-                      <div className="text-[10px] text-text-muted">
+                      <div className="text-[10px] font-medium text-text-muted">
                         restante
                       </div>
                     </div>

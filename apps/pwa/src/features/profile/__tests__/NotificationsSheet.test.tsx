@@ -4,6 +4,18 @@ import NotificationsSheet from "../NotificationsSheet";
 import * as appStateModule from "@/lib/state/app-state-context";
 import type { AppState, Account, Transaction, CardStatement } from "@/lib/state/types";
 
+vi.mock("../PushNotificationsCard", () => ({
+  default: ({ workspaceId }: { workspaceId?: string }) => (
+    <div data-testid="push-workspace-id">{workspaceId ?? "none"}</div>
+  ),
+}));
+
+vi.mock("@/lib/auth/workspace-context", () => ({
+  useWorkspaceSafe: () => ({
+    activeWorkspace: { id: "workspace-live" },
+  }),
+}));
+
 const mockRouter = { push: vi.fn(), refresh: vi.fn() };
 vi.mock("next/navigation", () => ({
   useRouter: () => mockRouter,
@@ -49,6 +61,11 @@ describe("NotificationsSheet", () => {
   it("renders empty state when no items derive from state", () => {
     render(<NotificationsSheet open onClose={vi.fn()} />);
     expect(screen.getByText(/Nada urgente agora/i)).toBeInTheDocument();
+  });
+
+  it("uses the active workspace for push subscriptions when no prop is provided", () => {
+    render(<NotificationsSheet open onClose={vi.fn()} />);
+    expect(screen.getByTestId("push-workspace-id")).toHaveTextContent("workspace-live");
   });
 
   it("emits an overdue payable item when state has overdue payables", () => {
@@ -363,4 +380,3 @@ describe("NotificationsSheet", () => {
     });
   });
 });
-

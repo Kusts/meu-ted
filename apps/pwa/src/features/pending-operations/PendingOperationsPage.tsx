@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
-import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import {
   fetchPendingOperations,
@@ -13,6 +12,7 @@ import {
 } from "@/lib/api/endpoints";
 import type { PendingOperation } from "@/lib/state/types";
 import { ApiError, isApiConfigured } from "@/lib/api/client";
+import { ShieldCheck, Undo2, RotateCw } from "lucide-react";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
@@ -38,7 +38,6 @@ function formatDateTime(iso: string): string {
 function payloadPreview(payload: unknown): string {
   if (!payload || typeof payload !== "object") return String(payload ?? "");
   const obj = payload as Record<string, unknown>;
-  // Try common fields
   const parts: string[] = [];
   if (typeof obj.description === "string") parts.push(obj.description);
   if (typeof obj.amountCents === "number") parts.push(formatBRL(obj.amountCents));
@@ -96,6 +95,7 @@ export default function PendingOperationsPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
@@ -153,7 +153,7 @@ export default function PendingOperationsPage() {
         <PageHeader title="Aprovações pendentes" />
         <div className="flex flex-1 items-center justify-center">
           <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-fill-medium border-t-primary" />
+            <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-border-subtle border-t-primary" />
             <span className="text-[13px] font-semibold text-text-muted">Carregando...</span>
           </div>
         </div>
@@ -169,19 +169,20 @@ export default function PendingOperationsPage() {
         subtitle={items.length > 0 ? `${items.length} pendente${items.length !== 1 ? "s" : ""}` : undefined}
       />
 
-      <main className="flex flex-1 flex-col gap-3 px-5 pb-[var(--tab-bar-height)]">
+      <main className="flex flex-1 flex-col gap-3 px-5 pb-[var(--tab-bar-height)] sm:px-8 lg:px-12">
         <div className="flex flex-col gap-2">
           <button
             type="button"
             onClick={() => void handleUndo()}
             disabled={undoLoading}
             data-testid="undo-last-action"
-            className="w-full rounded-[12px] border border-border bg-surface px-4 py-3 text-[13px] font-bold text-text-primary disabled:opacity-60"
+            className="flex items-center justify-center gap-2 w-full rounded-[14px] border border-border-subtle bg-surface-1 px-4 py-3 text-[13px] font-bold text-text-primary shadow-xs hover:bg-surface-2 transition-all active:scale-[0.99] disabled:opacity-60"
           >
+            <Undo2 size={16} />
             {undoLoading ? 'Desfazendo…' : 'Desfazer última ação'}
           </button>
           {undoResult && (
-            <div className="rounded-[12px] bg-success-tint px-4 py-2.5 text-[12px] font-semibold text-success" data-testid="undo-success">
+            <div className="rounded-[12px] bg-primary-tint px-4 py-2.5 text-[12px] font-bold text-primary" data-testid="undo-success">
               ✓ {undoResult}
             </div>
           )}
@@ -193,7 +194,7 @@ export default function PendingOperationsPage() {
         </div>
 
         {!isApiConfigured() && (
-          <div className="rounded-[12px] bg-warning-tint px-4 py-3 text-[12px] font-semibold text-warning">
+          <div className="rounded-[14px] border border-warning/30 bg-warning-tint px-4 py-3 text-[12px] font-semibold text-warning">
             API não configurada — modo demonstração. Nenhuma operação pendente real.
           </div>
         )}
@@ -206,21 +207,19 @@ export default function PendingOperationsPage() {
 
         {items.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center py-16 text-center" data-testid="pending-empty">
-            <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-fill-light text-text-muted">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
-                <path d="m9 12 2 2 4-4" />
-              </svg>
+            <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-surface-2 text-text-muted shadow-xs">
+              <ShieldCheck size={26} strokeWidth={2} />
             </div>
-            <div className="text-[14px] font-bold text-text-primary">Nenhuma operação pendente</div>
-            <div className="mt-1 max-w-[260px] text-[12px] leading-relaxed text-text-muted">
+            <div className="text-[15px] font-bold text-text-primary">Nenhuma operação pendente</div>
+            <div className="mt-1 max-w-[280px] text-[12px] leading-relaxed text-text-muted">
               Operações que exigem confirmação (valor alto ou ação destrutiva) aparecerão aqui para aprovação no seu workspace.
             </div>
             <button
               type="button"
               onClick={() => void load()}
-              className="mt-4 rounded-full bg-fill-light px-4 py-2 text-[12px] font-bold text-text-secondary"
+              className="mt-4 rounded-full bg-surface-2 border border-border-subtle px-4 py-2 text-[12px] font-bold text-text-secondary hover:bg-surface-3 transition-colors flex items-center gap-1.5"
             >
+              <RotateCw size={14} />
               Atualizar
             </button>
           </div>
@@ -232,11 +231,11 @@ export default function PendingOperationsPage() {
                 <div
                   key={op.id}
                   data-testid="pending-card"
-                  className="rounded-[14px] border border-border bg-surface px-4 py-3.5 shadow-card"
+                  className="rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-4 shadow-card"
                 >
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span
-                      className="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white"
+                      className="rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-2xs"
                       style={{ background: reasonColor(op.reason) }}
                     >
                       {reasonLabel(op.reason)}
@@ -246,10 +245,10 @@ export default function PendingOperationsPage() {
                     </span>
                   </div>
 
-                  <div className="text-[13px] font-bold text-text-primary">{op.operation}</div>
+                  <div className="text-[14px] font-bold text-text-primary">{op.operation}</div>
                   <div className="mt-1 text-[12px] leading-relaxed text-text-secondary">{payloadPreview(op.payload)}</div>
 
-                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-muted">
+                  <div className="mt-2 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-text-muted">
                     <span>Criada em {formatDateTime(op.createdAt)}</span>
                     <span>·</span>
                     <span>Expira em {formatDateTime(op.expiresAt)}</span>
@@ -267,7 +266,7 @@ export default function PendingOperationsPage() {
                       onClick={() => setConfirmReject(op)}
                       disabled={isActing}
                       data-testid={`reject-${op.id}`}
-                      className="flex-1 rounded-[12px] border border-danger bg-surface py-2.5 text-[13px] font-bold text-danger disabled:opacity-60"
+                      className="flex-1 rounded-[12px] border border-danger/30 bg-danger-tint py-2.5 text-[13px] font-bold text-danger hover:bg-danger-tint/80 active:scale-[0.98] transition-all disabled:opacity-60"
                     >
                       {isActing ? "…" : "Cancelar"}
                     </button>
@@ -276,7 +275,7 @@ export default function PendingOperationsPage() {
                       onClick={() => setConfirmApprove(op)}
                       disabled={isActing}
                       data-testid={`approve-${op.id}`}
-                      className="flex-1 rounded-[12px] bg-primary py-2.5 text-[13px] font-bold text-white disabled:opacity-60"
+                      className="flex-1 rounded-[12px] bg-primary py-2.5 text-[13px] font-bold text-white shadow-xs hover:bg-primary-hover active:scale-[0.98] transition-all disabled:opacity-60"
                     >
                       {isActing ? "Processando…" : "Confirmar"}
                     </button>
@@ -291,8 +290,9 @@ export default function PendingOperationsPage() {
           <button
             type="button"
             onClick={() => void load()}
-            className="mx-auto mt-2 rounded-full bg-fill-light px-4 py-2 text-[12px] font-semibold text-text-secondary"
+            className="mx-auto mt-2 rounded-full bg-surface-2 border border-border-subtle px-4 py-2 text-[12px] font-bold text-text-secondary hover:bg-surface-3 transition-colors flex items-center gap-1.5"
           >
+            <RotateCw size={14} />
             Atualizar lista
           </button>
         )}

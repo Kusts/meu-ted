@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Plus_Jakarta_Sans, Space_Grotesk } from "next/font/google";
 import { RootProviders } from "@/components/RootProviders";
+import { THEME_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +21,7 @@ const spaceGrotesk = Space_Grotesk({
 
 export const metadata: Metadata = {
   title: "Pi Financeiro",
-  description: "Controle financeiro pessoal via WhatsApp",
+  description: "Controle financeiro pessoal e familiar com assistente inteligente",
   applicationName: "Pi Financeiro",
   appleWebApp: {
     capable: true,
@@ -40,7 +41,10 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0E8C5A",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#0B0F0E" },
+    { media: "(prefers-color-scheme: light)", color: "#F8F9FA" },
+  ],
 };
 
 export default function RootLayout({
@@ -50,9 +54,17 @@ export default function RootLayout({
 }>) {
   return (
     <html
-      lang="pt"
+      lang="pt-BR"
+      suppressHydrationWarning
       className={`${plusJakartaSans.variable} ${spaceGrotesk.variable}`}
     >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: THEME_SCRIPT,
+          }}
+        />
+      </head>
       <body className="font-ui antialiased">
         <RootProviders>{children}</RootProviders>
       </body>

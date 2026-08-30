@@ -8,17 +8,13 @@ import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { StaleBanner } from "@/components/StaleBanner";
 import Skeleton from "@/components/ui/Skeleton";
+import EmptyState from "@/components/ui/EmptyState";
 import { TransactionActionSheet } from "./components/TransactionActionSheet";
 import { TransactionEditSheet } from "./components/TransactionEditSheet";
 import { CategoryBadge } from "@/components/ui/CategoryBadge";
 import { useAppState } from "@/lib/state/app-state-context";
 import type { Transaction } from "@/lib/state/types";
-
-// Edge-fade mask that visually hints "this row scrolls horizontally".
-// Applied to overflow-x-auto rows so the leftmost/rightmost chips appear
-// to fade into the page edge, signalling more content off-screen.
-// Uses percentages instead of `calc(...)` to stay compatible with jsdom's
-// CSSStyleDeclaration parser used in unit tests.
+import { Search, SlidersHorizontal, ChevronRight, ChevronLeft } from "lucide-react";
 
 type TypeFilter = "all" | "expense" | "income" | "transfer";
 type PeriodFilter = "all" | "today" | 7 | 30 | "month" | "custom";
@@ -100,8 +96,6 @@ export default function RecordsPage() {
   const [filterPage, setFilterPage] = useState<"main" | "category">("main");
   const [search, setSearch] = useState("");
 
-  // Read ?type=&categoryId= from the URL on mount. Used by the Home
-  // donut to deep-link the user onto a pre-filtered records view.
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -123,12 +117,10 @@ export default function RecordsPage() {
   const filtered = useMemo(() => {
     let result = [...transactions];
 
-    // Type filter
     if (typeFilter !== "all") {
       result = result.filter((t) => t.kind === typeFilter);
     }
 
-    // Period filter
     if (periodFilter !== "all") {
       const today = new Date();
       let cutoff: Date;
@@ -137,7 +129,7 @@ export default function RecordsPage() {
       } else if (periodFilter === "month") {
         cutoff = new Date(today.getFullYear(), today.getMonth(), 1);
       } else if (periodFilter === "custom") {
-        cutoff = new Date("1970-01-01"); // handled below
+        cutoff = new Date("1970-01-01");
       } else {
         cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - periodFilter);
@@ -147,7 +139,6 @@ export default function RecordsPage() {
       );
     }
 
-    // Custom date range
     if (periodFilter === "custom") {
       if (customStartDate) {
         result = result.filter((t) => t.date >= customStartDate);
@@ -157,7 +148,6 @@ export default function RecordsPage() {
       }
     }
 
-    // Search
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter(
@@ -167,22 +157,18 @@ export default function RecordsPage() {
       );
     }
 
-    // Account filter
     if (accountFilter) {
       result = result.filter((t) => t.accountId === accountFilter);
     }
 
-    // Category filter
     if (categoryFilter) {
       result = result.filter((t) => t.categoryId === categoryFilter);
     }
 
-    // Sort by date descending
     result.sort((a, b) => b.date.localeCompare(a.date));
     return result;
   }, [transactions, typeFilter, periodFilter, search, categoryFilter, accountFilter, customStartDate, customEndDate]);
 
-  // Group by date
   const groups = useMemo(() => {
     const map = new Map<string, Transaction[]>();
     for (const tx of filtered) {
@@ -227,9 +213,7 @@ export default function RecordsPage() {
         <StatusBar />
         <PageHeader title="Registros" />
         <main className="flex flex-1 flex-col gap-3 px-5 pb-[var(--tab-bar-height)] sm:px-8 lg:px-12">
-          {/* Search skeleton */}
           <Skeleton variant="card" height={42} />
-          {/* Filter chip rows skeleton */}
           <div className="flex gap-2">
             <Skeleton width={64} height={30} />
             <Skeleton width={88} height={30} />
@@ -237,15 +221,14 @@ export default function RecordsPage() {
             <Skeleton width={56} height={30} />
             <Skeleton width={56} height={30} />
           </div>
-          {/* Transaction groups skeleton */}
           {[0, 1, 2].map((g) => (
             <div key={g} className="flex flex-col gap-2">
               <Skeleton variant="text" width={70} height={10} />
-              <div className="overflow-hidden rounded-[16px] border border-border bg-surface">
+              <div className="overflow-hidden rounded-[18px] border border-border-subtle bg-surface-1">
                 {[0, 1, 2].map((r) => (
                   <div
                     key={r}
-                    className="flex items-center gap-3 border-b border-fill-medium px-4 py-3 last:border-none"
+                    className="flex items-center gap-3 border-b border-border-subtle px-4 py-3 last:border-none"
                   >
                     <Skeleton variant="circle" width={38} height={38} />
                     <div className="flex flex-1 flex-col gap-1.5">
@@ -295,26 +278,14 @@ export default function RecordsPage() {
 
         {/* Search */}
         <div className="mx-5 mb-3 sm:mx-8 lg:mx-12">
-          <div className="flex items-center gap-2 rounded-[12px] border border-border bg-surface px-3.5 py-2.5">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="var(--color-text-muted)"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="11" cy="11" r="7" />
-              <path d="m21 21-4.3-4.3" />
-            </svg>
+          <div className="flex items-center gap-2.5 rounded-[14px] border border-border-subtle bg-surface-1 px-3.5 py-2.5 shadow-sm focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all">
+            <Search size={16} className="text-text-muted flex-none" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Buscar lançamento"
-              className="w-full border-none bg-transparent text-[13px] text-text-primary outline-none"
+              className="w-full border-none bg-transparent text-[13px] font-medium text-text-primary placeholder:text-text-muted outline-none"
             />
           </div>
         </div>
@@ -324,21 +295,39 @@ export default function RecordsPage() {
           <button
             data-testid="filter-trigger"
             onClick={() => setFilterOpen(true)}
-            className="flex w-full items-center gap-2 rounded-[12px] border border-border bg-surface px-3.5 py-2.5 text-left text-[13px] font-semibold text-text-primary"
+            className="flex w-full items-center gap-2 rounded-[14px] border border-border-subtle bg-surface-1 px-3.5 py-2.5 text-left text-[13px] font-semibold text-text-primary shadow-sm hover:bg-surface-2 transition-colors"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />
-            </svg>
-            Filtro
-            {typeFilter !== "all" && <span className="ml-auto rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-white">{chips.find((c) => c.key === typeFilter)?.label}</span>}
-            {periodFilter !== "all" && periodFilter !== "custom" && <span className="rounded-full bg-fill-light px-2 py-0.5 text-[10px] font-bold text-text-secondary">{
-              periodFilter === "today" ? "Hoje" :
-              periodFilter === "month" ? "Este mês" :
-              `${periodFilter}d`
-            }</span>}
-            {periodFilter === "custom" && (customStartDate || customEndDate) && <span className="rounded-full bg-fill-light px-2 py-0.5 text-[10px] font-bold text-text-secondary">Personalizado</span>}
-            {accountFilter && <span className="rounded-full bg-fill-light px-2 py-0.5 text-[10px] font-bold text-text-secondary">{accounts.find((a) => a.id === accountFilter)?.name}</span>}
-            {categoryFilter && <span className="rounded-full bg-fill-light px-2 py-0.5 text-[10px] font-bold text-text-secondary">{categories.find((c) => c.id === categoryFilter)?.name}</span>}
+            <SlidersHorizontal size={15} className="text-text-muted flex-none" />
+            <span>Filtro</span>
+            {typeFilter !== "all" && (
+              <span className="ml-auto rounded-full bg-primary px-2.5 py-0.5 text-[10px] font-bold text-white shadow-xs">
+                {chips.find((c) => c.key === typeFilter)?.label}
+              </span>
+            )}
+            {periodFilter !== "all" && periodFilter !== "custom" && (
+              <span className="rounded-full bg-surface-2 border border-border-subtle px-2 py-0.5 text-[10px] font-bold text-text-secondary">
+                {periodFilter === "today"
+                  ? "Hoje"
+                  : periodFilter === "month"
+                    ? "Este mês"
+                    : `${periodFilter}d`}
+              </span>
+            )}
+            {periodFilter === "custom" && (customStartDate || customEndDate) && (
+              <span className="rounded-full bg-surface-2 border border-border-subtle px-2 py-0.5 text-[10px] font-bold text-text-secondary">
+                Personalizado
+              </span>
+            )}
+            {accountFilter && (
+              <span className="rounded-full bg-surface-2 border border-border-subtle px-2 py-0.5 text-[10px] font-bold text-text-secondary">
+                {accounts.find((a) => a.id === accountFilter)?.name}
+              </span>
+            )}
+            {categoryFilter && (
+              <span className="rounded-full bg-surface-2 border border-border-subtle px-2 py-0.5 text-[10px] font-bold text-text-secondary">
+                {categories.find((c) => c.id === categoryFilter)?.name}
+              </span>
+            )}
           </button>
         </div>
 
@@ -346,7 +335,7 @@ export default function RecordsPage() {
         <BottomSheet open={filterOpen} onClose={() => setFilterOpen(false)} title="Filtros">
           {/* Type */}
           <div className="mb-4">
-            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-text-muted">Tipo</div>
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-text-muted">Tipo</div>
             <div className="flex flex-wrap gap-1.5">
               {chips.map((chip) => (
                 <button
@@ -355,10 +344,10 @@ export default function RecordsPage() {
                     setTypeFilter(chip.key === typeFilter ? "all" : chip.key);
                     setFilterOpen(false);
                   }}
-                  className={`rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${
+                  className={`rounded-full px-3.5 py-1.5 text-[12px] font-bold transition-all ${
                     typeFilter === chip.key
-                      ? "bg-primary text-white"
-                      : "bg-fill-light text-text-secondary"
+                      ? "bg-primary text-white shadow-xs"
+                      : "bg-surface-2 text-text-secondary hover:bg-surface-3"
                   }`}
                 >
                   {chip.label}
@@ -369,7 +358,7 @@ export default function RecordsPage() {
 
           {/* Period */}
           <div className="mb-4">
-            <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-text-muted">Período</div>
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-text-muted">Período</div>
             <div className="flex flex-wrap gap-1.5">
               {periodChips.map((chip) => (
                 <button
@@ -378,67 +367,63 @@ export default function RecordsPage() {
                     setPeriodFilter(chip.key === periodFilter ? "all" : chip.key);
                     if (chip.key !== "custom") setFilterOpen(false);
                   }}
-                  className={`rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${
+                  className={`rounded-full px-3.5 py-1.5 text-[12px] font-bold transition-all ${
                     periodFilter === chip.key
-                      ? "bg-primary text-white"
-                      : "bg-fill-light text-text-secondary"
+                      ? "bg-primary text-white shadow-xs"
+                      : "bg-surface-2 text-text-secondary hover:bg-surface-3"
                   }`}
                 >
                   {chip.label}
                 </button>
               ))}
             </div>
-            {/* Custom date inputs — visible only when Personalizado is active */}
+            {/* Custom date inputs */}
             {periodFilter === "custom" && (
               <div className="mt-3 flex gap-2">
                 <div className="flex-1">
-                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-muted">Data inicial</label>
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-text-muted">Data inicial</label>
                   <input
                     type="date"
                     value={customStartDate}
                     onChange={(e) => setCustomStartDate(e.target.value)}
-                    className="w-full rounded-[10px] border border-border bg-surface px-3 py-2 text-[12px] text-text-primary outline-none"
+                    className="w-full rounded-[10px] border border-border-subtle bg-surface-2 px-3 py-2 text-[12px] text-text-primary outline-none focus:border-primary"
                   />
                 </div>
                 <div className="flex-1">
-                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-text-muted">Data final</label>
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-text-muted">Data final</label>
                   <input
                     type="date"
                     value={customEndDate}
                     onChange={(e) => setCustomEndDate(e.target.value)}
-                    className="w-full rounded-[10px] border border-border bg-surface px-3 py-2 text-[12px] text-text-primary outline-none"
+                    className="w-full rounded-[10px] border border-border-subtle bg-surface-2 px-3 py-2 text-[12px] text-text-primary outline-none focus:border-primary"
                   />
                 </div>
               </div>
             )}
           </div>
 
-          {/* Category — single selector trigger */}
+          {/* Category */}
           {categories.length > 0 && (
             <div className="mb-4">
-              <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-text-muted">Categoria</div>
+              <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-text-muted">Categoria</div>
               {filterPage === "main" ? (
                 <button
                   data-testid="category-selector-trigger"
                   onClick={() => setFilterPage("category")}
-                  className="flex w-full items-center gap-2 rounded-[10px] border border-border bg-surface px-3 py-2.5 text-left text-[13px] font-semibold text-text-primary"
+                  className="flex w-full items-center gap-2 rounded-[12px] border border-border-subtle bg-surface-2 px-3.5 py-2.5 text-left text-[13px] font-semibold text-text-primary hover:bg-surface-3 transition-colors"
                 >
                   {categoryFilter
                     ? categories.find((c) => c.id === categoryFilter)?.name ?? "Categoria"
                     : "Todas as categorias"}
-                  <svg className="ml-auto" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <path d="m9 18 6-6-6-6" />
-                  </svg>
+                  <ChevronRight size={16} className="ml-auto text-text-muted" />
                 </button>
               ) : (
                 <div className="flex flex-col gap-1">
                   <button
                     onClick={() => setFilterPage("main")}
-                    className="mb-1 flex items-center gap-1 text-[12px] font-semibold text-primary"
+                    className="mb-1 flex items-center gap-1 text-[12px] font-bold text-primary"
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                      <path d="m15 18-6-6 6-6" />
-                    </svg>
+                    <ChevronLeft size={16} />
                     Voltar
                   </button>
                   <button
@@ -446,8 +431,8 @@ export default function RecordsPage() {
                       setCategoryFilter(null);
                       setFilterPage("main");
                     }}
-                    className={`w-full rounded-[10px] px-3 py-2.5 text-left text-[13px] font-semibold transition-colors ${
-                      categoryFilter === null ? "bg-primary-tint text-primary" : "text-text-primary hover:bg-fill-light"
+                    className={`w-full rounded-[10px] px-3 py-2 text-left text-[13px] font-semibold transition-colors ${
+                      categoryFilter === null ? "bg-primary-tint text-primary font-bold" : "text-text-primary hover:bg-surface-2"
                     }`}
                   >
                     Todas as categorias
@@ -459,8 +444,8 @@ export default function RecordsPage() {
                         setCategoryFilter(c.id);
                         setFilterPage("main");
                       }}
-                      className={`w-full rounded-[10px] px-3 py-2.5 text-left text-[13px] font-semibold transition-colors ${
-                        categoryFilter === c.id ? "bg-primary-tint text-primary" : "text-text-primary hover:bg-fill-light"
+                      className={`w-full rounded-[10px] px-3 py-2 text-left text-[13px] font-semibold transition-colors ${
+                        categoryFilter === c.id ? "bg-primary-tint text-primary font-bold" : "text-text-primary hover:bg-surface-2"
                       }`}
                     >
                       {c.name}
@@ -478,7 +463,7 @@ export default function RecordsPage() {
               setCategoryFilter(null);
               setFilterOpen(false);
             }}
-            className="mt-2 w-full rounded-[12px] border border-border bg-surface py-3 text-[13px] font-semibold text-text-secondary"
+            className="mt-2 w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 text-[13px] font-bold text-text-secondary hover:bg-surface-3 transition-colors"
           >
             Limpar filtros
           </button>
@@ -486,20 +471,20 @@ export default function RecordsPage() {
 
         {/* Content */}
         {filtered.length === 0 ? (
-          <div className="px-5 py-[50px] text-center text-text-muted sm:px-8 lg:px-12">
-            <div className="text-[14px] font-semibold">Nada encontrado</div>
-            <div className="mt-1 text-[12px]">
-              Ajuste a busca ou os filtros.
-            </div>
+          <div className="px-5 py-[50px] text-center sm:px-8 lg:px-12">
+            <EmptyState
+              title="Nada encontrado"
+              description="Ajuste a busca ou os filtros."
+            />
           </div>
         ) : (
           <div data-testid="records-groups" className="flex flex-col gap-4 px-5 sm:px-8 lg:px-12">
             {groups.map((group) => (
               <div key={group.date}>
-                <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-text-muted">
+                <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-text-muted">
                   {group.label}
                 </div>
-                <div className="overflow-hidden rounded-[16px] border border-border bg-surface">
+                <div className="overflow-hidden rounded-[18px] border border-border-subtle bg-surface-1 shadow-card">
                   {group.items.map((tx) => {
                     const cat = categories.find(
                       (c) => c.id === tx.categoryId,
@@ -521,26 +506,26 @@ export default function RecordsPage() {
                       <div
                         key={tx.id}
                         onClick={() => handleRowClick(tx)}
-                        className="flex cursor-pointer items-center gap-3 border-b border-fill-medium px-4 py-3 last:border-none active:bg-fill-light"
+                        className="flex cursor-pointer items-center gap-3 border-b border-border-subtle px-4 py-3.5 last:border-none hover:bg-surface-2/60 active:bg-surface-2 transition-colors"
                       >
-                        <div className="flex h-[38px] w-[38px] flex-none items-center justify-center rounded-[11px] bg-fill-light">
+                        <div className="flex h-10 w-10 flex-none items-center justify-center rounded-[12px] bg-surface-2 shadow-xs">
                           <CategoryBadge
                             name={cat?.name ?? ""}
                             size={22}
                           />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="text-[13px] font-semibold text-text-primary">
+                          <div className="truncate text-[13px] font-bold text-text-primary">
                             {tx.description}
                           </div>
-                          <div className="text-[11px] text-text-muted">
+                          <div className="text-[11px] font-medium text-text-muted">
                             {getCategoryName(tx.categoryId)}
                             {tx.categoryId && " · "}
                             {getAccountName(tx.accountId)}
                           </div>
                         </div>
                         <div
-                          className="flex-none font-mono text-[13px] font-semibold"
+                          className="flex-none font-mono tabular-nums text-[13px] font-bold"
                           style={{ color: amountColor }}
                         >
                           {prefix}
@@ -578,8 +563,8 @@ export default function RecordsPage() {
 
       <ConfirmActionDialog
         open={deleteConfirmOpen}
-        title="Excluir lan\u00e7amento"
-        message="Esta a\u00e7\u00e3o n\u00e3o pode ser desfeita. Deseja realmente excluir?"
+        title="Excluir lançamento"
+        message="Esta ação não pode ser desfeita. Deseja realmente excluir?"
         confirmLabel="Excluir"
         cancelLabel="Cancelar"
         danger

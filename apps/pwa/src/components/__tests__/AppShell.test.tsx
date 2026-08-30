@@ -1,5 +1,6 @@
 import { render, screen } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import AppShell from "../AppShell";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
@@ -37,7 +38,11 @@ function defaultState(): AppState {
 }
 
 function navButton(label: string): HTMLButtonElement {
-  const button = screen.getByText(label).closest("button");
+  const bottomNav = document.querySelector('[data-nav="bottom"]');
+  const elements = screen.getAllByText(label);
+  const button = elements
+    .map((el) => el.closest("button"))
+    .find((b) => b && (!bottomNav || bottomNav.contains(b)));
   if (!button) throw new Error(`Button for ${label} not found`);
   return button as HTMLButtonElement;
 }
@@ -64,9 +69,9 @@ describe("AppShell", () => {
 
     it("renders bottom navigation", () => {
       render(<AppShell><div>Content</div></AppShell>);
-      expect(screen.getByText("Resumo")).toBeInTheDocument();
-      const buttons = screen.getAllByRole("button");
-      expect(buttons.length).toBeGreaterThanOrEqual(4);
+      expect(screen.getAllByText("Resumo").length).toBeGreaterThanOrEqual(1);
+      const bottomNav = document.querySelector('[data-nav="bottom"]');
+      expect(bottomNav).toBeInTheDocument();
     });
   });
 
@@ -111,7 +116,7 @@ describe("AppShell", () => {
       expectInactive("Resumo");
     });
 
-    it.each(["/cartoes", "/contas", "/metas", "/perfil", "/assinaturas", "/orcamentos", "/categorias", "/relatorios", "/patrimonio"])(
+    it.each(["/cartoes", "/contas", "/metas", "/perfil", "/assinaturas", "/orcamentos", "/categorias", "/relatorios", "/patrimonio", "/workspaces"])(
       "highlights Mais for secondary route %s",
       (route) => {
         mockPath = route;
@@ -127,17 +132,18 @@ describe("AppShell", () => {
       const user = userEvent.setup();
       render(<AppShell><div>Content</div></AppShell>);
       await user.click(screen.getByLabelText("Nova transação"));
-      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
       expect(screen.getByText("Despesa")).toBeInTheDocument();
     });
 
     it("opens Mais grid when Mais is clicked", async () => {
       const user = userEvent.setup();
       render(<AppShell><div>Content</div></AppShell>);
-      const buttons = screen.getAllByRole("button");
-      await user.click(buttons[4]);
-      expect(screen.getByText("Cartões")).toBeInTheDocument();
-      expect(screen.getByText("Contas")).toBeInTheDocument();
+      await user.click(navButton("Mais"));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getAllByText("Cartões").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("Contas").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("Workspaces").length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -148,13 +154,13 @@ describe("AppShell", () => {
 
       // Open sheet via FAB
       await user.click(screen.getByLabelText("Nova transação"));
-      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
 
       // Click bottom nav "Registros"
-      await user.click(screen.getByText("Registros"));
+      await user.click(navButton("Registros"));
 
       // Sheet should close (no dialog present)
-      expect(screen.queryByText("Novo lançamento")).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
     it("closes sheet via Escape key", async () => {
@@ -163,13 +169,13 @@ describe("AppShell", () => {
 
       // Open sheet via FAB
       await user.click(screen.getByLabelText("Nova transação"));
-      expect(screen.getByText("Novo lançamento")).toBeInTheDocument();
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
 
       // Press Escape
       await user.keyboard("{Escape}");
 
       // Sheet should close
-      expect(screen.queryByText("Novo lançamento")).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
     it("closes sheet and leaves no residual overlay", async () => {
@@ -205,7 +211,7 @@ describe("AppShell", () => {
       const descInput = screen.getByPlaceholderText(/Aluguel, mercado/);
       await user.type(descInput, "Mercado semanal");
       await user.click(screen.getByText("Alimentação"));
-      await user.click(screen.getByText("Nubank"));
+      await user.click(screen.getAllByText("Nubank")[0]);
       await user.click(screen.getByText("Salvar"));
 
       expect(addSpy).toHaveBeenCalledTimes(1);
