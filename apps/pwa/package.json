@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-
+    "start:standalone": "node e2e/standalone-server.mjs",
     "lint": "eslint",
     "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
     "test": "vitest run",
@@ -18,13 +18,14 @@
     "deploy": "pnpm build:cloudflare && wrangler deploy"
   },
   "dependencies": {
+    "@ai-sdk/react": "^2.0.0",
+    "@cloudflare/ai-chat": "^0.1.0",
     "@serwist/next": "9.5.11",
     "@serwist/precaching": "9.5.11",
     "@serwist/sw": "9.5.11",
     "agents": "^0.2.0",
     "ai": "^5.0.0",
-    "@cloudflare/ai-chat": "^0.1.0",
-    "@ai-sdk/react": "^2.0.0",
+    "lucide-react": "^1.35.0",
     "next": "16.2.12",
     "react": "19.2.4",
     "react-dom": "19.2.4",
