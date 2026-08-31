@@ -1,5 +1,5 @@
-import type { Pool } from 'pg';
-import { queryInTransaction, withTransaction } from '../db/pool.js';
+import type { Pool, PoolClient } from 'pg';
+import { withTransaction } from '../db/pool.js';
 
 type Row = Record<string, unknown>;
 
@@ -15,8 +15,8 @@ type AcceptInput = {
   destinationAuthUserId: string;
 };
 
-const findUser = async (pool: Pool, authUserId: string): Promise<Row | undefined> => {
-  const result = await queryInTransaction<Row>(pool, 'SELECT id FROM users WHERE auth_user_id = $1', [authUserId]);
+const findUser = async (client: PoolClient, authUserId: string): Promise<Row | undefined> => {
+  const result = await client.query<Row>('SELECT id FROM users WHERE auth_user_id = $1', [authUserId]);
   return result.rows[0];
 };
 
@@ -25,12 +25,12 @@ const quoteIdentifier = (identifier: string): string => {
   return `"${identifier}"`;
 };
 
-const setTrustedDatabaseRole = (pool: Pool, role?: string) => {
+const setTrustedDatabaseRole = (client: PoolClient, role?: string) => {
   if (!role) return Promise.resolve();
-  return queryInTransaction(pool, `SET LOCAL ROLE ${quoteIdentifier(role)}`);
+  return client.query(`SET LOCAL ROLE ${quoteIdentifier(role)}`);
 };
 
-const setAuthenticatedUser = (pool: Pool, userId: string) => queryInTransaction(pool,
+const setAuthenticatedUser = (client: PoolClient, userId: string) => client.query(
   'SELECT set_ownership_transfer_context($1::uuid)',
   [userId],
 );
@@ -44,12 +44,12 @@ export class OwnershipTransferError extends Error {
 
 export const createPostgresOwnershipTransferStore = (pool: Pool, trustedDatabaseRole?: string) => ({
   async create(input: TransferInput) {
-    return withTransaction(pool, async () => {
-      await setTrustedDatabaseRole(pool, trustedDatabaseRole);
-      const actor = await findUser(pool, input.fromAuthUserId);
+    return withTransaction(pool, async (client) => {
+      await setTrustedDatabaseRole(client, trustedDatabaseRole);
+      const actor = await findUser(client, input.fromAuthUserId);
       if (!actor) throw new OwnershipTransferError('ownership_transfer.not_allowed', 403, 'ownership transfer is not allowed');
-      await setAuthenticatedUser(pool, actor['id'] as string);
-      const result = await queryInTransaction<Row>(pool,
+      await setAuthenticatedUser(client, actor['id'] as string);
+      const result = await client.query<Row>(
         `INSERT INTO ownership_transfers (household_id, from_user_id, to_user_id)
          SELECT $1, source.id, target.id
            FROM users source, users target
@@ -63,12 +63,12 @@ export const createPostgresOwnershipTransferStore = (pool: Pool, trustedDatabase
   },
 
   async accept(input: AcceptInput) {
-    return withTransaction(pool, async () => {
-      await setTrustedDatabaseRole(pool, trustedDatabaseRole);
-      const target = await findUser(pool, input.destinationAuthUserId);
+    return withTransaction(pool, async (client) => {
+      await setTrustedDatabaseRole(client, trustedDatabaseRole);
+      const target = await findUser(client, input.destinationAuthUserId);
       if (!target) throw new OwnershipTransferError('ownership_transfer.not_allowed', 403, 'only destination can accept transfer');
-      await setAuthenticatedUser(pool, target['id'] as string);
-      const result = await queryInTransaction<Row>(pool,
+      await setAuthenticatedUser(client, target['id'] as string);
+      const result = await client.query<Row>(
         `UPDATE ownership_transfers transfer
             SET status = 'accepted', accepted_by = target.id, accepted_at = NOW()
            FROM users target
@@ -87,6 +87,48 @@ export const createPostgresOwnershipTransferStore = (pool: Pool, trustedDatabase
       return result.rows[0]!;
     });
   },
+
+  async listPending(input: { householdId: string; authUserId: string }): Promise<PendingOwnershipTransfer[]> {
+    return withTransaction(pool, async (client) => {
+      await setTrustedDatabaseRole(client, trustedDatabaseRole);
+      const actor = await findUser(client, input.authUserId);
+      if (!actor) return [];
+      await setAuthenticatedUser(client, actor['id'] as string);
+      const result = await client.query<Row>(
+        `SELECT transfer.id,
+                transfer.household_id,
+                source.auth_user_id AS from_user_id,
+                target.auth_user_id AS to_user_id,
+                transfer.status,
+                transfer.created_at
+           FROM ownership_transfers transfer
+           JOIN users source ON source.id = transfer.from_user_id
+           JOIN users target ON target.id = transfer.to_user_id
+          WHERE transfer.household_id = $1
+            AND transfer.status = 'pending'
+            AND (transfer.from_user_id = $2 OR transfer.to_user_id = $2)
+          ORDER BY transfer.created_at DESC`,
+        [input.householdId, actor['id']],
+      );
+      return result.rows.map((row) => ({
+        id: row['id'] as string,
+        householdId: row['household_id'] as string,
+        fromUserId: row['from_user_id'] as string,
+        toUserId: row['to_user_id'] as string,
+        status: row['status'] as string,
+        createdAt: (row['created_at'] instanceof Date ? row['created_at'] : new Date(row['created_at'] as string)).toISOString(),
+      }));
+    });
+  },
 });
+
+export type PendingOwnershipTransfer = {
+  id: string;
+  householdId: string;
+  fromUserId: string;
+  toUserId: string;
+  status: string;
+  createdAt: string;
+};
 
 export type OwnershipTransferStore = ReturnType<typeof createPostgresOwnershipTransferStore>;
