@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { getToken, setToken } from "@/lib/auth/token-store";
-import { apiFetch, apiGet, ApiError } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/client";
+import { signInWithEmail, registerDeviceToken, verifyDeviceToken } from "@/lib/api/auth";
 import { clearSensitiveSession } from "@/lib/session";
 import { SessionProvider } from "@/lib/auth/session-context";
 import { Lock, Mail, ArrowRight } from "lucide-react";
@@ -28,7 +29,7 @@ export function AuthGate({ children }: Props) {
       }
 
       try {
-        await apiGet<unknown>("/auth/devices/me", token);
+        await verifyDeviceToken(token);
         if (!cancelled) setState("unlocked");
       } catch (e) {
         if (cancelled) return;
@@ -58,28 +59,10 @@ export function AuthGate({ children }: Props) {
   const handleLogin = useCallback(async (credentials: { email: string; password: string }) => {
     setError("");
     try {
-      const signInRes = await apiFetch<{ token?: string; user?: unknown; redirect?: boolean }>(
-        "/auth/sign-in/email",
-        {
-          method: "POST",
-          body: JSON.stringify(credentials),
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+      const signInRes = await signInWithEmail(credentials);
       const sessionToken = signInRes?.token;
 
-      const res = await apiFetch<{
-        token: string;
-        deviceId: string;
-        householdId: string;
-      }>("/auth/devices/register", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
-        },
-        body: JSON.stringify({ deviceName: "PWA Web Device" }),
-      });
+      const res = await registerDeviceToken(sessionToken);
 
       if (!res?.token) {
         throw new Error("Token de dispositivo não retornado pelo servidor.");

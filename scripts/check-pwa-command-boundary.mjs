@@ -122,10 +122,39 @@ function propertyCallsOf(source, objects, properties) {
 export function scanSource(sourceRoot) {
   const violations = [];
   const allowed = {
-    rawFetch: new Set(["lib/api/fetch-core.ts", "lib/api/client.ts", "lib/api/agent-client.ts", "sw.ts", "lib/observability/web-vitals.ts", "lib/sw-coordinator.tsx", "app/api/backend/[...path]/route.ts"]),
-    apiFetch: new Set(["lib/api/client.ts", "lib/api/endpoints.ts", "lib/api/agent-client.ts", "lib/api/push-client.ts", "lib/api/workspaces.ts", "lib/auth/reconnect-token.ts", "lib/api/adoption.ts"]),
+    rawFetch: new Set([
+      "lib/api/fetch-core.ts",
+      "lib/api/client.ts",
+      "lib/api/agent-client.ts",
+      "sw.ts",
+      "lib/observability/web-vitals.ts",
+      "lib/sw-coordinator.tsx",
+      "app/api/backend/[...path]/route.ts",
+      "app/api/agent/[...path]/route.ts",
+    ]),
+    apiFetch: new Set([
+      "lib/api/client.ts",
+      "lib/api/endpoints.ts",
+      "lib/api/agent-client.ts",
+      "lib/api/push-client.ts",
+      "lib/api/workspaces.ts",
+      "lib/auth/reconnect-token.ts",
+      "lib/api/adoption.ts",
+      "lib/api/admin-agent-llm-config.ts",
+      "lib/api/agent-auth.ts",
+      "lib/api/auth.ts",
+    ]),
     appFetch: new Set(["lib/api/client.ts", "lib/sw-coordinator.tsx", "lib/observability/web-vitals.ts"]),
-    raw: new Set(["lib/api/fetch-core.ts", "lib/api/client.ts", "lib/api/agent-client.ts", "sw.ts", "lib/observability/web-vitals.ts", "lib/sw-coordinator.tsx", "app/api/backend/[...path]/route.ts"]),
+    raw: new Set([
+      "lib/api/fetch-core.ts",
+      "lib/api/client.ts",
+      "lib/api/agent-client.ts",
+      "sw.ts",
+      "lib/observability/web-vitals.ts",
+      "lib/sw-coordinator.tsx",
+      "app/api/backend/[...path]/route.ts",
+      "app/api/agent/[...path]/route.ts",
+    ]),
   };
 
   for (const file of collectFiles(sourceRoot)) {
@@ -178,6 +207,7 @@ export function scanSource(sourceRoot) {
       "features/cards/CardsPage.tsx", // V033 card purchase edit: commands wrapper pending (P4 debt)
       "lib/state/profile-adapter.ts", // profile adapter is the commands seam itself (delegates via endpoints)
       "app/api/backend/[...path]/route.ts", // Next.js proxy is transport, not business mutator
+      "app/api/agent/[...path]/route.ts", // Next.js proxy for agent is transport, not business mutator
     ]);
     if (relative !== "lib/state/commands.ts" && !mutatorExempt.has(relative)) {
       const mutatorAliases = new Set([
