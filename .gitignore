@@ -90,3 +90,32 @@ tmp-pwa-*.log
 start-coder.bat
 start-planner.bat
 start-agents.bat
+
+# Agent runtimes & IDE session caches
+.opencode/
+.pi-subagents/
+.pi/extensions/
+.pi/loops/
+.pi/subagents/
+
+# Temporary artifacts, inspection scripts and local test dumps
+tmp/
+tmp-*/
+.tmp-*/
+.tmp-*
+--gate
+.vps-inspect.sh
+dispatch-push.mjs
+scripts/dispatch-push.mjs
+apps/api/scripts/dbg-refresh.mts
+apps/pwa/.tmp-inspect-browser-cookies.mjs
+docs/rehearsal-output.txt
+
+# Obsolete spikes and test artifacts
+scripts/access-spike/
+scripts/bridge-tsconfig.test.mjs
+scripts/runtime-pins.test.mjs
+
+# Goal-runs dated micro-runs and console text logs
+docs/superpowers/goal-runs/2026[0-9]*.md
+docs/superpowers/goal-runs/*.txt
