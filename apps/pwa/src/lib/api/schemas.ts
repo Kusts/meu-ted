@@ -305,4 +305,51 @@ export const workspaceInviteAcceptanceSchema = z.object({
   membership: z.object({ userId: id, householdId: id, role: z.enum(["owner", "member"]) }),
 });
 
+export const pendingInviteSchema = z.object({
+  id,
+  householdId: id,
+  email: z.string().email(),
+  role: z.enum(["owner", "member"]).default("member"),
+  expiresAt: date,
+  createdAt: date.optional(),
+});
+export const pendingInviteListSchema = listResponse(pendingInviteSchema);
+
+export const resendInviteResponseSchema = z.object({
+  success: z.boolean(),
+  inviteId: id,
+  email: z.string().email(),
+  expiresAt: date,
+});
+
+export const revokeInviteResponseSchema = z.object({
+  success: z.boolean(),
+  inviteId: id,
+  revokedAt: date.optional(),
+});
+
+export const ownershipTransferSchema = z.object({
+  id,
+  householdId: z.string().optional(),
+  household_id: z.string().optional(),
+  fromUserId: z.string().optional(),
+  toUserId: z.string().optional(),
+  from_user_id: z.string().optional(),
+  to_user_id: z.string().optional(),
+  status: z.string(),
+  createdAt: date.optional(),
+  created_at: date.optional(),
+  acceptedAt: date.optional(),
+  accepted_at: date.optional(),
+}).transform((row) => ({
+  id: row.id,
+  householdId: row.householdId ?? row.household_id ?? "",
+  fromUserId: row.fromUserId ?? row.from_user_id ?? "",
+  toUserId: row.toUserId ?? row.to_user_id ?? "",
+  status: row.status,
+  createdAt: row.createdAt ?? row.created_at ?? "",
+  acceptedAt: row.acceptedAt ?? row.accepted_at,
+}));
+export const ownershipTransferListSchema = listResponse(ownershipTransferSchema);
+
 export const pwaControlSchema = z.object({ enabled: z.boolean().optional() });

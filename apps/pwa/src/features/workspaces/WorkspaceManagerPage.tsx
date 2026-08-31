@@ -35,6 +35,8 @@ export default function WorkspaceManagerPage() {
     workspaces,
     activeWorkspace,
     members,
+    pendingInvites,
+    ownershipTransfers,
     loading,
     error,
     selectWorkspace,
@@ -43,6 +45,10 @@ export default function WorkspaceManagerPage() {
     renameWorkspace,
     archiveWorkspace,
     restoreWorkspace,
+    resendInvite,
+    revokeInvite,
+    transferOwnership,
+    acceptTransfer,
   } = useWorkspace();
   const [newName, setNewName] = useState("");
   const [newKind, setNewKind] = useState<WorkspaceKind>("shared");
@@ -53,9 +59,75 @@ export default function WorkspaceManagerPage() {
   const [formBusy, setFormBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const [revokeTarget, setRevokeTarget] = useState<import("@/lib/api/workspaces").PendingInvite | null>(null);
+  const [resendingInviteId, setResendingInviteId] = useState<string | null>(null);
+  const [revokeBusy, setRevokeBusy] = useState(false);
+  const [transferTargetUserId, setTransferTargetUserId] = useState("");
+  const [transferConfirmOpen, setTransferConfirmOpen] = useState(false);
+  const [acceptTransferTarget, setAcceptTransferTarget] = useState<import("@/lib/api/workspaces").OwnershipTransfer | null>(null);
+  const [transferBusy, setTransferBusy] = useState(false);
+
   const active = workspaces.filter((workspace) => workspace.status !== "archived");
   const archived = workspaces.filter((workspace) => workspace.status === "archived");
   const activeMembers = activeWorkspace?.kind === "shared" ? members.length : 0;
+  const otherMembers = members.filter((m) => m.role !== "owner");
+  const activePendingTransfer = ownershipTransfers?.find((t) => t.status === "pending");
+  const pendingTransferForMember = activeWorkspace?.role === "member" ? activePendingTransfer : null;
+
+  async function handleResendInvite(inviteId: string) {
+    setResendingInviteId(inviteId);
+    setActionError(null);
+    try {
+      await resendInvite(inviteId);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Não foi possível reenviar o convite.");
+    } finally {
+      setResendingInviteId(null);
+    }
+  }
+
+  async function handleRevokeInvite() {
+    if (!revokeTarget) return;
+    setRevokeBusy(true);
+    setActionError(null);
+    try {
+      await revokeInvite(revokeTarget.id);
+      setRevokeTarget(null);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Não foi possível revogar o convite.");
+    } finally {
+      setRevokeBusy(false);
+    }
+  }
+
+  async function handleTransferOwnership() {
+    if (!transferTargetUserId) return;
+    setTransferBusy(true);
+    setActionError(null);
+    try {
+      await transferOwnership(transferTargetUserId);
+      setTransferConfirmOpen(false);
+      setTransferTargetUserId("");
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Não foi possível transferir a titularidade.");
+    } finally {
+      setTransferBusy(false);
+    }
+  }
+
+  async function handleAcceptTransfer() {
+    if (!acceptTransferTarget) return;
+    setTransferBusy(true);
+    setActionError(null);
+    try {
+      await acceptTransfer(acceptTransferTarget.id);
+      setAcceptTransferTarget(null);
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Não foi possível aceitar a titularidade.");
+    } finally {
+      setTransferBusy(false);
+    }
+  }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -266,6 +338,27 @@ export default function WorkspaceManagerPage() {
           </div>
         )}
 
+        {pendingTransferForMember && (
+          <Card className="border-primary/40 bg-primary-tint/30">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-[15px] font-extrabold text-text-primary">Proposta de Titularidade</h2>
+                <p className="mt-1 text-[12px] text-text-muted">
+                  O proprietário atual propôs transferir a titularidade deste workspace para você.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={() => setAcceptTransferTarget(pendingTransferForMember)}
+              >
+                Aceitar Titularidade
+              </Button>
+            </div>
+          </Card>
+        )}
+
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
           <section aria-labelledby="workspace-list-heading">
             <div className="mb-3 flex items-end justify-between gap-3">
@@ -329,6 +422,104 @@ export default function WorkspaceManagerPage() {
                 </div>
               </div>
             </Card>
+
+            {activeWorkspace?.kind === "shared" && activeWorkspace.role === "owner" && (
+              <>
+                <Card elevation={2}>
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-[15px] font-extrabold text-text-primary">Convites pendentes</h2>
+                      <p className="text-[11px] text-text-muted">Convites aguardando resposta.</p>
+                    </div>
+                    <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[11px] font-bold text-text-muted">
+                      {pendingInvites.length}
+                    </span>
+                  </div>
+                  {pendingInvites.length === 0 ? (
+                    <p className="text-[12px] text-text-muted py-2">Nenhum convite pendente.</p>
+                  ) : (
+                    <div className="divide-y divide-border-subtle">
+                      {pendingInvites.map((invite) => (
+                        <div key={invite.id} className="flex items-center justify-between py-2.5 gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-[12px] font-bold text-text-primary">{invite.email}</p>
+                            <p className="text-[10px] text-text-muted">
+                              Membro · Expira em {new Date(invite.expiresAt).toLocaleDateString("pt-BR")}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-none">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              aria-label={`Reenviar convite para ${invite.email}`}
+                              loading={resendingInviteId === invite.id}
+                              onClick={() => void handleResendInvite(invite.id)}
+                            >
+                              Reenviar
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              aria-label={`Revogar convite para ${invite.email}`}
+                              onClick={() => setRevokeTarget(invite)}
+                            >
+                              Revogar
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+
+                <Card elevation={2}>
+                  <div className="mb-3">
+                    <h2 className="text-[15px] font-extrabold text-text-primary">Transferir titularidade</h2>
+                    <p className="text-[11px] text-text-muted">Passe o controle total deste workspace para outro membro ativo.</p>
+                  </div>
+                  {activePendingTransfer ? (
+                    <div className="rounded-[12px] bg-warning-tint p-3 text-[11px] font-medium text-warning border border-warning/30">
+                      Transferência pendente aguardando aceitação pelo destinatário.
+                    </div>
+                  ) : otherMembers.length === 0 ? (
+                    <p className="text-[11px] text-text-muted py-1">Adicione outros membros ao workspace para habilitar a transferência.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      <div>
+                        <label htmlFor="new-owner-select" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                          Novo titular
+                        </label>
+                        <select
+                          id="new-owner-select"
+                          aria-label="Novo titular"
+                          value={transferTargetUserId}
+                          onChange={(e) => setTransferTargetUserId(e.target.value)}
+                          className="h-10 w-full rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[12px] font-medium text-text-primary outline-none focus:border-primary"
+                        >
+                          <option value="">Selecione um membro...</option>
+                          {otherMembers.map((member) => (
+                            <option key={member.userId} value={member.userId}>
+                              {member.name ? `${member.name} (${member.email})` : member.email}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full"
+                        disabled={!transferTargetUserId}
+                        onClick={() => setTransferConfirmOpen(true)}
+                      >
+                        Transferir titularidade
+                      </Button>
+                    </div>
+                  )}
+                </Card>
+              </>
+            )}
           </aside>
         </div>
       </main>
@@ -348,6 +539,27 @@ export default function WorkspaceManagerPage() {
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={() => setArchiveTarget(null)}>Cancelar</Button>
           <Button type="button" variant="danger" loading={busyWorkspaceId === archiveTarget?.id} onClick={() => void handleArchive()}>Arquivar workspace</Button>
+        </div>
+      </Dialog>
+
+      <Dialog open={revokeTarget !== null} onClose={() => setRevokeTarget(null)} title="Revogar convite?" description="O destinatário não conseguirá mais entrar neste workspace com este convite.">
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={() => setRevokeTarget(null)}>Cancelar</Button>
+          <Button type="button" variant="danger" loading={revokeBusy} onClick={() => void handleRevokeInvite()}>Revogar convite</Button>
+        </div>
+      </Dialog>
+
+      <Dialog open={transferConfirmOpen} onClose={() => setTransferConfirmOpen(false)} title="Transferir titularidade do workspace?" description="Ao transferir a titularidade, o membro selecionado se tornará o novo Owner deste workspace, e seu acesso será convertido para Membro comum após a aceitação.">
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={() => setTransferConfirmOpen(false)}>Cancelar</Button>
+          <Button type="button" variant="primary" loading={transferBusy} onClick={() => void handleTransferOwnership()}>Confirmar transferência</Button>
+        </div>
+      </Dialog>
+
+      <Dialog open={acceptTransferTarget !== null} onClose={() => setAcceptTransferTarget(null)} title="Aceitar titularidade do workspace?" description="Você se tornará o novo Owner deste workspace com controle administrativo total.">
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={() => setAcceptTransferTarget(null)}>Cancelar</Button>
+          <Button type="button" variant="primary" loading={transferBusy} onClick={() => void handleAcceptTransfer()}>Confirmar aceitação</Button>
         </div>
       </Dialog>
     </div>

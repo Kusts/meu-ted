@@ -9,6 +9,12 @@ import { saveSnapshotDomain, loadSnapshotDomain } from "@/lib/state/snapshot-sto
 const api = vi.hoisted(() => ({
   fetchWorkspaces: vi.fn(),
   fetchWorkspaceMembers: vi.fn(),
+  fetchPendingInvites: vi.fn(),
+  resendWorkspaceInvite: vi.fn(),
+  revokeWorkspaceInvite: vi.fn(),
+  fetchOwnershipTransfers: vi.fn(),
+  createOwnershipTransfer: vi.fn(),
+  acceptOwnershipTransfer: vi.fn(),
   createWorkspace: vi.fn(),
   renameWorkspace: vi.fn(),
   archiveWorkspace: vi.fn(),
@@ -26,16 +32,38 @@ vi.mock("@/lib/api/client", () => ({
 }));
 
 function Probe() {
-  const { activeWorkspace, workspaces, selectWorkspace, error, members, refreshMembers, renameWorkspace, archiveWorkspace, restoreWorkspace } = useWorkspace();
+  const {
+    activeWorkspace,
+    workspaces,
+    selectWorkspace,
+    error,
+    members,
+    pendingInvites,
+    ownershipTransfers,
+    refreshMembers,
+    renameWorkspace,
+    archiveWorkspace,
+    restoreWorkspace,
+    resendInvite,
+    revokeInvite,
+    transferOwnership,
+    acceptTransfer,
+  } = useWorkspace();
   const [refreshError, setRefreshError] = useState<string | null>(null);
   return <>
     <div data-testid="active">{activeWorkspace?.name ?? "none"}</div>
     <div data-testid="error">{error ?? "no-error"}</div>
     <div data-testid="refresh-error">{refreshError ?? "no-refresh-error"}</div>
     <div data-testid="members-count">{members.length}</div>
+    <div data-testid="invites-count">{pendingInvites.length}</div>
+    <div data-testid="transfers-count">{ownershipTransfers.length}</div>
     <button onClick={() => void renameWorkspace("workspace-1", "Casa renomeada")}>Rename</button>
     <button onClick={() => void archiveWorkspace("workspace-1")}>Archive</button>
     <button onClick={() => void restoreWorkspace("workspace-2")}>Restore</button>
+    <button onClick={() => void resendInvite("invite-1")}>Resend Invite</button>
+    <button onClick={() => void revokeInvite("invite-1")}>Revoke Invite</button>
+    <button onClick={() => void transferOwnership("user-2")}>Transfer Ownership</button>
+    <button onClick={() => void acceptTransfer("transfer-1")}>Accept Transfer</button>
     <button onClick={async () => {
       try {
         await refreshMembers();
@@ -53,9 +81,11 @@ describe("WorkspaceProvider", () => {
     for (const db of dbs) if (db.name) indexedDB.deleteDatabase(db.name);
     api.fetchWorkspaces.mockResolvedValue([
       { id: "workspace-1", name: "Casa", kind: "personal", role: "owner" },
-      { id: "workspace-2", name: "Equipe", kind: "shared", role: "member" },
+      { id: "workspace-2", name: "Equipe", kind: "shared", role: "owner" },
     ]);
     api.fetchWorkspaceMembers.mockResolvedValue([]);
+    api.fetchPendingInvites.mockResolvedValue([]);
+    api.fetchOwnershipTransfers.mockResolvedValue([]);
   });
 
   it("selects the first authorized workspace and switches only to listed workspaces", async () => {
@@ -130,5 +160,36 @@ describe("WorkspaceProvider", () => {
     expect(api.renameWorkspace).toHaveBeenCalledWith("workspace-1", "Casa renomeada");
     expect(api.archiveWorkspace).toHaveBeenCalledWith("workspace-1");
     expect(api.restoreWorkspace).toHaveBeenCalledWith("workspace-2");
+  });
+
+  it("handles pending invites and ownership transfer lifecycle through context actions", async () => {
+    api.fetchWorkspaces.mockResolvedValue([
+      { id: "workspace-2", name: "Equipe", kind: "shared", role: "owner", status: "active" },
+    ]);
+    api.fetchPendingInvites.mockResolvedValue([
+      { id: "invite-1", householdId: "workspace-2", email: "guest@example.com", role: "member", expiresAt: "2026-09-01T00:00:00.000Z" },
+    ]);
+    api.fetchOwnershipTransfers.mockResolvedValue([
+      { id: "transfer-1", householdId: "workspace-2", fromUserId: "user-1", toUserId: "user-2", status: "pending", createdAt: "2026-08-30T00:00:00.000Z" },
+    ]);
+
+    const user = userEvent.setup();
+    render(<WorkspaceProvider><Probe /></WorkspaceProvider>);
+
+    expect(await screen.findByTestId("active")).toHaveTextContent("Equipe");
+    expect(await screen.findByTestId("invites-count")).toHaveTextContent("1");
+    expect(await screen.findByTestId("transfers-count")).toHaveTextContent("1");
+
+    await user.click(screen.getByRole("button", { name: "Resend Invite" }));
+    expect(api.resendWorkspaceInvite).toHaveBeenCalledWith("workspace-2", "invite-1");
+
+    await user.click(screen.getByRole("button", { name: "Revoke Invite" }));
+    expect(api.revokeWorkspaceInvite).toHaveBeenCalledWith("workspace-2", "invite-1");
+
+    await user.click(screen.getByRole("button", { name: "Transfer Ownership" }));
+    expect(api.createOwnershipTransfer).toHaveBeenCalledWith("workspace-2", "user-2");
+
+    await user.click(screen.getByRole("button", { name: "Accept Transfer" }));
+    expect(api.acceptOwnershipTransfer).toHaveBeenCalledWith("workspace-2", "transfer-1");
   });
 });

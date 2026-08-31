@@ -5,16 +5,24 @@ import { isApiConfigured, clearActiveWorkspaceId, setActiveWorkspaceId } from "@
 import { clearSensitiveSession } from "@/lib/session";
 import { closeAllSockets } from "./socket-registry";
 import {
+  acceptOwnershipTransfer,
   acceptWorkspaceInvite,
+  createOwnershipTransfer,
   createWorkspace as createWorkspaceRequest,
   createWorkspaceInvite,
+  fetchOwnershipTransfers,
+  fetchPendingInvites,
   fetchWorkspaceMembers,
   fetchWorkspaces,
   leaveWorkspace,
   removeWorkspaceMember,
   renameWorkspace as renameWorkspaceRequest,
+  resendWorkspaceInvite,
+  revokeWorkspaceInvite,
   archiveWorkspace as archiveWorkspaceRequest,
   restoreWorkspace as restoreWorkspaceRequest,
+  type OwnershipTransfer,
+  type PendingInvite,
   type Workspace,
   type WorkspaceMember,
 } from "@/lib/api/workspaces";
@@ -31,19 +39,29 @@ export interface WorkspaceContextValue {
   workspaces: Workspace[];
   activeWorkspace: Workspace | null;
   members: WorkspaceMember[];
+  pendingInvites: PendingInvite[];
+  ownershipTransfers: OwnershipTransfer[];
   loading: boolean;
   membersLoading: boolean;
+  pendingInvitesLoading: boolean;
+  ownershipTransfersLoading: boolean;
   error: string | null;
   selectWorkspace: (workspaceId: string) => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
   refreshMembers: () => Promise<void>;
+  refreshPendingInvites: () => Promise<void>;
+  refreshOwnershipTransfers: () => Promise<void>;
   createWorkspace: (input: { name: string; kind: "personal" | "shared" }) => Promise<Workspace>;
   renameWorkspace: (workspaceId: string, name: string) => Promise<void>;
   archiveWorkspace: (workspaceId: string) => Promise<void>;
   restoreWorkspace: (workspaceId: string) => Promise<void>;
   inviteMember: (email: string) => Promise<void>;
+  resendInvite: (inviteId: string) => Promise<void>;
+  revokeInvite: (inviteId: string) => Promise<void>;
   acceptInvite: (token: string) => Promise<void>;
   removeMember: (userId: string) => Promise<void>;
+  transferOwnership: (toUserId: string) => Promise<void>;
+  acceptTransfer: (transferId: string) => Promise<void>;
   leave: () => Promise<void>;
 }
 
@@ -60,8 +78,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     isApiConfigured() ? undefined : MOCK_DEFAULT_WORKSPACE.id,
   );
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
+  const [ownershipTransfers, setOwnershipTransfers] = useState<OwnershipTransfer[]>([]);
   const [loading, setLoading] = useState(() => isApiConfigured());
   const [membersLoading, setMembersLoading] = useState(false);
+  const [pendingInvitesLoading, setPendingInvitesLoading] = useState(false);
+  const [ownershipTransfersLoading, setOwnershipTransfersLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refreshWorkspaces = useCallback(async () => {
@@ -156,26 +178,80 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }, [activeWorkspace]);
 
+  const refreshPendingInvites = useCallback(async () => {
+    if (!activeWorkspace || !isApiConfigured() || activeWorkspace.kind !== "shared" || activeWorkspace.role !== "owner") {
+      setPendingInvites([]);
+      return;
+    }
+    setPendingInvitesLoading(true);
+    try {
+      const invites = await fetchPendingInvites(activeWorkspace.id);
+      setPendingInvites(invites);
+    } catch {
+      // Do not overwrite on transient errors
+    } finally {
+      setPendingInvitesLoading(false);
+    }
+  }, [activeWorkspace]);
+
+  const refreshOwnershipTransfers = useCallback(async () => {
+    if (!activeWorkspace || !isApiConfigured() || activeWorkspace.kind !== "shared") {
+      setOwnershipTransfers([]);
+      return;
+    }
+    setOwnershipTransfersLoading(true);
+    try {
+      const transfers = await fetchOwnershipTransfers(activeWorkspace.id);
+      setOwnershipTransfers(transfers);
+    } catch {
+      // 403 or non-authorized fallback
+      setOwnershipTransfers([]);
+    } finally {
+      setOwnershipTransfersLoading(false);
+    }
+  }, [activeWorkspace]);
+
   useEffect(() => {
     let cancelled = false;
     if (!activeWorkspace || !isApiConfigured()) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMembers([]);
+      setPendingInvites([]);
+      setOwnershipTransfers([]);
       return () => {
         cancelled = true;
       };
     }
-    async function loadMembers(workspaceId: string) {
-      try {
-        const nextMembers = await fetchWorkspaceMembers(workspaceId);
-        if (!cancelled) setMembers(nextMembers);
-      } catch {
+    async function loadDetails(workspaceId: string, role: "owner" | "member", kind: "personal" | "shared") {
+      if (kind === "shared") {
+        try {
+          const nextMembers = await fetchWorkspaceMembers(workspaceId);
+          if (!cancelled) setMembers(nextMembers);
+        } catch {}
+
+        if (role === "owner") {
+          try {
+            const nextInvites = await fetchPendingInvites(workspaceId);
+            if (!cancelled) setPendingInvites(nextInvites);
+          } catch {}
+        } else {
+          if (!cancelled) setPendingInvites([]);
+        }
+
+        try {
+          const nextTransfers = await fetchOwnershipTransfers(workspaceId);
+          if (!cancelled) setOwnershipTransfers(nextTransfers);
+        } catch {
+          if (!cancelled) setOwnershipTransfers([]);
+        }
+      } else {
         if (!cancelled) {
-          // Do not overwrite members on transient errors
+          setMembers([]);
+          setPendingInvites([]);
+          setOwnershipTransfers([]);
         }
       }
     }
-    void loadMembers(activeWorkspace.id);
+    void loadDetails(activeWorkspace.id, activeWorkspace.role, activeWorkspace.kind);
     return () => {
       cancelled = true;
     };
@@ -222,7 +298,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const inviteMember = useCallback(async (email: string) => {
     if (!activeWorkspace) throw new Error("Selecione um workspace compartilhado.");
     await createWorkspaceInvite(activeWorkspace.id, email);
-  }, [activeWorkspace]);
+    await refreshPendingInvites();
+  }, [activeWorkspace, refreshPendingInvites]);
+
+  const resendInvite = useCallback(async (inviteId: string) => {
+    if (!activeWorkspace) throw new Error("Selecione um workspace compartilhado.");
+    await resendWorkspaceInvite(activeWorkspace.id, inviteId);
+    await refreshPendingInvites();
+  }, [activeWorkspace, refreshPendingInvites]);
+
+  const revokeInvite = useCallback(async (inviteId: string) => {
+    if (!activeWorkspace) throw new Error("Selecione um workspace compartilhado.");
+    await revokeWorkspaceInvite(activeWorkspace.id, inviteId);
+    await refreshPendingInvites();
+  }, [activeWorkspace, refreshPendingInvites]);
 
   const acceptInvite = useCallback(async (token: string) => {
     await acceptWorkspaceInvite(token.trim());
@@ -235,6 +324,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     await refreshMembers();
   }, [activeWorkspace, refreshMembers]);
 
+  const transferOwnership = useCallback(async (toUserId: string) => {
+    if (!activeWorkspace) throw new Error("Selecione um workspace.");
+    await createOwnershipTransfer(activeWorkspace.id, toUserId);
+    await refreshOwnershipTransfers();
+  }, [activeWorkspace, refreshOwnershipTransfers]);
+
+  const acceptTransfer = useCallback(async (transferId: string) => {
+    if (!activeWorkspace) throw new Error("Selecione um workspace.");
+    await acceptOwnershipTransfer(activeWorkspace.id, transferId);
+    await refreshWorkspaces();
+    await refreshMembers();
+    await refreshOwnershipTransfers();
+  }, [activeWorkspace, refreshMembers, refreshOwnershipTransfers, refreshWorkspaces]);
+
   const leave = useCallback(async () => {
     if (!activeWorkspace) throw new Error("Selecione um workspace.");
     await leaveWorkspace(activeWorkspace.id);
@@ -245,21 +348,31 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     workspaces,
     activeWorkspace,
     members,
+    pendingInvites,
+    ownershipTransfers,
     loading,
     membersLoading,
+    pendingInvitesLoading,
+    ownershipTransfersLoading,
     error,
     selectWorkspace,
     refreshWorkspaces,
     refreshMembers,
+    refreshPendingInvites,
+    refreshOwnershipTransfers,
     createWorkspace,
     renameWorkspace,
     archiveWorkspace,
     restoreWorkspace,
     inviteMember,
+    resendInvite,
+    revokeInvite,
     acceptInvite,
     removeMember,
+    transferOwnership,
+    acceptTransfer,
     leave,
-  }), [workspaces, activeWorkspace, members, loading, membersLoading, error, selectWorkspace, refreshWorkspaces, refreshMembers, createWorkspace, renameWorkspace, archiveWorkspace, restoreWorkspace, inviteMember, acceptInvite, removeMember, leave]);
+  }), [workspaces, activeWorkspace, members, pendingInvites, ownershipTransfers, loading, membersLoading, pendingInvitesLoading, ownershipTransfersLoading, error, selectWorkspace, refreshWorkspaces, refreshMembers, refreshPendingInvites, refreshOwnershipTransfers, createWorkspace, renameWorkspace, archiveWorkspace, restoreWorkspace, inviteMember, resendInvite, revokeInvite, acceptInvite, removeMember, transferOwnership, acceptTransfer, leave]);
 
   if (loading) return <main className="flex h-dvh items-center justify-center text-text-secondary">Carregando workspaces…</main>;
   return (

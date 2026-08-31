@@ -1,6 +1,11 @@
 import { apiFetch } from "./client";
 import {
   emptyResponseSchema,
+  ownershipTransferListSchema,
+  ownershipTransferSchema,
+  pendingInviteListSchema,
+  resendInviteResponseSchema,
+  revokeInviteResponseSchema,
   workspaceInviteAcceptanceSchema,
   workspaceInviteSchema,
   workspaceListSchema,
@@ -21,6 +26,25 @@ export type WorkspaceMember = {
   name: string;
   email: string;
   role: "owner" | "member";
+};
+
+export type PendingInvite = {
+  id: string;
+  householdId: string;
+  email: string;
+  role: "owner" | "member";
+  expiresAt: string;
+  createdAt?: string;
+};
+
+export type OwnershipTransfer = {
+  id: string;
+  householdId: string;
+  fromUserId: string;
+  toUserId: string;
+  status: string;
+  createdAt: string;
+  acceptedAt?: string;
 };
 
 export async function fetchWorkspaces(): Promise<Workspace[]> {
@@ -67,6 +91,80 @@ export async function fetchWorkspaceMembers(workspaceId: string): Promise<Worksp
     responseSchema: workspaceMemberListSchema,
   });
   return response.items;
+}
+
+export async function fetchPendingInvites(workspaceId: string): Promise<PendingInvite[]> {
+  const response = await apiFetch<{ items: PendingInvite[] }>(`/workspaces/${encodeURIComponent(workspaceId)}/invites`, {
+    responseSchema: pendingInviteListSchema,
+  });
+  return response.items;
+}
+
+export async function resendWorkspaceInvite(
+  workspaceId: string,
+  inviteId: string,
+): Promise<{ success: boolean; inviteId: string; email: string; expiresAt: string }> {
+  return apiFetch<{ success: boolean; inviteId: string; email: string; expiresAt: string }>(
+    `/workspaces/${encodeURIComponent(workspaceId)}/invites/${encodeURIComponent(inviteId)}/resend`,
+    {
+      method: "POST",
+      idempotencyKey: createIdempotencyKey(),
+      responseSchema: resendInviteResponseSchema,
+    },
+  );
+}
+
+export async function revokeWorkspaceInvite(
+  workspaceId: string,
+  inviteId: string,
+): Promise<{ success: boolean; inviteId: string; revokedAt?: string }> {
+  return apiFetch<{ success: boolean; inviteId: string; revokedAt?: string }>(
+    `/workspaces/${encodeURIComponent(workspaceId)}/invites/${encodeURIComponent(inviteId)}`,
+    {
+      method: "DELETE",
+      idempotencyKey: createIdempotencyKey(),
+      responseSchema: revokeInviteResponseSchema,
+    },
+  );
+}
+
+export async function fetchOwnershipTransfers(workspaceId: string): Promise<OwnershipTransfer[]> {
+  const response = await apiFetch<{ items: OwnershipTransfer[] }>(
+    `/workspaces/${encodeURIComponent(workspaceId)}/ownership-transfers`,
+    {
+      responseSchema: ownershipTransferListSchema,
+    },
+  );
+  return response.items;
+}
+
+export async function createOwnershipTransfer(
+  workspaceId: string,
+  toUserId: string,
+): Promise<OwnershipTransfer> {
+  return apiFetch<OwnershipTransfer>(
+    `/workspaces/${encodeURIComponent(workspaceId)}/ownership-transfers`,
+    {
+      method: "POST",
+      body: JSON.stringify({ toUserId }),
+      idempotencyKey: createIdempotencyKey(),
+      responseSchema: ownershipTransferSchema,
+    },
+  );
+}
+
+export async function acceptOwnershipTransfer(
+  workspaceId: string,
+  transferId: string,
+): Promise<OwnershipTransfer> {
+  return apiFetch<OwnershipTransfer>(
+    `/workspaces/${encodeURIComponent(workspaceId)}/ownership-transfers/${encodeURIComponent(transferId)}/accept`,
+    {
+      method: "POST",
+      idempotencyKey: createIdempotencyKey(),
+      responseSchema: ownershipTransferSchema,
+    },
+  );
 }
 
 export async function createWorkspaceInvite(workspaceId: string, email: string, expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)): Promise<{ inviteId: string; email: string; expiresAt: string }> {
