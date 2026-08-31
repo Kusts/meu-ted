@@ -81,4 +81,96 @@ describe('G0.4.2 — composed idempotency identity', () => {
     expect(otherOperation.replayed).toBe(false);
     expect(effects).toBe(3);
   });
+
+  it('ensures single-flight execution for four simultaneous lookupOrRecord calls with same key and payload', async () => {
+    const store = createInMemoryIdempotencyStore();
+    let producerExecutions = 0;
+    let releaseProducer!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseProducer = resolve;
+    });
+
+    const producer = async () => {
+      producerExecutions++;
+      await gate;
+      return { createdId: 'tx-123', status: 'ok' };
+    };
+
+    const req = request({ key: 'concurrent-single-flight-key' });
+    const payload = { amountCents: 10000, description: 'Single flight test' };
+
+    // Launch 4 simultaneous calls
+    const promise1 = store.lookupOrRecord(req, payload, producer);
+    const promise2 = store.lookupOrRecord(req, payload, producer);
+    const promise3 = store.lookupOrRecord(req, payload, producer);
+    const promise4 = store.lookupOrRecord(req, payload, producer);
+
+    // Release the single in-flight producer
+    releaseProducer();
+
+    const [res1, res2, res3, res4] = await Promise.all([promise1, promise2, promise3, promise4]);
+
+    // Producer must execute exactly once
+    expect(producerExecutions).toBe(1);
+
+    // All results must receive canonical response
+    expect(res1.response).toEqual({ createdId: 'tx-123', status: 'ok' });
+    expect(res2.response).toEqual({ createdId: 'tx-123', status: 'ok' });
+    expect(res3.response).toEqual({ createdId: 'tx-123', status: 'ok' });
+    expect(res4.response).toEqual({ createdId: 'tx-123', status: 'ok' });
+
+    // One is original, remaining three are replayed
+    const replayedFlags = [res1.replayed, res2.replayed, res3.replayed, res4.replayed];
+    expect(replayedFlags.filter((f) => !f)).toHaveLength(1);
+    expect(replayedFlags.filter((f) => f)).toHaveLength(3);
+  });
+
+  it('rejects with conflict when concurrent in-flight request uses same key with different payload', async () => {
+    const store = createInMemoryIdempotencyStore();
+    let releaseProducer!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseProducer = resolve;
+    });
+
+    const producer = async () => {
+      await gate;
+      return { success: true };
+    };
+
+    const req = request({ key: 'in-flight-conflict-key' });
+
+    const promise1 = store.lookupOrRecord(req, { amountCents: 5000 }, producer);
+    const promiseConflict = store.lookupOrRecord(req, { amountCents: 9000 }, producer);
+
+    releaseProducer();
+
+    await expect(promiseConflict).rejects.toMatchObject({ code: 'idempotency.conflict' });
+    const res1 = await promise1;
+    expect(res1.replayed).toBe(false);
+  });
+
+  it('clears in-flight tracking on producer failure allowing subsequent retry to execute', async () => {
+    const store = createInMemoryIdempotencyStore();
+    let attempt = 0;
+
+    const failingThenSucceedingProducer = async () => {
+      attempt++;
+      if (attempt === 1) {
+        throw new Error('Database temporary timeout');
+      }
+      return { attempt, success: true };
+    };
+
+    const req = request({ key: 'in-flight-failure-retry-key' });
+    const payload = { amountCents: 7500 };
+
+    // First attempt fails
+    await expect(store.lookupOrRecord(req, payload, failingThenSucceedingProducer)).rejects.toThrow('Database temporary timeout');
+
+    // Second attempt (retry) must execute successfully without being stuck in flight or cached
+    const retry = await store.lookupOrRecord(req, payload, failingThenSucceedingProducer);
+    expect(retry.replayed).toBe(false);
+    expect(retry.response).toEqual({ attempt: 2, success: true });
+    expect(attempt).toBe(2);
+  });
 });

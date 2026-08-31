@@ -71,6 +71,7 @@ export const createIdempotencyRequest = (
 
 export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
   const store = new Map<string, IdempotencyEntry<unknown>>();
+  const inFlight = new Map<string, { payloadHash: string; promise: Promise<unknown> }>();
 
   const evictExpired = (now: number): void => {
     for (const [k, v] of store.entries()) {
@@ -115,12 +116,40 @@ export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
         }
       }
 
-      const response = await producer();
-      store.set(composite, { payloadHash, response, createdAt: now });
-      return { response, replayed: false };
+      const flight = inFlight.get(composite);
+      if (flight) {
+        if (flight.payloadHash !== payloadHash) {
+          throw domainErrors.idempotencyConflict();
+        }
+        const response = await flight.promise;
+        return { response: response as never, replayed: true };
+      }
+
+      let resolveFlight!: (val: unknown) => void;
+      let rejectFlight!: (err: unknown) => void;
+      const flightPromise = new Promise<unknown>((res, rej) => {
+        resolveFlight = res;
+        rejectFlight = rej;
+      });
+      flightPromise.catch(() => undefined);
+
+      inFlight.set(composite, { payloadHash, promise: flightPromise });
+
+      try {
+        const response = await producer();
+        store.set(composite, { payloadHash, response, createdAt: Date.now() });
+        resolveFlight(response);
+        return { response, replayed: false };
+      } catch (err) {
+        rejectFlight(err);
+        throw err;
+      } finally {
+        inFlight.delete(composite);
+      }
     },
     clear() {
       store.clear();
+      inFlight.clear();
     },
   };
 };
