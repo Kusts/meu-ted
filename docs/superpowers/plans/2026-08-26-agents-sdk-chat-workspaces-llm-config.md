@@ -152,7 +152,7 @@
 - Modify: `apps/api/src/routes/route-handlers.ts`
 - Modify: `apps/api/src/env.ts`
 - Modify: `apps/api/src/server/index.ts`
-- Create: `docs/adr/006-global-agent-llm-configuration.md`
+- Create: `docs/adr/009-global-agent-llm-configuration.md`
 - Test: `apps/api/tests/agent/llm-config.test.ts`
 - Test: `apps/api/tests/integration/postgres-agent-llm-config.test.ts`
 - Test: `apps/api/tests/routes/admin-agent-llm-config.test.ts`
@@ -477,7 +477,7 @@ pnpm --filter pwa typecheck
 - Modify: `docs/ROADMAP.md`
 - Modify: `docs/architecture/runtime-facts.json`
 - Modify: `docs/adr/005-generated-agent-tools.md`
-- Modify: `docs/adr/006-global-agent-llm-configuration.md`
+- Modify: `docs/adr/009-global-agent-llm-configuration.md`
 
 - [ ] **Step 1: E2E local determinístico.** Usar provider fake controlado para provar login, troca de workspace, conversa compartilhada, isolamento, stream/reconnect, approval e configuração admin sem gastar tokens.
 - [ ] **Step 2: E2E móvel.** Playwright em viewport iPhone prova fullscreen, safe area, teclado, scroll para última mensagem, stop e retomada.

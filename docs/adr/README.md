@@ -14,6 +14,7 @@ Este diretório contém o registro imutável de decisões de arquitetura do proj
 | [ADR-006](006-runtime-ownership-retirement.md) | State Machine de Runtime Ownership e Aposentadoria do Legado | accepted | 2026-08-18 | D06 |
 | [ADR-007](007-production-topology.md) | Topologia de Produção e Separação Edge / VPS | accepted | 2026-08-18 | D07 |
 | [ADR-008](008-consent-rollback-policy.md) | Política de Consentimento e Proteção de Rollback | accepted | 2026-08-18 | D08 |
+| [ADR-009](009-global-agent-llm-configuration.md) | Configuração Global de LLM para o Agent TED | accepted | 2026-08-26 | D06 |
 
 ## Template para Novos ADRs
 

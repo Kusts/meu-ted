@@ -1,4 +1,4 @@
-# ADR-006: Configuração Global de LLM para o Agent TED
+# ADR-009: Configuração Global de LLM para o Agent TED
 
 **Status:** accepted
 **Date:** 2026-08-26
