@@ -1,6 +1,6 @@
 # PI Financeiro — Arquitetura Atual
 
-**Last verified:** 2026-08-26  
+**Last verified:** 2026-08-31
 **Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)  
 
 ## 1. Visão Geral da Topologia
@@ -10,9 +10,7 @@ A arquitetura do PI Financeiro opera em modelo híbrido entre Borda (Cloudflare)
 ```mermaid
 graph TD
     User([Usuário]) --> PWA[PWA - apps/pwa<br/>Cloudflare Pages / OpenNext]
-    User --> WhatsApp[WhatsApp Messaging<br/>(Transição P3)]
-    WhatsApp --> Bridge[whatsapp-bridge<br/>Hostinger VPS]
-    Bridge --> Agent[Agent Worker - apps/agent<br/>Cloudflare Workers / DO]
+    User --> Agent[Agent Worker - apps/agent<br/>Cloudflare Workers / DO]
     PWA --> API[Fastify API - apps/api<br/>Hostinger VPS pi-stack]
     Agent --> API
     API --> Postgres[(PostgreSQL 16 DB<br/>Hostinger VPS)]
@@ -45,4 +43,3 @@ graph TD
 - **Isolamento e Idempotência:**
   - Garantia de que nenhuma requisição ou agente acesse registros fora do workspace associado.
   - Mutações protegidas contra repetição acidental via `Idempotency-Key` e tabela `idempotency_keys`.
-
