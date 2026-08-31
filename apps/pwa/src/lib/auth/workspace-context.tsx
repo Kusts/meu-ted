@@ -213,24 +213,24 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    if (!activeWorkspace || !isApiConfigured()) {
-      setMembers([]);
-      setPendingInvites([]);
-      setOwnershipTransfers([]);
-      return () => {
-        cancelled = true;
-      };
-    }
-    async function loadDetails(workspaceId: string, role: "owner" | "member", kind: "personal" | "shared") {
-      if (kind === "shared") {
+    async function loadDetails() {
+      if (!activeWorkspace || !isApiConfigured()) {
+        if (!cancelled) {
+          setMembers([]);
+          setPendingInvites([]);
+          setOwnershipTransfers([]);
+        }
+        return;
+      }
+      if (activeWorkspace.kind === "shared") {
         try {
-          const nextMembers = await fetchWorkspaceMembers(workspaceId);
+          const nextMembers = await fetchWorkspaceMembers(activeWorkspace.id);
           if (!cancelled) setMembers(nextMembers);
         } catch {}
 
-        if (role === "owner") {
+        if (activeWorkspace.role === "owner") {
           try {
-            const nextInvites = await fetchPendingInvites(workspaceId);
+            const nextInvites = await fetchPendingInvites(activeWorkspace.id);
             if (!cancelled) setPendingInvites(nextInvites);
           } catch {}
         } else {
@@ -238,7 +238,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
 
         try {
-          const nextTransfers = await fetchOwnershipTransfers(workspaceId);
+          const nextTransfers = await fetchOwnershipTransfers(activeWorkspace.id);
           if (!cancelled) setOwnershipTransfers(nextTransfers);
         } catch {
           if (!cancelled) setOwnershipTransfers([]);
@@ -251,7 +251,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
       }
     }
-    void loadDetails(activeWorkspace.id, activeWorkspace.role, activeWorkspace.kind);
+    void loadDetails();
     return () => {
       cancelled = true;
     };

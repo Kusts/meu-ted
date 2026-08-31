@@ -29,9 +29,6 @@ export function AgentTranscript({ open, workspaceId, onClose = () => {} }: Agent
     if (!open) return;
     let cancelled = false;
 
-    setHistoryError(null);
-    setMessages([]);
-    setPendingOps([]);
     fetchAgentHistory(workspaceId)
       .then((items) => {
         if (cancelled) return;

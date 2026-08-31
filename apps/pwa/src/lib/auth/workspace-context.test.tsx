@@ -67,8 +67,8 @@ function Probe() {
     <button onClick={async () => {
       try {
         await refreshMembers();
-      } catch (e: any) {
-        setRefreshError(e.message);
+      } catch (e) {
+        setRefreshError(e instanceof Error ? e.message : String(e));
       }
     }}>Refresh Members</button>
     {workspaces.map((workspace) => <button key={workspace.id} onClick={() => selectWorkspace(workspace.id)}>{workspace.name}</button>)}

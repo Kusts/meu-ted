@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "fake-indexeddb/auto";
 import { runBootstrap } from "../sync-engine";
+import { type AppStateAction } from "../state-reducer";
 import { ApiError } from "@/lib/api/client";
 import * as endpoints from "@/lib/api/endpoints";
 
@@ -25,8 +26,8 @@ describe("Bootstrap resilience and finite state transitions", () => {
   });
 
   it("short-circuits on 401, calls expireSession and dispatches BOOTSTRAP_401 to exit loading", async () => {
-    const actions: any[] = [];
-    const dispatch = (action: any) => actions.push(action);
+    const actions: AppStateAction[] = [];
+    const dispatch = (action: AppStateAction) => actions.push(action);
     const expireSession = vi.fn();
 
     vi.mocked(endpoints.fetchAccounts).mockRejectedValue(new ApiError(401, "auth.invalid_token", "Invalid token"));
@@ -50,8 +51,8 @@ describe("Bootstrap resilience and finite state transitions", () => {
   });
 
   it("completes bootstrap with BOOTSTRAP_COMPLETE even when endpoints time out (408) with snapshot preload fallback", async () => {
-    const actions: any[] = [];
-    const dispatch = (action: any) => actions.push(action);
+    const actions: AppStateAction[] = [];
+    const dispatch = (action: AppStateAction) => actions.push(action);
     const expireSession = vi.fn();
 
     // Accounts times out with 408
@@ -80,8 +81,8 @@ describe("Bootstrap resilience and finite state transitions", () => {
   });
 
   it("completes bootstrap with BOOTSTRAP_COMPLETE even when snapshot writes fail", async () => {
-    const actions: any[] = [];
-    const dispatch = (action: any) => actions.push(action);
+    const actions: AppStateAction[] = [];
+    const dispatch = (action: AppStateAction) => actions.push(action);
     const expireSession = vi.fn();
 
     vi.mocked(endpoints.fetchAccounts).mockResolvedValue([{ id: "acc-1", name: "Checking", kind: "bank", balanceCents: 100, isActive: true }]);
