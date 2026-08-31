@@ -62,10 +62,10 @@ describe('workspace production composition', () => {
     await auth.close();
   });
 
-  it('does NOT mount invite routes with a silent no-op when inviteDelivery is omitted', async () => {
+  it('mounts protected invite routes when inviteDelivery is omitted', async () => {
     const auth = makeAuth();
     const app = Fastify({ logger: false });
-    // inviteDelivery omitted
+    // inviteDelivery omitted: management remains available but delivery fails closed.
     registerPostgresProductionRoutes(app, mockPool, false, HOUSEHOLD_A, auth, undefined);
 
     const inviteRes = await app.inject({
@@ -73,14 +73,13 @@ describe('workspace production composition', () => {
       url: '/auth/invites',
       payload: { householdId: HOUSEHOLD_A, email: 'guest@example.com', role: 'member', expiresAt: new Date().toISOString() },
     });
-    // Must return 404 because no inviteService is registered without explicit delivery
-    expect(inviteRes.statusCode).toBe(404);
+    expect(inviteRes.statusCode).toBe(401);
 
     await app.close();
     await auth.close();
   });
 
-  it('mounts invite routes only when explicit inviteDelivery is provided', async () => {
+  it('mounts protected invite routes when explicit inviteDelivery is provided', async () => {
     const auth = makeAuth();
     const explicitDelivery = async () => undefined;
     const app = Fastify({ logger: false });

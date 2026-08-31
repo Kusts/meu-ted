@@ -86,6 +86,28 @@ describe('legacy production composition', () => {
     await auth.close();
   });
 
+  it('mounts invite management routes without a delivery provider', async () => {
+    const auth = createBetterAuth({
+      database: memoryAdapter({ user: [], session: [], account: [], verification: [] }),
+      disableSignUp: false,
+      transaction: false,
+      secret: 'test-secret-that-is-at-least-32-characters',
+      baseURL: 'http://localhost:3001',
+      trustedOrigins: ['http://localhost:3000'],
+    });
+    const app = Fastify({ logger: false });
+    registerPostgresProductionRoutes(app, legacyPool, true, HOUSEHOLD_A, auth);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/workspaces/${HOUSEHOLD_A}/invites`,
+    });
+
+    expect(response.statusCode).toBe(401);
+    await app.close();
+    await auth.close();
+  });
+
   it('serves canonical entity filters through production HTTP wiring', async () => {
     const canonicalPool = {
       async query(sql: string, values: unknown[] = []) {

@@ -24,7 +24,7 @@ describe('production invite runtime', () => {
     }
   });
 
-  it('builds the invite service only with explicit delivery and authorizes shared owners', async () => {
+  it('keeps invite management available without delivery and fails creation closed', async () => {
     const workspaceAccess: WorkspaceAccessStore = {
       async resolve(userId, householdId) {
         return {
@@ -38,7 +38,18 @@ describe('production invite runtime', () => {
     const pool = {} as Pool;
     const delivery = async () => undefined;
 
-    expect(createPostgresInviteRuntime({ pool, workspaceAccess })).toEqual({});
+    const runtimeWithoutDelivery = createPostgresInviteRuntime({ pool, workspaceAccess });
+    expect(runtimeWithoutDelivery.inviteService).toBeDefined();
+    await expect(runtimeWithoutDelivery.inviteService?.createInvite({
+      householdId: 'shared-id',
+      email: 'guest@example.com',
+      role: 'member',
+      invitedByUserId: 'owner-user',
+      expiresAt: new Date(Date.now() + 60_000),
+    })).rejects.toMatchObject({
+      code: 'invite.delivery_unavailable',
+      statusCode: 503,
+    });
 
     const runtime = createPostgresInviteRuntime({ pool, workspaceAccess, delivery });
     expect(runtime.inviteService).toBeDefined();

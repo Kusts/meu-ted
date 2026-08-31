@@ -77,7 +77,7 @@ export type CreateInviteInput = {
 export class InviteError extends Error {
   constructor(
     message: string,
-    readonly code: 'invite.invalid_email' | 'invite.not_found' | 'invite.expired' | 'invite.already_used' | 'invite.revoked' | 'invite.user_not_found' | 'invite.email_mismatch',
+    readonly code: 'invite.invalid_email' | 'invite.not_found' | 'invite.expired' | 'invite.already_used' | 'invite.revoked' | 'invite.user_not_found' | 'invite.email_mismatch' | 'invite.delivery_unavailable',
     readonly statusCode = 400,
   ) {
     super(message);

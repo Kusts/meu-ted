@@ -24,7 +24,7 @@ import {
   createPostgresWriteStore,
 } from "../writes/postgres.js";
 import { createLegacyPostgresAuditLogStore, createPostgresAuditLogStore } from "../audit/store.js";
-import { createInviteService } from "../auth/invites.js";
+import { InviteError, createInviteService } from "../auth/invites.js";
 import { createPostgresInviteStore } from "../auth/invites-postgres.js";
 import { createPostgresWorkspaceStore } from "../auth/workspaces-postgres.js";
 import { createPostgresWorkspaceAccessStore } from "../auth/workspace-access.js";
@@ -45,11 +45,19 @@ export const createPostgresInviteRuntime = (input: {
   delivery?: InviteDelivery | undefined;
 }): PostgresInviteRuntime => {
   const { workspaceAccess, delivery } = input;
-  if (!workspaceAccess || !delivery) return {};
+  if (!workspaceAccess) return {};
+
+  const deliver = delivery ?? (async () => {
+    throw new InviteError(
+      "invite delivery is not configured",
+      "invite.delivery_unavailable",
+      503,
+    );
+  });
 
   const inviteService = createInviteService({
     store: createPostgresInviteStore(input.pool),
-    deliver: delivery,
+    deliver,
   });
 
   return {
