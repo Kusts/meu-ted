@@ -148,4 +148,102 @@ describe('Postgres invite store', () => {
     expect(reRevoked.householdId).toBe(record.householdId);
     expect(reRevoked.revokedAt).toEqual(originalRevokedAt);
   });
+
+  it('fetches pending invite and activates resent invite with CAS in postgres store', async () => {
+    const queries: string[] = [];
+    const newTokenHash = 'new-token-hash-123456';
+    const pool = {
+      query: async (text: string) => {
+        queries.push(text);
+        if (text.includes('SELECT') && text.includes('FROM invites')) {
+          return {
+            rows: [{
+              id: record.id,
+              household_id: record.householdId,
+              email: record.email,
+              email_normalized: record.email,
+              role: record.role,
+              token_hash: record.tokenHash,
+              expires_at: record.expiresAt,
+              consumed_at: null,
+              revoked_at: null,
+              invited_by: 'app-user-1',
+              created_at: new Date('2028-01-01T00:00:00.000Z'),
+            }],
+            rowCount: 1,
+          };
+        }
+        if (text.includes('UPDATE invites') && text.includes('token_hash = $3')) {
+          return {
+            rows: [{
+              id: record.id,
+              household_id: record.householdId,
+              email_normalized: record.email,
+              role: record.role,
+              token_hash: newTokenHash,
+              expires_at: new Date('2031-01-01T00:00:00.000Z'),
+              consumed_at: null,
+              revoked_at: null,
+              invited_by: 'app-user-1',
+              created_at: new Date('2028-01-01T00:00:00.000Z'),
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    } as unknown as Pool;
+    const store = createPostgresInviteStore(pool);
+
+    const pending = await store.getPendingInvite(record.householdId, record.id);
+    expect(pending.id).toBe(record.id);
+    expect(pending.tokenHash).toBe(record.tokenHash);
+
+    const activated = await store.activateResentInvite({
+      householdId: record.householdId,
+      inviteId: record.id,
+      expectedTokenHash: record.tokenHash,
+      newTokenHash,
+      newExpiresAt: new Date('2031-01-01T00:00:00.000Z'),
+      now: new Date('2029-01-01T00:00:00.000Z'),
+    });
+
+    expect(activated.id).toBe(record.id);
+    expect(activated.tokenHash).toBe(newTokenHash);
+    expect(queries.some((q) => q.includes('token_hash = $3') && q.includes('token_hash = $4'))).toBe(true);
+  });
+
+  it('rejects activateResentInvite with 409 when CAS token_hash does not match in postgres store', async () => {
+    const pool = {
+      query: async (text: string) => {
+        if (text.includes('UPDATE invites')) {
+          // CAS mismatch (rowCount 0)
+          return { rows: [], rowCount: 0 };
+        }
+        if (text.includes('SELECT id, consumed_at, revoked_at, token_hash FROM invites')) {
+          // Invite exists but token_hash was already changed
+          return {
+            rows: [{
+              id: record.id,
+              consumed_at: null,
+              revoked_at: null,
+              token_hash: 'concurrent-newer-hash',
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    } as unknown as Pool;
+    const store = createPostgresInviteStore(pool);
+
+    await expect(store.activateResentInvite({
+      householdId: record.householdId,
+      inviteId: record.id,
+      expectedTokenHash: 'stale-expected-hash',
+      newTokenHash: 'new-hash-attempt',
+      newExpiresAt: new Date('2031-01-01T00:00:00.000Z'),
+      now: new Date('2029-01-01T00:00:00.000Z'),
+    })).rejects.toMatchObject({ code: 'invite.already_used', statusCode: 409 });
+  });
 });

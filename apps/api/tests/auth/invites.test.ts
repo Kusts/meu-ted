@@ -183,4 +183,188 @@ describe('invite flow', () => {
       now: new Date('2029-01-01T00:00:00.000Z'),
     })).rejects.toMatchObject({ code: 'invite.revoked', statusCode: 410 });
   });
+
+  it('resends a pending invite: delivers a new token, invalidates old token, and allows acceptance with new token', async () => {
+    const { service, store, deliveries } = makeService([{ id: 'user-1', email: 'resend@example.com' }]);
+
+    const created = await service.createInvite({
+      householdId,
+      email: 'resend@example.com',
+      role: 'member',
+      invitedByUserId: 'owner-1',
+      expiresAt: new Date('2030-01-01T00:00:00.000Z'),
+    });
+
+    const oldToken = deliveries[0]!.token;
+
+    // Resend invite
+    const resendResult = await service.resendInvite({
+      householdId,
+      inviteId: created.id,
+      now: new Date('2029-01-01T00:00:00.000Z'),
+    });
+
+    expect(resendResult.id).toBe(created.id);
+    expect(resendResult.email).toBe('resend@example.com');
+    expect(deliveries).toHaveLength(2);
+
+    const newToken = deliveries[1]!.token;
+    expect(newToken).not.toBe(oldToken);
+
+    // Old token must now fail to be accepted
+    await expect(service.acceptInvite({
+      token: oldToken,
+      userId: 'user-1',
+      userEmail: 'resend@example.com',
+      now: new Date('2029-01-02T00:00:00.000Z'),
+    })).rejects.toMatchObject({ code: 'invite.not_found', statusCode: 404 });
+
+    // New token must succeed
+    const accepted = await service.acceptInvite({
+      token: newToken,
+      userId: 'user-1',
+      userEmail: 'resend@example.com',
+      now: new Date('2029-01-02T00:00:00.000Z'),
+    });
+    expect(accepted.inviteId).toBe(created.id);
+    expect(store.listMemberships()).toEqual([{ householdId, role: 'member', userId: 'user-1' }]);
+  });
+
+  it('compensates createInvite when deliver fails: no active pending invite remains and retry creates only 1 valid invite', async () => {
+    const store = createInMemoryInviteStore({ users: [{ id: 'user-1', email: 'fail@example.com' }] });
+    let shouldFailDelivery = true;
+    const deliveries: Array<{ token: string; email: string }> = [];
+    const service = createInviteService({
+      store,
+      deliver: async (msg) => {
+        if (shouldFailDelivery) throw new Error('SMTP connection timed out');
+        deliveries.push(msg);
+      },
+    });
+
+    // 1. Creation attempt fails during deliver
+    await expect(service.createInvite({
+      householdId,
+      email: 'fail@example.com',
+      role: 'member',
+      invitedByUserId: 'owner-1',
+      expiresAt: new Date('2030-01-01T00:00:00.000Z'),
+    })).rejects.toThrow('SMTP connection timed out');
+
+    // 2. No pending invite remains active
+    const pendingAfterFailure = await service.listPendingInvites({ householdId, now: new Date('2029-01-01T00:00:00.000Z') });
+    expect(pendingAfterFailure).toHaveLength(0);
+
+    // 3. Retry with delivery succeeding creates exactly 1 active invite
+    shouldFailDelivery = false;
+    const retry = await service.createInvite({
+      householdId,
+      email: 'fail@example.com',
+      role: 'member',
+      invitedByUserId: 'owner-1',
+      expiresAt: new Date('2030-01-01T00:00:00.000Z'),
+    });
+
+    const pendingAfterRetry = await service.listPendingInvites({ householdId, now: new Date('2029-01-01T00:00:00.000Z') });
+    expect(pendingAfterRetry).toHaveLength(1);
+    expect(pendingAfterRetry[0]!.id).toBe(retry.id);
+  });
+
+  it('compensates resendInvite when deliver fails: restores previous token and does not activate failed token', async () => {
+    const store = createInMemoryInviteStore({ users: [{ id: 'user-1', email: 'resendfail@example.com' }] });
+    let shouldFailResendDelivery = false;
+    const deliveredTokens: string[] = [];
+    const service = createInviteService({
+      store,
+      deliver: async (msg) => {
+        if (shouldFailResendDelivery) throw new Error('Provider 500 error');
+        deliveredTokens.push(msg.token);
+      },
+    });
+
+    // 1. Create successfully
+    const created = await service.createInvite({
+      householdId,
+      email: 'resendfail@example.com',
+      role: 'member',
+      invitedByUserId: 'owner-1',
+      expiresAt: new Date('2030-01-01T00:00:00.000Z'),
+    });
+    const originalToken = deliveredTokens[0]!;
+
+    // 2. Resend fails during deliver
+    shouldFailResendDelivery = true;
+    await expect(service.resendInvite({
+      householdId,
+      inviteId: created.id,
+      now: new Date('2029-01-01T00:00:00.000Z'),
+    })).rejects.toThrow('Provider 500 error');
+
+    // 3. Original token is STILL valid and can be accepted
+    const accepted = await service.acceptInvite({
+      token: originalToken,
+      userId: 'user-1',
+      userEmail: 'resendfail@example.com',
+      now: new Date('2029-01-02T00:00:00.000Z'),
+    });
+    expect(accepted.inviteId).toBe(created.id);
+    expect(store.listMemberships()).toHaveLength(1);
+  });
+
+  it('rejects concurrent resends with CAS conflict so only one token is activated', async () => {
+    const store = createInMemoryInviteStore({ users: [{ id: 'user-1', email: 'concurrent@example.com' }] });
+    const deliveries: Array<{ token: string; inviteId: string }> = [];
+    const service = createInviteService({
+      store,
+      deliver: async (msg) => {
+        deliveries.push({ token: msg.token, inviteId: msg.inviteId });
+      },
+    });
+
+    const created = await service.createInvite({
+      householdId,
+      email: 'concurrent@example.com',
+      role: 'member',
+      invitedByUserId: 'owner-1',
+      expiresAt: new Date('2030-01-01T00:00:00.000Z'),
+    });
+
+    const baseToken = deliveries[0]!.token;
+
+    // Simulate two concurrent resends starting from the same base state
+    const pending = await store.getPendingInvite(householdId, created.id);
+    const expectedTokenHash = pending.tokenHash;
+
+    const tokenA = 'a'.repeat(64);
+    const tokenB = 'b'.repeat(64);
+
+    // Resend A activates first
+    const activatedA = await store.activateResentInvite({
+      householdId,
+      inviteId: created.id,
+      expectedTokenHash,
+      newTokenHash: tokenA,
+      newExpiresAt: new Date('2030-02-01T00:00:00.000Z'),
+      now: new Date('2029-01-01T00:00:00.000Z'),
+    });
+    expect(activatedA.tokenHash).toBe(tokenA);
+
+    // Resend B tries to activate with stale expectedTokenHash: MUST fail with 409 conflict
+    await expect(store.activateResentInvite({
+      householdId,
+      inviteId: created.id,
+      expectedTokenHash,
+      newTokenHash: tokenB,
+      newExpiresAt: new Date('2030-02-01T00:00:00.000Z'),
+      now: new Date('2029-01-01T00:00:00.000Z'),
+    })).rejects.toMatchObject({ code: 'invite.already_used', statusCode: 409 });
+
+    // Verify token B cannot be accepted, but token A can
+    await expect(service.acceptInvite({
+      token: tokenB,
+      userId: 'user-1',
+      userEmail: 'concurrent@example.com',
+      now: new Date('2029-01-02T00:00:00.000Z'),
+    })).rejects.toMatchObject({ code: 'invite.not_found', statusCode: 404 });
+  });
 });

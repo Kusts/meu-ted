@@ -175,4 +175,44 @@ export const createPostgresInviteStore = (pool: Pool): InviteStore => ({
       };
     });
   },
+
+  async getPendingInvite(householdId, inviteId) {
+    const result = await queryInTransaction<Row>(pool,
+      `SELECT id, household_id, email, email_normalized, role, token_hash, expires_at, consumed_at, revoked_at, invited_by, created_at
+         FROM invites
+        WHERE id = $1 AND household_id = $2`,
+      [inviteId, householdId],
+    );
+    if (result.rowCount === 0) throw new InviteError('invite was not found', 'invite.not_found', 404);
+    const row = result.rows[0]!;
+    if (row['consumed_at']) throw new InviteError('invite was already used', 'invite.already_used', 409);
+    if (row['revoked_at']) throw new InviteError('invite was revoked', 'invite.revoked', 410);
+    return mapInvite(row);
+  },
+
+  async activateResentInvite({ householdId, inviteId, expectedTokenHash, newTokenHash, newExpiresAt, now = new Date() }) {
+    const result = await queryInTransaction<Row>(pool,
+      `UPDATE invites
+          SET token_hash = $4,
+              expires_at = $5
+        WHERE id = $1
+          AND household_id = $2
+          AND token_hash = $3
+          AND consumed_at IS NULL
+          AND revoked_at IS NULL
+        RETURNING id, household_id, email_normalized, role, token_hash, expires_at, consumed_at, revoked_at, invited_by, created_at`,
+      [inviteId, householdId, expectedTokenHash, newTokenHash, newExpiresAt],
+    );
+    if (result.rowCount === 0) {
+      const check = await queryInTransaction<Row>(pool,
+        `SELECT id, consumed_at, revoked_at, token_hash FROM invites WHERE id = $1 AND household_id = $2`,
+        [inviteId, householdId],
+      );
+      if (check.rowCount === 0) throw new InviteError('invite was not found', 'invite.not_found', 404);
+      if (check.rows[0]?.['consumed_at']) throw new InviteError('invite was already used', 'invite.already_used', 409);
+      if (check.rows[0]?.['revoked_at']) throw new InviteError('invite was revoked', 'invite.revoked', 410);
+      throw new InviteError('invite was modified concurrently', 'invite.already_used', 409);
+    }
+    return mapInvite(result.rows[0]!);
+  },
 });

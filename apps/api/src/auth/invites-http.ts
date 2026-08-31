@@ -150,6 +150,54 @@ export const registerInviteRoutes = (app: FastifyInstance, opts: {
 
   app.delete('/workspaces/:householdId/invites/:inviteId', { preHandler: sessionPreHandler }, handleRevoke);
   app.post('/workspaces/:householdId/invites/:inviteId/revoke', { preHandler: sessionPreHandler }, handleRevoke);
+
+  app.post('/workspaces/:householdId/invites/:inviteId/resend', { preHandler: sessionPreHandler }, async (request, reply) => {
+    const parsed = inviteRevokeParams.safeParse(request.params);
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    const context = request.betterAuthContext!;
+    if (!(await opts.authorizeCreate({ userId: context.userId, householdId: parsed.data.householdId }))) {
+      return reply.code(403).send({ code: 'auth.invite_forbidden', message: 'invite resending is not authorized' });
+    }
+
+    let key: string;
+    try {
+      key = requireIdempotencyKey(request.headers);
+    } catch (error) {
+      return sendInviteError(reply, error);
+    }
+
+    try {
+      const result = await idempotency.lookupOrRecord(
+        {
+          workspaceId: parsed.data.householdId,
+          actorType: 'user',
+          actorId: context.userId,
+          operation: 'invite.resend',
+          key,
+        },
+        { householdId: parsed.data.householdId, inviteId: parsed.data.inviteId },
+        async () => {
+          const res = await opts.service.resendInvite({
+            householdId: parsed.data.householdId,
+            inviteId: parsed.data.inviteId,
+          });
+          return {
+            status: 200,
+            body: {
+              success: true,
+              inviteId: res.id,
+              email: res.email,
+              expiresAt: res.expiresAt.toISOString(),
+            },
+          };
+        },
+      );
+      if (result.replayed) reply.header('Idempotent-Replayed', 'true');
+      return reply.code(result.response.status).send(result.response.body);
+    } catch (error) {
+      return sendInviteError(reply, error);
+    }
+  });
 };
 
 const sendInviteError = (reply: FastifyReply, error: unknown) => {

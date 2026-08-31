@@ -53,8 +53,17 @@ export type InviteStore = {
     userEmail: string;
     now: Date;
   }): Promise<{ invite: InviteRecord; membership: InviteMembership }>;
-  listPendingInvites(householdId: string, now?: Date): Promise<PendingInviteSummary[]>;
-  revokeInvite(input: { householdId: string; inviteId: string; now?: Date }): Promise<{ id: string; householdId: string; revokedAt: Date }>;
+  listPendingInvites(householdId: string, now?: Date | undefined): Promise<PendingInviteSummary[]>;
+  revokeInvite(input: { householdId: string; inviteId: string; now?: Date | undefined }): Promise<{ id: string; householdId: string; revokedAt: Date }>;
+  getPendingInvite(householdId: string, inviteId: string): Promise<InviteRecord>;
+  activateResentInvite(input: {
+    householdId: string;
+    inviteId: string;
+    expectedTokenHash: string;
+    newTokenHash: string;
+    newExpiresAt: Date;
+    now: Date;
+  }): Promise<InviteRecord>;
 };
 
 export type CreateInviteInput = {
@@ -99,7 +108,8 @@ export const createInviteService = (deps: {
       expiresAt: new Date(input.expiresAt),
       invitedByUserId: input.invitedByUserId,
     };
-    await deps.store.insertInvite(record);
+
+    // Deliver before commit: if delivery fails, nothing is persisted in the store.
     await deps.deliver({
       inviteId: record.id,
       householdId: record.householdId,
@@ -107,6 +117,9 @@ export const createInviteService = (deps: {
       token,
       expiresAt: record.expiresAt,
     });
+
+    await deps.store.insertInvite(record);
+
     return {
       id: record.id,
       householdId: record.householdId,
@@ -132,6 +145,42 @@ export const createInviteService = (deps: {
 
   async revokeInvite(input: { householdId: string; inviteId: string; now?: Date }): Promise<{ id: string; householdId: string; revokedAt: Date }> {
     return deps.store.revokeInvite(input);
+  },
+
+  async resendInvite(input: { householdId: string; inviteId: string; newExpiresAt?: Date; now?: Date }): Promise<Pick<InviteRecord, 'id' | 'householdId' | 'email' | 'role' | 'expiresAt'>> {
+    const now = input.now ?? new Date();
+    // 1. Fetch current pending invite state
+    const pending = await deps.store.getPendingInvite(input.householdId, input.inviteId);
+    const token = randomBytes(32).toString('hex');
+    const newTokenHash = hashInviteToken(token);
+    const expiresAt = input.newExpiresAt ?? (pending.expiresAt.getTime() > now.getTime() ? pending.expiresAt : new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
+
+    // 2. Deliver new token: if delivery fails, store is never mutated and previous token remains active.
+    await deps.deliver({
+      inviteId: pending.id,
+      householdId: pending.householdId,
+      email: pending.email,
+      token,
+      expiresAt,
+    });
+
+    // 3. Atomic CAS Activation: only updates if expectedTokenHash matches current state and invite is still pending.
+    const updated = await deps.store.activateResentInvite({
+      householdId: input.householdId,
+      inviteId: input.inviteId,
+      expectedTokenHash: pending.tokenHash,
+      newTokenHash,
+      newExpiresAt: expiresAt,
+      now,
+    });
+
+    return {
+      id: updated.id,
+      householdId: updated.householdId,
+      email: updated.email,
+      role: updated.role,
+      expiresAt: updated.expiresAt,
+    };
   },
 });
 
@@ -206,6 +255,39 @@ export const createInMemoryInviteStore = (input: { users: InviteUser[] }): InMem
         householdId: invite.householdId,
         revokedAt: invite.revokedAt,
       };
+    },
+
+    async getPendingInvite(householdId, inviteId) {
+      const invite = invites.get(inviteId);
+      if (!invite || invite.householdId !== householdId) {
+        throw new InviteError('invite was not found', 'invite.not_found', 404);
+      }
+      if (invite.acceptedAt) {
+        throw new InviteError('invite was already used', 'invite.already_used', 409);
+      }
+      if (invite.revokedAt) {
+        throw new InviteError('invite was revoked', 'invite.revoked', 410);
+      }
+      return { ...invite };
+    },
+
+    async activateResentInvite({ householdId, inviteId, expectedTokenHash, newTokenHash, newExpiresAt, now }) {
+      const invite = invites.get(inviteId);
+      if (!invite || invite.householdId !== householdId) {
+        throw new InviteError('invite was not found', 'invite.not_found', 404);
+      }
+      if (invite.acceptedAt) {
+        throw new InviteError('invite was already used', 'invite.already_used', 409);
+      }
+      if (invite.revokedAt) {
+        throw new InviteError('invite was revoked', 'invite.revoked', 410);
+      }
+      if (invite.tokenHash !== expectedTokenHash) {
+        throw new InviteError('invite was modified concurrently', 'invite.already_used', 409);
+      }
+      invite.tokenHash = newTokenHash;
+      invite.expiresAt = new Date(newExpiresAt);
+      return { ...invite };
     },
 
     getRawInvite(id) {

@@ -357,4 +357,113 @@ describe('invite HTTP flow', () => {
       await auth.close();
     }
   });
+
+  it('owner resends a pending invite with Idempotency-Key: generates new token, invalidates old token, and replays safely', async () => {
+    const auth = createBetterAuth({
+      database: memoryAdapter({ user: [], session: [], account: [], verification: [] }),
+      disableSignUp: false,
+      transaction: false,
+      secret: 'test-secret-that-is-at-least-32-characters',
+      baseURL: 'http://localhost:3001',
+      trustedOrigins: ['http://localhost:3000'],
+    });
+    const store = createInMemoryInviteStore({ users: [] });
+    const deliveries: Array<{ token: string; inviteId: string; email: string }> = [];
+    const service = createInviteService({
+      store,
+      deliver: async (message) => { deliveries.push({ token: message.token, inviteId: message.inviteId, email: message.email }); },
+    });
+    const { app } = buildTestApp({}, undefined, undefined, auth, service, async (input?: { householdId?: string }) => input?.householdId === householdId);
+
+    try {
+      const owner = await signUp(app, 'owner@example.com');
+      const member = await signUp(app, 'member@example.com');
+      store.addUser(member.user);
+
+      // 1. Create invite
+      const createRes = await app.inject({
+        method: 'POST',
+        url: '/auth/invites',
+        headers: { origin: 'http://localhost:3000', cookie: owner.cookie, 'idempotency-key': 'resend-setup-create' },
+        payload: { householdId, email: 'member@example.com', role: 'member', expiresAt: '2030-01-01T00:00:00.000Z' },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const inviteId = createRes.json().inviteId;
+      const firstToken = deliveries[0]!.token;
+
+      // 2. Resend without Idempotency-Key returns 400
+      const noIdemp = await app.inject({
+        method: 'POST',
+        url: `/workspaces/${householdId}/invites/${inviteId}/resend`,
+        headers: { origin: 'http://localhost:3000', cookie: owner.cookie },
+      });
+      expect(noIdemp.statusCode).toBe(400);
+
+      // 3. Resend unauthenticated returns 401
+      const unauth = await app.inject({
+        method: 'POST',
+        url: `/workspaces/${householdId}/invites/${inviteId}/resend`,
+        headers: { origin: 'http://localhost:3000', 'idempotency-key': 'resend-unauth-key' },
+      });
+      expect(unauth.statusCode).toBe(401);
+
+      // 4. Resend with valid Idempotency-Key returns 200 and dispatches second email
+      const resend1 = await app.inject({
+        method: 'POST',
+        url: `/workspaces/${householdId}/invites/${inviteId}/resend`,
+        headers: {
+          origin: 'http://localhost:3000',
+          cookie: owner.cookie,
+          'idempotency-key': 'test-resend-key-1',
+        },
+      });
+      expect(resend1.statusCode).toBe(200);
+      const resendBody = resend1.json();
+      expect(resendBody.inviteId).toBe(inviteId);
+      expect(resendBody.email).toBe('member@example.com');
+      // Must not leak tokens in response
+      expect(resendBody.token).toBeUndefined();
+      expect(resendBody.tokenHash).toBeUndefined();
+      expect(deliveries).toHaveLength(2);
+
+      const secondToken = deliveries[1]!.token;
+      expect(secondToken).not.toBe(firstToken);
+
+      // 5. Replay with same Idempotency-Key returns replayed response without 3rd delivery
+      const resend2 = await app.inject({
+        method: 'POST',
+        url: `/workspaces/${householdId}/invites/${inviteId}/resend`,
+        headers: {
+          origin: 'http://localhost:3000',
+          cookie: owner.cookie,
+          'idempotency-key': 'test-resend-key-1',
+        },
+      });
+      expect(resend2.statusCode).toBe(200);
+      expect(resend2.headers['idempotent-replayed']).toBe('true');
+      expect(deliveries).toHaveLength(2); // No extra email
+
+      // 6. Old token is rejected
+      const acceptOld = await app.inject({
+        method: 'POST',
+        url: '/auth/invites/accept',
+        headers: { origin: 'http://localhost:3000', cookie: member.cookie },
+        payload: { token: firstToken },
+      });
+      expect(acceptOld.statusCode).toBe(404);
+
+      // 7. New token is accepted
+      const acceptNew = await app.inject({
+        method: 'POST',
+        url: '/auth/invites/accept',
+        headers: { origin: 'http://localhost:3000', cookie: member.cookie },
+        payload: { token: secondToken },
+      });
+      expect(acceptNew.statusCode).toBe(200);
+      expect(store.listMemberships()).toEqual([{ householdId, role: 'member', userId: member.user.id }]);
+    } finally {
+      await app.close();
+      await auth.close();
+    }
+  });
 });
