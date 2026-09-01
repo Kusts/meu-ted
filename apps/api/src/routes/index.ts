@@ -66,10 +66,12 @@ import { registerBetterAuthRoutes } from "../auth/better-auth-http.js";
 import { registerInviteRoutes } from "../auth/invites-http.js";
 import { registerWorkspaceRoutes } from "../auth/workspaces-http.js";
 import { registerAdminInviteRoutes } from "./admin-invites.js";
+import { registerAccountInviteRoutes } from "../auth/account-invites-http.js";
 import type { AdminInviteDelivery } from "../auth/admin-invite-service.js";
 import type { BetterAuth } from "../auth/better-auth.js";
 import type { InviteService } from "../auth/invites.js";
 import type { WorkspaceStore } from "../auth/workspaces-http.js";
+import type { AccountInviteService } from "../auth/account-invites.js";
 
 import type { WorkspaceAccessStore } from "../auth/workspace-access.js";
 import { getBetterAuthSessionContext } from "../auth/better-auth.js";
@@ -115,6 +117,7 @@ export type RouteDeps = {
   workspaceStore?: WorkspaceStore;
   adminEmails?: string[];
   adminInviteDelivery?: AdminInviteDelivery;
+  accountInviteService?: AccountInviteService;
   disableDeviceRegistration?: boolean;
   approvalPolicy?: import('../approvals/policy.js').ApprovalPolicy;
   clock?: () => Date;
@@ -452,13 +455,30 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     });
   }
   if (deps.auth) {
-    registerBetterAuthRoutes(app, deps.auth, undefined, undefined, deps.inviteSignupGuard);
+    const consumeAccountInvite = deps.accountInviteService
+      ? async (email: string) => {
+          try {
+            await deps.accountInviteService!.consumeAccountInvite({ email });
+          } catch {
+            // best-effort
+          }
+        }
+      : undefined;
+    registerBetterAuthRoutes(app, deps.auth, undefined, undefined, deps.inviteSignupGuard, consumeAccountInvite);
     const adminEmails = deps.adminEmails ?? ['walissonead@gmail.com'];
     registerAdminInviteRoutes(app, {
       auth: deps.auth,
       adminEmails,
       delivery: deps.adminInviteDelivery,
     });
+    if (deps.accountInviteService) {
+      registerAccountInviteRoutes(app, {
+        auth: deps.auth,
+        service: deps.accountInviteService,
+        adminEmails,
+        idempotency,
+      });
+    }
     if (deps.inviteService && deps.authorizeInviteCreate) {
       registerInviteRoutes(app, {
         auth: deps.auth,

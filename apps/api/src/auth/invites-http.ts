@@ -25,7 +25,7 @@ const inviteRevokeParams = z.object({
 export const registerInviteRoutes = (app: FastifyInstance, opts: {
   auth: BetterAuth;
   service: InviteService;
-  authorizeCreate: (input: { userId: string; householdId: string }) => Promise<boolean>;
+  authorizeCreate: (input: { userId: string; householdId: string; email?: string }) => Promise<boolean>;
   idempotency?: IdempotencyStore;
 }): void => {
   const idempotency = opts.idempotency ?? createInMemoryIdempotencyStore();
@@ -44,7 +44,7 @@ export const registerInviteRoutes = (app: FastifyInstance, opts: {
     const parsed = createInviteInput.safeParse(request.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     const context = request.betterAuthContext!;
-    if (!(await opts.authorizeCreate({ userId: context.userId, householdId: parsed.data.householdId }))) {
+    if (!(await opts.authorizeCreate({ userId: context.userId, householdId: parsed.data.householdId, email: parsed.data.email }))) {
       return reply.code(403).send({ code: 'auth.invite_forbidden', message: 'invite creation is not authorized' });
     }
 

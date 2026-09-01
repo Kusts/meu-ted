@@ -3,13 +3,29 @@ import { createPostgresInviteSignupGuard } from '../../src/auth/invite-signup-gu
 import type { Pool } from 'pg';
 
 describe('invite signup guard', () => {
-  it('returns true when a pending invite exists for the normalized email', async () => {
+  it('returns true when a pending account invite exists for the normalized email', async () => {
     const pool = {
-      query: vi.fn(async () => ({ rows: [{ count: '1' }], rowCount: 1 })),
+      query: vi.fn(async (text: string) => {
+        if (text.includes('FROM account_invites')) return { rows: [{ count: '1' }], rowCount: 1 } as never;
+        return { rows: [{ count: '0' }], rowCount: 1 } as never;
+      }),
     } as unknown as Pool;
     const guard = createPostgresInviteSignupGuard(pool);
     await expect(guard('  MEMBER@Example.COM  ')).resolves.toBe(true);
-    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('email_normalized'), ['member@example.com']);
+    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('account_invites'), ['member@example.com']);
+  });
+
+  it('returns true when a pending workspace invite from owner exists for email without account', async () => {
+    const pool = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes('FROM account_invites')) return { rows: [{ count: '0' }], rowCount: 1 } as never;
+        if (text.includes('FROM "user"')) return { rows: [{ count: '0' }], rowCount: 1 } as never;
+        if (text.includes('FROM invites')) return { rows: [{ count: '1' }], rowCount: 1 } as never;
+        return { rows: [{ count: '0' }], rowCount: 1 } as never;
+      }),
+    } as unknown as Pool;
+    const guard = createPostgresInviteSignupGuard(pool);
+    await expect(guard('newuser@example.com')).resolves.toBe(true);
   });
 
   it('returns false when no pending invite exists', async () => {
@@ -18,6 +34,21 @@ describe('invite signup guard', () => {
     } as unknown as Pool;
     const guard = createPostgresInviteSignupGuard(pool);
     await expect(guard('unknown@example.com')).resolves.toBe(false);
+  });
+
+  it('returns false when only member invited without-account (not owner)', async () => {
+    const pool = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes('FROM account_invites')) return { rows: [{ count: '0' }], rowCount: 1 } as never;
+        if (text.includes('FROM "user"')) return { rows: [{ count: '0' }], rowCount: 1 } as never;
+        // Simulate that the workspace invite exists but is from member, not owner -> our guard's query checks for owner, so it should return 0
+        if (text.includes('FROM invites')) return { rows: [{ count: '0' }], rowCount: 1 } as never;
+        return { rows: [{ count: '0' }], rowCount: 1 } as never;
+      }),
+    } as unknown as Pool;
+    const guard = createPostgresInviteSignupGuard(pool);
+    // This will be false because the workspace invite from member is not counted as owner
+    await expect(guard('member-invited@example.com')).resolves.toBe(false);
   });
 
   it('returns false for invalid email', async () => {

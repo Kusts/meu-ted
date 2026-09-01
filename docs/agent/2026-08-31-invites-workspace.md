@@ -187,3 +187,172 @@ Corrigir o legacy path de `createPostgresIdempotencyStore` (apps/api/src/writes/
 3. TDD: testes com SQL verificado contra schema real (mock deve VALIDAR nomes de colunas, não só aceitar INSERT; inspecionar SQL gerado e comparar com colunas reais documentadas acima). Atualizar `tests/server/legacy-idempotency-wiring.test.ts` (mock atual aceita qualquer INSERT — insuficiente).
 4. Validar: pnpm typecheck + pnpm --filter pi-finance-api test + docs:lint + governance:check.
 5. NÃO deployar sem review do Planner. NÃO commitar sem aprovação.
+
+## E2E REAL VALIDADO em produção (2026-09-01) — fluxo de convite funcionando
+
+### Bug do idempotency corrigido e deployado (commits f7488d0 + 030a28e)
+- **Causa raiz**: banco híbrido VPS (operation_records canônico + audit_logs legacy); commit 9efdfc3 (30/08,
+  anterior) ligou legacy:true no idempotency com INSERT em colunas inexistentes (household_id) → 500 em
+  toda mutação com idempotency-key (invite/workspace/push com key). Transações seguiam OK (PWA não envia key).
+- **Fix (review+2 follow-ups)**: legacy path grava operation_records canônico (ON CONFLICT claim/replay) +
+  audit_logs legacy (entity_type='operation'); user_id resolvido via src/auth/resolve-user-id.ts
+  (auth_user_id OU users.id, fallback NULL; contrato workspace-scoped mantido rigoroso movendo SQL p/ auth/).
+- **Deploy**: release-030a28e → tag main → compose up. Health OK. Rollback: release-f7488d0 disponível.
+
+### Evidências do E2E real (via browser Orca, conta admin logada)
+1. PWA local → /workspaces → Test Family (Compartilhado·Owner) → form "Convidar membro" visível.
+2. Preenchi synkrooia@gmail.com → "Convidar membro" → **apareceu em Convites pendentes** (sem erro).
+3. Banco VPS: invites(synkrooia@gmail.com, member, expires 2026-09-08, pendente); operation_records
+   invite.create completed; audit_logs user_id RESOLVIDO (adbb7007… = users.id, de auth_user_id WUCGTzoQ…).
+4. Erros 42P01 restantes em produção = push reminder job pré-existente (tabela push_reminder_deliveries
+   ausente no schema legacy) — SEM relação com invites.
+
+### Pendências
+- [ ] Receber o e-mail de convite em synkrooia@gmail.com (SMTP enviou; confirmar caixa).
+- [ ] Criar a 2ª conta via link /convite?token=... e aceitar; validar visibilidade dos dados financeiros
+      nas duas contas do workspace shared (persistência multitenant — R3).
+- [ ] (Opcional) Corrigir push reminder job (tabela push_reminder_deliveries / 42P01 pré-existente).
+
+## BUG: accept de convite falha 401 no PWA local (2026-09-01)
+
+### Sintoma (reproduzido E2E)
+- Conta criada (sign-up 200), login OK (sign-in 200), accept 401.
+- Logs VPS: req-ck POST /auth/invites/accept -> 401 (auth.missing_session).
+- Efeito: convite segue pendente (consumed_at NULL), app-user/membership não criados, guest sem workspaces.
+
+### Causa raiz
+- Better-Auth em produção baseURL https define cookie `__Secure-better-auth.session_token` com `Secure` + `SameSite=None`.
+- PWA local roda em http://localhost:3000 por proxy /api/backend: o browser NÃO persiste cookie Secure originado em domínio localhost (http) -> sessionPreHandler não acha sessão -> 401.
+- Em produção (https workers.dev) funcionaria; o problema é do PWA LOCAL (e de qualquer origem http).
+
+### Fix planejado (delegado ao Coder)
+- O client PWA já tem o padrão correto em registerDeviceToken: `Authorization: Bearer ${sessionToken}`.
+- Aplicar o mesmo para as rotas que exigem sessão de usuário: acceptWorkspaceInvite (POST /auth/invites/accept) e createWorkspaceInvite (POST /auth/invites) — obter o session token (ex.: do retorno signIn/signUp token persistido; ver token-store/pi-finance:token) e enviar como Authorization Bearer.
+- Validar que o cookie continua sendo o caminho em produção (https) — Bearer é aceito por getBetterAuthSessionContext em ambos.
+- TDD: testes unitários do client (accept envia Authorization Bearer quando token presente); testes de rota já existentes cobrem 401 sem sessão.
+- Rodar suite pwa + api; typecheck; NÃO commit sem review.
+
+### Evidência técnica (para o Coder)
+- getBetterAuthSessionContext(auth, headers) resolve via cookie OU Authorization Bearer (confirmado testando curl -H "Authorization: Bearer <sessionToken>" -> 200).
+- sign-in retorna { token } (session token) no body.
+- registerDeviceToken já usa Bearer com esse token (exemplo vivo no código).
+
+## FIX deployado no PWA e validado (2026-09-01) — Bearer fallback para sessão
+
+### Implementado (Coder, task_6902a3528c98, revisado e aprovado pelo Planner)
+- token-store.ts: getSessionToken/setSessionToken/clearSessionToken (localStorage pi-finance:session-token).
+- auth.ts fetchSession + workspaces.ts createWorkspaceInvite/acceptWorkspaceInvite enviam Authorization: Bearer
+  quando session token presente (padrão já usado por registerDeviceToken).
+- AuthGate.tsx persiste session token no sign-in; session.ts limpa no logout.
+- Mantido credentials:'include' (cookie Secure continua o caminho em produção https; Bearer aceito por
+  getBetterAuthSessionContext em ambos).
+
+### Validações do Planner
+- Testes PWA workspaces.test + auth.test: 12 pass.
+- pnpm typecheck: OK.
+- Curl via proxy local: POST /auth/invites/accept com `Authorization: Bearer <token>` SEM sessão de cookie
+  → 404 invite.not_found (antes 401) → sessão reconhecida via Bearer ✓.
+- Browser Orca local (http://localhost:3000): login admin → localStorage session-token 'present' ✓;
+  Workspaces → Test Family → convite convidado.teste.pi@gmail.com criado sem erro ✓ (rota protegida OK).
+- Convite synkrooia@gmail.com segue pendente (consumed_at NULL) — token real está no e-mail do convidado;
+  o aceite final precisa do dono da caixa (R2).
+
+### Estado
+- Commit NÃO feito pelo Coder (aguarda aprovação/commit do Planner neste fluxo). Preservar convenção: commit
+  após review — feito no f7488d0/030a28e; este fix (7 arquivos PWA) está no working tree para commit.
+
+## BUG: accept de convite falha 23502 (phone NOT NULL) — 2026-09-01
+
+### Sintoma (reproduzido via API com as credenciais do usuário)
+- POST /auth/invites/accept com Authorization Bearer (session synkrooia) + token real do convite
+  -> HTTP 500, code 23502: 'null value in column "phone" of relation "users" violates not-null constraint'.
+- O 401 (sessão) foi resolvido; este é o próximo erro no fluxo.
+
+### Causa raiz
+- Tabela public.users (VPS) tem coluna phone TEXT NOT NULL (sem DEFAULT) — provém do schema
+  legado/outro caminho (nenhuma migration do repo a cria nesta forma; V010/V011 criam phone na tabela
+  profiles, não em users).
+- invite accept (apps/api/src/auth/invites-postgres.ts linhas ~16 e ~95) faz
+  INSERT INTO users (auth_user_id, email, name, created_at) sem phone -> viola NOT NULL.
+- O admin (walissonead) também tem phone vazio na VPS, mas sua linha users foi criada antes
+  (backfill V020 / outro caminho) — o INSERT de invite nunca funcionou para users novos.
+
+### Fix (delegado ao Coder)
+- Fornecer phone no INSERT (valor vazio '' ou derivado do e-mail), nos DOIS INSERTs de
+  invites-postgres.ts (ensureApplicationUser linha ~16 e acceptInvite linha ~95).
+- Avaliar também se o POST /auth/invites/accept deve validar/atribuir phone; manter compatível
+  com a constraint NOT NULL.
+- TDD: teste unitário do store (mock query com users schema real incluindo phone NOT NULL);
+  RED (falha com ausência) -> GREEN.
+- Validações: pnpm --filter pi-finance-api test, pnpm typecheck, docs:lint, governance:check.
+- NÃO commit sem review.
+
+## BUG 2 no accept: users_phone_key UNIQUE colide com phone='' (2026-09-01)
+
+- Apos fix de phone NOT NULL (23502), accept retorna 23505: 'duplicate key value violates
+  unique constraint "users_phone_key"'.
+- Constraint real VPS: users_phone_key UNIQUE (phone) + users_auth_user_id_key UNIQUE.
+- Tabela tem 1 linha (admin, phone = ''). phone='' fixo colide no 2o usuario.
+- Fix correto: phone unico e deterministico por usuario no INSERT (ex.: usar o email do user
+  como phone fallback — email ja e unico via users_email_uidx — ou derivar de auth_user_id).
+  Decidir com base no uso real de users.phone (fluxo de phone e' via user_phone_bindings, entao
+  users.phone parece residuo de schema; confirmar antes de escolher). Delegado ao Coder (TDD).
+
+## E2E COMPLETO VALIDADO com credenciais reais (2026-09-01) — sucesso integral
+
+### Fluxo executado (eu mesmo, com as credenciais fornecidas pelo usuário)
+1. Login synkrooia via proxy local (Bearer) -> 200; workspaces: [] (correto, sem membership).
+2. Login admin -> 200; workspaces: 3 (junio/Test Family/familia) — isolamento por usuário OK.
+3. https://localhost → POST /auth/invites/accept com Bearer + token do convite (do e-mail):
+   - 1a iteração: 23502 phone NOT NULL -> fix phone='' (commit f217185).
+   - 2a iteração: 23505 users_phone_key UNIQUE (phone='' colide 2o user) -> fix phone=email (commit c670ae9).
+   - Resultado: HTTP 200 — `{inviteId, membership:{userId, houseId=550e8400(Test Family), role:member}}`.
+4. Banco: invites.consumed_at preenchido; memberships tem linha synkrooia->Test Family role member.
+5. Workspaces da synkrooia: agora `[{name: Test Family, kind: shared, role: member}]`.
+6. Contas do Test Family visíveis com token da synkrooia + X-Workspace-Id (Conta Corrente Nubank
+   6.097,70 / Poupança 14.395,00) — persistência multitenant OK nas duas contas.
+7. Isolamento: X-Workspace-Id de outro household -> 403 auth.workspace_forbidden.
+
+### Observação de produto (follow-up sugerido)
+- Device register de usuário SEM membership cai no defaultHouseholdId (Test Family) — permite escrita
+  de não-membro no workspace default antes do aceite. Não impede a feature (post-aceite tudo correto),
+  mas merece revisão: exigir workspace explícito ou membership antes de registrar device. Registrar
+  como proposta separada; não bloquear.
+
+### Deploys feitos nesta rodada
+- f7488d0 feature invites; 030a28e idempotency híbrido; f217185 Bearer+phone; c670ae9 phone=email.
+
+## DECISÕES DE PRODUTO FINAIS (2026-09-01, usuário) — modelo de dois convites
+
+### 1. Convite para CRIAR CONTA (só ADMIN)
+- Somente admin (ADMIN_EMAILS) pode convidar pessoas para criar conta e usar o PWA.
+- Admin envia por e-mail -> convidado recebe LINK com token -> define a PRÓPRIA senha -> cria a conta.
+  (Substitui o fluxo legado /admin/invite de senha temporária, que nunca teve delivery configurado.)
+- Signup FECHADO: criar conta só com convite do admin (ou convite de workspace do owner p/ não-contado).
+
+### 2. Convite para WORKSPACE COMPARTILHADO
+- Para quem já POSSUI conta: qualquer membro (owner ou member) pode convidar -> aviso por
+  E-MAIL + NOTIFICAÇÃO no PWA -> usuário logado aceita.
+- Para quem NÃO possui conta: SOMENTE o owner pode convidar -> link único que permite
+  criar conta + aceitar workspace num fluxo só (como funciona hoje, validado).
+- Workspace compartilhado fica ATIVO em ambas as contas (validado: synkrooia+admin veem Test Family).
+
+### 3. Regras de autorização
+- authorizeInviteCreate (workspace): owner OU member podem convidar para ws compartilhado;
+  convite p/ e-mail SEM conta só por owner.
+- Signup liberado se: existe convite de conta do admin p/ o e-mail, OU convite de workspace
+  do owner p/ e-mail sem conta (link único).
+- Notificação PWA: badge/lista de convites pendentes para usuários logados.
+
+### Escopo técnico (para delegar ao Coder em iterações)
+A) API — convite de conta do admin: nova rota/fluxo com token + e-mail (SMTP, reuso do
+   invite-delivery-smtp); guard de signup valida convite de conta (tabela nova ex.
+   account_invites OU reuso de invites com purpose) + convite de ws de owner p/ sem-conta.
+B) API — authorizeInviteCreate: permitir member (não só owner) para e-mails com conta;
+   owner ainda é o único p/ e-mails sem conta.
+C) API/PWA — notificação de convite de workspace no PWA (badge/item "convites pendentes",
+   reuso de pendingInvites já no WorkspaceManagerPage; aviso in-app).
+D) PWA — página /convite: tratar também token de convite de CONTA (criar conta com senha
+   definida pelo convidado, sem workspace), além do token de workspace atual.
+E) Validar E2E: admin convida 3a conta (sem workspace) -> define senha -> loga;
+   member convida 4a conta p/ ws; owner convida sem-conta p/ ws; notificações; visibilidade.

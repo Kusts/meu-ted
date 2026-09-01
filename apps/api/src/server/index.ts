@@ -54,7 +54,9 @@ import {
 import { createPostgresAgentReplayStore } from "../auth/agent-connection-token-replay-postgres.js";
 import { createInMemoryAgentReplayStore } from "../auth/agent-connection-token-replay.js";
 import { registerCors } from "./cors.js";
-import { createPostgresInviteRuntime } from "./production-routes.js";
+import { createPostgresInviteRuntime, createPostgresAccountInviteRuntime } from "./production-routes.js";
+import { createPostgresAccountInviteStore } from "../auth/account-invites-postgres.js";
+import { createAccountInviteService } from "../auth/account-invites.js";
 
 const start = async (): Promise<void> => {
   const cfg = loadConfig();
@@ -103,6 +105,13 @@ const start = async (): Promise<void> => {
       workspaceAccess,
       delivery: inviteDelivery,
     });
+    const accountInviteService = createAccountInviteService({
+      store: createPostgresAccountInviteStore(pool),
+      deliver: inviteDelivery ?? (async () => {
+        throw new Error("invite delivery is not configured");
+      }),
+    });
+    const accountInviteRuntime = { accountInviteService };
 
     if (process.env.DB_SCHEMA === "legacy") {
       app.log.info("using legacy pi_financeiro schema adapters");
@@ -183,6 +192,7 @@ const start = async (): Promise<void> => {
         workspaceStore,
         ownershipTransferStore,
         ...inviteRuntime,
+        ...accountInviteRuntime,
         inviteSignupGuard,
         llmConfigStore: createPostgresLlmConfigStore(pool),
         agentConnectionSecret: cfg.agentConnectionSecret,
@@ -276,6 +286,7 @@ const start = async (): Promise<void> => {
         workspaceStore,
         ownershipTransferStore,
         ...inviteRuntime,
+        ...accountInviteRuntime,
         inviteSignupGuard,
         llmConfigStore: createPostgresLlmConfigStore(pool),
         agentConnectionSecret: cfg.agentConnectionSecret,

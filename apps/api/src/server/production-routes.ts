@@ -29,6 +29,8 @@ import { createPostgresInviteStore } from "../auth/invites-postgres.js";
 import { createPostgresWorkspaceStore } from "../auth/workspaces-postgres.js";
 import { createPostgresWorkspaceAccessStore } from "../auth/workspace-access.js";
 import { createPostgresOwnershipTransferStore } from "../auth/ownership-transfers-postgres.js";
+import { createAccountInviteService } from "../auth/account-invites.js";
+import { createPostgresAccountInviteStore } from "../auth/account-invites-postgres.js";
 import type { createBetterAuth } from "../auth/better-auth.js";
 import type { WorkspaceAccessStore } from "../auth/workspace-access.js";
 
@@ -62,11 +64,47 @@ export const createPostgresInviteRuntime = (input: {
 
   return {
     inviteService,
-    authorizeInviteCreate: async ({ userId, householdId }) => {
+    authorizeInviteCreate: async ({ userId, householdId, email }: { userId: string; householdId: string; email?: string }) => {
       const access = await workspaceAccess.resolve(userId, householdId);
-      return access?.kind === "shared" && access.role === "owner";
+      if (!access || access.kind !== "shared") return false;
+      if (access.role === "owner") return true;
+      // Member can invite only when target already has an account (email exists in "user")
+      if (access.role === "member") {
+        if (!email) return false;
+        const normalized = email.trim().toLowerCase();
+        const result = await input.pool.query(
+          `SELECT 1 FROM "user" WHERE lower(email) = $1 LIMIT 1`,
+          [normalized],
+        );
+        return (result.rowCount ?? 0) > 0;
+      }
+      return false;
     },
   };
+};
+
+export type PostgresAccountInviteRuntime = {
+  accountInviteService?: import("../auth/account-invites.js").AccountInviteService;
+};
+
+export const createPostgresAccountInviteRuntime = (input: {
+  pool: Pool;
+  delivery?: InviteDelivery | undefined;
+}): PostgresAccountInviteRuntime => {
+  const deliver = input.delivery ?? (async () => {
+    throw new InviteError(
+      "invite delivery is not configured",
+      "invite.delivery_unavailable",
+      503,
+    );
+  });
+
+  const accountInviteService = createAccountInviteService({
+    store: createPostgresAccountInviteStore(input.pool),
+    deliver,
+  });
+
+  return { accountInviteService };
 };
 
 export const registerPostgresProductionRoutes = (
@@ -89,6 +127,9 @@ export const registerPostgresProductionRoutes = (
   const ownershipTransferStore = betterAuth ? createPostgresOwnershipTransferStore(pool) : undefined;
   const inviteRuntime = betterAuth
     ? createPostgresInviteRuntime({ pool, workspaceAccess, delivery: inviteDelivery })
+    : {};
+  const accountInviteRuntime = betterAuth
+    ? createPostgresAccountInviteRuntime({ pool, delivery: inviteDelivery })
     : {};
 
   if (legacy) {
@@ -123,6 +164,7 @@ export const registerPostgresProductionRoutes = (
       ...(workspaceStore ? { workspaceStore } : {}),
       ...(ownershipTransferStore ? { ownershipTransferStore } : {}),
       ...inviteRuntime,
+      ...accountInviteRuntime,
       ...(pushDelivery ? { pushDelivery } : {}),
       ...(vapidPublicKey ? { vapidPublicKey } : {}),
     });
@@ -160,6 +202,7 @@ export const registerPostgresProductionRoutes = (
     ...(workspaceStore ? { workspaceStore } : {}),
     ...(ownershipTransferStore ? { ownershipTransferStore } : {}),
     ...inviteRuntime,
+    ...accountInviteRuntime,
     ...(pushDelivery ? { pushDelivery } : {}),
     ...(vapidPublicKey ? { vapidPublicKey } : {}),
   });

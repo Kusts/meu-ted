@@ -16,6 +16,7 @@ export const registerBetterAuthRoutes = (
   reconnectTokens?: ReconnectTokenStore,
   reconnectSockets?: ReconnectSocketRegistry,
   inviteSignupGuard?: InviteSignupGuard,
+  consumeAccountInvite?: (email: string) => Promise<void>,
 ): void => {
   app.post('/auth/reconnect', async (request, reply) => {
     if (isUntrustedMutation(request, auth)) return reply.code(403).send({ code: 'auth.invalid_origin', message: 'Invalid origin' });
@@ -82,10 +83,20 @@ export const registerBetterAuthRoutes = (
     const session = isSignOut && reconnectTokens
       ? await getBetterAuthSessionContext(auth, new Headers(request.headers as Record<string, string>))
       : undefined;
+    const isSignUp = request.method === 'POST' && request.url.split('?')[0] === '/auth/sign-up/email';
+    const signUpEmail = isSignUp ? ((request.body as Record<string, unknown>)?.email as string | undefined) : undefined;
     const response = await auth.handler(toWebRequest(request, auth.options.baseURL));
     if (isSignOut && session && reconnectTokens) {
       reconnectTokens.invalidateSession(session.sessionId);
       reconnectSockets?.closeSession(session.sessionId, 'session signed out');
+    }
+    // Consume account invite after successful signup (account invite is signup-only)
+    if (isSignUp && consumeAccountInvite && signUpEmail && response.status >= 200 && response.status < 300) {
+      try {
+        await consumeAccountInvite(signUpEmail);
+      } catch {
+        // Best-effort: signup already succeeded, do not fail the response
+      }
     }
     return sendWebResponse(reply, response);
   });
