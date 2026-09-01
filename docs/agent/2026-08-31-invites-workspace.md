@@ -143,3 +143,47 @@ todos os dados do workspace persistam e sejam visíveis para **todas as contas**
   (`WORKDIR /app`, pnpm-lock na raiz), imagem `pi-finance-api:release-<hash>` → tag `:main` → compose up.
   Não há script de release; processo manual: sync apps/api → app/, docker build, tag, restart, healthcheck.
 - **PWA**: deploy automático via Cloudflare Pages (auto-deploy main) — rota /convite entra com o push.
+
+## Release em produção — VALIDADO (2026-09-01, commit f7488d0)
+
+### Executado
+1. Commit `f7488d0` (24 arquivos) + `git push origin main` → auto-deploy PWA (rota /convite).
+2. Sync apps/api → VPS `~/pi-financeiro` (tar+scp, sem node_modules/dist).
+3. `docker build -f apps/api/Dockerfile -t pi-finance-api:release-f7488d0` (VPS) → tag `:main` → `docker compose up -d`.
+4. `.env` VPS: SMTP_HOST/PORT/USER/PASS/FROM/SECURE + INVITE_ACCEPT_URL (via stdin, sem histórico).
+5. Rollback disponível: imagem antiga tag `release-9cecb4f6a8ff` preservada.
+
+### Validações em produção
+- Container `Up (healthy)`; `api.synkroo.com.br/health` → `{"status":"ok"}`.
+- `POST /auth/sign-up/email` SEM convite → `403 auth.signup_requires_invite` (mensagem pt-BR) ✅ guard ativo.
+- `POST /auth/invites/verify` token inválido → `404 invite.not_found` ✅ rota nova no ar.
+- Tabela `invites` existe no banco prod (schema compatível: email_normalized, token_hash, consumed_at, revoked_at).
+- Probe SMTP local (walissonead@gmail.com + App Password): `SMTP_OK` ✅ (e-mail teste enviado).
+
+### Observações
+- Erro pré-existente (não relacionado): job de push reminders falha com `42P01` pois a tabela
+  `push_reminder_deliveries` não existe no schema legacy (MIGRATIONS_MODE=disabled). Já falhava na imagem anterior.
+- Falta E2E manual com 2 contas reais (depende de UI autenticada): criar convite de workspace shared,
+  receber e-mail, criar 2ª conta, aceitar, ver dados nas duas contas.
+
+## BUG DE PRODUÇÃO DESCOBERTO no E2E (2026-09-01) — idempotency legacy quebrado
+
+### Sintoma
+- Form "Convidar membro" no PWA local (contra VPS) falha: `column "household_id" of relation "operation_records" does not exist` (HTTP 500).
+- Confirmação via log da VPS: `dist/writes/postgres.js:372` → `createPostgresIdempotencyStore` legacy path.
+
+### Causa raiz (banco híbrido da VPS)
+- `operation_records` = schema CANÔNICO (V013/V014, 05/08): workspace_id, payload_hash, status, lease_until, retry_until, retention_until, completed_at, actor_type, response, effect_ref.
+- `audit_logs` = schema LEGACY preservado: household_id, user_id, action, entity_type, entity_id, before_json, after_json, created_at (SEM operation_record_id/workspace_id/actor_id).
+- Commit `9efdfc3` (30/08 18:00, ANTERIOR à feature de invites) trocou `createPostgresIdempotencyStore({ pool })` → `{ pool, legacy: true }` no boot legacy da VPS (DB_SCHEMA=legacy). O legacy path insere:
+  - operation_records com household_id/request_payload/actor_type → COLUNAS INEXISTENTES → 42703.
+- O caminho canônico tenta audit_logs com operation_record_id/workspace_id → COLUNAS INEXISTENTES no audit_logs legacy → também quebraria.
+- Por que nada quebrou antes: última mutação com idempotency-key na VPS foi push em 12/08 (antes do 9efdfc3, quando o path era canônico e o audit era gravado como entity_type='operation'/entity_id=<record_id>). Transações do PWA não enviam idempotency-key (bypass) → continuam funcionando.
+
+### Fix (delegado ao Coder)
+Corrigir o legacy path de `createPostgresIdempotencyStore` (apps/api/src/writes/postgres.ts ~linha 480):
+1. INSERT em `operation_records` usando colunas CANÔNICAS REAIS: workspace_id, actor_id, operation, idempotency_key, payload_hash, status='processing', lease_until, retry_until, retention_until (+ claim/update como no path canônico OU INSERT simples + update completed; seguir padrão de replay do path canônico para manter idempotência).
+2. INSERT em `audit_logs` usando colunas LEGACY REAIS: household_id, user_id, action, entity_type='operation', entity_id=<operation_record_id>, before_json, after_json, created_at (mesmo shape que os registros push de 12/08).
+3. TDD: testes com SQL verificado contra schema real (mock deve VALIDAR nomes de colunas, não só aceitar INSERT; inspecionar SQL gerado e comparar com colunas reais documentadas acima). Atualizar `tests/server/legacy-idempotency-wiring.test.ts` (mock atual aceita qualquer INSERT — insuficiente).
+4. Validar: pnpm typecheck + pnpm --filter pi-finance-api test + docs:lint + governance:check.
+5. NÃO deployar sem review do Planner. NÃO commitar sem aprovação.

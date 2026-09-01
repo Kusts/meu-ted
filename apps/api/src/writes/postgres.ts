@@ -16,6 +16,7 @@ import { withTransaction } from '../db/pool.js';
 import { domainErrors, DomainError } from './errors.js';
 import { buildIdempotencyKey } from './idempotency.js';
 import type { WriteStore } from './store.js';
+import { resolveApplicationUserId } from '../auth/resolve-user-id.js';
 import type {
   CreateAccountInput,
   CreateCategoryInput,
@@ -481,18 +482,49 @@ export const createPostgresIdempotencyStore = (opts: { pool: Pool; legacy?: bool
       const payloadHash = hash(payload);
       return withTransaction(pool, async (client) => {
         if (legacy) {
-          await client.query(
-            `INSERT INTO operation_records (id, household_id, actor_type, actor_id, operation, idempotency_key, request_payload, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-            [randomUUID(), householdId, actorType ?? 'device', actorId ?? 'unknown', operation ?? 'write', key, JSON.stringify(payload)],
+          // Hybrid VPS: operation_records is CANONICAL, audit_logs is LEGACY
+          const claim = await client.query<{ id: string; status: string; response: unknown; effect_ref: string | null }>(
+            `INSERT INTO operation_records
+               (workspace_id, actor_id, operation, idempotency_key, payload_hash, status,
+                lease_until, retry_until, retention_until)
+             VALUES ($1, $2, $3, $4, $5, 'processing',
+                     NOW() + INTERVAL '5 minutes', NOW() + INTERVAL '7 days', NOW() + INTERVAL '90 days')
+             ON CONFLICT (workspace_id, idempotency_key) DO NOTHING
+             RETURNING id, status, response, effect_ref`,
+            [householdId, actorId ?? 'unknown', operation ?? 'write', compositeKey, payloadHash],
           );
-          const response = await producer();
-          await client.query(
-            `INSERT INTO audit_logs (id, household_id, actor_type, actor_id, action, before_json, after_json, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-            [randomUUID(), householdId, actorType ?? 'device', actorId ?? 'unknown', operation ?? 'write', null, JSON.stringify(response)],
+
+          if (claim.rowCount === 1) {
+            const recordId = claim.rows[0]!.id;
+            const response = await producer();
+            const effectRef = (response as { transactionId?: string } | null)?.transactionId ?? null;
+            await client.query(
+              `UPDATE operation_records
+                  SET status = 'completed', response = $3, effect_ref = $4, completed_at = NOW()
+                WHERE id = $1 AND workspace_id = $2`,
+              [recordId, householdId, JSON.stringify(response), effectRef],
+            );
+            const resolvedUserId = await resolveApplicationUserId(client, actorId);
+            await client.query(
+              `INSERT INTO audit_logs
+                 (id, household_id, user_id, action, entity_type, entity_id, before_json, after_json, created_at)
+               VALUES ($1, $2, $3, $4, 'operation', $5, $6, $7, NOW())`,
+              [randomUUID(), householdId, resolvedUserId, operation ?? 'write', recordId, null, JSON.stringify(response)],
+            );
+            return { response, replayed: false };
+          }
+
+          const settled = await client.query<{ status: string; response: unknown; payload_hash: string }>(
+            `SELECT status, response, payload_hash
+               FROM operation_records
+              WHERE workspace_id = $1 AND idempotency_key = $2`,
+            [householdId, compositeKey],
           );
-          return { response, replayed: false };
+          if (settled.rowCount === 0) throw domainErrors.idempotencyConflict();
+          const row = settled.rows[0]!;
+          if (row.status === 'failed') throw domainErrors.idempotencyConflict();
+          if (row.payload_hash !== payloadHash) throw domainErrors.idempotencyConflict();
+          return { response: row.response as never, replayed: true };
         }
 
         // Canonical path: claim + effect + completion + audit in one
