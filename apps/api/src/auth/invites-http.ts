@@ -93,6 +93,24 @@ export const registerInviteRoutes = (app: FastifyInstance, opts: {
     }
   });
 
+  // Public verification: allows PWA to show “convite para email X” before signup.
+  // No auth required — possession of the 64-char token is the authorization.
+  app.post('/auth/invites/verify', async (request, reply) => {
+    const parsed = acceptInviteInput.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    try {
+      const result = await opts.service.verifyInvite({ token: parsed.data.token });
+      return reply.code(200).send({
+        email: result.email,
+        householdId: result.householdId,
+        role: result.role,
+        expiresAt: result.expiresAt.toISOString(),
+      });
+    } catch (error) {
+      return sendInviteError(reply, error);
+    }
+  });
+
   app.get('/workspaces/:householdId/invites', { preHandler: sessionPreHandler }, async (request, reply) => {
     const parsed = workspaceParams.safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });

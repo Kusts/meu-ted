@@ -190,6 +190,14 @@ export async function acceptWorkspaceInvite(token: string): Promise<{ inviteId: 
   });
 }
 
+export async function verifyWorkspaceInvite(token: string): Promise<{ email: string; householdId: string; role: "owner" | "member"; expiresAt: string }> {
+  return apiFetch<{ email: string; householdId: string; role: "owner" | "member"; expiresAt: string }>("/auth/invites/verify", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 export async function removeWorkspaceMember(workspaceId: string, memberUserId: string): Promise<void> {
   return apiFetch<void>(`/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(memberUserId)}`, {
     method: "DELETE",

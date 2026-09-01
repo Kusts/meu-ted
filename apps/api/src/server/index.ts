@@ -14,6 +14,7 @@ import { createPostgresWorkspaceAccessStore } from "../auth/workspace-access.js"
 import { createPostgresWorkspaceStore } from "../auth/workspaces-postgres.js";
 import { createPostgresOwnershipTransferStore } from "../auth/ownership-transfers-postgres.js";
 import { createHttpInviteDelivery } from "../auth/invite-delivery.js";
+import { createSmtpInviteDelivery } from "../auth/invite-delivery-smtp.js";
 import { createPostgresAdoptionStore } from "../observability/adoption.js";
 import { loadConfig } from "../env.js";
 import { createInMemoryGoalStore } from "../goals/in-memory.js";
@@ -63,22 +64,40 @@ const start = async (): Promise<void> => {
 
   if (cfg.databaseUrl) {
     const pool = createPool({ connectionString: cfg.databaseUrl });
+    const { createPostgresInviteSignupGuard } = await import("../auth/invite-signup-guard.js");
+    const inviteSignupGuard = createPostgresInviteSignupGuard(pool);
     const auth = createBetterAuth({
       pool,
       secret: cfg.betterAuthSecret,
       baseURL: cfg.betterAuthUrl,
       trustedOrigins: cfg.trustedOrigins,
-      disableSignUp: cfg.disableSignUp,
+      // Invite-restricted signup: Better-Auth's global disableSignUp is opened,
+      // but the route guard in better-auth-http enforces “pending invite required” (403).
+      disableSignUp: false,
     });
     const workspaceAccess = createPostgresWorkspaceAccessStore(pool);
     const workspaceStore = createPostgresWorkspaceStore(pool);
     const ownershipTransferStore = createPostgresOwnershipTransferStore(pool);
-    const inviteDelivery = cfg.inviteDeliveryUrl && cfg.inviteDeliveryToken
-      ? createHttpInviteDelivery({
+    const inviteDelivery = (() => {
+      if (cfg.smtpHost && cfg.smtpFrom && cfg.inviteAcceptUrl) {
+        return createSmtpInviteDelivery({
+          host: cfg.smtpHost,
+          port: cfg.smtpPort ?? 587,
+          ...(cfg.smtpUser ? { user: cfg.smtpUser } : {}),
+          ...(cfg.smtpPass ? { pass: cfg.smtpPass } : {}),
+          from: cfg.smtpFrom,
+          acceptUrlBase: cfg.inviteAcceptUrl,
+          secure: cfg.smtpSecure,
+        });
+      }
+      if (cfg.inviteDeliveryUrl && cfg.inviteDeliveryToken) {
+        return createHttpInviteDelivery({
           endpoint: cfg.inviteDeliveryUrl,
           bearerToken: cfg.inviteDeliveryToken,
-        })
-      : undefined;
+        });
+      }
+      return undefined;
+    })();
     const inviteRuntime = createPostgresInviteRuntime({
       pool,
       workspaceAccess,
@@ -164,6 +183,7 @@ const start = async (): Promise<void> => {
         workspaceStore,
         ownershipTransferStore,
         ...inviteRuntime,
+        inviteSignupGuard,
         llmConfigStore: createPostgresLlmConfigStore(pool),
         agentConnectionSecret: cfg.agentConnectionSecret,
         agentConfigToken: cfg.agentConfigToken,
@@ -256,6 +276,7 @@ const start = async (): Promise<void> => {
         workspaceStore,
         ownershipTransferStore,
         ...inviteRuntime,
+        inviteSignupGuard,
         llmConfigStore: createPostgresLlmConfigStore(pool),
         agentConnectionSecret: cfg.agentConnectionSecret,
         agentConfigToken: cfg.agentConfigToken,

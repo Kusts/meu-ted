@@ -59,6 +59,13 @@ export type AppConfig = {
   agentRuntimeAdminToken: string;
   inviteDeliveryUrl: string | null;
   inviteDeliveryToken: string | null;
+  smtpHost: string | null;
+  smtpPort: number | null;
+  smtpUser: string | null;
+  smtpPass: string | null;
+  smtpFrom: string | null;
+  smtpSecure: boolean;
+  inviteAcceptUrl: string | null;
 };
 
 export const loadConfig = (): AppConfig => {
@@ -84,6 +91,17 @@ export const loadConfig = (): AppConfig => {
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
 
+  const smtpHost = process.env.SMTP_HOST?.trim() || null;
+  const smtpPortRaw = process.env.SMTP_PORT?.trim();
+  const smtpPort = smtpPortRaw ? Number(smtpPortRaw) : null;
+  const smtpUser = process.env.SMTP_USER?.trim() || null;
+  const smtpPass = process.env.SMTP_PASS?.trim() || null;
+  const smtpFrom = process.env.SMTP_FROM?.trim() || null;
+  const smtpSecure = process.env.SMTP_SECURE?.trim().toLowerCase() === 'true' || (smtpPort === 465);
+  const rawInviteAcceptUrl = process.env.INVITE_ACCEPT_URL?.trim() || null;
+  const pwaOrigin = process.env.PWA_ORIGIN?.trim() || null;
+  const inviteAcceptUrl = rawInviteAcceptUrl ?? (pwaOrigin ? `${pwaOrigin.replace(/\/$/, '')}/convite` : null);
+
   return {
     port,
     host,
@@ -102,5 +120,12 @@ export const loadConfig = (): AppConfig => {
     agentRuntimeAdminToken: process.env.AGENT_RUNTIME_ADMIN_TOKEN?.trim() || 'dev-agent-runtime-admin-token-32-chars!',
     inviteDeliveryUrl: process.env.INVITE_DELIVERY_URL?.trim() || null,
     inviteDeliveryToken: process.env.INVITE_DELIVERY_TOKEN?.trim() || null,
+    smtpHost,
+    smtpPort,
+    smtpUser,
+    smtpPass,
+    smtpFrom,
+    smtpSecure,
+    inviteAcceptUrl,
   };
 };

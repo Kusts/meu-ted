@@ -127,6 +127,7 @@ export type RouteDeps = {
   agentRuntimeOrigin?: string;
   agentRuntimeAdminToken?: string;
   trustedOrigins?: string[];
+  inviteSignupGuard?: import('../auth/invite-signup-guard.js').InviteSignupGuard;
 };
 
 
@@ -451,7 +452,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     });
   }
   if (deps.auth) {
-    registerBetterAuthRoutes(app, deps.auth);
+    registerBetterAuthRoutes(app, deps.auth, undefined, undefined, deps.inviteSignupGuard);
     const adminEmails = deps.adminEmails ?? ['walissonead@gmail.com'];
     registerAdminInviteRoutes(app, {
       auth: deps.auth,

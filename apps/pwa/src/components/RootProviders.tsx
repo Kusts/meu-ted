@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { usePathname } from "next/navigation";
 import { isApiConfigured } from "@/lib/api/client";
 import { AuthGate } from "@/features/auth/AuthGate";
 import { AppStateProvider } from "@/lib/state/app-state-context";
@@ -18,6 +19,21 @@ export function RootProviders({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     initRUM();
   }, []);
+  const pathname = usePathname();
+
+  const isInviteRoute = pathname?.startsWith("/convite");
+
+  if (isInviteRoute) {
+    return (
+      <ThemeProvider>
+        <UnsavedChangesProvider>
+          <SWCoordinator>
+            <SheetProvider>{children}</SheetProvider>
+          </SWCoordinator>
+        </UnsavedChangesProvider>
+      </ThemeProvider>
+    );
+  }
 
   const inner = (
     <UnsavedChangesProvider>

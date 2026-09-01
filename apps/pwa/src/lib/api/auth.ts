@@ -25,6 +25,25 @@ export async function signInWithEmail(credentials: SignInEmailCredentials): Prom
   });
 }
 
+export async function signUpWithEmail(input: { email: string; password: string; name: string }): Promise<SignInEmailResponse> {
+  return apiFetch<SignInEmailResponse>("/auth/sign-up/email", {
+    method: "POST",
+    body: JSON.stringify(input),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export async function fetchSession(): Promise<{ user: { id: string; email: string; name: string } | null }> {
+  try {
+    const res = await apiFetch<{ user: { id: string; email: string; name: string }; session: unknown }>("/auth/session", {
+      method: "GET",
+    });
+    return { user: res.user };
+  } catch {
+    return { user: null };
+  }
+}
+
 export async function registerDeviceToken(sessionToken?: string): Promise<RegisterDeviceResponse> {
   return apiFetch<RegisterDeviceResponse>("/auth/devices/register", {
     method: "POST",

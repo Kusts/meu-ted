@@ -131,6 +131,7 @@ describe("WorkspaceManagerPage", () => {
 
     // Member cannot see administrative invite management or transfer initiation
     expect(screen.queryByRole("heading", { name: "Convites pendentes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Convidar membro" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Novo titular")).not.toBeInTheDocument();
 
     // Member sees ownership transfer proposal and can accept it
@@ -139,5 +140,22 @@ describe("WorkspaceManagerPage", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("Aceitar titularidade do workspace?");
     await user.click(screen.getByRole("button", { name: "Confirmar aceitação" }));
     expect(context.acceptTransfer).toHaveBeenCalledWith("transfer-1");
+  });
+
+  it("owner can invite a member via email form in shared workspace", async () => {
+    const user = userEvent.setup();
+    context.activeWorkspace = { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "owner", status: "active" };
+    context.members = [
+      { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner" },
+    ];
+    context.pendingInvites = [];
+    context.ownershipTransfers = [];
+    render(<WorkspaceManagerPage />);
+
+    expect(screen.getByRole("heading", { name: "Convidar membro" })).toBeInTheDocument();
+    const input = screen.getByLabelText("E-mail do convidado");
+    await user.type(input, "novo@example.com");
+    await user.click(screen.getByRole("button", { name: "Convidar membro" }));
+    expect(context.inviteMember).toHaveBeenCalledWith("novo@example.com");
   });
 });

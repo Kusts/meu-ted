@@ -215,4 +215,25 @@ export const createPostgresInviteStore = (pool: Pool): InviteStore => ({
     }
     return mapInvite(result.rows[0]!);
   },
+
+  async verifyInvite({ tokenHash, now }) {
+    const result = await queryInTransaction<Row>(pool,
+      `SELECT id, household_id, email_normalized, role, token_hash, expires_at, consumed_at, revoked_at, invited_by
+         FROM invites
+        WHERE token_hash = $1`,
+      [tokenHash],
+    );
+    if (result.rowCount === 0) throw new InviteError('invite was not found', 'invite.not_found', 404);
+    const invite = mapInvite(result.rows[0]!);
+    if (invite.revokedAt) throw new InviteError('invite was revoked', 'invite.revoked', 410);
+    if (invite.acceptedAt) throw new InviteError('invite was already used', 'invite.already_used', 409);
+    if (invite.expiresAt.getTime() <= now.getTime()) throw new InviteError('invite expired', 'invite.expired', 410);
+    return {
+      id: invite.id,
+      householdId: invite.householdId,
+      email: invite.email,
+      role: invite.role,
+      expiresAt: invite.expiresAt,
+    };
+  },
 });

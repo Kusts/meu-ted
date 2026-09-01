@@ -45,6 +45,7 @@ export default function WorkspaceManagerPage() {
     renameWorkspace,
     archiveWorkspace,
     restoreWorkspace,
+    inviteMember,
     resendInvite,
     revokeInvite,
     transferOwnership,
@@ -66,6 +67,8 @@ export default function WorkspaceManagerPage() {
   const [transferConfirmOpen, setTransferConfirmOpen] = useState(false);
   const [acceptTransferTarget, setAcceptTransferTarget] = useState<import("@/lib/api/workspaces").OwnershipTransfer | null>(null);
   const [transferBusy, setTransferBusy] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteBusy, setInviteBusy] = useState(false);
 
   const active = workspaces.filter((workspace) => workspace.status !== "archived");
   const archived = workspaces.filter((workspace) => workspace.status === "archived");
@@ -126,6 +129,22 @@ export default function WorkspaceManagerPage() {
       setActionError(cause instanceof Error ? cause.message : "Não foi possível aceitar a titularidade.");
     } finally {
       setTransferBusy(false);
+    }
+  }
+
+  async function handleInvite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const email = inviteEmail.trim();
+    if (!email) return;
+    setInviteBusy(true);
+    setActionError(null);
+    try {
+      await inviteMember(email);
+      setInviteEmail("");
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Não foi possível enviar o convite.");
+    } finally {
+      setInviteBusy(false);
     }
   }
 
@@ -425,6 +444,33 @@ export default function WorkspaceManagerPage() {
 
             {activeWorkspace?.kind === "shared" && activeWorkspace.role === "owner" && (
               <>
+                <Card elevation={2}>
+                  <div className="mb-3">
+                    <h2 className="text-[15px] font-extrabold text-text-primary">Convidar membro</h2>
+                    <p className="text-[11px] text-text-muted">Envie um convite por e-mail para adicionar alguém ao workspace.</p>
+                  </div>
+                  <form onSubmit={(event) => void handleInvite(event)} className="space-y-3">
+                    <div>
+                      <label htmlFor="invite-email" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                        E-mail do convidado
+                      </label>
+                      <input
+                        id="invite-email"
+                        aria-label="E-mail do convidado"
+                        type="email"
+                        value={inviteEmail}
+                        onChange={(event) => setInviteEmail(event.target.value)}
+                        placeholder="email@exemplo.com"
+                        required
+                        className="h-10 w-full rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] font-medium text-text-primary outline-none focus:border-primary"
+                      />
+                    </div>
+                    <Button type="submit" className="w-full" loading={inviteBusy} disabled={!inviteEmail.trim()}>
+                      Convidar membro
+                    </Button>
+                  </form>
+                </Card>
+
                 <Card elevation={2}>
                   <div className="mb-3 flex items-center justify-between">
                     <div>

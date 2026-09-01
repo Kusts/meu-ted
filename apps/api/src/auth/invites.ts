@@ -64,6 +64,7 @@ export type InviteStore = {
     newExpiresAt: Date;
     now: Date;
   }): Promise<InviteRecord>;
+  verifyInvite(input: { tokenHash: string; now: Date }): Promise<Pick<InviteRecord, 'id' | 'householdId' | 'email' | 'role' | 'expiresAt'>>;
 };
 
 export type CreateInviteInput = {
@@ -182,6 +183,14 @@ export const createInviteService = (deps: {
       expiresAt: updated.expiresAt,
     };
   },
+
+  async verifyInvite(input: { token: string; now?: Date }): Promise<Pick<InviteRecord, 'id' | 'householdId' | 'email' | 'role' | 'expiresAt'>> {
+    const result = await deps.store.verifyInvite({
+      tokenHash: hashInviteToken(input.token),
+      now: input.now ?? new Date(),
+    });
+    return result;
+  },
 });
 
 export type InviteService = ReturnType<typeof createInviteService>;
@@ -288,6 +297,21 @@ export const createInMemoryInviteStore = (input: { users: InviteUser[] }): InMem
       invite.tokenHash = newTokenHash;
       invite.expiresAt = new Date(newExpiresAt);
       return { ...invite };
+    },
+
+    async verifyInvite({ tokenHash, now }) {
+      const invite = [...invites.values()].find((candidate) => candidate.tokenHash === tokenHash);
+      if (!invite) throw new InviteError('invite was not found', 'invite.not_found', 404);
+      if (invite.revokedAt) throw new InviteError('invite was revoked', 'invite.revoked', 410);
+      if (invite.acceptedAt) throw new InviteError('invite was already used', 'invite.already_used', 409);
+      if (invite.expiresAt.getTime() <= now.getTime()) throw new InviteError('invite expired', 'invite.expired', 410);
+      return {
+        id: invite.id,
+        householdId: invite.householdId,
+        email: invite.email,
+        role: invite.role,
+        expiresAt: invite.expiresAt,
+      };
     },
 
     getRawInvite(id) {

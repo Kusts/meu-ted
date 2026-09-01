@@ -3,13 +3,20 @@ import type { createBetterAuth } from './better-auth.js';
 import { getBetterAuthSessionContext } from './better-auth.js';
 import type { ReconnectTokenStore } from './reconnect-tokens.js';
 import type { ReconnectSocketRegistry } from './reconnect-sockets.js';
+import type { InviteSignupGuard } from './invite-signup-guard.js';
 import { z } from 'zod';
 
 type BetterAuth = ReturnType<typeof createBetterAuth>;
 
 const reconnectInput = z.object({ token: z.string().trim().min(1) });
 
-export const registerBetterAuthRoutes = (app: FastifyInstance, auth: BetterAuth, reconnectTokens?: ReconnectTokenStore, reconnectSockets?: ReconnectSocketRegistry): void => {
+export const registerBetterAuthRoutes = (
+  app: FastifyInstance,
+  auth: BetterAuth,
+  reconnectTokens?: ReconnectTokenStore,
+  reconnectSockets?: ReconnectSocketRegistry,
+  inviteSignupGuard?: InviteSignupGuard,
+): void => {
   app.post('/auth/reconnect', async (request, reply) => {
     if (isUntrustedMutation(request, auth)) return reply.code(403).send({ code: 'auth.invalid_origin', message: 'Invalid origin' });
     if (!reconnectTokens) return reply.code(503).send({ code: 'auth.reconnect_unavailable', message: 'reconnect tokens are unavailable' });
@@ -55,6 +62,21 @@ export const registerBetterAuthRoutes = (app: FastifyInstance, auth: BetterAuth,
     }
     if (isUntrustedMutation(request, auth)) {
       return reply.code(403).send({ code: 'auth.invalid_origin', message: 'Invalid origin' });
+    }
+    // Invite-restricted signup: only allow creating account when e-mail has a pending invite.
+    if (inviteSignupGuard && request.method === 'POST' && request.url.split('?')[0] === '/auth/sign-up/email') {
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const email = typeof body.email === 'string' ? body.email : '';
+      if (!email) {
+        return reply.code(400).send({ code: 'auth.invalid_email', message: 'E-mail é obrigatório.' });
+      }
+      const hasInvite = await inviteSignupGuard(email);
+      if (!hasInvite) {
+        return reply.code(403).send({
+          code: 'auth.signup_requires_invite',
+          message: 'É necessário um convite pendente para criar conta com este e-mail. Peça ao owner do workspace para enviar um convite.',
+        });
+      }
     }
     const isSignOut = request.method === 'POST' && request.url.split('?')[0] === '/auth/sign-out';
     const session = isSignOut && reconnectTokens
