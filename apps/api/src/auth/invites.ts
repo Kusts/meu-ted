@@ -54,6 +54,7 @@ export type InviteStore = {
     now: Date;
   }): Promise<{ invite: InviteRecord; membership: InviteMembership }>;
   listPendingInvites(householdId: string, now?: Date | undefined): Promise<PendingInviteSummary[]>;
+  listPendingInvitesByEmail(emailNormalized: string, now?: Date | undefined): Promise<PendingInviteSummary[]>;
   revokeInvite(input: { householdId: string; inviteId: string; now?: Date | undefined }): Promise<{ id: string; householdId: string; revokedAt: Date }>;
   getPendingInvite(householdId: string, inviteId: string): Promise<InviteRecord>;
   activateResentInvite(input: {
@@ -142,6 +143,10 @@ export const createInviteService = (deps: {
 
   async listPendingInvites(input: { householdId: string; now?: Date }): Promise<PendingInviteSummary[]> {
     return deps.store.listPendingInvites(input.householdId, input.now);
+  },
+
+  async listPendingInvitesByEmail(emailNormalized: string, now?: Date): Promise<PendingInviteSummary[]> {
+    return deps.store.listPendingInvitesByEmail(emailNormalized, now);
   },
 
   async revokeInvite(input: { householdId: string; inviteId: string; now?: Date }): Promise<{ id: string; householdId: string; revokedAt: Date }> {
@@ -238,6 +243,19 @@ export const createInMemoryInviteStore = (input: { users: InviteUser[] }): InMem
     async listPendingInvites(householdId, now = new Date()) {
       return [...invites.values()]
         .filter((candidate) => candidate.householdId === householdId && !candidate.acceptedAt && !candidate.revokedAt && candidate.expiresAt.getTime() > now.getTime())
+        .map((candidate) => ({
+          id: candidate.id,
+          householdId: candidate.householdId,
+          email: candidate.email,
+          role: candidate.role,
+          expiresAt: candidate.expiresAt,
+          ...(candidate.createdAt ? { createdAt: candidate.createdAt } : {}),
+        }));
+    },
+
+    async listPendingInvitesByEmail(emailNormalized, now = new Date()) {
+      return [...invites.values()]
+        .filter((candidate) => candidate.email.toLowerCase() === emailNormalized && !candidate.acceptedAt && !candidate.revokedAt && candidate.expiresAt.getTime() > now.getTime())
         .map((candidate) => ({
           id: candidate.id,
           householdId: candidate.householdId,

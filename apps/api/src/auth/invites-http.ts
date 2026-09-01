@@ -126,6 +126,18 @@ export const registerInviteRoutes = (app: FastifyInstance, opts: {
     }
   });
 
+  app.get('/auth/invites/pending-me', { preHandler: sessionPreHandler }, async (request, reply) => {
+    const context = request.betterAuthContext!;
+    const normalized = (context.email ?? '').trim().toLowerCase();
+    if (!normalized) return reply.code(400).send({ code: 'validation.error', message: 'session email missing' });
+    try {
+      const items = await opts.service.listPendingInvitesByEmail(normalized);
+      return reply.code(200).send({ items, total: items.length });
+    } catch (error) {
+      return sendInviteError(reply, error);
+    }
+  });
+
   const handleRevoke = async (request: FastifyRequest, reply: FastifyReply) => {
     const parsed = inviteRevokeParams.safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });

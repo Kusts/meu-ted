@@ -150,6 +150,27 @@ export const createPostgresInviteStore = (pool: Pool): InviteStore => ({
     }));
   },
 
+  async listPendingInvitesByEmail(emailNormalized, now = new Date()) {
+    const result = await queryInTransaction<Row>(pool,
+      `SELECT id, household_id, email_normalized, role, expires_at, created_at
+         FROM invites
+        WHERE email_normalized = $1
+          AND consumed_at IS NULL
+          AND revoked_at IS NULL
+          AND expires_at > $2
+        ORDER BY created_at ASC`,
+      [emailNormalized, now],
+    );
+    return result.rows.map((row) => ({
+      id: row['id'] as string,
+      householdId: row['household_id'] as string,
+      email: row['email_normalized'] as string,
+      role: row['role'] as InviteRecord['role'],
+      expiresAt: row['expires_at'] as Date,
+      ...(row['created_at'] ? { createdAt: row['created_at'] as Date } : {}),
+    }));
+  },
+
   async revokeInvite({ householdId, inviteId, now = new Date() }) {
     return withTransaction(pool, async (client) => {
       const result = await client.query<Row>(

@@ -466,4 +466,67 @@ describe('invite HTTP flow', () => {
       await auth.close();
     }
   });
+
+  it('GET /auth/invites/pending-me returns pending invites for session email', async () => {
+    const auth = createBetterAuth({
+      database: memoryAdapter({ user: [], session: [], account: [], verification: [] }),
+      disableSignUp: false,
+      transaction: false,
+      secret: 'test-secret-that-is-at-least-32-characters',
+      baseURL: 'http://localhost:3001',
+      trustedOrigins: ['http://localhost:3000'],
+    });
+    const store = createInMemoryInviteStore({ users: [] });
+    const deliveries: Array<{ token: string; email: string }> = [];
+    const service = createInviteService({
+      store,
+      deliver: async (message) => { deliveries.push({ token: message.token, email: message.email }); },
+    });
+    const { app } = buildTestApp({}, undefined, undefined, auth, service, async () => true);
+
+    try {
+      const owner = await signUp(app, 'owner@example.com');
+      const member = await signUp(app, 'member@example.com');
+      store.addUser(member.user);
+
+      // Create a pending invite for member
+      await app.inject({
+        method: 'POST',
+        url: '/auth/invites',
+        headers: { origin: 'http://localhost:3000', cookie: owner.cookie, 'idempotency-key': 'pending-me-create' },
+        payload: { householdId, email: 'member@example.com', role: 'member', expiresAt: '2030-01-01T00:00:00.000Z' },
+      });
+
+      // 1. Authenticated user with pending invite gets 200 with the invite
+      const pending = await app.inject({
+        method: 'GET',
+        url: '/auth/invites/pending-me',
+        headers: { origin: 'http://localhost:3000', cookie: member.cookie },
+      });
+      expect(pending.statusCode).toBe(200);
+      const body = pending.json();
+      expect(body.items).toHaveLength(1);
+      expect(body.items[0].email).toBe('member@example.com');
+      expect(body.total).toBe(1);
+
+      // 2. Different user gets empty list
+      const other = await app.inject({
+        method: 'GET',
+        url: '/auth/invites/pending-me',
+        headers: { origin: 'http://localhost:3000', cookie: owner.cookie },
+      });
+      expect(other.statusCode).toBe(200);
+      expect(other.json().items).toHaveLength(0);
+
+      // 3. Unauthenticated returns 401
+      const unauth = await app.inject({
+        method: 'GET',
+        url: '/auth/invites/pending-me',
+      });
+      expect(unauth.statusCode).toBe(401);
+    } finally {
+      await app.close();
+      await auth.close();
+    }
+  });
 });
