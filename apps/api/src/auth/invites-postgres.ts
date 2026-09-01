@@ -12,10 +12,15 @@ const ensureApplicationUser = async (pool: Pool, authUserId: string): Promise<st
   const user = userResult.rows[0];
   if (!user) return undefined;
 
+  // users.phone is NOT NULL UNIQUE in the VPS legacy schema but is unused for
+  // email-based app users (real phone binding lives in user_phone_bindings).
+  // Use the user's email as a deterministic unique phone fallback (users.email
+  // is already UNIQUE via users_email_uidx) to satisfy NOT NULL + UNIQUE without
+  // colliding on ''.
   const appUserResult = await queryInTransaction<Row>(pool,
     `INSERT INTO users (auth_user_id, email, name, phone, created_at)
-     VALUES ($1, $2, $3, '', $4)
-     ON CONFLICT (auth_user_id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name
+     VALUES ($1, $2, $3, $2, $4)
+     ON CONFLICT (auth_user_id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, phone = EXCLUDED.phone
      RETURNING id`,
     [authUserId, user['email'], user['name'], user['createdAt']],
   );
@@ -91,10 +96,12 @@ export const createPostgresInviteStore = (pool: Pool): InviteStore => ({
         throw new InviteError('authenticated email does not match invite', 'invite.email_mismatch', 403);
       }
 
+      // Same phone fallback as ensureApplicationUser: email is UNIQUE, phone='' would
+      // collide on second user (users_phone_key UNIQUE). Use email as phone.
       const appUserResult = await client.query<Row>(
         `INSERT INTO users (auth_user_id, email, name, phone, created_at)
-         VALUES ($1, $2, $3, '', $4)
-         ON CONFLICT (auth_user_id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name
+         VALUES ($1, $2, $3, $2, $4)
+         ON CONFLICT (auth_user_id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, phone = EXCLUDED.phone
          RETURNING id`,
         [userId, user['email'], user['name'], user['createdAt']],
       );

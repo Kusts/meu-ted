@@ -16,8 +16,9 @@ const record: InviteRecord = {
 describe('Postgres invite store', () => {
   it('persists normalized email and locks the invite during acceptance', async () => {
     const queries: string[] = [];
+    const phones = new Set<string>();
     const client = {
-      query: async (text: string) => {
+      query: async (text: string, values?: unknown[]) => {
         queries.push(text);
         if (text.includes('FROM invites')) return { rows: [{
           id: record.id,
@@ -32,6 +33,22 @@ describe('Postgres invite store', () => {
         if (text.includes('FROM "user"')) return { rows: [{ id: 'user-1', email: 'member@example.com', name: 'Member', createdAt: new Date('2029-01-01T00:00:00.000Z') }], rowCount: 1 };
         if (text.includes('INSERT INTO users')) {
           if (!text.includes('phone')) throw new Error('null value in column "phone" of relation "users" violates not-null constraint');
+          // phone must be unique deterministic value (email), not '' which would collide on second user
+          const phone = values?.[3] ?? (text.includes("'', $4") ? '' : undefined);
+          // In the fixed SQL phone is $2 (email), so values[1] is phone. Check that phone is email and not empty.
+          const email = values?.[1] as string | undefined;
+          // The SQL is VALUES ($1, $2, $3, $2, $4) so phone should equal email
+          if (phone === '' || phone === undefined) {
+            // Simulate UNIQUE violation if phone '' already used
+            if (phones.has('')) throw new Error('duplicate key value violates unique constraint "users_phone_key"');
+            phones.add('');
+          } else {
+            // For our fixed code, phone is email, check uniqueness via email
+            const phoneValue = email as string;
+            if (phones.has(phoneValue)) throw new Error('duplicate key value violates unique constraint "users_phone_key"');
+            phones.add(phoneValue);
+          }
+          if (text.includes("'', $4")) throw new Error('duplicate key value violates unique constraint "users_phone_key" - phone empty collides');
           return { rows: [{ id: 'app-user-1' }], rowCount: 1 };
         }
         if (text.includes('INSERT INTO memberships')) return { rows: [{ user_id: 'app-user-1', household_id: record.householdId, role: 'member' }], rowCount: 1 };
@@ -61,6 +78,60 @@ describe('Postgres invite store', () => {
     expect(accepted.membership.userId).toBe('app-user-1');
     expect(queries.some((query) => query.includes('email_normalized'))).toBe(true);
     expect(queries.some((query) => query.includes('FOR UPDATE'))).toBe(true);
+  });
+
+  it('uses email as phone to satisfy UNIQUE (two distinct users do not collide)', async () => {
+    const phones = new Set<string>();
+    const makeClient = (email: string, name: string) => ({
+      query: async (text: string, values?: unknown[]) => {
+        if (text.includes('FROM invites')) return { rows: [{
+          id: record.id,
+          household_id: record.householdId,
+          email_normalized: email.toLowerCase(),
+          role: record.role,
+          token_hash: hashInviteToken(`token-${email}`),
+          expires_at: new Date('2030-01-01T00:00:00.000Z'),
+          consumed_at: null,
+          invited_by: 'app-user-1',
+        }], rowCount: 1 };
+        if (text.includes('FROM "user"')) return { rows: [{ id: `user-${email}`, email, name, createdAt: new Date('2029-01-01T00:00:00.000Z') }], rowCount: 1 };
+        if (text.includes('INSERT INTO users')) {
+          if (!text.includes('phone')) throw new Error('null value in column "phone" of relation "users" violates not-null constraint');
+          if (text.includes("'', $4")) throw new Error('duplicate key value violates unique constraint "users_phone_key" - phone empty collides');
+          const phoneAsEmail = values?.[1] as string;
+          if (!phoneAsEmail || phoneAsEmail === '') throw new Error('phone empty');
+          if (phones.has(phoneAsEmail)) throw new Error('duplicate key value violates unique constraint "users_phone_key"');
+          phones.add(phoneAsEmail);
+          return { rows: [{ id: `app-${email}` }], rowCount: 1 };
+        }
+        if (text.includes('INSERT INTO memberships')) return { rows: [{ user_id: `app-${email}`, household_id: record.householdId, role: 'member' }], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      },
+      release: () => undefined,
+    });
+    const pool1 = { connect: async () => makeClient('alice@example.com', 'Alice'), query: async () => ({ rows: [], rowCount: 0 }) } as unknown as Pool;
+    const pool2 = { connect: async () => makeClient('bob@example.com', 'Bob'), query: async () => ({ rows: [], rowCount: 0 }) } as unknown as Pool;
+
+    const store1 = createPostgresInviteStore(pool1 as unknown as Pool);
+    const store2 = createPostgresInviteStore(pool2 as unknown as Pool);
+
+    // First user
+    await store1.acceptInvite({
+      tokenHash: hashInviteToken('token-alice@example.com'),
+      userId: 'user-alice@example.com',
+      userEmail: 'alice@example.com',
+      now: new Date('2029-01-01T00:00:00.000Z'),
+    });
+    // Second distinct user should not collide on phone
+    await store2.acceptInvite({
+      tokenHash: hashInviteToken('token-bob@example.com'),
+      userId: 'user-bob@example.com',
+      userEmail: 'bob@example.com',
+      now: new Date('2029-01-01T00:00:00.000Z'),
+    });
+    expect(phones.has('alice@example.com')).toBe(true);
+    expect(phones.has('bob@example.com')).toBe(true);
+    expect(phones.size).toBe(2);
   });
 
   it('lists pending invites and revokes an invite in postgres store', async () => {
