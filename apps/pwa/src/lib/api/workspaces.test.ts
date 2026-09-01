@@ -1,8 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "./client";
 import { acceptWorkspaceInvite, archiveWorkspace, createWorkspace, createWorkspaceInvite, fetchWorkspaceMembers, fetchWorkspaces, leaveWorkspace, removeWorkspaceMember, renameWorkspace, restoreWorkspace } from "./workspaces";
+import * as tokenStore from "@/lib/auth/token-store";
 
 vi.mock("./client", () => ({ apiFetch: vi.fn() }));
+vi.mock("@/lib/auth/token-store", () => ({
+  getSessionToken: vi.fn(() => null),
+  getToken: vi.fn(() => null),
+  setToken: vi.fn(),
+  setSessionToken: vi.fn(),
+  clearToken: vi.fn(),
+  clearSessionToken: vi.fn(),
+}));
 const mocked = vi.mocked(apiFetch);
 
 beforeEach(() => {
@@ -149,5 +158,29 @@ describe("workspace API", () => {
       createdAt: "2026-08-31T10:00:00.000Z",
       acceptedAt: undefined,
     });
+  });
+
+  it("sends Authorization Bearer for invite create and accept when session token is present", async () => {
+    const { getSessionToken } = await import("@/lib/auth/token-store");
+    vi.mocked(getSessionToken).mockReturnValue("session-token-123");
+    mocked.mockClear();
+    await createWorkspaceInvite("workspace-1", "member@example.com");
+    expect(mocked.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer session-token-123" }) }));
+    mocked.mockClear();
+    await acceptWorkspaceInvite("a".repeat(64));
+    expect(mocked.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer session-token-123" }) }));
+  });
+
+  it("does not send Authorization when no session token", async () => {
+    const { getSessionToken } = await import("@/lib/auth/token-store");
+    vi.mocked(getSessionToken).mockReturnValue(null);
+    mocked.mockClear();
+    await createWorkspaceInvite("workspace-1", "member@example.com");
+    const headers = (mocked.mock.calls[0]?.[1] as Record<string, unknown>)?.headers as Record<string, string> | undefined;
+    expect(headers?.Authorization).toBeUndefined();
+    mocked.mockClear();
+    await acceptWorkspaceInvite("a".repeat(64));
+    const headers2 = (mocked.mock.calls[0]?.[1] as Record<string, unknown>)?.headers as Record<string, string> | undefined;
+    expect(headers2?.Authorization).toBeUndefined();
   });
 });

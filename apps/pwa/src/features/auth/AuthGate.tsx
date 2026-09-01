@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { getToken, setToken } from "@/lib/auth/token-store";
+import { getToken, setToken, setSessionToken } from "@/lib/auth/token-store";
 import { ApiError } from "@/lib/api/client";
 import { signInWithEmail, registerDeviceToken, verifyDeviceToken } from "@/lib/api/auth";
 import { clearSensitiveSession } from "@/lib/session";
@@ -61,6 +61,14 @@ export function AuthGate({ children }: Props) {
     try {
       const signInRes = await signInWithEmail(credentials);
       const sessionToken = signInRes?.token;
+      if (sessionToken) {
+        setSessionToken(sessionToken);
+        try {
+          localStorage.setItem("pi-finance:session-token", sessionToken);
+        } catch {
+          /* noop */
+        }
+      }
 
       const res = await registerDeviceToken(sessionToken);
 

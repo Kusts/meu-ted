@@ -27,3 +27,27 @@ export function clearToken(): void {
     /* noop */
   }
 }
+
+const SESSION_PREFIX = "pi-finance:session-token";
+
+export function getSessionToken(): string | null {
+  try {
+    return getStorage()?.getItem(SESSION_PREFIX) ?? null;
+  } catch {
+    return null;
+  }
+}
+export function setSessionToken(token: string): void {
+  try {
+    getStorage()?.setItem(SESSION_PREFIX, token);
+  } catch {
+    /* noop */
+  }
+}
+export function clearSessionToken(): void {
+  try {
+    getStorage()?.removeItem(SESSION_PREFIX);
+  } catch {
+    /* noop */
+  }
+}

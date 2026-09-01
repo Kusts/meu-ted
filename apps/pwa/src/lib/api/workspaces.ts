@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import { getSessionToken } from "@/lib/auth/token-store";
 import {
   emptyResponseSchema,
   ownershipTransferListSchema,
@@ -12,6 +13,19 @@ import {
   workspaceMemberListSchema,
   workspaceSchema,
 } from "./schemas";
+
+/**
+ * Canonical session token source: localStorage 'pi-finance:session-token'
+ * Persisted after sign-in/sign-up (see token-store.ts and convite/page.tsx,
+ * AuthGate.tsx). Used as fallback for Better-Auth when Secure cookie is not
+ * persisted (http://localhost via proxy). Production https continues to use
+ * cookie (credentials:'include'); Bearer is accepted by getBetterAuthSessionContext
+ * in both cases.
+ */
+function sessionAuthHeader(): Record<string, string> {
+  const token = getSessionToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export type Workspace = {
   id: string;
@@ -177,6 +191,7 @@ export async function createWorkspaceInvite(workspaceId: string, email: string, 
       expiresAt: expiresAt.toISOString(),
     }),
     idempotencyKey: createIdempotencyKey(),
+    headers: sessionAuthHeader(),
     responseSchema: workspaceInviteSchema,
   });
 }
@@ -186,6 +201,7 @@ export async function acceptWorkspaceInvite(token: string): Promise<{ inviteId: 
     method: "POST",
     body: JSON.stringify({ token }),
     idempotencyKey: createIdempotencyKey(),
+    headers: sessionAuthHeader(),
     responseSchema: workspaceInviteAcceptanceSchema,
   });
 }

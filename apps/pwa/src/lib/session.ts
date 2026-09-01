@@ -16,7 +16,7 @@
  * Does NOT touch Cache Storage (static app-shell caches intentionally remain).
  */
 
-import { clearToken } from "@/lib/auth/token-store";
+import { clearToken, clearSessionToken } from "@/lib/auth/token-store";
 import { deleteV2Snapshot } from "@/lib/state/snapshot-db";
 
 const SNAPSHOT_KEY = "pi-finance:snapshot:v1";
@@ -52,6 +52,12 @@ export async function clearSensitiveSession(
   if (doToken) {
     tasks.push(
       Promise.resolve().then(() => { try { clearToken(); } catch { /* noop */ } }),
+    );
+    tasks.push(
+      Promise.resolve().then(() => { try { clearSessionToken(); } catch { /* noop */ } }),
+    );
+    tasks.push(
+      Promise.resolve().then(() => { try { localStorage.removeItem("pi-finance:session-token"); } catch { /* noop */ } }),
     );
   }
   if (doSnapshot) {

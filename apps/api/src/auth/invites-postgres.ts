@@ -13,8 +13,8 @@ const ensureApplicationUser = async (pool: Pool, authUserId: string): Promise<st
   if (!user) return undefined;
 
   const appUserResult = await queryInTransaction<Row>(pool,
-    `INSERT INTO users (auth_user_id, email, name, created_at)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO users (auth_user_id, email, name, phone, created_at)
+     VALUES ($1, $2, $3, '', $4)
      ON CONFLICT (auth_user_id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name
      RETURNING id`,
     [authUserId, user['email'], user['name'], user['createdAt']],
@@ -92,8 +92,8 @@ export const createPostgresInviteStore = (pool: Pool): InviteStore => ({
       }
 
       const appUserResult = await client.query<Row>(
-        `INSERT INTO users (auth_user_id, email, name, created_at)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO users (auth_user_id, email, name, phone, created_at)
+         VALUES ($1, $2, $3, '', $4)
          ON CONFLICT (auth_user_id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name
          RETURNING id`,
         [userId, user['email'], user['name'], user['createdAt']],

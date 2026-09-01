@@ -30,7 +30,10 @@ describe('Postgres invite store', () => {
           invited_by: 'app-user-1',
         }], rowCount: 1 };
         if (text.includes('FROM "user"')) return { rows: [{ id: 'user-1', email: 'member@example.com', name: 'Member', createdAt: new Date('2029-01-01T00:00:00.000Z') }], rowCount: 1 };
-        if (text.includes('INSERT INTO users')) return { rows: [{ id: 'app-user-1' }], rowCount: 1 };
+        if (text.includes('INSERT INTO users')) {
+          if (!text.includes('phone')) throw new Error('null value in column "phone" of relation "users" violates not-null constraint');
+          return { rows: [{ id: 'app-user-1' }], rowCount: 1 };
+        }
         if (text.includes('INSERT INTO memberships')) return { rows: [{ user_id: 'app-user-1', household_id: record.householdId, role: 'member' }], rowCount: 1 };
         if (text.includes('INSERT INTO invites')) return { rows: [{ id: record.id }], rowCount: 1 };
         return { rows: [], rowCount: 0 };

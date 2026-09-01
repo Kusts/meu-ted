@@ -1,4 +1,5 @@
 import { apiFetch, apiGet } from "./client";
+import { getSessionToken } from "@/lib/auth/token-store";
 
 export type SignInEmailCredentials = {
   email: string;
@@ -35,8 +36,12 @@ export async function signUpWithEmail(input: { email: string; password: string; 
 
 export async function fetchSession(): Promise<{ user: { id: string; email: string; name: string } | null }> {
   try {
+    const headers: Record<string, string> = {};
+    const token = getSessionToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
     const res = await apiFetch<{ user: { id: string; email: string; name: string }; session: unknown }>("/auth/session", {
       method: "GET",
+      headers,
     });
     return { user: res.user };
   } catch {

@@ -7,7 +7,7 @@ import Card from "@/components/ui/Card";
 import { ApiError } from "@/lib/api/client";
 import { fetchSession, signInWithEmail, signUpWithEmail, registerDeviceToken } from "@/lib/api/auth";
 import { acceptWorkspaceInvite, verifyWorkspaceInvite } from "@/lib/api/workspaces";
-import { setToken } from "@/lib/auth/token-store";
+import { setToken, setSessionToken } from "@/lib/auth/token-store";
 
 type VerifyResult = {
   email: string;
@@ -154,10 +154,27 @@ export default function ConvitePage() {
     setSignupBusy(true);
     setSignupError(null);
     try {
-      await signUpWithEmail({ email: normalizedEmail, password, name: name.trim() });
+      const signUpRes = await signUpWithEmail({ email: normalizedEmail, password, name: name.trim() });
+      const signUpToken = (signUpRes as unknown as { token?: string })?.token;
+      if (signUpToken) {
+        setSessionToken(signUpToken);
+        try {
+          localStorage.setItem("pi-finance:session-token", signUpToken);
+        } catch {
+          /* noop */
+        }
+      }
       // Após signup, fazer login para obter sessão + device token
       const signInRes = await signInWithEmail({ email: normalizedEmail, password });
-      const sessionToken = (signInRes as unknown as { token?: string })?.token;
+      const sessionToken = (signInRes as unknown as { token?: string })?.token ?? signUpToken;
+      if (sessionToken) {
+        setSessionToken(sessionToken);
+        try {
+          localStorage.setItem("pi-finance:session-token", sessionToken);
+        } catch {
+          /* noop */
+        }
+      }
       const deviceRes = await registerDeviceToken(sessionToken);
       if (deviceRes?.token) {
         setToken(deviceRes.token);
