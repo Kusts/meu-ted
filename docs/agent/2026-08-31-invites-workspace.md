@@ -389,3 +389,28 @@ E) Validar E2E: admin convida 3a conta (sem workspace) -> define senha -> loga;
 - O worker-start original da iteração 2 (task_8c813e790058) registrou dispatch ctx_b98886baaf17
   (ready/input_accepted) — segue ativo. A task clone task_63a164c42a0e (criada por engano
   durante diagnóstico) foi cancelada. Iteração 2 em andamento no terminal do Coder.
+
+## BUG: synthetic workspace id viola FK audit_logs_household_id (23503) — 2026-09-01
+
+### Sintoma (E2E real, válios fluxos)
+- POST /admin/invites/account -> 500 23503 'audit_logs violates foreign key audit_logs_household_id_fkey'
+- POST /workspaces (criar ws compartilhado) -> mesmo 500 23503.
+- Causa: idempotency legacy path (writes/postgres.ts ~500) grava audit_logs.household_id = 
+  operation workspace_id; para criar ws/account-invite o workspaceId é um synthetic UUID que NÃO
+  existe em households -> FK violation.
+
+### Escopo real do bug
+- Criar workspace compartilhado/pessoal está QUEBRADO em produção desde o deploy que ligou
+  legacy:true (9efdfc3, 30/08) — nenhum workspace.create gravou em operation_records (confirmado no banco).
+  Os workspaces existentes são anteriores. Ou seja: regressão silenciosa de produção + agora exposta
+  pelo account invite.
+
+### Fix (delegado ao Coder — crítico, TDD)
+- Em apps/api/src/writes/postgres.ts legacy path: ao inserir audit_logs, não assumir que o
+  workspaceId é um household real. Resolver: se existir households(id=workspaceId) usar; senão NULL
+  (coluna é nullable; push 12/08 usou NULL validamente). Ou derivar do claim.
+- GARANTIR idempotência preservada (claim/replay intactos). Testes: mock do pool que valide:
+  (a) audit_logs.household_id = NULL quando workspaceId não existe em households;
+  (b) = workspaceId real quando exists;
+  (c) workspace.create e account-invite.create não quebram (sem 23503). RED->GREEN.
+- Validar: suite API completa, typecheck, docs:lint, governance:check. NÃO commit sem review.

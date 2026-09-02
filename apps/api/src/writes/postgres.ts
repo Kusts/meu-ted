@@ -17,6 +17,7 @@ import { domainErrors, DomainError } from './errors.js';
 import { buildIdempotencyKey } from './idempotency.js';
 import type { WriteStore } from './store.js';
 import { resolveApplicationUserId } from '../auth/resolve-user-id.js';
+import { resolveHouseholdId } from '../auth/resolve-household-id.js';
 import type {
   CreateAccountInput,
   CreateCategoryInput,
@@ -504,12 +505,17 @@ export const createPostgresIdempotencyStore = (opts: { pool: Pool; legacy?: bool
                 WHERE id = $1 AND workspace_id = $2`,
               [recordId, householdId, JSON.stringify(response), effectRef],
             );
-            const resolvedUserId = await resolveApplicationUserId(client, actorId);
+const resolvedUserId = await resolveApplicationUserId(client, actorId);
+            // The idempotency scope id may be a synthetic UUID (workspace.create,
+            // account-invite.create) that is not a real household. audit_logs has an
+            // FK to households(id); resolve the real household when it exists and
+            // fall back to NULL (nullable column, as push notifications use).
+            const resolvedHouseholdId = await resolveHouseholdId(client, householdId);
             await client.query(
               `INSERT INTO audit_logs
                  (id, household_id, user_id, action, entity_type, entity_id, before_json, after_json, created_at)
                VALUES ($1, $2, $3, $4, 'operation', $5, $6, $7, NOW())`,
-              [randomUUID(), householdId, resolvedUserId, operation ?? 'write', recordId, null, JSON.stringify(response)],
+[randomUUID(), resolvedHouseholdId, resolvedUserId, operation ?? 'write', recordId, null, JSON.stringify(response)],
             );
             return { response, replayed: false };
           }

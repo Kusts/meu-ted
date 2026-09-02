@@ -158,3 +158,65 @@ describe('G2 — legacy idempotency audit boundary', () => {
     expect(result.replayed).toBe(false);
   });
 });
+
+describe('G2b — synthetic scope household FK safety', () => {
+  it('writes audit_logs.household_id = NULL when the scope is a synthetic id (no households row) — regression 23503', async () => {
+    const captured: Array<{ text: string; values?: unknown[] }> = [];
+    const client = {
+      async query(text: string, values?: unknown[]) {
+        captured.push({ text, values });
+        if (text.includes('SELECT id FROM households')) return { rowCount: 0, rows: [] };
+        if (text.includes('SELECT id FROM users')) return { rowCount: 0, rows: [] };
+        if (text.includes('INSERT INTO operation_records')) {
+          return { rowCount: 1, rows: [{ id: '00000000-0000-4000-8000-000000000001', status: 'processing', response: null, effect_ref: null }] };
+        }
+        if (text.includes('INSERT INTO audit_logs')) return { rowCount: 1, rows: [] };
+        if (text.includes('UPDATE operation_records')) return { rowCount: 1, rows: [] };
+        return { rowCount: 1, rows: [] };
+      },
+      release() {},
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+
+    const synthetic = '11111111-2222-4333-8444-555555555555';
+    await createPostgresIdempotencyStore({ pool, legacy: true }).lookupOrRecord(
+      { workspaceId: synthetic, actorType: 'user', actorId: 'user-1', operation: 'workspace.create', key: 'k-synthetic' },
+      { name: 'Teste' },
+      async () => ({ id: 'ws-1' }),
+    );
+
+    const audit = captured.find((c) => c.text.includes('INSERT INTO audit_logs'))!;
+    // $2 = household_id param -> must be null for a synthetic scope (FK-safe)
+    expect(audit.values?.[1]).toBeNull();
+    const householdSelect = captured.find((c) => c.text.includes('SELECT id FROM households'));
+    expect(householdSelect?.values?.[0]).toBe(synthetic);
+  });
+
+  it('writes audit_logs.household_id = real household when the scope exists', async () => {
+    const captured: Array<{ text: string; values?: unknown[] }> = [];
+    const client = {
+      async query(text: string, values?: unknown[]) {
+        captured.push({ text, values });
+        if (text.includes('SELECT id FROM households')) return { rowCount: 1, rows: [{ id: '550e8400-e29b-41d4-a716-446655440000' }] };
+        if (text.includes('SELECT id FROM users')) return { rowCount: 0, rows: [] };
+        if (text.includes('INSERT INTO operation_records')) {
+          return { rowCount: 1, rows: [{ id: '00000000-0000-4000-8000-000000000001', status: 'processing', response: null, effect_ref: null }] };
+        }
+        if (text.includes('INSERT INTO audit_logs')) return { rowCount: 1, rows: [] };
+        if (text.includes('UPDATE operation_records')) return { rowCount: 1, rows: [] };
+        return { rowCount: 1, rows: [] };
+      },
+      release() {},
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+
+    await createPostgresIdempotencyStore({ pool, legacy: true }).lookupOrRecord(
+      { workspaceId: '550e8400-e29b-41d4-a716-446655440000', actorType: 'user', actorId: 'user-1', operation: 'transactions.expense.create', key: 'k-real' },
+      { amountCents: 100 },
+      async () => ({ transactionId: 'tx-1' }),
+    );
+
+    const audit = captured.find((c) => c.text.includes('INSERT INTO audit_logs'))!;
+    expect(audit.values?.[1]).toBe('550e8400-e29b-41d4-a716-446655440000');
+  });
+});
