@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
 import { ApiError } from "@/lib/api/client";
-import { fetchSession, signInWithEmail, signUpWithEmail, registerDeviceToken } from "@/lib/api/auth";
+import { fetchSession, signInWithEmail, signUpWithEmail, verifyAccountInvite, registerDeviceToken } from "@/lib/api/auth";
 import { acceptWorkspaceInvite, verifyWorkspaceInvite } from "@/lib/api/workspaces";
 import { setToken, setSessionToken } from "@/lib/auth/token-store";
 
@@ -16,6 +16,8 @@ type VerifyResult = {
   expiresAt: string;
 };
 
+type InviteKind = "workspace" | "account" | null;
+
 export default function ConvitePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -24,6 +26,7 @@ export default function ConvitePage() {
   const [verify, setVerify] = useState<VerifyResult | null>(null);
   const [verifyLoading, setVerifyLoading] = useState(true);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [inviteKind, setInviteKind] = useState<InviteKind>(null);
 
   const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
@@ -38,7 +41,6 @@ export default function ConvitePage() {
   const [signupBusy, setSignupBusy] = useState(false);
   const [signupError, setSignupError] = useState<string | null>(null);
 
-  // Verificar token
   useEffect(() => {
     if (!token) {
       setVerifyError("Link de convite inválido. Verifique se o link foi copiado corretamente.");
@@ -53,25 +55,52 @@ export default function ConvitePage() {
     let cancelled = false;
     (async () => {
       try {
-        const result = await verifyWorkspaceInvite(token);
+        const wsResult = await verifyWorkspaceInvite(token);
         if (!cancelled) {
-          setVerify(result);
-          setEmail(result.email);
+          setVerify(wsResult);
+          setEmail(wsResult.email);
+          setInviteKind("workspace");
           setVerifyError(null);
         }
-      } catch (cause) {
-        if (!cancelled) {
+      } catch (workspaceCause) {
+        if (!cancelled && workspaceCause instanceof ApiError && workspaceCause.code === "invite.not_found") {
+          try {
+            const acResult = await verifyAccountInvite(token);
+            if (!cancelled) {
+              setVerify({ email: acResult.email, householdId: "", role: "member", expiresAt: acResult.expiresAt });
+              setEmail(acResult.email);
+              setInviteKind("account");
+              setVerifyError(null);
+            }
+          } catch (accountCause) {
+            if (!cancelled) {
+const message =
+                accountCause instanceof ApiError
+                  ? accountCause.code === "invite.not_found"
+                    ? "Convite não encontrado. Ele pode ter sido revogado ou já utilizado."
+                    : accountCause.code === "invite.expired"
+                      ? "Convite de conta expirado."
+                      : accountCause.code === "invite.revoked"
+                        ? "Convite de conta revogado."
+                        : accountCause.code === "invite.already_used"
+                          ? "Convite de conta já utilizado."
+                          : accountCause.message
+                  : "Não foi possível verificar o convite.";
+              setVerifyError(message);
+            }
+          }
+        } else if (!cancelled) {
           const message =
-            cause instanceof ApiError
-              ? cause.code === "invite.not_found"
+            workspaceCause instanceof ApiError
+              ? workspaceCause.code === "invite.not_found"
                 ? "Convite não encontrado. Ele pode ter sido revogado ou já utilizado."
-                : cause.code === "invite.expired"
+                : workspaceCause.code === "invite.expired"
                   ? "Convite expirado. Peça um novo convite ao owner do workspace."
-                  : cause.code === "invite.revoked"
+                  : workspaceCause.code === "invite.revoked"
                     ? "Convite revogado. Solicite um novo convite."
-                    : cause.code === "invite.already_used"
+                    : workspaceCause.code === "invite.already_used"
                       ? "Convite já utilizado."
-                      : cause.message
+                      : workspaceCause.message
               : "Não foi possível verificar o convite.";
           setVerifyError(message);
         }
@@ -79,12 +108,9 @@ export default function ConvitePage() {
         if (!cancelled) setVerifyLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [token]);
 
-  // Checar sessão
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -94,9 +120,7 @@ export default function ConvitePage() {
         setSessionChecked(true);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   const clearTokenFromUrl = () => {
@@ -105,7 +129,6 @@ export default function ConvitePage() {
       url.searchParams.delete("token");
       window.history.replaceState({}, "", url.pathname + url.search);
     } catch {
-      // fallback: router replace without query
       router.replace("/convite");
     }
   };
@@ -118,15 +141,12 @@ export default function ConvitePage() {
       await acceptWorkspaceInvite(token);
       setAcceptSuccess(true);
       clearTokenFromUrl();
-      // Pequeno delay para feedback antes de redirecionar
-      setTimeout(() => {
-        router.replace("/workspaces");
-      }, 900);
+      setTimeout(() => { router.replace("/workspaces"); }, 900);
     } catch (cause) {
       const message =
         cause instanceof ApiError
           ? cause.code === "invite.email_mismatch"
-            ? "O e-mail da sua conta não confere com o do convite. Faça login com o e-mail convidado ou crie a conta correta."
+            ? "O e-mail da sua conta não confere com o do convite. Faça logout e entre com o e-mail convidado, ou crie a conta correta."
             : cause.message
           : "Não foi possível aceitar o convite.";
       setAcceptError(message);
@@ -158,39 +178,25 @@ export default function ConvitePage() {
       const signUpToken = (signUpRes as unknown as { token?: string })?.token;
       if (signUpToken) {
         setSessionToken(signUpToken);
-        try {
-          localStorage.setItem("pi-finance:session-token", signUpToken);
-        } catch {
-          /* noop */
-        }
+        try { localStorage.setItem("pi-finance:session-token", signUpToken); } catch { /* noop */ }
       }
-      // Após signup, fazer login para obter sessão + device token
       const signInRes = await signInWithEmail({ email: normalizedEmail, password });
       const sessionToken = (signInRes as unknown as { token?: string })?.token ?? signUpToken;
       if (sessionToken) {
         setSessionToken(sessionToken);
-        try {
-          localStorage.setItem("pi-finance:session-token", sessionToken);
-        } catch {
-          /* noop */
-        }
+        try { localStorage.setItem("pi-finance:session-token", sessionToken); } catch { /* noop */ }
       }
       const deviceRes = await registerDeviceToken(sessionToken);
       if (deviceRes?.token) {
         setToken(deviceRes.token);
-        try {
-          localStorage.setItem("pi-finance:token", deviceRes.token);
-        } catch {
-          /* noop */
-        }
+        try { localStorage.setItem("pi-finance:token", deviceRes.token); } catch { /* noop */ }
       }
-      // Agora aceitar convite
-      await acceptWorkspaceInvite(token);
+      if (inviteKind === "workspace") {
+        await acceptWorkspaceInvite(token);
+      }
       setAcceptSuccess(true);
       clearTokenFromUrl();
-      setTimeout(() => {
-        router.replace("/workspaces");
-      }, 900);
+      setTimeout(() => { router.replace("/workspaces"); }, 900);
     } catch (cause) {
       const message =
         cause instanceof ApiError
@@ -208,6 +214,11 @@ export default function ConvitePage() {
 
   const isLogged = sessionEmail !== null;
 
+  const inviteTitle = inviteKind === "account" ? "Convite para criar conta" : "Convite de workspace";
+  const inviteSubtitle = inviteKind === "account"
+    ? "Você foi convidado a criar sua conta no Pi Financeiro."
+    : "Aceite o convite para acessar o workspace compartilhado.";
+
   return (
     <main className="flex min-h-dvh flex-col bg-bg">
       <div className="mx-auto flex w-full max-w-lg flex-1 flex-col px-5 py-10 sm:px-6">
@@ -215,8 +226,8 @@ export default function ConvitePage() {
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[16px] bg-gradient-to-br from-primary to-[#0A3A28] text-white shadow-fab">
             <span className="font-mono text-[22px] font-bold">π</span>
           </div>
-          <h1 className="mt-4 text-[22px] font-extrabold tracking-tight text-text-primary">Convite de workspace</h1>
-          <p className="mt-1 text-[13px] text-text-muted">Aceite o convite para acessar o workspace compartilhado.</p>
+          <h1 className="mt-4 text-[22px] font-extrabold tracking-tight text-text-primary">{inviteTitle}</h1>
+          <p className="mt-1 text-[13px] text-text-muted">{inviteSubtitle}</p>
         </div>
 
         {verifyLoading && (
@@ -227,16 +238,10 @@ export default function ConvitePage() {
 
         {!verifyLoading && verifyError && (
           <Card className="border-danger/20 bg-danger-tint">
-            <p className="text-[13px] font-semibold text-danger" role="alert">
-              {verifyError}
-            </p>
+            <p className="text-[13px] font-semibold text-danger" role="alert">{verifyError}</p>
             <div className="mt-4 flex gap-2">
-              <Button type="button" variant="outline" className="w-full" onClick={() => router.push("/")}>
-                Voltar ao início
-              </Button>
-              <Button type="button" className="w-full" onClick={() => router.push("/workspaces")}>
-                Ir para Workspaces
-              </Button>
+              <Button type="button" variant="outline" className="w-full" onClick={() => router.push("/")}>Voltar ao início</Button>
+              <Button type="button" className="w-full" onClick={() => router.push("/workspaces")}>Ir para Workspaces</Button>
             </div>
           </Card>
         )}
@@ -252,7 +257,9 @@ export default function ConvitePage() {
           <>
             <Card elevation={2} className="space-y-3">
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-wider text-text-muted">Detalhes do convite</p>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
+                  {inviteKind === "account" ? "Convite de conta" : "Detalhes do convite"}
+                </p>
                 <p className="mt-2 text-[13px]">
                   <span className="font-semibold text-text-primary">E-mail convidado:</span> <span className="font-bold text-primary">{verify.email}</span>
                 </p>
@@ -272,95 +279,61 @@ export default function ConvitePage() {
                   </p>
                   {sessionEmail !== verify.email.toLowerCase() && (
                     <p className="mt-2 rounded-[10px] bg-warning-tint px-3 py-2 text-[12px] font-semibold text-warning" role="alert">
-                      O e-mail da sua sessão ({sessionEmail}) não confere com o do convite ({verify.email}). Faça logout e entre com o e-mail convidado, ou crie a conta correta.
+                      O e-mail da sua sessão ({sessionEmail}) não confere com o do convite ({verify.email}).
+                      {inviteKind === "account"
+                        ? " Faça login com o e-mail convidado para criar a conta."
+                        : " Faça logout e entre com o e-mail convidado, ou crie a conta correta."}
                     </p>
                   )}
                 </div>
-                {acceptError && (
-                  <p className="rounded-[10px] bg-danger-tint px-3 py-2 text-[12px] font-semibold text-danger" role="alert">
-                    {acceptError}
-                  </p>
+                {inviteKind === "workspace" ? (
+                  <>
+                    {acceptError && (
+                      <p className="rounded-[10px] bg-danger-tint px-3 py-2 text-[12px] font-semibold text-danger" role="alert">{acceptError}</p>
+                    )}
+                    <Button type="button" className="w-full" loading={acceptBusy} disabled={sessionEmail !== verify.email.toLowerCase()} onClick={() => void handleAccept()}>
+                      Aceitar convite
+                    </Button>
+                    <p className="text-center text-[11px] text-text-muted">O token será removido da URL após o aceite.</p>
+                  </>
+                ) : (
+                  <p className="text-[12px] text-text-muted">Para criar sua conta, faça logout e use o link novamente ou crie uma conta com este e-mail.</p>
                 )}
-                <Button
-                  type="button"
-                  className="w-full"
-                  loading={acceptBusy}
-                  disabled={sessionEmail !== verify.email.toLowerCase()}
-                  onClick={() => void handleAccept()}
-                >
-                  Aceitar convite
-                </Button>
-                <p className="text-center text-[11px] text-text-muted">O token será removido da URL após o aceite.</p>
               </Card>
             ) : (
               <Card className="mt-4">
-                <h2 className="text-[15px] font-extrabold text-text-primary">Crie sua conta para aceitar</h2>
+                <h2 className="text-[15px] font-extrabold text-text-primary">
+                  {inviteKind === "account" ? "Crie sua conta" : "Crie sua conta para aceitar"}
+                </h2>
                 <p className="mt-1 text-[12px] text-text-muted">
-                  Sua conta será criada vinculada a este convite. Use exatamente o e-mail convidado.
+                  {inviteKind === "account"
+                    ? "Sua conta será criada com este e-mail. Use exatamente o e-mail do convite."
+                    : "Sua conta será criada vinculada a este convite. Use exatamente o e-mail convidado."}
                 </p>
                 <form onSubmit={handleSignupAndAccept} className="mt-4 space-y-3">
                   <div>
-                    <label htmlFor="invite-name" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
-                      Nome
-                    </label>
-                    <input
-                      id="invite-name"
-                      value={name}
-                      onChange={(event) => setName(event.target.value)}
-                      placeholder="Seu nome"
-                      required
-                      className="h-11 w-full rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] text-text-primary outline-none focus:border-primary"
-                    />
+                    <label htmlFor="invite-name" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Nome</label>
+                    <input id="invite-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Seu nome" required className="h-11 w-full rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] text-text-primary outline-none focus:border-primary" />
                   </div>
                   <div>
-                    <label htmlFor="invite-email" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
-                      E-mail (do convite)
-                    </label>
-                    <input
-                      id="invite-email"
-                      type="email"
-                      value={email}
-                      onChange={(event) => setEmail(event.target.value)}
-                      required
-                      className="h-11 w-full rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] text-text-primary outline-none focus:border-primary"
-                    />
+                    <label htmlFor="invite-email" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">E-mail</label>
+                    <input id="invite-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required className="h-11 w-full rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] text-text-primary outline-none focus:border-primary" />
                     <p className="mt-1 text-[10px] text-text-muted">Deve ser {verify.email}</p>
                   </div>
                   <div>
-                    <label htmlFor="invite-password" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
-                      Senha (mín. 8 caracteres)
-                    </label>
-                    <input
-                      id="invite-password"
-                      type="password"
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      required
-                      minLength={8}
-                      className="h-11 w-full rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] text-text-primary outline-none focus:border-primary"
-                    />
+                    <label htmlFor="invite-password" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Senha (mín. 8 caracteres)</label>
+                    <input id="invite-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={8} className="h-11 w-full rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] text-text-primary outline-none focus:border-primary" />
                   </div>
-                  {signupError && (
-                    <p className="rounded-[10px] bg-danger-tint px-3 py-2 text-[12px] font-semibold text-danger" role="alert">
-                      {signupError}
-                    </p>
-                  )}
-                  {acceptError && (
-                    <p className="rounded-[10px] bg-danger-tint px-3 py-2 text-[12px] font-semibold text-danger" role="alert">
-                      {acceptError}
-                    </p>
-                  )}
+                  {signupError && (<p className="rounded-[10px] bg-danger-tint px-3 py-2 text-[12px] font-semibold text-danger" role="alert">{signupError}</p>)}
                   <Button type="submit" className="w-full" loading={signupBusy}>
-                    Criar conta e aceitar convite
+                    {inviteKind === "account" ? "Criar conta" : "Criar conta e aceitar convite"}
                   </Button>
                   <p className="text-center text-[11px] text-text-muted">
-                    Após criar a conta, o convite será aceito automaticamente e o token removido da URL.
+                    Após criar a conta, seu convite será aceito automaticamente e o token removido da URL.
                   </p>
                 </form>
                 <div className="mt-4 flex justify-center">
-                  <button type="button" className="text-[12px] font-bold text-primary" onClick={() => router.push("/")}>
-                    Já tenho conta — fazer login
-                  </button>
+                  <button type="button" className="text-[12px] font-bold text-primary" onClick={() => router.push("/")}>Já tenho conta — fazer login</button>
                 </div>
               </Card>
             )}

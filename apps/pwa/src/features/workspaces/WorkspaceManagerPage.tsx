@@ -10,6 +10,7 @@ import Dialog from "@/components/ui/Dialog";
 import EmptyState from "@/components/ui/EmptyState";
 import { useWorkspace } from "@/lib/auth/workspace-context";
 import type { Workspace } from "@/lib/api/workspaces";
+import { ApiError } from "@/lib/api/client";
 
 type WorkspaceKind = Workspace["kind"];
 
@@ -142,7 +143,13 @@ export default function WorkspaceManagerPage() {
       await inviteMember(email);
       setInviteEmail("");
     } catch (cause) {
-      setActionError(cause instanceof Error ? cause.message : "Não foi possível enviar o convite.");
+      const message =
+        cause instanceof ApiError && cause.code === "auth.invite_forbidden"
+          ? "Apenas o owner pode convidar quem ainda não possui conta."
+          : cause instanceof Error
+            ? cause.message
+            : "Não foi possível enviar o convite.";
+      setActionError(message);
     } finally {
       setInviteBusy(false);
     }
@@ -442,7 +449,7 @@ export default function WorkspaceManagerPage() {
               </div>
             </Card>
 
-            {activeWorkspace?.kind === "shared" && activeWorkspace.role === "owner" && (
+{activeWorkspace?.kind === "shared" && (
               <>
                 <Card elevation={2}>
                   <div className="mb-3">
@@ -469,8 +476,11 @@ export default function WorkspaceManagerPage() {
                       Convidar membro
                     </Button>
                   </form>
-                </Card>
-
+</Card>
+              </>
+            )}
+            {activeWorkspace?.role === "owner" && (
+              <>
                 <Card elevation={2}>
                   <div className="mb-3 flex items-center justify-between">
                     <div>

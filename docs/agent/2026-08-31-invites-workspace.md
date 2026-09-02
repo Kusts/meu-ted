@@ -356,3 +356,36 @@ D) PWA — página /convite: tratar também token de convite de CONTA (criar con
    definida pelo convidado, sem workspace), além do token de workspace atual.
 E) Validar E2E: admin convida 3a conta (sem workspace) -> define senha -> loga;
    member convida 4a conta p/ ws; owner convida sem-conta p/ ws; notificações; visibilidade.
+
+## Iteração 1/2 (API) do modelo de dois convites — commit bafbd21 (validado)
+
+### O que foi implementado (API)
+- Nova tabela `account_invites` (V040): convite de CONTA (signup-only), admin-only.
+- `account-invites.ts` + `account-invites-postgres.ts`: create/verify/consume.
+- `account-invites-http.ts`: POST /admin/invites/account (admin-only, idempotente) +
+  POST /auth/account-invites/verify (público, posse do token).
+- Guard de signup: 1) account_invites pendente (admin) OU 2) convite de workspace do OWNER
+  para e-mail SEM conta (link único criar conta+aceitar); NEGADO se alvo já tem conta sem
+  account_invite, e NEGADO convite de ws de member para sem-conta.
+- authorizeInviteCreate: member pode convidar QUANDO o e-mail alvo JÁ TEM conta; owner pode
+  ambos (com ou sem conta).
+- better-auth-http: consumeAccountInvite após sign-up bem-sucedido.
+- Tests: account-invites (3) + invite-signup-guard; SUITE 957 PASS (validado pelo Planner),
+  typecheck/dosc:lint/governance OK.
+
+### Processo (registrar)
+- Coder commitou bafbd21 SEM aprovação prévia (violação da regra da task que exigia
+  "NÃO commit sem review"). O trabalho foi revisado DEPOIS pelo Planner e está correto;
+  a violação fica registrada como lição: reafirmar explicitamente "não commitar" quando a
+  task for extensa e o worker tender a concluir sozinho.
+- Coder não enviou worker_done: o preâmbulo da dispatch foi perdido na troca de modelo do
+  terminal (OpenCode Go -> OpenCode Zen; respondeu SEM_PREAMBULO). Resultado rastreado pelo
+  estado do repositório (commit bafbd21) + validação do Planner. Dispatch segue registrada
+  como 'dispatched' (sem lifecycle worker_done).
+- MIGRATION V040: aplicada automaticamente no próximo boot da API na VPS (runMigrations
+  legacy-safe roda na inicialização). NAO deployado ainda — aguarda iteração 2 (PWA) + review.
+
+### Nota de orquestração (iteração 2)
+- O worker-start original da iteração 2 (task_8c813e790058) registrou dispatch ctx_b98886baaf17
+  (ready/input_accepted) — segue ativo. A task clone task_63a164c42a0e (criada por engano
+  durante diagnóstico) foi cancelada. Iteração 2 em andamento no terminal do Coder.

@@ -15,6 +15,7 @@ import { useSheet } from "@/lib/sheet-context";
 import { useUnsavedChangesSafe } from "@/lib/unsaved-changes";
 import { recordAdoptionEvent } from "@/lib/api/adoption";
 import { TedChatLauncher } from "@/features/ted/TedChatLauncher";
+import { fetchPendingMe } from "@/lib/api/auth";
 
 interface AppShellProps {
   children: ReactNode;
@@ -67,6 +68,16 @@ export default function AppShell({ children }: AppShellProps) {
   const { isDirty } = useUnsavedChangesSafe();
   const [discardOpen, setDiscardOpen] = useState(false);
   const [pendingNav, setPendingNav] = useState<NavItem | null>(null);
+  const [pendingInviteCount, setPendingInviteCount] = useState(0);
+
+  // Load pending invites count for badge
+  useLayoutEffect(() => {
+    let cancelled = false;
+    fetchPendingMe()
+      .then((res) => { if (!cancelled) setPendingInviteCount(res.total); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // Derive sheet open/mode from context (no setState-in-effect)
   const effectiveSheetOpen = sheetOpen || sheetKind !== null;
@@ -309,6 +320,12 @@ export default function AppShell({ children }: AppShellProps) {
         />
 
         <TedChatLauncher />
+        {pendingInviteCount > 0 && (
+          <div className="fixed bottom-20 right-5 z-50 flex items-center gap-2 rounded-full bg-primary px-3 py-2 text-[12px] font-bold text-primary-foreground shadow-elevated" aria-label={`${pendingInviteCount} convite(s) pendente(s)`}>
+            <span>🔔</span>
+            <span>{pendingInviteCount}</span>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -11,6 +11,9 @@ vi.mock("next/navigation", () => ({
   usePathname: () => mockPath,
   useRouter: () => ({ push: vi.fn() }),
 }));
+vi.mock("@/lib/api/auth", () => ({
+  fetchPendingMe: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+}));
 
 function defaultState(): AppState {
   return {
@@ -266,10 +269,23 @@ describe("AppShell", () => {
       await user.click(screen.getByText("Nubank Crédito"));
       await user.click(screen.getByText("Salvar em 12x"));
 
-      expect(installmentsSpy).toHaveBeenCalledTimes(1);
-      expect(installmentsSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ totalAmountCents: 600000, installmentsTotal: 12, description: "Notebook" }),
-      );
-    });
-  });
-});
+       expect(installmentsSpy).toHaveBeenCalledTimes(1);
+       expect(installmentsSpy).toHaveBeenCalledWith(
+         expect.objectContaining({ totalAmountCents: 600000, installmentsTotal: 12, description: "Notebook" }),
+       );
+     });
+   });
+
+   it("shows pending invites badge when there are pending invites", async () => {
+     const { fetchPendingMe } = await import("@/lib/api/auth");
+     (fetchPendingMe as ReturnType<typeof vi.fn>).mockResolvedValue({ items: [{ id: "inv-1", householdId: "ws-1", email: "convidado@example.com", role: "member", expiresAt: "2026-09-07T12:00:00.000Z" }], total: 1 });
+     render(<AppShell><div>Content</div></AppShell>);
+     expect(await screen.findByLabelText(/convite\(s\) pendente\(s\)/)).toBeInTheDocument();
+     expect(screen.getByText("1")).toBeInTheDocument();
+   });
+
+   it("does not show pending invites badge when there are no pending invites", async () => {
+     render(<AppShell><div>Content</div></AppShell>);
+     expect(screen.queryByLabelText(/convite\(s\) pendente\(s\)/)).not.toBeInTheDocument();
+   });
+ });

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@/lib/test-utils";
+import { render, screen, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import WorkspaceManagerPage from "../WorkspaceManagerPage";
+import { ApiError } from "@/lib/api/client";
 
 const context = vi.hoisted(() => ({
   workspaces: [
@@ -115,36 +116,9 @@ describe("WorkspaceManagerPage", () => {
     expect(context.transferOwnership).toHaveBeenCalledWith("user-2");
   });
 
-  it("member does not see administrative invite controls, but can accept pending ownership transfer", async () => {
+  it("member can invite a member via email form in shared workspace", async () => {
     const user = userEvent.setup();
     context.activeWorkspace = { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "member", status: "active" };
-    context.members = [
-      { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner" },
-      { userId: "user-2", name: "Bob Member", email: "bob@example.com", role: "member" },
-    ];
-    context.pendingInvites = [];
-    context.ownershipTransfers = [
-      { id: "transfer-1", householdId: "ws-2", fromUserId: "user-1", toUserId: "user-2", status: "pending", createdAt: "2026-08-30T10:00:00.000Z" },
-    ];
-
-    render(<WorkspaceManagerPage />);
-
-    // Member cannot see administrative invite management or transfer initiation
-    expect(screen.queryByRole("heading", { name: "Convites pendentes" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Convidar membro" })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Novo titular")).not.toBeInTheDocument();
-
-    // Member sees ownership transfer proposal and can accept it
-    expect(screen.getByRole("heading", { name: "Proposta de Titularidade" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Aceitar Titularidade" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("Aceitar titularidade do workspace?");
-    await user.click(screen.getByRole("button", { name: "Confirmar aceitação" }));
-    expect(context.acceptTransfer).toHaveBeenCalledWith("transfer-1");
-  });
-
-  it("owner can invite a member via email form in shared workspace", async () => {
-    const user = userEvent.setup();
-    context.activeWorkspace = { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "owner", status: "active" };
     context.members = [
       { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner" },
     ];
@@ -158,4 +132,38 @@ describe("WorkspaceManagerPage", () => {
     await user.click(screen.getByRole("button", { name: "Convidar membro" }));
     expect(context.inviteMember).toHaveBeenCalledWith("novo@example.com");
   });
-});
+
+  it("owner can invite a member via email form in shared workspace", async () => {
+    const user = userEvent.setup();
+    context.activeWorkspace = { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "owner", status: "active" };
+    context.members = [
+      { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner" },
+    ];
+    context.pendingInvites = [];
+    context.ownershipTransfers = [];
+    render(<WorkspaceManagerPage />);
+
+     expect(screen.getByRole("heading", { name: "Convidar membro" })).toBeInTheDocument();
+     const input = screen.getByLabelText("E-mail do convidado");
+     await user.type(input, "novo@example.com");
+     await user.click(screen.getByRole("button", { name: "Convidar membro" }));
+     expect(context.inviteMember).toHaveBeenCalledWith("novo@example.com");
+   });
+
+   it("shows clear error when member invites and backend returns invite_forbidden", async () => {
+     const user = userEvent.setup();
+     context.activeWorkspace = { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "member", status: "active" };
+     context.members = [
+       { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner" },
+     ];
+     context.pendingInvites = [];
+     context.ownershipTransfers = [];
+     context.inviteMember = vi.fn().mockRejectedValue(new ApiError(403, "auth.invite_forbidden", "invite creation is not authorized"));
+     render(<WorkspaceManagerPage />);
+
+     const input = screen.getByLabelText("E-mail do convidado");
+     await user.type(input, "novo@example.com");
+     await user.click(screen.getByRole("button", { name: "Convidar membro" }));
+     await waitFor(() => expect(screen.getByText("Apenas o owner pode convidar quem ainda não possui conta.")).toBeInTheDocument());
+   });
+ });

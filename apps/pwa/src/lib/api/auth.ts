@@ -1,6 +1,25 @@
 import { apiFetch, apiGet } from "./client";
 import { getSessionToken } from "@/lib/auth/token-store";
 
+export type VerifyAccountInviteResult = {
+  email: string;
+  expiresAt: string;
+};
+
+export type PendingInviteSummary = {
+  id: string;
+  householdId: string;
+  email: string;
+  role: "owner" | "member";
+  expiresAt: string;
+  createdAt?: string;
+};
+
+export type PendingMeResult = {
+  items: PendingInviteSummary[];
+  total: number;
+};
+
 export type SignInEmailCredentials = {
   email: string;
   password: string;
@@ -31,6 +50,24 @@ export async function signUpWithEmail(input: { email: string; password: string; 
     method: "POST",
     body: JSON.stringify(input),
     headers: { "Content-Type": "application/json" },
+  });
+}
+
+export async function verifyAccountInvite(token: string): Promise<VerifyAccountInviteResult> {
+  return apiFetch<VerifyAccountInviteResult>("/auth/account-invites/verify", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export async function fetchPendingMe(): Promise<PendingMeResult> {
+  const headers: Record<string, string> = {};
+  const token = getSessionToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return apiFetch<PendingMeResult>("/auth/invites/pending-me", {
+    method: "GET",
+    headers,
   });
 }
 
