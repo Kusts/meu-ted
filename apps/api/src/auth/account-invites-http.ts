@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { createBetterAuth } from './better-auth.js';
@@ -9,12 +10,19 @@ import { isUserAdmin } from './admin-invite-service.js';
 import './request-context.js';
 
 type BetterAuth = ReturnType<typeof createBetterAuth>;
+// Account invites have no persistent workspace id; the Postgres idempotency
+// store still requires a valid UUID for operation_records.workspace_id.
+// Derive a deterministic synthetic UUID from the authenticated admin.
+const ACCOUNT_INVITE_NAMESPACE = '6ba7b811-9dad-11d1-80b4-00c04fd430c9';
+export const getSyntheticWorkspaceId = (authUserId: string): string => {
+  const hash = createHash('sha256').update(`${ACCOUNT_INVITE_NAMESPACE}:account-invite.create:${authUserId}`).digest('hex');
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+};
 
 const createAccountInviteInput = z.object({
   email: z.string().trim().email(),
   expiresAt: z.coerce.date().optional(),
 });
-
 const verifyInput = z.object({ token: z.string().length(64) });
 
 export const registerAccountInviteRoutes = (
@@ -59,7 +67,7 @@ export const registerAccountInviteRoutes = (
     try {
       const result = await idempotency.lookupOrRecord(
         {
-          workspaceId: 'account-invite',
+workspaceId: getSyntheticWorkspaceId(context.userId),
           actorType: 'user',
           actorId: context.userId,
           operation: 'account-invite.create',

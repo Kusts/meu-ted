@@ -56,3 +56,16 @@ describe('account invite flow', () => {
     expect(await store.hasPendingAccountInvite('consume@example.com')).toBe(false);
   });
 });
+
+describe('account-invites HTTP idempotency workspace id', () => {
+  it('derives a valid synthetic UUID workspace id (regression: 22P02 on literal string)', async () => {
+    const { getSyntheticWorkspaceId, registerAccountInviteRoutes } = await import('../../src/auth/account-invites-http.js');
+    const route = registerAccountInviteRoutes as unknown;
+    expect(route).toBeTypeOf('function');
+    const id = getSyntheticWorkspaceId('admin-user-1');
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    // Deterministic: same admin -> same id (idempotency replay works across calls)
+    expect(getSyntheticWorkspaceId('admin-user-1')).toBe(id);
+    expect(getSyntheticWorkspaceId('admin-user-2')).not.toBe(id);
+  });
+});
