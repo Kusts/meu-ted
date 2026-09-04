@@ -7,6 +7,7 @@
 // value or payload — so no sensitive data can leak through logs.
 
 import { NextRequest, NextResponse } from "next/server";
+import { RUM_MAX_BODY_BYTES, RUM_RATE_LIMIT } from "./constants";
 
 const ALLOWED_KEYS = new Set(["metric", "value", "route", "buildId"]);
 const KNOWN_METRICS = new Set(["LCP", "INP", "CLS", "FCP", "TTFB", "TBT", "FID"]);
@@ -15,12 +16,6 @@ const KNOWN_ROUTES = new Set([
   "/metas", "/cartoes", "/assinaturas", "/patrimonio", "/relatorios", "/perfil",
   "/_not-found", "/manifest.webmanifest",
 ]);
-
-/** P2-10: payload cap — real RUM events are well under 1 KB. */
-export const RUM_MAX_BODY_BYTES = 1024;
-
-/** P2-10: local proportional rate limit (per client IP, sliding window). */
-export const RUM_RATE_LIMIT = { limit: 30, windowMs: 60_000 } as const;
 
 const rateBuckets = new Map<string, number[]>();
 

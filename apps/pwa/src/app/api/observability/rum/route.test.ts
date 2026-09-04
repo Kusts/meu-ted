@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { POST, RUM_RATE_LIMIT, RUM_MAX_BODY_BYTES } from "./route";
+import { POST } from "./route";
+import { RUM_MAX_BODY_BYTES, RUM_RATE_LIMIT } from "./constants";
 
 const VALID = { metric: "LCP", value: 1200, route: "/" };
 
