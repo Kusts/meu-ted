@@ -194,7 +194,9 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
               </h3>
               <div className="flex flex-col gap-2.5">
                 {models.map((m) => {
-                  const isCurrentActive = runtime?.activeProviderId === m.providerId && runtime?.activeModelId === m.modelId;
+                  const isCurrentActive =
+                    runtime?.activeProviderId === m.providerId &&
+                    (runtime?.activeModelId === m.id || runtime?.activeModelId === m.modelId);
                   return (
                     <div
                       key={m.id}
@@ -220,11 +222,14 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                         <button
                           type="button"
                           onClick={() => void handleToggleModel(m.id, m.enabled)}
-                          className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-all active:scale-95 ${
+                          disabled={isCurrentActive}
+                          aria-disabled={isCurrentActive}
+                          title={isCurrentActive ? "Modelo ativo — desative outro modelo antes de desabilitar este" : undefined}
+                          className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 ${
                             m.enabled ? "bg-surface-2 border border-primary/30 text-primary hover:bg-primary-tint" : "bg-surface-2 border border-border-subtle text-text-muted hover:bg-surface-3"
-                          }`}
+                          } ${isCurrentActive ? "opacity-60" : ""}`}
                         >
-                          {m.enabled ? "Habilitado" : "Desabilitado"}
+                          {isCurrentActive ? "Ativo · Habilitado" : m.enabled ? "Habilitado" : "Desabilitado"}
                         </button>
                         {!isCurrentActive && m.enabled && (
                           <button

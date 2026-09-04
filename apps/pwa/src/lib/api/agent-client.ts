@@ -26,8 +26,12 @@ const historySchema = z.object({
 
 export type AgentMessage = z.infer<typeof historyItemSchema>;
 
-function agentBaseUrl(): string | undefined {
-  return process.env.NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL?.replace(/\/$/, "") || undefined;
+function agentBaseUrl(): string {
+  const direct = process.env.NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL?.replace(/\/$/, "");
+  if (direct) return direct;
+  // Fallback seguro ao proxy Next.js /api/agent quando a URL direta não estiver configurada.
+  // Preserva token e X-Workspace-Id via forwardHeaders do proxy e evita CORS/misconfig.
+  return "/api/agent";
 }
 
 export type AgentTurn = { turnId: string; status: string; attempts?: number; output?: string };
@@ -63,13 +67,11 @@ export type PendingOperation = z.infer<typeof pendingOperationSchema>;
 
 function agentRequestUrl(workspaceId: string, suffix: string): string {
   const baseUrl = agentBaseUrl();
-  if (!baseUrl) throw new Error("Agent não configurado");
   return `${baseUrl}/agents/workspace/${encodeURIComponent(workspaceId)}/message${suffix}`;
 }
 
 function agentHistoryUrl(workspaceId: string, suffix: string): string {
   const baseUrl = agentBaseUrl();
-  if (!baseUrl) throw new Error("Agent não configurado");
   return `${baseUrl}/agents/workspace/${encodeURIComponent(workspaceId)}/history${suffix}`;
 }
 
@@ -94,7 +96,6 @@ async function agentAuthHeaders(workspaceId: string): Promise<Record<string, str
 
 export async function sendAgentMessage(workspaceId: string, content: string): Promise<AgentTurn> {
   const baseUrl = agentBaseUrl();
-  if (!baseUrl) throw new Error("Agent não configurado");
   const authHeaders = await agentAuthHeaders(workspaceId);
   const response = await fetch(
     `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/chat`,
@@ -111,13 +112,21 @@ export async function sendAgentMessage(workspaceId: string, content: string): Pr
   );
   if (!response.ok) {
     let errorMsg = "Operação do agente falhou.";
+    let errorCode: string | undefined;
     try {
       const errBody = await response.json() as { message?: string; code?: string };
       if (errBody?.message) errorMsg = errBody.message;
+      if (errBody?.code) errorCode = errBody.code;
     } catch {
       // use default message
     }
-    throw new Error(errorMsg);
+    // Preserve 401/403 sem mascarar: anexa code/status ao erro para caller distinguir sem vazar segredo
+    const err = new Error(errorMsg) as Error & { status?: number; code?: string };
+    err.status = response.status;
+    if (errorCode) err.code = errorCode;
+    else if (response.status === 401) err.code = "auth.session_required";
+    else if (response.status === 403) err.code = "auth.workspace_forbidden";
+    throw err;
   }
   const data = await response.json() as { turnId?: string; intentionId?: string; status?: string; output?: string };
   return {
@@ -244,7 +253,6 @@ export async function rejectPendingOperation(workspaceId: string, pendingOperati
 
 export async function fetchAgentHistory(workspaceId: string): Promise<AgentMessage[]> {
   const baseUrl = agentBaseUrl();
-  if (!baseUrl) return [];
   const authHeaders = await agentAuthHeaders(workspaceId);
   const response = await fetch(
     `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/history`,
@@ -258,13 +266,20 @@ export async function fetchAgentHistory(workspaceId: string): Promise<AgentMessa
   );
   if (!response.ok) {
     let errorMsg = "Não foi possível carregar o histórico do agente.";
+    let errorCode: string | undefined;
     try {
       const errBody = await response.json() as { message?: string; code?: string };
       if (errBody?.message) errorMsg = errBody.message;
+      if (errBody?.code) errorCode = errBody.code;
     } catch {
       // use default message
     }
-    throw new Error(errorMsg);
+    const err = new Error(errorMsg) as Error & { status?: number; code?: string };
+    err.status = response.status;
+    if (errorCode) err.code = errorCode;
+    else if (response.status === 401) err.code = "auth.session_required";
+    else if (response.status === 403) err.code = "auth.workspace_forbidden";
+    throw err;
   }
   const json = await response.json();
   return historySchema.parse(json).items;
