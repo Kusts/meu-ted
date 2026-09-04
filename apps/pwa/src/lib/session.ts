@@ -18,6 +18,7 @@
 
 import { clearToken, clearSessionToken } from "@/lib/auth/token-store";
 import { deleteV2Snapshot } from "@/lib/state/snapshot-db";
+import { clearActiveWorkspaceId } from "@/lib/api/client";
 
 const SNAPSHOT_KEY = "pi-finance:snapshot:v1";
 const PROFILE_KEY = "pi-finance:profile";
@@ -58,6 +59,9 @@ export async function clearSensitiveSession(
     );
     tasks.push(
       Promise.resolve().then(() => { try { localStorage.removeItem("pi-finance:session-token"); } catch { /* noop */ } }),
+    );
+    tasks.push(
+      Promise.resolve().then(() => { try { clearActiveWorkspaceId(); } catch { /* noop */ } }),
     );
   }
   if (doSnapshot) {

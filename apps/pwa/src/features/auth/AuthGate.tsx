@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { getToken, setToken, setSessionToken } from "@/lib/auth/token-store";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, clearActiveWorkspaceId } from "@/lib/api/client";
 import { signInWithEmail, registerDeviceToken, verifyDeviceToken } from "@/lib/api/auth";
 import { clearSensitiveSession } from "@/lib/session";
 import { SessionProvider } from "@/lib/auth/session-context";
@@ -58,6 +58,7 @@ export function AuthGate({ children }: Props) {
 
   const handleLogin = useCallback(async (credentials: { email: string; password: string }) => {
     setError("");
+    clearActiveWorkspaceId();
     try {
       const signInRes = await signInWithEmail(credentials);
       const sessionToken = signInRes?.token;

@@ -303,6 +303,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     if (current) {
       closeAllSockets("workspace access revoked");
+      clearActiveWorkspaceId();
       await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true });
     }
     activeWorkspaceIdRef.current = workspaceId;

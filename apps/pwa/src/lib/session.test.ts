@@ -76,6 +76,24 @@ describe("clearSensitiveSession", () => {
     }
   });
 
+  it("clears activeWorkspaceId when clearToken is true to prevent leaking to new session", async () => {
+    const { setActiveWorkspaceId, apiFetch } = await import("@/lib/api/client");
+    setActiveWorkspaceId("ws-leak-test");
+
+    await clearSensitiveSession({
+      clearToken: true,
+    });
+
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await apiFetch("/accounts");
+    const h = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(h["X-Workspace-Id"]).toBeUndefined();
+  });
+
   it("respects selective flags (only clears what is requested)", async () => {
     setToken("test-token-select");
     seedProfile();

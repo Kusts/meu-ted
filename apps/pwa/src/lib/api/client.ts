@@ -48,6 +48,15 @@ export function isApiConfigured(): boolean {
   return baseUrl() !== undefined;
 }
 
+/** Returns the session token from localStorage (safe for client-side only) */
+export function getSessionToken(): string | undefined {
+  try {
+    return localStorage.getItem("pi-finance:session-token") ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Returns the auth token from localStorage (safe for client-side only) */
 export function getAuthToken(): string | undefined {
   try {
@@ -106,10 +115,12 @@ export async function apiFetch<T>(
     ...rest
   } = options;
   const resolvedToken = token ?? getAuthToken();
+  const sessionToken = getSessionToken();
 
   const requestHeaders: Record<string, string> = {
     Accept: "application/json",
     ...(rest.body ? { "Content-Type": "application/json" } : {}),
+    ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
     ...(resolvedToken ? { "x-device-token": resolvedToken } : {}),
     ...(activeWorkspaceId ? { "X-Workspace-Id": activeWorkspaceId } : {}),
     ...((optsHeaders as Record<string, string>) ?? {}),

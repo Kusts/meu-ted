@@ -146,32 +146,90 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     const auth = deps.auth;
     const workspaceAccess = deps.workspaceAccess;
     app.addHook("preHandler", async (request, reply) => {
+      if (
+        request.url === '/health' ||
+        request.url.startsWith('/auth/') ||
+        request.url.startsWith('/api/auth') ||
+        request.url.startsWith('/bridge/')
+      ) {
+        return;
+      }
+
+      const authHeader = request.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const rawToken = authHeader.slice('Bearer '.length).trim();
+        try {
+          const [, p] = rawToken.split('.');
+          if (p) {
+            const j = JSON.parse(Buffer.from(p, 'base64url').toString('utf8')) as { iss?: string };
+            if (j.iss === 'pi-agent') return;
+          }
+        } catch {
+          // non-jwt or error, proceed
+        }
+      }
+
       const workspaceIdHeader = request.headers['x-workspace-id'];
       const workspaceId = Array.isArray(workspaceIdHeader) ? workspaceIdHeader[0] : workspaceIdHeader;
-      if (!workspaceId) return;
 
       const headers = new Headers();
       for (const [key, val] of Object.entries(request.headers)) {
         if (val !== undefined) headers.set(key, Array.isArray(val) ? val.join(', ') : val);
       }
       const session = await getBetterAuthSessionContext(auth, headers);
-      if (!session) return;
 
-      const access = await workspaceAccess.resolve(session.userId, workspaceId);
-      if (!access) {
-        return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Acesso ao workspace proibido.' });
+      if (workspaceId) {
+        if (session) {
+          const access = await workspaceAccess.resolve(session.userId, workspaceId);
+          if (!access) {
+            return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Acesso ao workspace proibido.' });
+          }
+
+          request.betterAuthContext = session;
+          request.workspaceAccess = access;
+          request.authenticatedContext = {
+            householdId: access.householdId,
+            actorId: access.userId,
+            authUserId: session.userId,
+            actorType: 'user',
+            deviceId: '',
+            role: access.role,
+          };
+          return;
+        }
+
+        const deviceHeader = request.headers[DEVICE_TOKEN_HEADER];
+        const deviceToken = Array.isArray(deviceHeader) ? deviceHeader[0] : deviceHeader;
+        if (deviceToken) {
+          try {
+            const deviceContext = await resolveToken(deviceToken);
+            if (deviceContext.householdId === workspaceId) {
+              request.authenticatedContext = {
+                householdId: deviceContext.householdId,
+                actorId: deviceContext.deviceId,
+                authUserId: deviceContext.deviceId,
+                actorType: 'device',
+                deviceId: deviceContext.deviceId,
+                role: 'owner',
+              };
+              return;
+            }
+            return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Acesso ao workspace proibido.' });
+          } catch {
+            return reply.code(401).send({ code: 'auth.session_required', message: 'Token de autenticação inválido ou expirado.' });
+          }
+        }
+
+        return reply.code(401).send({ code: 'auth.session_required', message: 'Sessão ou token de autenticação obrigatório.' });
       }
 
-      request.betterAuthContext = session;
-      request.workspaceAccess = access;
-      request.authenticatedContext = {
-        householdId: access.householdId,
-        actorId: access.userId,
-        authUserId: session.userId,
-        actorType: 'user',
-        deviceId: '',
-        role: access.role,
-      };
+      if (session) {
+        if (request.url === '/workspaces' || request.url.startsWith('/workspaces?')) {
+          return;
+        }
+
+        return reply.code(403).send({ code: 'auth.workspace_required', message: 'Header x-workspace-id é obrigatório.' });
+      }
     });
   }
 
@@ -309,6 +367,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     disableDeviceRegistration: deps.disableDeviceRegistration ?? false,
     ...(deps.auth ? { auth: deps.auth } : {}),
     ...(deps.workspaceAccess ? { workspaceAccess: deps.workspaceAccess } : {}),
+    ...(deps.workspaceStore ? { workspaceStore: deps.workspaceStore } : {}),
   };
   if (deps.defaultHouseholdId !== undefined)
     authOpts.defaultHouseholdId = deps.defaultHouseholdId;

@@ -232,6 +232,19 @@ describe("apiFetch error, timeout and edge handling", () => {
     expect(getAuthToken()).toBe("stored");
     localStorage.removeItem("pi-finance:token");
   });
+
+  it("apiFetch automatically forwards pi-finance:session-token as Bearer header", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    localStorage.setItem("pi-finance:session-token", "sess-test-token-xyz");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await apiFetch("/transactions");
+    const h = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(h["Authorization"]).toBe("Bearer sess-test-token-xyz");
+    localStorage.removeItem("pi-finance:session-token");
+  });
 });
 
 describe("central 401 handling (UNAUTHORIZED_EVENT)", () => {

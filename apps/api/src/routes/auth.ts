@@ -24,6 +24,7 @@ export const registerAuthRoutes = (
     disableDeviceRegistration?: boolean;
     auth?: BetterAuth;
     workspaceAccess?: WorkspaceAccessStore;
+    workspaceStore?: import('../auth/workspaces-store.js').WorkspaceStore;
   },
 ): void => {
   app.get('/auth/devices/me', async (req, reply) => {
@@ -55,8 +56,17 @@ export const registerAuthRoutes = (
             const wsId = Array.isArray(workspaceIdHeader) ? workspaceIdHeader[0] : workspaceIdHeader;
             if (wsId) {
               const access = await opts.workspaceAccess.resolve(session.userId, wsId);
-              if (access) sessionHouseholdId = access.householdId;
+              if (access) {
+                sessionHouseholdId = access.householdId;
+              } else {
+                return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Acesso ao workspace proibido.' });
+              }
             }
+          }
+          if (!sessionHouseholdId && opts.workspaceStore) {
+            const list = await opts.workspaceStore.list(session.userId);
+            const active = list.find((w) => w.status !== 'archived');
+            if (active) sessionHouseholdId = active.id;
           }
           if (!sessionHouseholdId) {
             const { DEMO_HOUSEHOLD_ID } = await import('../read-models/demo-data.js');
