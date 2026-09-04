@@ -1,9 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { useState } from "react";
 import "fake-indexeddb/auto";
-import { render, screen } from "@/lib/test-utils";
+import { render, screen, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import { WorkspaceProvider, useWorkspace } from "./workspace-context";
+import { AppStateProvider, useAppState } from "@/lib/state/app-state-context";
+import * as endpoints from "@/lib/api/endpoints";
 import { saveSnapshotDomain, loadSnapshotDomain } from "@/lib/state/snapshot-store";
 
 const api = vi.hoisted(() => ({
@@ -21,14 +23,28 @@ const api = vi.hoisted(() => ({
   restoreWorkspace: vi.fn(),
   closeAllSockets: vi.fn(),
 }));
+const clientState = vi.hoisted(() => ({ active: undefined as string | undefined }));
 vi.mock("@/lib/api/workspaces", () => api);
 vi.mock("./socket-registry", () => ({ closeAllSockets: api.closeAllSockets }));
 vi.mock("@/lib/api/client", () => ({
   isApiConfigured: () => true,
-  getAuthToken: () => undefined,
-  setActiveWorkspaceId: vi.fn(),
-  clearActiveWorkspaceId: vi.fn(),
+  // A valid token is required so AppStateProvider's apiUsable() bootstraps in
+  // the P1-1 integration test below.
+  getAuthToken: () => "user-1",
+  setActiveWorkspaceId: vi.fn((id: string) => {
+    clientState.active = id;
+  }),
+  clearActiveWorkspaceId: vi.fn(() => {
+    clientState.active = undefined;
+  }),
   apiFetch: vi.fn(),
+  // Minimal stub: sync-engine performs `reason instanceof ApiError` on every
+  // bootstrap result while this module is mocked.
+  ApiError: class ApiError extends Error {
+    constructor(public status: number, public code: string, message: string) {
+      super(message);
+    }
+  },
 }));
 
 function Probe() {
@@ -191,5 +207,88 @@ describe("WorkspaceProvider", () => {
 
     await user.click(screen.getByRole("button", { name: "Accept Transfer" }));
     expect(api.acceptOwnershipTransfer).toHaveBeenCalledWith("workspace-2", "transfer-1");
+  });
+});
+
+
+describe("WorkspaceProvider + AppStateProvider — workspace switch remount (P1-1 regression)", () => {
+  beforeEach(async () => {
+    const dbs = await indexedDB.databases();
+    for (const db of dbs) if (db.name) indexedDB.deleteDatabase(db.name);
+    api.fetchWorkspaces.mockResolvedValue([
+      { id: "workspace-1", name: "Casa", kind: "personal", role: "owner" },
+      { id: "workspace-2", name: "Equipe", kind: "shared", role: "owner" },
+    ]);
+    api.fetchWorkspaceMembers.mockResolvedValue([]);
+    api.fetchPendingInvites.mockResolvedValue([]);
+    api.fetchOwnershipTransfers.mockResolvedValue([]);
+  });
+
+  it("re-bootstraps and replaces previous workspace data on selectWorkspace", async () => {
+    const user = userEvent.setup();
+    const w1Tx = { id: "tx-w1", description: "Compra W1", amountCents: 1000, date: "2026-09-01", kind: "expense", categoryId: "c1", accountId: "acc-w1" };
+    const w2Tx = { id: "tx-w2", description: "Compra W2", amountCents: 2000, date: "2026-09-02", kind: "expense", categoryId: "c1", accountId: "acc-w2" };
+    // Fixtures are keyed by the active workspace (mirroring the real API,
+    // which returns data for the workspace in the X-Workspace-Id header) so
+    // the assertions are independent of how many times the provider boots.
+    const w1 = { account: { id: "acc-w1", name: "Conta W1", kind: "checking", balanceCents: 100, status: "active" }, tx: w1Tx, profileName: "User W1" };
+    const w2 = { account: { id: "acc-w2", name: "Conta W2", kind: "checking", balanceCents: 200, status: "active" }, tx: w2Tx, profileName: "User W2" };
+    const byWorkspace = <T,>(w1Value: T, w2Value: T) => () =>
+      Promise.resolve(clientState.active === "workspace-2" ? w2Value : w1Value);
+    const fetchAccounts = vi.spyOn(endpoints, "fetchAccounts")
+      .mockImplementation(byWorkspace([w1.account], [w2.account]));
+    vi.spyOn(endpoints, "fetchCategories").mockResolvedValue([] as never);
+    vi.spyOn(endpoints, "fetchTransactions")
+      .mockImplementation(byWorkspace({ items: [w1.tx], total: 1 }, { items: [w2.tx], total: 1 }));
+    vi.spyOn(endpoints, "fetchPayables").mockResolvedValue([] as never);
+    vi.spyOn(endpoints, "fetchBudgets").mockResolvedValue([] as never);
+    vi.spyOn(endpoints, "fetchGoals").mockResolvedValue([] as never);
+    vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([] as never);
+    vi.spyOn(endpoints, "fetchCards").mockResolvedValue([] as never);
+    vi.spyOn(endpoints, "fetchProfile")
+      .mockImplementation(byWorkspace({ householdId: "h1", name: w1.profileName }, { householdId: "h1", name: w2.profileName }));
+    vi.spyOn(endpoints, "fetchQuickInsights").mockResolvedValue([] as never);
+
+    function AppStateProbe() {
+      const { accounts, transactions, profile, loading, error } = useAppState();
+      const { workspaces, selectWorkspace, activeWorkspace } = useWorkspace();
+      return (
+        <>
+          <div data-testid="ws-active">{activeWorkspace?.name ?? "none"}</div>
+          <div data-testid="boot-loading">{String(loading)}</div>
+          <div data-testid="boot-error">{error ?? "none"}</div>
+          <div data-testid="accounts">{accounts.map((a) => a.name).join(",") || "empty"}</div>
+          <div data-testid="transactions">{transactions.map((t) => t.description).join(",") || "empty"}</div>
+          <div data-testid="profile">{profile?.name ?? "none"}</div>
+          {workspaces.map((workspace) => (
+            <button key={workspace.id} onClick={() => void selectWorkspace(workspace.id)}>
+              {workspace.name}
+            </button>
+          ))}
+        </>
+      );
+    }
+
+    render(
+      <WorkspaceProvider>
+        <AppStateProvider>
+          <AppStateProbe />
+        </AppStateProvider>
+      </WorkspaceProvider>,
+    );
+
+    expect(await screen.findByTestId("ws-active")).toHaveTextContent("Casa");
+    await waitFor(() => expect(screen.getByTestId("accounts")).toHaveTextContent("Conta W1"));
+    expect(screen.getByTestId("transactions")).toHaveTextContent("Compra W1");
+    await waitFor(() => expect(screen.getByTestId("profile")).toHaveTextContent("User W1"));
+
+    await user.click(screen.getByRole("button", { name: "Equipe" }));
+
+    expect(await screen.findByTestId("ws-active")).toHaveTextContent("Equipe");
+    await waitFor(() => expect(screen.getByTestId("accounts")).toHaveTextContent("Conta W2"));
+    await waitFor(() => expect(screen.getByTestId("transactions")).toHaveTextContent("Compra W2"));
+    expect(screen.getByTestId("transactions")).not.toHaveTextContent("Compra W1");
+    await waitFor(() => expect(screen.getByTestId("profile")).toHaveTextContent("User W2"));
+    expect(fetchAccounts.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });

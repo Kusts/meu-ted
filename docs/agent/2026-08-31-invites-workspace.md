@@ -414,3 +414,43 @@ E) Validar E2E: admin convida 3a conta (sem workspace) -> define senha -> loga;
   (b) = workspaceId real quando exists;
   (c) workspace.create e account-invite.create não quebram (sem 23503). RED->GREEN.
 - Validar: suite API completa, typecheck, docs:lint, governance:check. NÃO commit sem review.
+
+## FIX FK synthetic scope (23503) — commit f9803b5 — VALIDADO E2E em produção
+
+### Causa
+idempotency legacy escrevia audit_logs.household_id = scope id; para workspace.create e
+account-invite.create o scope é um uuid sintético sem linha em households -> FK violation
+(23503). QUEBRAVA TANTO account invite QUANTO criação de workspace compartilhado em produção
+(confirmação: POST /workspaces 500 antes; nenhum workspace.create em operation_records).
+
+### Fix
+- Novo src/auth/resolve-household-id.ts (fora do contrato workspace-scoped, como resolve-user-id):
+  devolve o households.id real quando o scope existe, senão NULL (coluna nullable, como push).
+- usado no legacy path de createPostgresIdempotencyStore (writes/postgres.ts).
+- Testes regressão: synthetic -> NULL; real -> real. Suite 961 pass; typecheck OK.
+
+### E2E final (produção)
+- POST /admin/invites/account -> 201 (account_invites gravado, 2 pendentes de teste).
+- POST /workspaces (shared) -> 201 "WS E2E Planner" (regressão FIXADA).
+- LIMPEZA: workspace WS E2E Planner e invites de teste convidado.teste.pi@gmail.com
+  devem ser revogados/removidos do banco de produção (não são dados reais).
+- Pendente: aplicar migration V040 manualmente em PROD foi feito (tabela + _migrations v40);
+  o runMigrations no boot NÃO aplica .sql novos (dist não copia .sql) — processo documentado.
+
+## LIMPEZA de dados de teste em produção (2026-09-02, autorizada)
+
+### Removidos (com backup CSV em /tmp/cleanup_*.csv na VPS)
+- 2 account_invites p/ convidado.teste.pi@gmail.com
+- 1 invite (workspace) p/ convidado.teste.pi@gmail.com
+- 1 household "WS E2E Planner" (aeedbcbe...) + sua membership (via FK CASCADE,
+  evitando o trigger protect_shared_workspace_owners que bloqueia DELETE direto de membership)
+
+### Verificação pós-limpeza
+- 0 resíduos de teste (account_invites/invites/household de convidado.teste = all 0)
+- Dados reais intactos: households 4 (inclui default Test Family), users 2, tx 166
+- Único invite restante: synkrooia (consumido em 20:17:56) — histórico legítimo
+
+### Aprendizado (processo)
+- Trigger protect_shared_workspace_owners impede DELETE direto de membership em ws shared;
+  para remover ws de teste, apagar o households primeiro (FK memberships..household_id ON DELETE
+  CASCADE remove a membership sem disparar o trigger).

@@ -201,6 +201,12 @@ export interface AppState {
     installmentsTotal: number;
     categoryId?: string;
   }) => Promise<void>;
+  /**
+   * Re-fetches the given domains from the API and updates provider state
+   * (used to invalidate stale data after out-of-band mutations, e.g.
+   * approving a pending operation).
+   */
+  refreshDomains: (domains: DomainKey[]) => Promise<void>;
 }
 
 const AppStateContext = createContext<AppState | null>(null);
@@ -266,6 +272,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   );
   const readOnlyRef = useRef(readOnly);
   const { expireSession } = useSession();
+  // Central 401 handling: any apiFetch 401 — including calls that never pass
+  // through AppState handlers (direct endpoint calls in feature pages) —
+  // expires the session in addition to closing sockets.
+  const expireSessionRef = useRef(expireSession);
+  useEffect(() => {
+    expireSessionRef.current = expireSession;
+  }, [expireSession]);
+  useEffect(() => {
+    // Event name mirrors UNAUTHORIZED_EVENT from "@/lib/api/client" (not
+    // imported so module-level client mocks in other tests stay valid).
+    const handler = () => expireSessionRef.current();
+    window.addEventListener("pi-finance:unauthorized", handler);
+    return () => window.removeEventListener("pi-finance:unauthorized", handler);
+  }, []);
   const [loading, setLoading] = useState(apiUsable());
   const [error, setError] = useState<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
@@ -274,12 +294,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const handleWriteError = useCallback(
     (e: unknown) => {
       if (e instanceof ApiError && e.status === 401) {
-        expireSession();
+        // Session expiration is handled centrally via onUnauthorized (apiFetch);
+        // expire defensively here too, because 401 ApiErrors can also arrive
+        // from layers that never touched apiFetch.
+        expireSessionRef.current();
         return;
       }
       if (e instanceof Error) setWriteError(e.message);
     },
-    [expireSession],
+    [],
   );
   const handleWriteErrorRef = useRef(handleWriteError);
 
@@ -431,26 +454,24 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         // 2. Preload existing v2 snapshot for offline fallback
         const snapshotPreload = await preloadSnapshot(token).catch(() => ({}));
 
-        // 3. Run bootstrap with preloaded snapshot data
-        await runBootstrap(token, bootstrapDispatch, expireSession, snapshotPreload);
+        // 3. Run bootstrap with preloaded snapshot data. Profile and quick
+        // insights are fetched by the bootstrap and returned in `boot` —
+        // the provider must NOT re-fetch them (boot dedupe).
+        // expireSession is read via ref: its identity can churn when no
+        // SessionProvider is present, and a dep change here would cancel the
+        // in-flight bootstrap continuation.
+        const boot = await runBootstrap(
+          token,
+          bootstrapDispatch,
+          () => expireSessionRef.current(),
+          snapshotPreload,
+        );
 
         if (cancelled) return;
 
-        // Profile and insights are fetched inside runBootstrap but
-        // handled separately by the provider (not in reducer).
-        // Refresh them after bootstrap completes.
-        try {
-          const profileResult = await endpoints.fetchProfile();
-          if (!cancelled) setProfile(profileResult);
-        } catch {
-          // profile failure is non-fatal
-        }
-        try {
-          const insights = await endpoints.fetchQuickInsights();
-          if (!cancelled) setQuickInsights(insights);
-        } catch {
-          if (!cancelled) setQuickInsights([]);
-        }
+        // Profile and insights come from the bootstrap's own fetches.
+        if (!cancelled) setProfile(boot.profile);
+        if (!cancelled) setQuickInsights(boot.quickInsights);
         try {
           const summary = await endpoints.fetchDashboardSummary();
           if (!cancelled) setDashboardSummary(summary);
@@ -470,7 +491,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bootstrapDispatch, expireSession]);
+  }, [bootstrapDispatch]);
 
   // ── Write actions ─────────────────────────────────────────────────
 
@@ -1477,6 +1498,57 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  /**
+   * Re-fetches the given domains and dispatches DOMAIN_LIVE so provider state
+   * is invalidated and rebuilt from the authoritative API. Domains outside the
+   * supported set are ignored. A failed refresh keeps the current data.
+   */
+  const refreshDomains = useCallback(
+    async (domains: DomainKey[]) => {
+      if (!apiUsable()) return;
+      await Promise.all(
+        domains.map(async (domain) => {
+          try {
+            let data: unknown;
+            switch (domain) {
+              case "accounts": {
+                const [accs, cards] = await Promise.all([
+                  endpoints.fetchAccounts(),
+                  endpoints.fetchCards(),
+                ]);
+                const merged = [...accs];
+                for (const c of cards) {
+                  const idx = merged.findIndex((m) => m.id === c.id);
+                  if (idx >= 0) merged[idx] = c;
+                  else merged.push(c);
+                }
+                data = merged;
+                break;
+              }
+              case "transactions":
+                data = (await endpoints.fetchTransactions({ limit: 200 })).items;
+                break;
+              case "payables":
+                data = await endpoints.fetchPayables();
+                break;
+              default:
+                return;
+            }
+            bootstrapDispatch({
+              type: "DOMAIN_LIVE",
+              domain,
+              data,
+              syncedAt: new Date().toISOString(),
+            });
+          } catch {
+            // Refresh failure keeps the current domain data.
+          }
+        }),
+      );
+    },
+    [bootstrapDispatch],
+  );
+
   // ── Local-mode persistence for profile (mock/local-storage) ─
   // When the API is configured, saveProfile already persists server-side;
   // in mock mode we hydrate from localStorage on mount and write back
@@ -1495,61 +1567,119 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, [profile, profileAdapter]);
 
 
+  // Memoized context value: consumers only re-render when the underlying
+  // data/callbacks actually change, not on unrelated provider re-renders.
+  const value = useMemo(
+    () => ({
+      accounts,
+      categories,
+      transactions,
+      payables,
+      budgets,
+      goals,
+      debts,
+      subscriptions,
+      cardStatements,
+      profile,
+      quickInsights,
+      dashboardSummary,
+      saveProfile,
+      refreshProfile,
+      refreshDashboardSummary,
+      sync,
+      readOnly,
+      loading,
+      error,
+      writeError,
+      clearWriteError,
+      addTransaction,
+      updateTransaction,
+      deleteTransaction,
+      markPayablePaid,
+      cancelPayable,
+      updatePayable,
+      undoPayablePayment,
+      createPayable,
+      createBudget,
+      updateBudget,
+      createGoal,
+      contributeToGoal,
+      cancelGoal,
+      updateGoal,
+      addAccount,
+      updateAccount,
+      deactivateAccount,
+      addCategory,
+      updateCategory,
+      deactivateCategory,
+      addCard,
+      updateCard,
+      addSubscription,
+      cancelSubscription,
+      updateSubscription,
+      refreshSubscriptions,
+      createTransfer,
+      payStatement,
+      createInstallments,
+      refreshDomains,
+    }),
+    [
+      accounts,
+      categories,
+      transactions,
+      payables,
+      budgets,
+      goals,
+      debts,
+      subscriptions,
+      cardStatements,
+      profile,
+      quickInsights,
+      dashboardSummary,
+      saveProfile,
+      refreshProfile,
+      refreshDashboardSummary,
+      sync,
+      readOnly,
+      loading,
+      error,
+      writeError,
+      clearWriteError,
+      addTransaction,
+      updateTransaction,
+      deleteTransaction,
+      markPayablePaid,
+      cancelPayable,
+      updatePayable,
+      undoPayablePayment,
+      createPayable,
+      createBudget,
+      updateBudget,
+      createGoal,
+      contributeToGoal,
+      cancelGoal,
+      updateGoal,
+      addAccount,
+      updateAccount,
+      deactivateAccount,
+      addCategory,
+      updateCategory,
+      deactivateCategory,
+      addCard,
+      updateCard,
+      addSubscription,
+      cancelSubscription,
+      updateSubscription,
+      refreshSubscriptions,
+      createTransfer,
+      payStatement,
+      createInstallments,
+      refreshDomains,
+    ],
+  );
+
   return (
-    <AppStateContext.Provider
-      value={{
-        accounts,
-        categories,
-        transactions,
-        payables,
-        budgets,
-        goals,
-        debts,
-        subscriptions,
-        cardStatements,
-        profile,
-        quickInsights,
-        dashboardSummary,
-        saveProfile,
-        refreshProfile,
-        refreshDashboardSummary,
-        sync,
-        readOnly,
-        loading,
-        error,
-        writeError,
-        clearWriteError,
-        addTransaction,
-        updateTransaction,
-        deleteTransaction,
-        markPayablePaid,
-        cancelPayable,
-        updatePayable,
-        undoPayablePayment,
-        createPayable,
-        createBudget,
-        updateBudget,
-        createGoal,
-        contributeToGoal,
-        cancelGoal,
-        updateGoal,
-        addAccount,
-        updateAccount,
-        deactivateAccount,
-        addCategory,
-        updateCategory,
-        deactivateCategory,
-        addCard,
-        updateCard,
-        addSubscription,
-        cancelSubscription,
-        updateSubscription,
-        refreshSubscriptions,
-        createTransfer,
-        payStatement,
-        createInstallments,
-      }}
-    >
+    <AppStateContext.Provider value={value}>
       {children}
     </AppStateContext.Provider>
   );

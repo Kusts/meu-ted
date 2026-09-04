@@ -225,12 +225,14 @@ function PayStatementSheet({
   card,
   accounts,
   onPay,
+  error,
 }: {
   open: boolean;
   onClose: () => void;
   card: CardData | null;
   accounts: { id: string; name: string; kind: string }[];
   onPay: (input: { amountCents: number; fromAccountId: string }) => void | Promise<void>;
+  error?: string | null;
 }) {
   const { markDirty, markClean } = useFormDirtySafe();
   const [mode, setMode] = useState<"full" | "partial">("full");
@@ -269,6 +271,15 @@ function PayStatementSheet({
   return (
     <BottomSheet open={open} onClose={onClose} title="Pagar fatura">
       <div className="flex flex-col gap-5" onChangeCapture={markDirty}>
+        {error && (
+          <div
+            data-testid="pay-error"
+            role="alert"
+            className="rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger"
+          >
+            <span aria-hidden="true">⚠</span> {error}
+          </div>
+        )}
         <div className="flex items-center gap-3 rounded-[16px] border border-border-subtle bg-surface-2 px-3.5 py-3">
           <div className="flex h-[44px] w-[70px] flex-none items-center justify-center rounded-[10px] font-mono text-[11px] font-bold text-white shadow-xs"
             style={{ background: gradientFor(card.color) }}>
@@ -544,6 +555,7 @@ export default function CardsPage() {
   const { accounts, transactions, categories, cardStatements, loading, error,
     addCard, payStatement, updateCard, writeError, clearWriteError } = useAppState();
   const [payCard, setPayCard] = useState<CardData | null>(null);
+  const [payError, setPayError] = useState<string | null>(null);
   const [editCard, setEditCard] = useState<CardData | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
@@ -851,11 +863,27 @@ export default function CardsPage() {
 
       <PayStatementSheet
         open={payCard !== null}
-        onClose={() => setPayCard(null)}
+        onClose={() => {
+          setPayCard(null);
+          setPayError(null);
+        }}
         card={payCard}
         accounts={accounts}
-        onPay={(input) => {
-          if (selectedStatementId) return payStatement(selectedStatementId, input);
+        error={payError}
+        onPay={async (input) => {
+          // No statement selected must never be a silent no-op that closes
+          // the sheet: surface a visible, recoverable error instead.
+          if (!selectedStatementId) {
+            setPayError("Nenhuma fatura selecionada para pagamento.");
+            return;
+          }
+          try {
+            setPayError(null);
+            await payStatement(selectedStatementId, input);
+          } catch (e) {
+            setPayError(e instanceof Error ? e.message : "Falha ao pagar a fatura.");
+            throw e;
+          }
         }}
       />
 

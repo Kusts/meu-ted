@@ -41,6 +41,7 @@ const syncLegacyHistory = async (
   env: Env,
   workspaceId: string,
   financeAgent: FinanceAgentStub,
+  opts?: { allowPendingForHistory?: boolean },
 ): Promise<Response | null> => {
   try {
     if (!env.AGENT || typeof env.AGENT.idFromName !== "function" || typeof env.AGENT.get !== "function") {
@@ -66,9 +67,16 @@ const syncLegacyHistory = async (
     }
 
     const exportData = await legacyStub.exportFullWorkspaceHistory(workspaceId);
+    // Idempotent no-op: nothing to migrate
+    if (exportData.turns.length === 0 && exportData.messages.length === 0) {
+      return null;
+    }
     const importRes = await financeAgent.importLegacyHistory(exportData);
     if (!importRes.success) {
       if (importRes.reason?.includes("migration_blocked_turns_in_flight")) {
+        if (opts?.allowPendingForHistory) {
+          return null;
+        }
         return Response.json(
           { code: "agent.history_migration_pending", message: "Histórico em migração ou com turnos em voo." },
           { status: 409 },
@@ -196,7 +204,10 @@ export default {
 
       if (isRestRpc) {
         const financeAgent = env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(workspaceId));
-        const syncError = await syncLegacyHistory(env, workspaceId, financeAgent);
+        const isHistory = subPath === "/rpc/history";
+        const syncError = await syncLegacyHistory(env, workspaceId, financeAgent, {
+          allowPendingForHistory: isHistory,
+        });
         if (syncError) return syncError;
 
         const headers = new Headers(request.headers);

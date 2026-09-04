@@ -16,6 +16,45 @@ const KNOWN_ROUTES = new Set([
   "/_not-found", "/manifest.webmanifest",
 ]);
 
+/** P2-10: payload cap — real RUM events are well under 1 KB. */
+export const RUM_MAX_BODY_BYTES = 1024;
+
+/** P2-10: local proportional rate limit (per client IP, sliding window). */
+export const RUM_RATE_LIMIT = { limit: 30, windowMs: 60_000 } as const;
+
+const rateBuckets = new Map<string, number[]>();
+
+function isRateLimited(key: string, now: number): boolean {
+  const cutoff = now - RUM_RATE_LIMIT.windowMs;
+  const hits = (rateBuckets.get(key) ?? []).filter((t) => t > cutoff);
+  if (hits.length >= RUM_RATE_LIMIT.limit) {
+    rateBuckets.set(key, hits);
+    return true;
+  }
+  hits.push(now);
+  rateBuckets.set(key, hits);
+  return false;
+}
+
+/**
+ * P2-10: verifiable same-origin. `Sec-Fetch-Site` is browser-controlled and
+ * cannot be forged by page JS; when absent (non-browser clients) fall back to
+ * a strict Origin-vs-Host comparison. No Origin and no Sec-Fetch-Site → 403.
+ */
+function isSameOrigin(request: NextRequest): boolean {
+  const site = request.headers.get("sec-fetch-site");
+  if (site === "same-origin") return true;
+  if (site && site !== "same-origin") return false;
+
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+  try {
+    return new URL(origin).host === new URL(request.url).host;
+  } catch {
+    return false;
+  }
+}
+
 // Any dimension matching these patterns is rejected (defense in depth).
 const SENSITIVE_RE =
   /token|household|session[_-]|amount[Cc]ents|balance[Cc]ents|total[Cc]ents|value[Cc]ents|bearer|api[_-]?key|secret|auth|password|credit[Cc]ard|query|_rsc|txn[_-]|account|cpf|email|phone|name/i;
@@ -69,9 +108,42 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   headers.set("CDN-Cache-Control", "no-store");
   headers.set("Pragma", "no-cache");
 
+  // P2-10: local proportional rate limit keyed by client IP (fail-open-free:
+  // unknown clients share the "local" bucket).
+  const clientKey =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+  if (isRateLimited(clientKey, Date.now())) {
+    console.log("[rum] rate limited");
+    return new NextResponse(null, { status: 429, headers });
+  }
+
+  // P2-10: same-origin must be verifiable; everything else is rejected blind.
+  if (!isSameOrigin(request)) {
+    console.log("[rum] rejected cross-origin request");
+    return new NextResponse(null, { status: 403, headers });
+  }
+
+  // P2-10: reject oversized payloads before parsing; never log their contents.
+  const contentLength = Number(request.headers.get("content-length") ?? "0");
+  if (contentLength > RUM_MAX_BODY_BYTES) {
+    console.log("[rum] rejected oversized payload");
+    return new NextResponse(null, { status: 413, headers });
+  }
+
+  let rawBody: string;
+  try {
+    rawBody = await request.text();
+  } catch {
+    return new NextResponse(null, { status: 400, headers });
+  }
+  if (rawBody.length > RUM_MAX_BODY_BYTES) {
+    console.log("[rum] rejected oversized payload");
+    return new NextResponse(null, { status: 413, headers });
+  }
+
   let body: unknown;
   try {
-    body = await request.json();
+    body = JSON.parse(rawBody);
   } catch {
     return new NextResponse(null, { status: 400, headers });
   }

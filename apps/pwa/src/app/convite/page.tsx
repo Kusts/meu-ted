@@ -41,17 +41,15 @@ export default function ConvitePage() {
   const [signupBusy, setSignupBusy] = useState(false);
   const [signupError, setSignupError] = useState<string | null>(null);
 
+  // Token validity is derived during render (no setState-in-effect cascade).
+  const tokenError = !token
+    ? "Link de convite inválido. Verifique se o link foi copiado corretamente."
+    : token.length !== 64
+      ? "Token do convite deve conter 64 caracteres. Cole o link completo recebido por e-mail."
+      : null;
+
   useEffect(() => {
-    if (!token) {
-      setVerifyError("Link de convite inválido. Verifique se o link foi copiado corretamente.");
-      setVerifyLoading(false);
-      return;
-    }
-    if (token.length !== 64) {
-      setVerifyError("Token do convite deve conter 64 caracteres. Cole o link completo recebido por e-mail.");
-      setVerifyLoading(false);
-      return;
-    }
+    if (tokenError) return;
     let cancelled = false;
     (async () => {
       try {
@@ -109,7 +107,10 @@ const message =
       }
     })();
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, tokenError]);
+
+  const showVerifying = verifyLoading && !tokenError;
+  const displayError = tokenError ?? verifyError;
 
   useEffect(() => {
     let cancelled = false;
@@ -230,15 +231,15 @@ const message =
           <p className="mt-1 text-[13px] text-text-muted">{inviteSubtitle}</p>
         </div>
 
-        {verifyLoading && (
+        {showVerifying && (
           <Card>
             <p className="py-6 text-center text-[13px] font-semibold text-text-muted">Verificando convite…</p>
           </Card>
         )}
 
-        {!verifyLoading && verifyError && (
+        {!showVerifying && displayError && (
           <Card className="border-danger/20 bg-danger-tint">
-            <p className="text-[13px] font-semibold text-danger" role="alert">{verifyError}</p>
+            <p className="text-[13px] font-semibold text-danger" role="alert">{displayError}</p>
             <div className="mt-4 flex gap-2">
               <Button type="button" variant="outline" className="w-full" onClick={() => router.push("/")}>Voltar ao início</Button>
               <Button type="button" className="w-full" onClick={() => router.push("/workspaces")}>Ir para Workspaces</Button>
@@ -246,14 +247,14 @@ const message =
           </Card>
         )}
 
-        {!verifyLoading && !verifyError && verify && acceptSuccess && (
+        {!showVerifying && !displayError && verify && acceptSuccess && (
           <Card className="border-primary/20 bg-primary-tint/30">
             <p className="text-[14px] font-bold text-primary">Convite aceito com sucesso!</p>
             <p className="mt-1 text-[12px] text-text-muted">Redirecionando para seus workspaces…</p>
           </Card>
         )}
 
-        {!verifyLoading && !verifyError && verify && !acceptSuccess && (
+        {!showVerifying && !displayError && verify && !acceptSuccess && (
           <>
             <Card elevation={2} className="space-y-3">
               <div>

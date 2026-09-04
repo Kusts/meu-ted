@@ -2,7 +2,7 @@ import "fake-indexeddb/auto";
 import { renderHook, act, waitFor } from "@/lib/test-utils";
 import { AppStateProvider, useAppState } from "../app-state-context";
 import * as endpoints from "@/lib/api/endpoints";
-import { ApiError } from "@/lib/api/client";
+import { ApiError, apiFetch } from "@/lib/api/client";
 import { SessionProvider } from "@/lib/auth/session-context";
 import type { Account, Transaction, Payable } from "@/lib/state/types";
 
@@ -1872,5 +1872,64 @@ describe("AppStateProvider — every write action (coverage-core)", () => {
     expect(cmds.addAccount).not.toHaveBeenCalled();
     // optimistic insert still happened locally
     expect(result.current.accounts.length).toBeGreaterThan(accountsBefore);
+  });
+});
+
+describe("AppStateProvider � boot dedupe, value stability and central 401", () => {
+  beforeEach(() => {
+    apiReady();
+    mockApiReads();
+  });
+
+  it("fetches profile and quick insights exactly once during boot", async () => {
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(vi.mocked(endpoints.fetchProfile)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(endpoints.fetchQuickInsights)).toHaveBeenCalledTimes(1);
+  });
+
+  it("hydrates profile and quick insights from the single bootstrap fetch", async () => {
+    const profileFixture = { householdId: "h1", name: "Ana" };
+    const insightsFixture = [{ id: "ins-1" }];
+    vi.mocked(endpoints.fetchProfile).mockResolvedValue(profileFixture as never);
+    vi.mocked(endpoints.fetchQuickInsights).mockResolvedValue(insightsFixture as never);
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() => expect(result.current.profile).toEqual(profileFixture));
+    await waitFor(() => expect(result.current.quickInsights).toEqual(insightsFixture));
+  });
+
+  it("keeps the context value identity stable across provider re-renders without state changes", async () => {
+    const { result, rerender } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => {});
+    const valueAfterBoot = result.current;
+    rerender();
+    await act(async () => {});
+    expect(Object.is(result.current, valueAfterBoot)).toBe(true);
+  });
+
+  it("expires the session for a 401 that never passes through AppState handlers", async () => {
+    const expireSession = vi.fn();
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <SessionProvider value={{ expireSession }}>
+        <AppStateProvider>{children}</AppStateProvider>
+      </SessionProvider>
+    );
+    const { result } = renderHook(() => useAppState(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "auth.expired", message: "Sessão expirada" }), { status: 401 }),
+    );
+    await act(async () => {
+      await expect(apiFetch("/outside-state")).rejects.toBeInstanceOf(ApiError);
+    });
+    expect(expireSession).toHaveBeenCalled();
   });
 });

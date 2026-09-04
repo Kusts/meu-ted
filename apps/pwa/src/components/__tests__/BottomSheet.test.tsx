@@ -81,7 +81,7 @@ describe("BottomSheet", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("restores body overflow on unmount", () => {
+  it("restores the original body overflow on unmount (ref-counted lock)", () => {
     document.body.style.overflow = "scroll";
     const { unmount } = render(
       <BottomSheet open={true} onClose={vi.fn()} title="Sheet">
@@ -91,6 +91,8 @@ describe("BottomSheet", () => {
 
     expect(document.body.style.overflow).toBe("hidden");
     unmount();
-    expect(document.body.style.overflow).toBe("");
+    // Ref-counted lock restores the overflow captured before the acquire.
+    expect(document.body.style.overflow).toBe("scroll");
+    document.body.style.overflow = "";
   });
 });

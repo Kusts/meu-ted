@@ -68,16 +68,35 @@ const STATIC_CACHE = "pi-finance-static";
 const OFFLINE_HTML = "/offline-shell.html";
 const OFFLINE_JS = "/offline-shell.js";
 
+/**
+ * Offline shell precache with real content revisions (P1-6).
+ *
+ * `revision: null` would tell Serwist the URL never changes, so shell fixes
+ * would never propagate to already-installed SWs. Revisions are the sha256 of
+ * each bundled file; src/sw-precache.test.ts fails when a file changes without
+ * updating its revision here.
+ */
+export const SHELL_PRECACHE_ENTRIES: ReadonlyArray<{
+  url: string;
+  revision: string;
+}> = [
+  {
+    url: OFFLINE_HTML,
+    revision: "sha256-7cf172f09b9cd8d6ad9738ba80182fadbfb3aa57ec91c9a5620d8becd9de8623",
+  },
+  {
+    url: OFFLINE_JS,
+    revision: "sha256-905f8b62693becd3756ba6d576c0b76e5e2a6e81f9acd22011f8d9c2f11d82c5",
+  },
+];
+
 installSerwist({
   skipWaiting: false,
   clientsClaim: true,
   navigationPreload: false,
   cleanupOutdatedCaches: true,
   // Only offline shell is precached — never route HTML.
-  precacheEntries: [
-    { url: OFFLINE_HTML, revision: null },
-    { url: OFFLINE_JS, revision: null },
-  ],
+  precacheEntries: [...SHELL_PRECACHE_ENTRIES],
   runtimeCaching: [
     // Hashed static assets only (never HTML / RSC).
     {

@@ -64,6 +64,28 @@ describe("PWA Sync Engine — sync-engine.ts", () => {
       expect(expireSession).not.toHaveBeenCalled();
     });
 
+    it("1.2 returns the profile and quick insights fetched during bootstrap (dedupes provider refetch)", async () => {
+      const dispatched: AppStateAction[] = [];
+      const dispatch = (a: AppStateAction) => { dispatched.push(a); };
+
+      const profileFixture = { householdId: "h1", name: "User", email: "user@test.com", phone: "", avatarColor: "#fff", greetingStyle: "auto", updatedAt: "2026-08-19" };
+      const insightsFixture = [{ id: "ins-1", title: "Gastos", body: "x" }];
+      vi.spyOn(endpoints, "fetchAccounts").mockResolvedValue([mockAccount("acc-1", "Nubank")]);
+      vi.spyOn(endpoints, "fetchCategories").mockResolvedValue([]);
+      vi.spyOn(endpoints, "fetchTransactions").mockResolvedValue({ items: [], total: 0 });
+      vi.spyOn(endpoints, "fetchPayables").mockResolvedValue([]);
+      vi.spyOn(endpoints, "fetchBudgets").mockResolvedValue([]);
+      vi.spyOn(endpoints, "fetchGoals").mockResolvedValue([]);
+      vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+      vi.spyOn(endpoints, "fetchCards").mockResolvedValue([]);
+      vi.spyOn(endpoints, "fetchProfile").mockResolvedValue(profileFixture as never);
+      vi.spyOn(endpoints, "fetchQuickInsights").mockResolvedValue(insightsFixture as never);
+
+      const result = await runBootstrap("test-token", dispatch, vi.fn());
+
+      expect(result).toEqual({ profile: profileFixture, quickInsights: insightsFixture });
+    });
+
     it("1.2 Correctly merges credit cards into accounts domain", async () => {
       const dispatched: AppStateAction[] = [];
       const dispatch = (a: AppStateAction) => { dispatched.push(a); };
@@ -154,6 +176,24 @@ describe("PWA Sync Engine — sync-engine.ts", () => {
       expect(expireSession).toHaveBeenCalledOnce();
       expect(dispatched.some((a) => a.type === "BOOTSTRAP_401")).toBe(true);
       expect(dispatched.some((a) => a.type === "BOOTSTRAP_COMPLETE")).toBe(false);
+    });
+
+    it("2.1b returns empty extras when boot short-circuits on 401", async () => {
+      const dispatched: AppStateAction[] = [];
+      const dispatch = (a: AppStateAction) => { dispatched.push(a); };
+      vi.spyOn(endpoints, "fetchAccounts").mockRejectedValue(new ApiError(401, "auth.invalid_token", "Invalid token"));
+      vi.spyOn(endpoints, "fetchCategories").mockResolvedValue([]);
+      vi.spyOn(endpoints, "fetchTransactions").mockResolvedValue({ items: [], total: 0 });
+      vi.spyOn(endpoints, "fetchPayables").mockResolvedValue([]);
+      vi.spyOn(endpoints, "fetchBudgets").mockResolvedValue([]);
+      vi.spyOn(endpoints, "fetchGoals").mockResolvedValue([]);
+      vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([]);
+      vi.spyOn(endpoints, "fetchCards").mockResolvedValue([]);
+      vi.spyOn(endpoints, "fetchProfile").mockResolvedValue(null);
+      vi.spyOn(endpoints, "fetchQuickInsights").mockResolvedValue([]);
+
+      const result = await runBootstrap("test-token", dispatch, vi.fn());
+      expect(result).toEqual({ profile: null, quickInsights: [] });
     });
 
     it("2.2 Network failure on essential domain without preload marks domain as DOMAIN_UNAVAILABLE", async () => {

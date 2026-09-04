@@ -34,7 +34,6 @@ import {
 // Proxy.ts (Next.js 16 native) is Node.js-only and rejected by OpenNext.
 export const runtime = "experimental-edge";
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function middleware(request: NextRequest) {
   const nonce = generateNonce();
   const csp = buildCspValue(nonce, process.env.NODE_ENV === "development");

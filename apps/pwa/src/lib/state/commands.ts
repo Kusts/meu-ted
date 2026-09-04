@@ -277,8 +277,32 @@ function guarded<T>(
  * Build the full command surface bound to the given context (online/token/
  * dispatch/api). The returned object is the canonical seam for all UI writes;
  * the provider composes it with optimistic React-state mutation and rollback.
+ *
+ * Every command is wrapped with an in-flight double-submit guard: while a
+ * mutation is pending, an identical re-invocation (same command + same
+ * arguments) reuses the same promise instead of firing a duplicate write.
  */
 export function createCommands(ctx: CommandsContext): Commands {
+  const inflightWrites = new Map<string, Promise<unknown>>();
+  const impl = buildCommands(ctx);
+  const wrapped: Record<string, unknown> = {};
+  for (const [name, fn] of Object.entries(impl)) {
+    wrapped[name] = (...args: unknown[]) => {
+      const dedupeKey = `${name}:${JSON.stringify(args)}`;
+      const pending = inflightWrites.get(dedupeKey);
+      if (pending) return pending;
+      const promise = (fn as (...a: unknown[]) => Promise<unknown>)(...args)
+        .finally(() => {
+          inflightWrites.delete(dedupeKey);
+        });
+      inflightWrites.set(dedupeKey, promise);
+      return promise;
+    };
+  }
+  return wrapped as unknown as Commands;
+}
+
+function buildCommands(ctx: CommandsContext): Commands {
   const a = ctx.api;
   return {
     // ── Transactions ─────────────────────────────────────────────

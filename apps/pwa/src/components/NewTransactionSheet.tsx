@@ -419,7 +419,7 @@ export default function NewTransactionSheet({
 
       {/* Valor */}
       <fieldset>
-        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+        <label htmlFor="nt-valor" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
           Valor
         </label>
         <div className="relative">
@@ -427,6 +427,7 @@ export default function NewTransactionSheet({
             R$
           </span>
           <input
+            id="nt-valor"
             type="text"
             inputMode="numeric"
             value={amountDisplay}
@@ -444,6 +445,8 @@ export default function NewTransactionSheet({
         </div>
         <button
           type="button"
+          aria-label={`Selecionar data: ${dateLabel}`}
+          aria-expanded={calOpen}
           onClick={() => setCalOpen(!calOpen)}
           className="flex w-full items-center justify-between rounded-[13px] bg-surface px-3.5 py-3 text-left transition-colors"
           style={{
@@ -527,10 +530,11 @@ export default function NewTransactionSheet({
 
       {/* Descrição */}
       <fieldset>
-        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+        <label htmlFor="nt-descricao" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
           Descrição
         </label>
         <input
+          id="nt-descricao"
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -977,6 +981,7 @@ export default function NewTransactionSheet({
                   inputMode="numeric"
                   min={2}
                   max={48}
+                  aria-label="Outro número de parcelas"
                   value={
                     [2, 3, 6, 10, 12].includes(installmentsCount)
                       ? ""

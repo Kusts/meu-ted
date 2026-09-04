@@ -3,6 +3,8 @@
 import Link from "next/link";
 import StatusBar from "@/components/StatusBar";
 import Badge from "@/components/ui/Badge";
+import { WriteErrorBanner } from "@/components/WriteErrorBanner";
+import { StaleBanner } from "@/components/StaleBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 import { Plus } from "lucide-react";
 
@@ -35,7 +37,7 @@ function cardBarColor(pct: number): string {
 }
 
 export default function WalletPage() {
-  const { accounts, goals, debts, cardStatements, loading, error } = useAppState();
+  const { accounts, goals, debts, cardStatements, loading, error, writeError, clearWriteError } = useAppState();
 
   if (loading) {
     return (
@@ -86,6 +88,10 @@ export default function WalletPage() {
             ⚠ {error}
           </div>
         )}
+
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+
+        <StaleBanner domains={["accounts", "goals", "cardStatements"]} />
 
         {/* Hero Titanium */}
         <div

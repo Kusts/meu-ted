@@ -21,6 +21,37 @@ import type {
 } from "@/lib/state/types";
 import { apiFetch } from "./client";
 
+// ─── Mutation options (idempotency) ──────────────────────────────────────────
+
+/** Generates a fresh idempotency key (UUID v4 when crypto is available). */
+export function newIdempotencyKey(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `pwa-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * apiFetch options for a financial mutation. Every mutation carries an
+ * `idempotency-key` header at the authoritative HTTP boundary: a
+ * caller-provided key wins, otherwise a fresh UUID is generated. The key is
+ * never serialized into the request body.
+ */
+export function mutationOptions(
+  method: "POST" | "PATCH" | "DELETE",
+  body?: object,
+): { method: string; body?: string; idempotencyKey: string } {
+  if (body === undefined) {
+    return { method, idempotencyKey: newIdempotencyKey() };
+  }
+  const { idempotencyKey, ...rest } = body as { idempotencyKey?: string } & Record<string, unknown>;
+  return {
+    method,
+    body: JSON.stringify(rest),
+    idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+  };
+}
+
 // ─── Response shapes (from Fastify routes) ───────────────────────────────────
 
 interface ListResponse<T> {
@@ -88,10 +119,7 @@ export async function createExpenseTransaction(input: {
   method?: string;
   sourceMessageId?: string;
 }): Promise<Transaction> {
-  return apiFetch<Transaction>("/transactions/expense", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Transaction>("/transactions/expense", mutationOptions("POST", input));
 }
 
 export async function createCard(input: {
@@ -100,10 +128,7 @@ export async function createCard(input: {
   closingDay: number;
   dueDay: number;
 }): Promise<Account> {
-  return apiFetch<Account>("/cards", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Account>("/cards", mutationOptions("POST", input));
 }
 
 export async function updateCard(
@@ -115,10 +140,7 @@ export async function updateCard(
     dueDay?: number;
   },
 ): Promise<Account> {
-  return apiFetch<Account>(`/cards/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Account>(`/cards/${id}`, mutationOptions("PATCH", input));
 }
 
 export async function fetchCards(): Promise<Account[]> {
@@ -145,20 +167,14 @@ export async function updateCardPurchase(
     categoryId?: string;
   },
 ): Promise<StatementDetail> {
-  return apiFetch<StatementDetail>(`/cards/purchases/${purchaseId}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<StatementDetail>(`/cards/purchases/${purchaseId}`, mutationOptions("PATCH", input));
 }
 
 export async function payStatement(
   statementId: string,
   input: { amountCents: number; fromAccountId: string },
 ): Promise<CardStatement> {
-  return apiFetch<CardStatement>(`/cards/statements/${statementId}/pay`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<CardStatement>(`/cards/statements/${statementId}/pay`, mutationOptions("POST", input));
 }
 
 export async function createInstallments(input: {
@@ -169,10 +185,7 @@ export async function createInstallments(input: {
   installmentsTotal: number;
   categoryId?: string;
 }): Promise<Transaction[]> {
-  const res = await apiFetch<{ items: Transaction[] }>("/cards/installments", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  const res = await apiFetch<{ items: Transaction[] }>("/cards/installments", mutationOptions("POST", input));
   return res.items;
 }
 
@@ -184,10 +197,7 @@ export async function createTransfer(input: {
   toAccountId: string;
   method?: string;
 }): Promise<Transaction> {
-  return apiFetch<Transaction>("/transfers", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Transaction>("/transfers", mutationOptions("POST", input));
 }
 
 export async function addAccount(input: {
@@ -195,10 +205,7 @@ export async function addAccount(input: {
   kind: "bank" | "cash" | "credit_card";
   initialBalanceCents: number;
 }): Promise<Account> {
-  return apiFetch<Account>("/accounts", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Account>("/accounts", mutationOptions("POST", input));
 }
 
 export async function addCategory(input: {
@@ -206,10 +213,7 @@ export async function addCategory(input: {
   kind: "expense" | "income";
   parentId?: string;
 }): Promise<Category> {
-  return apiFetch<Category>("/categories", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Category>("/categories", mutationOptions("POST", input));
 }
 
 export async function fetchSubscriptions(): Promise<Subscription[]> {
@@ -224,16 +228,11 @@ export async function addSubscription(input: {
   day: number;
   paymentMethod: string;
 }): Promise<Subscription> {
-  return apiFetch<Subscription>("/subscriptions", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Subscription>("/subscriptions", mutationOptions("POST", input));
 }
 
 export async function cancelSubscription(id: string): Promise<Subscription> {
-  return apiFetch<Subscription>(`/subscriptions/${id}/cancel`, {
-    method: "POST",
-  });
+  return apiFetch<Subscription>(`/subscriptions/${id}/cancel`, mutationOptions("POST"));
 }
 
 export async function updateSubscription(
@@ -246,10 +245,7 @@ export async function updateSubscription(
     paymentMethod?: string;
   },
 ): Promise<Subscription> {
-  return apiFetch<Subscription>(`/subscriptions/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Subscription>(`/subscriptions/${id}`, mutationOptions("PATCH", input));
 }
 
 export async function createIncomeTransaction(input: {
@@ -261,10 +257,7 @@ export async function createIncomeTransaction(input: {
   method?: string;
   sourceMessageId?: string;
 }): Promise<Transaction> {
-  return apiFetch<Transaction>("/transactions/income", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Transaction>("/transactions/income", mutationOptions("POST", input));
 }
 
 export async function updateTransaction(
@@ -277,42 +270,33 @@ export async function updateTransaction(
     categoryId?: string;
   },
 ): Promise<Transaction> {
-  return apiFetch<Transaction>(`/transactions/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Transaction>(`/transactions/${id}`, mutationOptions("PATCH", input));
 }
 
 export async function deleteTransaction(id: string): Promise<void> {
-  await apiFetch(`/transactions/${id}`, { method: "DELETE" });
+  await apiFetch(`/transactions/${id}`, mutationOptions("DELETE"));
 }
 
 export async function updateAccount(
   id: string,
   input: { name: string },
 ): Promise<Account> {
-  return apiFetch<Account>(`/accounts/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Account>(`/accounts/${id}`, mutationOptions("PATCH", input));
 }
 
 export async function deactivateAccount(id: string): Promise<void> {
-  await apiFetch(`/accounts/${id}/deactivate`, { method: "POST" });
+  await apiFetch(`/accounts/${id}/deactivate`, mutationOptions("POST"));
 }
 
 export async function updateCategory(
   id: string,
   input: { name: string },
 ): Promise<Category> {
-  return apiFetch<Category>(`/categories/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Category>(`/categories/${id}`, mutationOptions("PATCH", input));
 }
 
 export async function deactivateCategory(id: string): Promise<void> {
-  await apiFetch(`/categories/${id}/deactivate`, { method: "POST" });
+  await apiFetch(`/categories/${id}/deactivate`, mutationOptions("POST"));
 }
 
 export async function createPayable(input: {
@@ -326,20 +310,14 @@ export async function createPayable(input: {
   reminderDaysBefore?: number;
   notes?: string;
 }): Promise<Payable> {
-  return apiFetch<Payable>("/payables", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Payable>("/payables", mutationOptions("POST", input));
 }
 
 export async function cancelPayable(
   id: string,
   reason?: string
 ): Promise<Payable> {
-  return apiFetch<Payable>(`/payables/${id}/cancel`, {
-    method: "POST",
-    body: reason ? JSON.stringify({ reason }) : undefined,
-  });
+  return apiFetch<Payable>(`/payables/${id}/cancel`, mutationOptions("POST", reason ? { reason } : undefined));
 }
 
 export async function updatePayable(
@@ -352,27 +330,18 @@ export async function updatePayable(
     categoryId?: string;
   },
 ): Promise<Payable> {
-  return apiFetch<Payable>(`/payables/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Payable>(`/payables/${id}`, mutationOptions("PATCH", input));
 }
 
 export async function undoPayablePayment(id: string): Promise<Payable> {
-  return apiFetch<Payable>(`/payables/${id}/unpay`, {
-    method: "POST",
-  });
+  return apiFetch<Payable>(`/payables/${id}/unpay`, mutationOptions("POST"));
 }
 
 export async function markPayablePaid(
   id: string,
   paidDate?: string
 ): Promise<Payable> {
-  const body = paidDate ? { paidDate } : {};
-  return apiFetch<Payable>(`/payables/${id}/pay`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  return apiFetch<Payable>(`/payables/${id}/pay`, mutationOptions("POST", paidDate ? { paidDate } : {}));
 }
 
 export async function createBudget(input: {
@@ -383,10 +352,7 @@ export async function createBudget(input: {
   startDate: string;
   alertThreshold?: number;
 }): Promise<Budget> {
-  return apiFetch<Budget>("/budgets", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Budget>("/budgets", mutationOptions("POST", input));
 }
 
 export async function updateBudget(
@@ -396,10 +362,7 @@ export async function updateBudget(
     alertThreshold?: number;
   },
 ): Promise<Budget> {
-  return apiFetch<Budget>(`/budgets/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Budget>(`/budgets/${id}`, mutationOptions("PATCH", input));
 }
 
 export async function createGoal(input: {
@@ -412,10 +375,7 @@ export async function createGoal(input: {
   categoryId?: string;
   accountId?: string;
 }): Promise<Goal> {
-  return apiFetch<Goal>("/goals", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Goal>("/goals", mutationOptions("POST", input));
 }
 
 export async function contributeToGoal(
@@ -427,14 +387,11 @@ export async function contributeToGoal(
     notes?: string;
   },
 ): Promise<Goal> {
-  return apiFetch<Goal>(`/goals/${id}/contribute`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Goal>(`/goals/${id}/contribute`, mutationOptions("POST", input));
 }
 
 export async function cancelGoal(id: string): Promise<Goal> {
-  return apiFetch<Goal>(`/goals/${id}/cancel`, { method: "POST" });
+  return apiFetch<Goal>(`/goals/${id}/cancel`, mutationOptions("POST"));
 }
 
 export async function updateGoal(
@@ -445,10 +402,7 @@ export async function updateGoal(
     targetDate?: string;
   },
 ): Promise<Goal> {
-  return apiFetch<Goal>(`/goals/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<Goal>(`/goals/${id}`, mutationOptions("PATCH", input));
 }
 
 // ─── Profile (Slice B / Resumo) ──────────────────────────
@@ -465,10 +419,7 @@ export async function patchProfile(input: {
   avatarColor?: string;
   greetingStyle?: Profile["greetingStyle"];
 }): Promise<Profile> {
-  const res = await apiFetch<{ profile: Profile }>("/profile", {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  const res = await apiFetch<{ profile: Profile }>("/profile", mutationOptions("PATCH", input));
   return res.profile;
 }
 
@@ -488,25 +439,17 @@ export async function fetchPendingOperations(
 }
 
 export async function approvePendingOperation(id: string): Promise<PendingOperation> {
-  return apiFetch<PendingOperation>(`/pending-operations/${encodeURIComponent(id)}/approve`, {
-    method: "POST",
-  });
+  return apiFetch<PendingOperation>(`/pending-operations/${encodeURIComponent(id)}/approve`, mutationOptions("POST"));
 }
 
 export async function rejectPendingOperation(id: string): Promise<PendingOperation> {
-  return apiFetch<PendingOperation>(`/pending-operations/${encodeURIComponent(id)}/reject`, {
-    method: "POST",
-  });
+  return apiFetch<PendingOperation>(`/pending-operations/${encodeURIComponent(id)}/reject`, mutationOptions("POST"));
 }
 
 export async function undoLastAction(input?: { lastOperationId?: string }): Promise<{
   undone: { operation: string; entityId: string; reversal: string };
 }> {
-  return apiFetch<{ undone: { operation: string; entityId: string; reversal: string } }>('/audit/undo', {
-    method: 'POST',
-    body: JSON.stringify(input ?? {}),
-    idempotencyKey: crypto.randomUUID(),
-  });
+  return apiFetch<{ undone: { operation: string; entityId: string; reversal: string } }>('/audit/undo', mutationOptions("POST", input ?? {}));
 }
 
 // ─── Duplicate detector ─────────────────────────────────────
@@ -616,10 +559,7 @@ export async function createPriceAlert(input: {
   targetPriceCents: number;
   condition: "below" | "above";
 }): Promise<PriceAlert> {
-  return apiFetch<PriceAlert>("/alerts/price", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return apiFetch<PriceAlert>("/alerts/price", mutationOptions("POST", input));
 }
 
 export async function checkPriceAlertsApi(input?: {

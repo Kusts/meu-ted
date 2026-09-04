@@ -156,7 +156,7 @@ describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
 
   it("legacy helpers remain available for backwards compatibility", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
-    const fetchMock = vi.spyOn(globalThis, "fetch")
+    vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify({ version: 1, exportedAt: "now", turns: [], messages: [], actions: [], events: [] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ deleted: true, recordCount: 2 }), { status: 200 }));
 

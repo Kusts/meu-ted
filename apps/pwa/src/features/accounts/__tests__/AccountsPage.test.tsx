@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, within } from "@/lib/test-utils";
+import { render, screen, fireEvent, within, waitFor } from "@/lib/test-utils";
 import AccountsPage from "../AccountsPage";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
@@ -290,5 +290,71 @@ describe("AccountsPage", () => {
       render(<AccountsPage />);
       expect(screen.getByText(/Nenhuma conta cadastrada/)).toBeInTheDocument();
     });
+  });
+});
+
+describe("AccountsPage — P2-1/P2-3 (payload bankColor + failure UX)", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("propagates the chosen bankColor through the add payload", () => {
+    const addSpy = vi.fn();
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addAccount: addSpy }));
+    render(<AccountsPage />);
+    fireEvent.click(screen.getByText("Nova"));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByText("Itaú"));
+    fireEvent.change(within(dialog).getByPlaceholderText(/Nubank, Itaú/i), { target: { value: "Banco Laranja" } });
+    fireEvent.click(within(dialog).getByText("Salvar conta"));
+    expect(addSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "Banco Laranja", bankColor: "#EC7000" }));
+  });
+
+  it("maps every UI subkind to the API bank kind", () => {
+    const addSpy = vi.fn();
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addAccount: addSpy }));
+    render(<AccountsPage />);
+    for (const label of ["Conta corrente", "Poupança", "Investimento"]) {
+      fireEvent.click(screen.getByText("Nova"));
+      const dialog = screen.getByRole("dialog");
+      fireEvent.click(within(dialog).getByText(label));
+      fireEvent.click(within(dialog).getByText("Salvar conta"));
+      expect(addSpy).toHaveBeenCalledWith(expect.objectContaining({ kind: "bank" }));
+      addSpy.mockClear();
+    }
+  });
+
+  it("keeps the create sheet open and preserves fields when addAccount rejects", async () => {
+    const addSpy = vi.fn().mockRejectedValue(new Error("falha de rede"));
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addAccount: addSpy }));
+    render(<AccountsPage />);
+    fireEvent.click(screen.getByText("Nova"));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByPlaceholderText(/Nubank, Itaú/i), { target: { value: "Banco X" } });
+    fireEvent.click(within(dialog).getByText("Salvar conta"));
+    await waitFor(() => expect(addSpy).toHaveBeenCalled());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog")).getByPlaceholderText(/Nubank, Itaú/i)).toHaveValue("Banco X");
+  });
+
+  it("closes the create sheet only after a successful save", async () => {
+    const addSpy = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addAccount: addSpy }));
+    render(<AccountsPage />);
+    fireEvent.click(screen.getByText("Nova"));
+    fireEvent.click(within(screen.getByRole("dialog")).getByText("Salvar conta"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("keeps the edit sheet open and preserves the name when updateAccount rejects", async () => {
+    const updateSpy = vi.fn().mockRejectedValue(new Error("erro de salvamento"));
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateAccount: updateSpy }));
+    render(<AccountsPage />);
+    fireEvent.click(screen.getAllByTestId("account-card")[0]);
+    fireEvent.click(screen.getByText("Editar conta"));
+    const input = screen.getByDisplayValue("Nubank") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Nubank Editado" } });
+    fireEvent.click(screen.getByText("Salvar"));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect((screen.getByDisplayValue("Nubank Editado") as HTMLInputElement)).toBeInTheDocument();
   });
 });

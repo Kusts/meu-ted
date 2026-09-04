@@ -11,15 +11,20 @@ import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
 import { Plus } from "lucide-react";
 
-function NewCategorySheet({ open, onClose, onAdd }: { open: boolean; onClose: () => void; onAdd: (input: { name: string; kind: "expense" | "income"; parentId?: string }) => void }) {
+function NewCategorySheet({ open, onClose, onAdd }: { open: boolean; onClose: () => void; onAdd: (input: { name: string; kind: "expense" | "income"; parentId?: string }) => void | Promise<void> }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState<"expense" | "income">("expense");
 
-  function handleSave() {
+  async function handleSave() {
     if (!name.trim()) return;
-    onAdd({ name: name.trim(), kind });
-    setName("");
-    onClose();
+    try {
+      await onAdd({ name: name.trim(), kind });
+      setName("");
+      onClose();
+    } catch {
+      // Save failed: sheet stays open with the typed name; the error is
+      // surfaced by the page-level WriteErrorBanner (PayablesPage pattern).
+    }
   }
 
   return (
@@ -124,7 +129,7 @@ function CategoryEditSheet({ open, category, onClose, onSave }: {
   open: boolean;
   category: { id: string; name: string } | null;
   onClose: () => void;
-  onSave: (id: string, name: string) => void;
+  onSave: (id: string, name: string) => void | Promise<void>;
 }) {
   const [name, setName] = useState("");
 
@@ -133,10 +138,14 @@ function CategoryEditSheet({ open, category, onClose, onSave }: {
     if (category) setName(category.name);
   }, [category]);
 
-  function handleSave() {
+  async function handleSave() {
     if (!category || !name.trim()) return;
-    onSave(category.id, name.trim());
-    onClose();
+    try {
+      await onSave(category.id, name.trim());
+      onClose();
+    } catch {
+      // Save failed: sheet stays open with the typed value.
+    }
   }
 
   return (

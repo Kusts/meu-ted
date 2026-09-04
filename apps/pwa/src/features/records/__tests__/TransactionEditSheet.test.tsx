@@ -130,3 +130,19 @@ describe("TransactionEditSheet", () => {
     );
   });
 });
+
+describe("TransactionEditSheet — P2-7 (labels acessíveis)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("associates all form labels with their inputs", () => {
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({}));
+    render(<TransactionEditSheet open onClose={vi.fn()} transaction={expenseTx} />);
+    expect(screen.getByLabelText("Descrição")).toBeInTheDocument();
+    expect(screen.getByLabelText("Data")).toBeInTheDocument();
+    expect(screen.getByLabelText("Valor (R$)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Categoria")).toBeInTheDocument();
+    expect(screen.getByLabelText("Conta")).toBeInTheDocument();
+  });
+});

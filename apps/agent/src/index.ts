@@ -1,3 +1,4 @@
+import { DurableObject } from "cloudflare:workers";
 import { initializeWorkspaceAgentSchema, WORKSPACE_AGENT_SCHEMA_VERSION } from "./schema";
 import { createDelegatedTurnToken, type DelegatedRole } from "./delegated-token";
 import { redactTranscript, redactTranscriptJson } from "./transcript-safety";
@@ -40,24 +41,29 @@ type AgentRuntimeEnv = {
   AGENT_RATE_LIMIT_MAX_REQUESTS?: string;
 };
 
-export class WorkspaceAgent {
+export class WorkspaceAgent extends DurableObject<AgentRuntimeEnv> {
   private readonly activeControllers = new Map<string, AbortController>();
   private readonly delegationSecret: string;
   private readonly dailyTokenBudget: number;
   private readonly rateLimitMaxRequests: number;
 
-  constructor(private readonly state: DurableObjectState, env?: AgentRuntimeEnv) {
+  constructor(ctx: DurableObjectState, env?: AgentRuntimeEnv) {
+    super(ctx, env ?? ({} as AgentRuntimeEnv));
     this.delegationSecret = env?.AGENT_DELEGATION_SECRET?.trim() ?? '';
     this.dailyTokenBudget = parsePositiveLimit(env?.AGENT_DAILY_TOKEN_BUDGET, DEFAULT_DAILY_TOKEN_BUDGET);
     this.rateLimitMaxRequests = parsePositiveLimit(env?.AGENT_RATE_LIMIT_MAX_REQUESTS, DEFAULT_RATE_LIMIT_MAX_REQUESTS);
-    initializeWorkspaceAgentSchema(state.storage.sql);
-    state.storage.sql.exec(`UPDATE turn_queue
+    initializeWorkspaceAgentSchema(ctx.storage.sql);
+    ctx.storage.sql.exec(`UPDATE turn_queue
       SET status = 'queued', updated_at = CURRENT_TIMESTAMP
       WHERE status = 'running' AND lease_until < CURRENT_TIMESTAMP AND attempts < ${MAX_TURN_ATTEMPTS}`);
-    state.storage.sql.exec(`UPDATE turn_queue
+    ctx.storage.sql.exec(`UPDATE turn_queue
       SET status = 'failed', updated_at = CURRENT_TIMESTAMP
       WHERE status = 'running' AND lease_until < CURRENT_TIMESTAMP AND attempts >= ${MAX_TURN_ATTEMPTS}`);
-    state.storage.setAlarm?.(Date.now());
+    ctx.storage.setAlarm?.(Date.now());
+  }
+
+  private get state(): DurableObjectState {
+    return this.ctx as unknown as DurableObjectState;
   }
 
   private usageDay(): string {

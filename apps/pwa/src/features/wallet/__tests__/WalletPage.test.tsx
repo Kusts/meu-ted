@@ -1,4 +1,4 @@
-import { render, screen } from "@/lib/test-utils";
+import { render, screen, fireEvent } from "@/lib/test-utils";
 import WalletPage from "../WalletPage";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals, mockDebts } from "@/lib/state/mock-data";
@@ -215,5 +215,38 @@ describe("WalletPage", () => {
       expect(screen.getByText(/Rede offline/i)).toBeInTheDocument();
       expect(screen.getByText("Patrimônio líquido")).toBeInTheDocument();
     });
+  });
+});
+describe("WalletPage — P2-5 (banners de erro/stale)", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("shows the write error banner and dismisses it", () => {
+    const clearSpy = vi.fn();
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+      mockState({ writeError: "Falha ao salvar lançamento", clearWriteError: clearSpy }),
+    );
+    render(<WalletPage />);
+    expect(screen.getByTestId("write-error-banner")).toHaveTextContent("Falha ao salvar lançamento");
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the stale banner when a dependent domain is served from snapshot", () => {
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+      mockState({
+        sync: {
+          accounts: { source: "snapshot", syncedAt: "2026-09-01" },
+          categories: { source: "mock", syncedAt: null },
+          transactions: { source: "mock", syncedAt: null },
+          payables: { source: "mock", syncedAt: null },
+          budgets: { source: "mock", syncedAt: null },
+          goals: { source: "mock", syncedAt: null },
+          subscriptions: { source: "mock", syncedAt: null },
+          cardStatements: { source: "mock", syncedAt: null },
+        },
+      }),
+    );
+    render(<WalletPage />);
+    expect(screen.getByTestId("stale-banner")).toBeInTheDocument();
   });
 });

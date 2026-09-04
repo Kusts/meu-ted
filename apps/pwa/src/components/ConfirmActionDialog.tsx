@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useId, useRef } from "react";
+import { OVERLAY_Z_INDEX, useBodyScrollLock } from "@/lib/ui/overlay-a11y";
 
 interface ConfirmActionDialogProps {
   open: boolean;
@@ -23,21 +24,49 @@ export function ConfirmActionDialog({
   onConfirm,
   onCancel,
 }: ConfirmActionDialogProps) {
+  const titleId = useId();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  useBodyScrollLock(open);
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onCancel();
+      }
+    },
+    [onCancel],
+  );
+
   useEffect(() => {
-    if (open) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
+    if (!open) return;
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open, handleKeyDown]);
+
+  // Focus the dialog when it opens; restore focus to the trigger on close.
+  useEffect(() => {
+    if (!open) return;
+    previousFocusRef.current = (document.activeElement as HTMLElement) ?? null;
+    containerRef.current?.focus();
     return () => {
-      document.body.style.overflow = "";
+      previousFocusRef.current?.focus();
     };
   }, [open]);
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center" role="dialog" aria-modal="true">
+    <div
+      ref={containerRef}
+      tabIndex={-1}
+      className="fixed inset-0 flex items-center justify-center outline-none"
+      style={{ zIndex: OVERLAY_Z_INDEX.confirmAction }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+    >
       {/* Overlay */}
       <div
         className="absolute inset-0"
@@ -47,7 +76,7 @@ export function ConfirmActionDialog({
 
       {/* Dialog */}
       <div className="relative z-10 mx-5 w-full max-w-sm rounded-[16px] bg-surface p-6 shadow-card">
-        <h3 className="mb-2 text-[16px] font-extrabold text-text-primary">
+        <h3 id={titleId} className="mb-2 text-[16px] font-extrabold text-text-primary">
           {title}
         </h3>
         <p className="mb-6 text-[13px] leading-relaxed text-text-secondary">

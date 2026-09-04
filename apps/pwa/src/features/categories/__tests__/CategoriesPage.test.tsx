@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, within } from "@/lib/test-utils";
+import { render, screen, fireEvent, within, waitFor } from "@/lib/test-utils";
 import CategoriesPage from "../CategoriesPage";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
@@ -229,5 +229,46 @@ describe("CategoriesPage", () => {
       render(<CategoriesPage />);
       expect(screen.getAllByText("1 categoria").length).toBe(2);
     });
+  });
+});
+
+describe("CategoriesPage — P2-3 (sheets stay open on rejected mutation)", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("keeps the new category sheet open and preserves the name when addCategory rejects", async () => {
+    const addSpy = vi.fn().mockRejectedValue(new Error("falha de rede"));
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addCategory: addSpy }));
+    render(<CategoriesPage />);
+    fireEvent.click(screen.getByText("Nova"));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByPlaceholderText(/Alimentação, Salário/i), { target: { value: "Nova Cat" } });
+    fireEvent.click(within(dialog).getByText("Salvar categoria"));
+    await waitFor(() => expect(addSpy).toHaveBeenCalled());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog")).getByPlaceholderText(/Alimentação, Salário/i)).toHaveValue("Nova Cat");
+  });
+
+  it("closes the new category sheet only after a successful save", async () => {
+    const addSpy = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addCategory: addSpy }));
+    render(<CategoriesPage />);
+    fireEvent.click(screen.getByText("Nova"));
+    fireEvent.change(within(screen.getByRole("dialog")).getByPlaceholderText(/Alimentação, Salário/i), { target: { value: "Nova Cat" } });
+    fireEvent.click(within(screen.getByRole("dialog")).getByText("Salvar categoria"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(addSpy).toHaveBeenCalledWith({ name: "Nova Cat", kind: "expense" });
+  });
+
+  it("keeps the edit category sheet open and preserves the name when updateCategory rejects", async () => {
+    const updateSpy = vi.fn().mockRejectedValue(new Error("erro de salvamento"));
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateCategory: updateSpy }));
+    render(<CategoriesPage />);
+    fireEvent.click(screen.getAllByText("Editar")[0]);
+    const input = screen.getByDisplayValue("Alimentação") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Alimentação Editada" } });
+    fireEvent.click(screen.getByText("Salvar"));
+    await waitFor(() => expect(updateSpy).toHaveBeenCalled());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Alimentação Editada")).toBeInTheDocument();
   });
 });

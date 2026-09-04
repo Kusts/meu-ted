@@ -100,10 +100,11 @@ export function TransactionEditSheet({
       <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         {/* Description */}
         <div>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label htmlFor="te-descricao" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
             Descrição
           </label>
           <input
+            id="te-descricao"
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -113,10 +114,11 @@ export function TransactionEditSheet({
 
         {/* Date */}
         <div>
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+          <label htmlFor="te-data" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
             Data
           </label>
           <input
+            id="te-data"
             type="date"
             value={date}
             onChange={(e) => setDate(e.target.value)}
@@ -127,10 +129,11 @@ export function TransactionEditSheet({
         {/* Amount (not for transfers) */}
         {!isTransfer && (
           <div>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            <label htmlFor="te-valor" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
               Valor (R$)
             </label>
             <input
+              id="te-valor"
               type="text"
               inputMode="numeric"
               value={amountStr}
@@ -144,10 +147,11 @@ export function TransactionEditSheet({
         {/* Category (not for transfers) */}
         {!isTransfer && (
           <div>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            <label htmlFor="te-categoria" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
               Categoria
             </label>
             <select
+              id="te-categoria"
               value={categoryId}
               onChange={(e) => setCategoryId(e.target.value)}
               className="w-full rounded-[12px] border border-border bg-surface px-3.5 py-2.5 text-[13px] text-text-primary outline-none"
@@ -165,10 +169,11 @@ export function TransactionEditSheet({
         {/* Account (not for transfers) */}
         {!isTransfer && (
           <div>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            <label htmlFor="te-conta" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
               Conta
             </label>
             <select
+              id="te-conta"
               value={accountId}
               onChange={(e) => setAccountId(e.target.value)}
               className="w-full rounded-[12px] border border-border bg-surface px-3.5 py-2.5 text-[13px] text-text-primary outline-none"

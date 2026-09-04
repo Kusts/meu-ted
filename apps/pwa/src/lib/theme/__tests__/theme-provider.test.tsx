@@ -42,17 +42,18 @@ describe("ThemeProvider & useTheme", () => {
     vi.restoreAllMocks();
   });
 
-  it("defaults to dark theme when nothing is stored in localStorage", () => {
+  it("defaults to system theme and respects prefers-color-scheme light when nothing is stored", () => {
     render(
       <ThemeProvider>
         <TestComponent />
       </ThemeProvider>
     );
 
-    expect(screen.getByTestId("theme")).toHaveTextContent("dark");
-    expect(screen.getByTestId("resolved-theme")).toHaveTextContent("dark");
-    expect(document.documentElement.classList.contains("dark")).toBe(true);
-    expect(document.documentElement.classList.contains("light")).toBe(false);
+    // beforeEach mocks matchMedia with matches=false → system resolves to light.
+    expect(screen.getByTestId("theme")).toHaveTextContent("system");
+    expect(screen.getByTestId("resolved-theme")).toHaveTextContent("light");
+    expect(document.documentElement.classList.contains("light")).toBe(true);
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
 
   it("reads stored theme from localStorage on initial render", () => {

@@ -1,64 +1,18 @@
 import { defineConfig } from "vitest/config";
 import path from "path";
 
-// Coverage scope = EVERY production TS/TSX file changed in cb57847e..HEAD plus
-// uncommitted production changes (the Phase 5 / hardening remediation set), NOT a
-// narrow 5-file selection. Each listed file is measured individually and must meet
-// >=80% statements/branches/functions/lines. `all: true` guarantees every listed
-// file appears in the report (an untested changed file shows 0%, surfacing the gap
-// instead of hiding it). Functions threshold is enforced (not dropped).
-const CHANGED_PRODUCTION = [
-  "src/app/pwa-control/route.ts",
-  "src/app/api/observability/rum/route.ts",
-  "src/components/NewTransactionSheet.tsx",
-  "src/components/RootProviders.tsx",
-  "src/components/StatusBar.tsx",
-  "src/features/accounts/AccountsPage.tsx",
-  "src/features/auth/AuthGate.tsx",
-  "src/features/budgets/BudgetsPage.tsx",
-  "src/features/cards/CardsPage.tsx",
-  "src/features/categories/CategoriesPage.tsx",
-  "src/features/goals/GoalsPage.tsx",
-  "src/features/payables/PayablesPage.tsx",
-  "src/features/profile/NotificationsSheet.tsx",
-  "src/features/profile/ProfilePage.tsx",
-  "src/features/records/RecordsPage.tsx",
-  "src/features/records/components/TransactionEditSheet.tsx",
-  "src/features/subscriptions/SubscriptionsPage.tsx",
-  "src/lib/api/client.ts",
-  "src/lib/api/endpoints.ts",
-  "src/lib/observability/web-vitals.ts",
-  "src/lib/reset-session.ts",
-  "src/lib/session.ts",
-  "src/lib/state/app-state-context.tsx",
-  "src/lib/state/commands.ts",
-  "src/lib/state/profile-adapter.ts",
-  "src/lib/state/snapshot-db.ts",
-  "src/lib/state/snapshot-store.ts",
-  "src/lib/state/state-reducer.ts",
-  "src/lib/state/subscriptions-adapter.ts",
-  "src/lib/state/sync-engine.ts",
-  "src/lib/sw-coordinator.tsx",
-  "src/lib/unsaved-changes.tsx",
-  "src/middleware.ts",
-  "src/proxy-utils.ts",
-  "src/sw-matcher.ts",
-  "src/sw.ts",
-];
-
-// Next's `next build` type-check resolves `vitest/config` to the workspace-root
-// vitest (3.2.6), whose `CoverageOptions` lacks the v4 `all`/`perFile` fields. Cast
-// to a local interface so Next's tsc accepts the config without weakening runtime
-// coverage enforcement (all:true + per-file >=80% thresholds still apply under vitest 4).
+// P2-11: coverage scope is the WHOLE production source tree (src/**), with
+// proportionate exclusions instead of a frozen commit-range list. Route/page
+// wrappers are excluded because they only compose covered features and are
+// exercised end-to-end by the Playwright suite; global calibrated thresholds
+// gate the whole tree.
 interface CoverageConfig {
   provider: "v8";
   reporter: string[];
   all: boolean;
   include: string[];
   exclude: string[];
-  perFile: boolean;
   thresholds: {
-    perFile: boolean;
     statements: number;
     branches: number;
     functions: number;
@@ -86,7 +40,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "text-summary"],
       all: true,
-      include: CHANGED_PRODUCTION,
+      include: ["src/**"],
       exclude: [
         "**/*.test.{ts,tsx}",
         "**/*.spec.{ts,tsx}",
@@ -94,13 +48,19 @@ export default defineConfig({
         "**/*.config.*",
         "src/test/**",
         "src/env.d.ts",
+        // Route/page wrappers only compose covered features and are covered by e2e.
+        "src/app/**/page.tsx",
+        "src/app/layout.tsx",
+        "src/app/manifest.ts",
       ],
+      // P2-11: global thresholds calibrated against the measured src/** baseline
+      // (83.8/75.6/83.5/86.4) with ~3.5pt headroom — a real ratchet without
+      // freezing out legacy modules the way the old per-file gate did.
       thresholds: {
-        perFile: true,
         statements: 80,
-        branches: 80,
+        branches: 72,
         functions: 80,
-        lines: 80,
+        lines: 83,
       },
     } as CoverageConfig,
   },

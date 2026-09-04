@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
 const API_ORIGIN = "https://api.synkroo.com.br";
+/** Upstream budget: slightly above the PWA client's 15s apiFetch timeout. */
+const UPSTREAM_TIMEOUT_MS = 20_000;
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "keep-alive",
@@ -52,15 +54,47 @@ function isLocalOrigin(origin: string): boolean {
   }
 }
 
+function upstreamErrorResponse(status: number, code: string, message: string): NextResponse {
+  return NextResponse.json(
+    { ok: false, error: { code, message } },
+    { status, headers: { "content-type": "application/json" } },
+  );
+}
+
+function isTimeoutError(cause: unknown): boolean {
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    (cause as { name?: unknown }).name === "TimeoutError"
+  );
+}
+
 async function proxy(request: Request, context: RouteContext): Promise<NextResponse> {
   const { path } = await context.params;
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
-  const upstream = await fetch(upstreamUrl(path, new URL(request.url).search), {
-    method: request.method,
-    headers: forwardHeaders(request),
-    ...(body ? { body } : {}),
-    redirect: "manual",
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(upstreamUrl(path, new URL(request.url).search), {
+      method: request.method,
+      headers: forwardHeaders(request),
+      ...(body ? { body } : {}),
+      redirect: "manual",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch (cause) {
+    if (isTimeoutError(cause)) {
+      return upstreamErrorResponse(
+        504,
+        "upstream_timeout",
+        "A API não respondeu dentro do tempo limite. Tente novamente.",
+      );
+    }
+    return upstreamErrorResponse(
+      502,
+      "upstream_unavailable",
+      "A API está indisponível no momento. Tente novamente mais tarde.",
+    );
+  }
 
   const headers = new Headers();
   upstream.headers.forEach((value, name) => {

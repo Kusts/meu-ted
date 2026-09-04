@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@/lib/test-utils";
+﻿import { render, screen, fireEvent } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import NewTransactionSheet from "../NewTransactionSheet";
 import type { Account, Category } from "@/lib/state/types";
@@ -470,5 +470,29 @@ describe("NewTransactionSheet", () => {
       expect(saved.subcategoryId).toBe("sub2");
       expect(saved.description).toBe("Jantar");
     });
+  });
+});
+
+describe("NewTransactionSheet — P2-7 (labels acessíveis)", () => {
+  it("associates the Valor and Descrição labels with their inputs", () => {
+    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
+    expect(screen.getByLabelText("Valor")).toBeInTheDocument();
+    expect(screen.getByLabelText("Descrição")).toBeInTheDocument();
+  });
+
+  it("exposes the date toggle with an accessible name and expanded state", async () => {
+    const user = userEvent.setup();
+    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
+    const toggle = screen.getByRole("button", { name: /Selecionar data/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("labels the custom installments input", async () => {
+    const user = userEvent.setup();
+    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
+    await user.click(screen.getByLabelText("Alternar parcelamento"));
+    expect(screen.getByLabelText("Outro número de parcelas")).toBeInTheDocument();
   });
 });

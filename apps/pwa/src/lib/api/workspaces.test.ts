@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "./client";
 import { acceptWorkspaceInvite, archiveWorkspace, createWorkspace, createWorkspaceInvite, fetchWorkspaceMembers, fetchWorkspaces, leaveWorkspace, removeWorkspaceMember, renameWorkspace, restoreWorkspace } from "./workspaces";
-import * as tokenStore from "@/lib/auth/token-store";
 
 vi.mock("./client", () => ({ apiFetch: vi.fn() }));
 vi.mock("@/lib/auth/token-store", () => ({

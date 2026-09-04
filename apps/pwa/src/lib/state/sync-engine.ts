@@ -10,7 +10,7 @@ import * as endpoints from "@/lib/api/endpoints";
 import { ApiError } from "@/lib/api/client";
 import { type DomainKey, type AppStateAction, ESSENTIAL_DOMAIN_KEYS } from "./state-reducer";
 import { saveSnapshotDomain } from "./snapshot-store";
-import type { Account, Transaction } from "./types";
+import type { Account, Profile, QuickInsight, Transaction } from "./types";
 
 type Dispatch = (action: AppStateAction) => void;
 
@@ -23,6 +23,16 @@ export interface PaginationOptions {
 export type SnapshotPreload = Partial<Record<DomainKey, { data: unknown; syncedAt: string }>>;
 
 /**
+ * Values already fetched by the bootstrap that the provider needs outside the
+ * reducer. Returning them lets callers hydrate profile/insights without a
+ * second network fetch.
+ */
+export interface BootstrapExtras {
+  profile: Profile | null;
+  quickInsights: QuickInsight[];
+}
+
+/**
  * Run the full bootstrap: fetch all domains, classify results, dispatch,
  * and persist live data to v2 snapshot.
  *
@@ -30,13 +40,14 @@ export type SnapshotPreload = Partial<Record<DomainKey, { data: unknown; syncedA
  * @param dispatch — dispatches reducer actions
  * @param expireSession — called on 401
  * @param snapshotPreload — optional preloaded v2 snapshot data for offline boot
+ * @returns the profile and quick insights fetched during the bootstrap
  */
 export async function runBootstrap(
   token: string,
   dispatch: Dispatch,
   expireSession: () => void,
   snapshotPreload?: SnapshotPreload,
-): Promise<void> {
+): Promise<BootstrapExtras> {
   dispatch({ type: "BOOTSTRAP_START" });
 
   const results = await Promise.allSettled([
@@ -59,8 +70,17 @@ export async function runBootstrap(
   if (unauthorized) {
     expireSession();
     dispatch({ type: "BOOTSTRAP_401" });
-    return;
+    return { profile: null, quickInsights: [] };
   }
+
+  // Profile/insights are fetched here and returned to the caller — never
+  // re-fetched by the provider (boot dedupe).
+  const profileResult = results[8];
+  const insightsResult = results[9];
+  const extras: BootstrapExtras = {
+    profile: profileResult.status === "fulfilled" ? (profileResult.value as Profile | null) : null,
+    quickInsights: insightsResult.status === "fulfilled" ? (insightsResult.value as QuickInsight[]) : [],
+  };
 
   // Collect v2 save promises so we await them before BOOTSTRAP_COMPLETE
   const savePromises: Promise<void>[] = [];
@@ -141,7 +161,7 @@ export async function runBootstrap(
   applyListDomain("cardStatements", 6);
 
   // Profile and insights — handled outside reducer, not persisted to snapshot
-  // (profile is fetched separately by the provider)
+  // (returned to the caller via `extras` instead of being re-fetched)
 
   // Global error if any essential domain failed
   const anyEssentialFailed = ESSENTIAL_DOMAIN_KEYS.some((_, i) => results[i].status === "rejected");
@@ -154,6 +174,8 @@ export async function runBootstrap(
   await Promise.allSettled(savePromises);
 
   dispatch({ type: "BOOTSTRAP_COMPLETE" });
+
+  return extras;
 }
 
 /**

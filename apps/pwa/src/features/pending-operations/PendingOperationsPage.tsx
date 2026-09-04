@@ -12,6 +12,7 @@ import {
 } from "@/lib/api/endpoints";
 import type { PendingOperation } from "@/lib/state/types";
 import { ApiError, isApiConfigured } from "@/lib/api/client";
+import { useAppState } from "@/lib/state/app-state-context";
 import { ShieldCheck, Undo2, RotateCw } from "lucide-react";
 
 function formatBRL(cents: number): string {
@@ -63,6 +64,7 @@ function expiresInLabel(expiresAt: string): string {
 }
 
 export default function PendingOperationsPage() {
+  const { refreshDomains } = useAppState();
   const [items, setItems] = useState<PendingOperation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -105,6 +107,9 @@ export default function PendingOperationsPage() {
     try {
       await approvePendingOperation(op.id);
       setItems((prev) => prev.filter((p) => p.id !== op.id));
+      // Approving executes the underlying financial mutation — invalidate the
+      // affected domains so the rest of the app does not show stale data.
+      void refreshDomains(["accounts", "transactions", "payables"]);
     } catch (e) {
       if (e instanceof ApiError) setError(e.message);
       else if (e instanceof Error) setError(e.message);
@@ -120,6 +125,9 @@ export default function PendingOperationsPage() {
     try {
       await rejectPendingOperation(op.id);
       setItems((prev) => prev.filter((p) => p.id !== op.id));
+      // Defensive: reject does not mutate financial domains, but a refresh
+      // guarantees no stale view after either decision.
+      void refreshDomains(["accounts", "transactions", "payables"]);
     } catch (e) {
       if (e instanceof ApiError) setError(e.message);
       else if (e instanceof Error) setError(e.message);

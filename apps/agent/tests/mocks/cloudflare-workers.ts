@@ -1,8 +1,10 @@
-export class DurableObject {
+export class DurableObject<Env = unknown> {
   state: unknown;
+  ctx: unknown;
   env: unknown;
   constructor(state: unknown, env: unknown) {
     this.state = state;
+    this.ctx = state;
     this.env = env;
   }
 }

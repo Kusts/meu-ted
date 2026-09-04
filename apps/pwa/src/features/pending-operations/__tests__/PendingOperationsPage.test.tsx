@@ -1,7 +1,17 @@
-import { render, screen, within } from "@/lib/test-utils";
+import { render, screen, within, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import PendingOperationsPage from "../PendingOperationsPage";
 import type { PendingOperation } from "@/lib/state/types";
+
+const refreshDomainsMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock("@/lib/state/app-state-context", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/state/app-state-context")>();
+  return {
+    ...actual,
+    useAppState: () => ({ refreshDomains: refreshDomainsMock }),
+  };
+});
 
 const mockOps: PendingOperation[] = [
   {
@@ -107,6 +117,32 @@ describe("PendingOperationsPage", () => {
     await user.click(within(dialog).getByRole("button", { name: /Sim, cancelar/i }));
     expect(endpoints.rejectPendingOperation).toHaveBeenCalledWith(mockOps[1]!.id);
     expect(screen.queryByText("cancel_payable")).not.toBeInTheDocument();
+  });
+
+  it("refreshes affected domains after approving an operation", async () => {
+    refreshDomainsMock.mockClear();
+    const user = userEvent.setup();
+    render(<PendingOperationsPage />);
+    await screen.findByTestId("pending-list");
+    await user.click(screen.getByTestId(`approve-${mockOps[0]!.id}`));
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /Sim, confirmar/i }));
+    await waitFor(() =>
+      expect(refreshDomainsMock).toHaveBeenCalledWith(["accounts", "transactions", "payables"]),
+    );
+  });
+
+  it("refreshes affected domains after rejecting an operation", async () => {
+    refreshDomainsMock.mockClear();
+    const user = userEvent.setup();
+    render(<PendingOperationsPage />);
+    await screen.findByTestId("pending-list");
+    await user.click(screen.getByTestId(`reject-${mockOps[1]!.id}`));
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /Sim, cancelar/i }));
+    await waitFor(() =>
+      expect(refreshDomainsMock).toHaveBeenCalledWith(["accounts", "transactions", "payables"]),
+    );
   });
 
   it("shows warning when API not configured", async () => {

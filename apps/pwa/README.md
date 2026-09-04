@@ -41,19 +41,34 @@ pnpm lint       # ESLint
 
 | Variable | Description |
 |----------|-------------|
-| `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL` | Base URL of sibling `pi-finance-api` (e.g. `https://api.example.com`) |
+| `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL` | Base URL da API autoritativa. Local: `/api/backend` (proxy same-origin para `https://api.synkroo.com.br`); Produção: `https://api.synkroo.com.br` (definido em `wrangler.jsonc` vars). |
+| `NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL` | Base URL do Agent Cloudflare (TED). Local: `/api/agent` (proxy same-origin para `https://pi-finance-agent.walissonead.workers.dev`); Produção: `https://pi-finance-agent.walissonead.workers.dev` (definido em `wrangler.jsonc` vars e em `src/app/api/agent/[...path]/route.ts` `AGENT_ORIGIN`). |
 
-Without this variable, the PWA runs entirely on local mock data **without** any
-network requests. The `AuthGate` is bypassed, so no `/auth/devices/register`
-call is made. All data comes from in-memory mocks.
+Sem `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL`, o PWA roda em modo mock **sem** requisições
+de rede — `AuthGate` é bypassado e dados vêm de mocks em memória.
+Sem `NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL`, o TED retorna `Agent não configurado` e
+o chat fica indisponível; a API financeira continua independente.
+
+Configure localmente via `apps/pwa/.env.local` (não versionado, vide `docs/runbooks/pwa-local-dev-2026-08-28.md`):
+```bash
+NEXT_PUBLIC_PI_FINANCE_API_BASE_URL=/api/backend
+NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL=/api/agent
+```
+Para build local de produção (standalone), exporte ambas as vars antes de `pnpm --filter pwa build`:
+```powershell
+set "NEXT_PUBLIC_PI_FINANCE_API_BASE_URL=/api/backend" && set "NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL=/api/agent" && pnpm --filter pwa build
+```
+Produção Cloudflare lê as mesmas vars de `apps/pwa/wrangler.jsonc` (vars). Não hard-code
+URLs em código de produção e não commite `.env.local` — use apenas os proxies `/api/*` no local.
 
 ## Environment Behavior
 
-| `BASE_URL` set | `BASE_URL` unset |
-|---|---|
-| AuthGate renders → device registration required | Mock mode: AuthGate bypassed, all features functional |
-| Reads from `localStorage.getItem("pi-finance:token")` | No token needed, data is mocked |
-| Fetches live data from the API | Zero network requests |
+| `BASE_URL` (API) | `AGENT_BASE_URL` (TED) | Comportamento |
+|---|---|---|
+| set (`/api/backend` ou `https://api.synkroo.com.br`) | set (`/api/agent` ou `https://pi-finance-agent.walissonead.workers.dev`) | API + TED operacionais; `AuthGate` ativo; proxies same-origin `/api/backend` e `/api/agent` encaminham para upstreams com headers `x-device-token` / `x-agent-connection-token` |
+| set | unset | API operacional, TED retorna `Agent não configurado` |
+| unset | set ou unset | Mock mode: `AuthGate` bypassed, dados em memória, zero requisições de rede |
+| | | `localStorage.getItem("pi-finance:token")` usado somente quando `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL` está configurado |
 
 > **Security note:** The device token is stored in `localStorage` under the key
 > `pi-finance:token`. This is intentionally JavaScript-accessible — the PWA

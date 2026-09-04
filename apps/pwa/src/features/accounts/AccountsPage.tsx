@@ -44,6 +44,21 @@ const BANK_COLORS = [
   { value: "#4A5568", label: "Outro" },
 ];
 
+/**
+ * Maps the UI subkinds to the kinds the authoritative API accepts on account
+ * creation ("bank" | "cash" | "credit_card"). checking/savings/investment are
+ * all bank-kind accounts at the API level — the subkind choice is honored in
+ * the payload via bankColor and kept here explicit instead of a degenerate
+ * ternary.
+ */
+function toApiAccountKind(kind: string): "bank" | "cash" | "credit_card" {
+  switch (kind) {
+    case "cash": return "cash";
+    case "credit_card": return "credit_card";
+    default: return "bank";
+  }
+}
+
 function parseBRLToCents(value: string): number {
   const cleaned = value.replace(/[.\s]/g, "").replace(",", ".");
   return Math.round(parseFloat(cleaned) * 100) || 0;
@@ -56,23 +71,34 @@ function AccountFormSheet({
 }: {
   open: boolean;
   onClose: () => void;
-  onAdd: (input: { name: string; kind: "bank" | "cash" | "credit_card"; initialBalanceCents: number }) => void;
+  onAdd: (input: {
+    name: string;
+    kind: "bank" | "cash" | "credit_card";
+    initialBalanceCents: number;
+    bankColor: string;
+  }) => void | Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState("checking");
   const [bankColor, setBankColor] = useState("#820AD1");
   const [balance, setBalance] = useState("");
 
-  function handleSave() {
+  async function handleSave() {
     const displayName = name.trim() || (bankColor === "#820AD1" ? "Nubank" : bankColor);
-    onAdd({
-      name: displayName,
-      kind: kind === "checking" ? "bank" : kind === "savings" ? "bank" : kind === "investment" ? "bank" : "bank",
-      initialBalanceCents: parseBRLToCents(balance),
-    });
-    setName("");
-    setBalance("");
-    onClose();
+    try {
+      await onAdd({
+        name: displayName,
+        kind: toApiAccountKind(kind),
+        initialBalanceCents: parseBRLToCents(balance),
+        bankColor,
+      });
+      setName("");
+      setBalance("");
+      onClose();
+    } catch {
+      // Save failed: sheet stays open with the typed values; the error is
+      // surfaced by the page-level WriteErrorBanner (PayablesPage pattern).
+    }
   }
 
   return (
@@ -178,7 +204,7 @@ function AccountEditSheet({ open, account, onClose, onSave }: {
   open: boolean;
   account: { id: string; name: string } | null;
   onClose: () => void;
-  onSave: (id: string, name: string) => void;
+  onSave: (id: string, name: string) => void | Promise<void>;
 }) {
   const [name, setName] = useState("");
 
@@ -187,10 +213,14 @@ function AccountEditSheet({ open, account, onClose, onSave }: {
     if (account) setName(account.name);
   }, [account]);
 
-  function handleSave() {
+  async function handleSave() {
     if (!account || !name.trim()) return;
-    onSave(account.id, name.trim());
-    onClose();
+    try {
+      await onSave(account.id, name.trim());
+      onClose();
+    } catch {
+      // Save failed: sheet stays open with the typed value.
+    }
   }
 
   return (
@@ -488,7 +518,15 @@ export default function AccountsPage() {
         </div>
       </main>
 
-      <AccountFormSheet open={createOpen} onClose={() => setCreateOpen(false)} onAdd={addAccount} />
+      <AccountFormSheet
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onAdd={async (input) => {
+          // bankColor travels in the payload (the API strips unknown fields
+          // today, but the choice is preserved end-to-end for forward-compat).
+          await addAccount({ ...input });
+        }}
+      />
 
       <AccountEditSheet
         open={editOpen}

@@ -90,7 +90,8 @@
 
   --text-primary: #111814;
   --text-secondary: #4B554E;
-  --text-muted: #828E85;
+  /* P2-8: >= 4.5:1 over bg-canvas, surface-1 and surface-2 (WCAG AA) */
+  --text-muted: #66716A;
 
   /* Primárias Esmeralda Light */
   --primary: #0E8C5A;
@@ -154,7 +155,8 @@
 
   --text-primary: #F3F5F2;
   --text-secondary: #9DA8A0;
-  --text-muted: #667269;
+  /* P2-8: >= 4.5:1 over bg-canvas, surface-1 and surface-2 (WCAG AA) */
+  --text-muted: #828E85;
 
   /* Primárias Esmeralda Dark */
   --primary: #10B981;

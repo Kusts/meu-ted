@@ -1,4 +1,4 @@
-import { render, screen, within } from "@/lib/test-utils";
+import { render, screen, within, fireEvent } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import GoalsPage from "../GoalsPage";
 import * as appStateModule from "@/lib/state/app-state-context";
@@ -369,5 +369,18 @@ describe("GoalsPage", () => {
       await user.click(screen.getByText("Salvar alterações"));
       expect(updateSpy).toHaveBeenCalled();
     });
+  });
+});
+
+describe("GoalsPage — P2-14 (cards keyboard-accessible)", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("exposes goal cards as keyboard-accessible buttons that open the detail", () => {
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({}));
+    render(<GoalsPage />);
+    const card = screen.getByRole("button", { name: /Ver detalhes de Reserva de emergência/i });
+    expect(card).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(card, { key: "Enter" });
+    expect(screen.getByText("Detalhes da meta")).toBeInTheDocument();
   });
 });

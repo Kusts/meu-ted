@@ -26,7 +26,8 @@ function getStoredTheme(storageKey: string, defaultTheme: Theme): Theme {
 
 export function ThemeProvider({
   children,
-  defaultTheme = "dark",
+  // P2-13: with no stored preference, follow prefers-color-scheme (light or dark).
+  defaultTheme = "system",
   storageKey = THEME_STORAGE_KEY,
 }: ThemeProviderProps) {
   const [theme, setThemeState] = useState<Theme>(() =>

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { apiFetch, apiGet, apiPost, getAuthToken, isApiConfigured, ApiError } from "./client";
+import { apiFetch, apiGet, apiPost, getAuthToken, isApiConfigured, UNAUTHORIZED_EVENT, ApiError } from "./client";
 
 describe("apiFetch JSON content-type", () => {
   afterEach(() => {
@@ -231,5 +231,38 @@ describe("apiFetch error, timeout and edge handling", () => {
     localStorage.setItem("pi-finance:token", "stored");
     expect(getAuthToken()).toBe("stored");
     localStorage.removeItem("pi-finance:token");
+  });
+});
+
+describe("central 401 handling (UNAUTHORIZED_EVENT)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("dispatches the unauthorized event when a 401 response arrives", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "auth.expired", message: "Sessão expirada" }), { status: 401 }),
+    );
+    const handler = vi.fn();
+    window.addEventListener(UNAUTHORIZED_EVENT, handler);
+
+    await expect(apiFetch("/me")).rejects.toBeInstanceOf(ApiError);
+    expect(handler).toHaveBeenCalledOnce();
+    window.removeEventListener(UNAUTHORIZED_EVENT, handler);
+  });
+
+  it("does not dispatch the unauthorized event on non-401 errors", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "server.error" }), { status: 500 }),
+    );
+    const handler = vi.fn();
+    window.addEventListener(UNAUTHORIZED_EVENT, handler);
+
+    await expect(apiFetch("/me")).rejects.toBeInstanceOf(ApiError);
+    expect(handler).not.toHaveBeenCalled();
+    window.removeEventListener(UNAUTHORIZED_EVENT, handler);
   });
 });

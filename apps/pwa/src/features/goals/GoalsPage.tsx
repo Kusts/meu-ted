@@ -382,7 +382,19 @@ export default function GoalsPage() {
             ) : (
               goalPcts.map((g) => (
                 <div key={g.id} className="rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-4 shadow-card hover:bg-surface-2/40 transition-colors">
-                  <div className="cursor-pointer" onClick={() => setDetailGoal(g)}>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Ver detalhes de ${g.name}`}
+                    onClick={() => setDetailGoal(g)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setDetailGoal(g);
+                      }
+                    }}
+                    className="cursor-pointer"
+                  >
                     <div className="mb-[10px] flex items-center justify-between">
                       <div className="flex items-center gap-[9px]">
                         <div className="flex h-[36px] w-[36px] items-center justify-center rounded-[11px] bg-primary-tint text-primary shadow-xs">
@@ -525,7 +537,19 @@ export default function GoalsPage() {
                 ? Math.min((g.currentAmountCents / g.targetAmountCents) * 100, 100) : 0;
               return (
                 <div key={g.id} className="rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-4 shadow-card hover:bg-surface-2/40 transition-colors">
-                  <div className="cursor-pointer" onClick={() => setDetailGoal(g)}>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Ver detalhes de ${g.name}`}
+                    onClick={() => setDetailGoal(g)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setDetailGoal(g);
+                      }
+                    }}
+                    className="cursor-pointer"
+                  >
                     <div className="mb-[10px] flex items-center gap-[9px]">
                       <div className="flex h-[36px] w-[36px] items-center justify-center rounded-[11px] bg-danger-tint text-danger shadow-xs">
                         <Target size={18} strokeWidth={2.2} />

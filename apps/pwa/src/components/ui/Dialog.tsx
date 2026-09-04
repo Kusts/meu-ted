@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useBodyScrollLock } from "@/lib/ui/overlay-a11y";
 
 export interface DialogProps {
   open: boolean;
@@ -27,15 +28,8 @@ export function Dialog({
     setMounted(true);
   }, []);
 
-  // Lock body scroll while open
-  useEffect(() => {
-    if (!open) return;
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = originalOverflow;
-    };
-  }, [open]);
+  // Lock body scroll while open (ref-counted across stacked overlays)
+  useBodyScrollLock(open);
 
   // Handle Escape key
   const handleKeyDown = useCallback(

@@ -787,3 +787,26 @@ describe("CardsPage", () => {
     });
   });
 });
+
+describe("CardsPage — P2-12 (erro visível ao pagar fatura)", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("shows a visible error and keeps the sheet open when payStatement fails", async () => {
+    const paySpy = vi.fn().mockRejectedValue(new Error("Falha de rede ao pagar"));
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+      mockState({
+        payStatement: paySpy,
+        cardStatements: [{ id: "stmt-1", accountId: "acc4", cycleYearMonth: "2026-06", closingDate: "2026-06-15", dueDate: "2026-06-25", totalCents: 4180, paidCents: 0, status: "open" }],
+      }),
+    );
+    const user = userEvent.setup();
+    render(<CardsPage />);
+    await user.click(screen.getByText("Nubank Crédito"));
+    await user.click(screen.getByText(/pagar fatura/i));
+    const nubankBtns = screen.getAllByText("Nubank");
+    await user.click(nubankBtns[nubankBtns.length - 1]);
+    await user.click(screen.getByRole("button", { name: /Pagar fatura total/i }));
+    expect(await screen.findByTestId("pay-error")).toHaveTextContent("Falha de rede ao pagar");
+    expect(screen.getByRole("button", { name: /Pagar fatura total/i })).toBeInTheDocument();
+  });
+});

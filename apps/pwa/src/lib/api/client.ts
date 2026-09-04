@@ -81,6 +81,17 @@ export class ApiError extends Error {
   }
 }
 
+// ── Central 401 handling ─────────────────────────────────────────────────────
+// Any 401 from the authoritative API (socket close + window event) lets every
+// consumer react to session expiry without each caller handling 401 itself.
+
+/**
+ * Fired on `window` whenever apiFetch receives a 401, so any part of the app
+ * (e.g. session expiry in AppStateProvider) can react without importing the
+ * client or handling 401 per call-site.
+ */
+export const UNAUTHORIZED_EVENT = "pi-finance:unauthorized";
+
 export async function apiFetch<T>(
   path: string,
   options: ApiClientOptions = {},
@@ -128,6 +139,9 @@ export async function apiFetch<T>(
       let body: Record<string, unknown> = {};
       try { body = await res.json(); } catch { /* noop */ }
       closeAllSockets("session expired");
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+      }
       throw new ApiError(
         401,
         (body.code as string) ?? "auth.error",

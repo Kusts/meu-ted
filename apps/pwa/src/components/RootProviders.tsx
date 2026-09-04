@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { isApiConfigured } from "@/lib/api/client";
+import { ApiUnconfiguredScreen } from "@/components/ApiUnconfiguredScreen";
 import { AuthGate } from "@/features/auth/AuthGate";
 import { AppStateProvider } from "@/lib/state/app-state-context";
 import { SheetProvider } from "@/lib/sheet-context";
@@ -14,12 +15,23 @@ import { initRUM } from "@/lib/observability/web-vitals";
 
 /**
  * Provider tree (ThemeProvider > agents-sdk: AuthGate > WorkspaceProvider > AppStateProvider)
+ *
+ * Fail closed: on origins without a configured authoritative API, only the
+ * ApiUnconfiguredScreen renders — no app content, no mock data, no AuthGate.
  */
 export function RootProviders({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     initRUM();
   }, []);
   const pathname = usePathname();
+
+  if (!isApiConfigured()) {
+    return (
+      <ThemeProvider>
+        <ApiUnconfiguredScreen />
+      </ThemeProvider>
+    );
+  }
 
   const isInviteRoute = pathname?.startsWith("/convite");
 

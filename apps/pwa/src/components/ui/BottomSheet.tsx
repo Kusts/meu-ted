@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { OVERLAY_Z_INDEX, useBodyScrollLock } from "@/lib/ui/overlay-a11y";
 
 export interface BottomSheetProps {
   open: boolean;
@@ -18,17 +19,8 @@ export function BottomSheet({
   children,
   className = "",
 }: BottomSheetProps) {
-  /* Lock body scroll while open */
-  useEffect(() => {
-    if (open) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [open]);
+  /* Lock body scroll while open (ref-counted across stacked overlays) */
+  useBodyScrollLock(open);
 
   /* Close on Escape key */
   const handleKeyDown = useCallback(
@@ -49,7 +41,12 @@ export function BottomSheet({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-40" role="dialog" aria-modal="true">
+    <div
+      className="fixed inset-0"
+      style={{ zIndex: OVERLAY_Z_INDEX.sheet }}
+      role="dialog"
+      aria-modal="true"
+    >
       {/* Overlay */}
       <div
         className="fixed inset-0 bg-black/60 backdrop-blur-xs animate-fade-in transition-opacity"

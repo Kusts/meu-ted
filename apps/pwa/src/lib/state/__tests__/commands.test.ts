@@ -260,5 +260,50 @@ describe("PWA State Mutators — commands.ts", () => {
       expect(res).toEqual(mockCreated);
       expect(apiSpy).toHaveBeenCalledWith(input);
     });
+
+    it("3.5 blocks re-submission of the same mutation while it is pending", async () => {
+      let resolveFn: ((value: unknown) => void) | undefined;
+      const pending = new Promise((r) => { resolveFn = r; });
+      const apiSpy = vi.spyOn(endpoints, "createExpenseTransaction").mockImplementation(() => pending as never);
+      const dispatch = vi.fn();
+      const commands = createCommands(makeContext(true, dispatch));
+
+      const input = {
+        description: "Duplicado",
+        amountCents: 5000,
+        date: "2026-08-19",
+        categoryId: "c1",
+        accountId: "a1",
+      };
+
+      const p1 = commands.createExpenseTransaction(input);
+      const p2 = commands.createExpenseTransaction(input);
+
+      expect(apiSpy).toHaveBeenCalledOnce();
+
+      resolveFn!({ id: "tx-1" });
+      await expect(p1).resolves.toEqual({ id: "tx-1" });
+      await expect(p2).resolves.toEqual({ id: "tx-1" });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it("3.6 allows resubmitting the same mutation after the previous one settled", async () => {
+      const apiSpy = vi.spyOn(endpoints, "createExpenseTransaction")
+        .mockResolvedValueOnce({ id: "tx-1" } as never)
+        .mockResolvedValueOnce({ id: "tx-2" } as never);
+      const commands = createCommands(makeContext(true));
+
+      const input = {
+        description: "Novo",
+        amountCents: 1000,
+        date: "2026-08-19",
+        categoryId: "c1",
+        accountId: "a1",
+      };
+
+      await expect(commands.createExpenseTransaction(input)).resolves.toEqual({ id: "tx-1" });
+      await expect(commands.createExpenseTransaction(input)).resolves.toEqual({ id: "tx-2" });
+      expect(apiSpy).toHaveBeenCalledTimes(2);
+    });
   });
 });
