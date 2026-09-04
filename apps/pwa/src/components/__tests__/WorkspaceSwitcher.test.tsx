@@ -70,6 +70,46 @@ describe("WorkspaceSwitcher Component (Task 9)", () => {
     expect(screen.getByText("Carregando…")).toBeInTheDocument();
   });
 
+  it("does not render Offline when workspace loading fails due to authorization error", () => {
+    mockContext.value = {
+      ...mockContext.value,
+      workspaces: [],
+      activeWorkspace: null,
+      error: "Token inválido",
+    };
+
+    render(<WorkspaceSwitcher />);
+    expect(screen.queryByText("Offline")).not.toBeInTheDocument();
+    expect(screen.getByText("Não autorizado")).toBeInTheDocument();
+  });
+
+  it("renders Offline alert when workspace loading fails due to network or backend unavailability", () => {
+    mockContext.value = {
+      ...mockContext.value,
+      workspaces: [],
+      activeWorkspace: null,
+      error: "API offline",
+    };
+
+    render(<WorkspaceSwitcher />);
+    expect(screen.getByText("Offline")).toBeInTheDocument();
+    expect(screen.queryByText("Não autorizado")).not.toBeInTheDocument();
+  });
+
+  it("renders hero variant styling for authorization error badge", () => {
+    mockContext.value = {
+      ...mockContext.value,
+      workspaces: [],
+      activeWorkspace: null,
+      error: "HTTP 401",
+    };
+
+    render(<WorkspaceSwitcher variant="hero" />);
+    const badge = screen.getByText("Não autorizado").closest("div");
+    expect(badge).toHaveAttribute("data-variant", "hero");
+    expect(badge?.className).toContain("border-danger/40");
+  });
+
   it("renders active workspace name and toggles dropdown list", async () => {
     const user = userEvent.setup();
 

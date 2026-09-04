@@ -4,9 +4,11 @@ import "fake-indexeddb/auto";
 import { render, screen, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import { WorkspaceProvider, useWorkspace } from "./workspace-context";
+import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import { AppStateProvider, useAppState } from "@/lib/state/app-state-context";
 import * as endpoints from "@/lib/api/endpoints";
 import { saveSnapshotDomain, loadSnapshotDomain } from "@/lib/state/snapshot-store";
+import { ApiError } from "@/lib/api/client";
 
 const api = vi.hoisted(() => ({
   fetchWorkspaces: vi.fn(),
@@ -53,6 +55,7 @@ function Probe() {
     workspaces,
     selectWorkspace,
     error,
+    isAuthError,
     members,
     pendingInvites,
     ownershipTransfers,
@@ -69,6 +72,7 @@ function Probe() {
   return <>
     <div data-testid="active">{activeWorkspace?.name ?? "none"}</div>
     <div data-testid="error">{error ?? "no-error"}</div>
+    <div data-testid="is-auth-error">{String(isAuthError ?? false)}</div>
     <div data-testid="refresh-error">{refreshError ?? "no-refresh-error"}</div>
     <div data-testid="members-count">{members.length}</div>
     <div data-testid="invites-count">{pendingInvites.length}</div>
@@ -147,6 +151,56 @@ describe("WorkspaceProvider", () => {
 
     expect(await screen.findByTestId("error")).toHaveTextContent("API offline");
     expect(screen.queryByText("Carregando workspaces…")).not.toBeInTheDocument();
+  });
+
+  it("flags isAuthError and preserves workspace isolation when fetchWorkspaces fails with 401", async () => {
+    api.fetchWorkspaces.mockRejectedValue(new Error("Token inválido"));
+    render(<WorkspaceProvider><Probe /></WorkspaceProvider>);
+
+    expect(await screen.findByTestId("error")).toHaveTextContent("Token inválido");
+    expect(screen.getByTestId("is-auth-error")).toHaveTextContent("true");
+    expect(screen.getByTestId("active")).toHaveTextContent("none");
+  });
+
+  it("keeps isAuthError false on network or backend unavailability", async () => {
+    api.fetchWorkspaces.mockRejectedValue(new Error("API offline"));
+    render(<WorkspaceProvider><Probe /></WorkspaceProvider>);
+
+    expect(await screen.findByTestId("error")).toHaveTextContent("API offline");
+    expect(screen.getByTestId("is-auth-error")).toHaveTextContent("false");
+    expect(screen.getByTestId("active")).toHaveTextContent("none");
+  });
+
+  it("flags isAuthError and does not classify typed ApiError 401 as Offline", async () => {
+    api.fetchWorkspaces.mockRejectedValue(new ApiError(401, "auth.invalid_token", "Sessão expirada"));
+    render(
+      <WorkspaceProvider>
+        <Probe />
+        <WorkspaceSwitcher />
+      </WorkspaceProvider>,
+    );
+
+    expect(await screen.findByTestId("error")).toHaveTextContent("Sessão expirada");
+    expect(screen.getByTestId("is-auth-error")).toHaveTextContent("true");
+    expect(screen.getByTestId("active")).toHaveTextContent("none");
+    expect(screen.queryByText("Offline")).not.toBeInTheDocument();
+    expect(screen.getByText("Não autorizado")).toBeInTheDocument();
+  });
+
+  it("flags isAuthError and does not classify typed ApiError 403 Forbidden as Offline", async () => {
+    api.fetchWorkspaces.mockRejectedValue(new ApiError(403, "workspace.forbidden", "Acesso restrito"));
+    render(
+      <WorkspaceProvider>
+        <Probe />
+        <WorkspaceSwitcher />
+      </WorkspaceProvider>,
+    );
+
+    expect(await screen.findByTestId("error")).toHaveTextContent("Acesso restrito");
+    expect(screen.getByTestId("is-auth-error")).toHaveTextContent("true");
+    expect(screen.getByTestId("active")).toHaveTextContent("none");
+    expect(screen.queryByText("Offline")).not.toBeInTheDocument();
+    expect(screen.getByText("Não autorizado")).toBeInTheDocument();
   });
 
   it("keeps archived workspaces visible but never selects one as active", async () => {

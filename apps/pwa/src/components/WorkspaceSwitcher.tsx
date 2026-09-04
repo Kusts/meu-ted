@@ -26,6 +26,24 @@ export interface WorkspaceSwitcherProps {
   variant?: "default" | "hero";
 }
 
+function isAuthorizationError(error: string | null | undefined): boolean {
+  if (!error) return false;
+  const normalized = error.toLowerCase();
+  return (
+    normalized.includes("token inválido") ||
+    normalized.includes("token invalido") ||
+    normalized.includes("unauthorized") ||
+    normalized.includes("não autorizado") ||
+    normalized.includes("nao autorizado") ||
+    normalized.includes("forbidden") ||
+    normalized.includes("sessão expirada") ||
+    normalized.includes("sessao expirada") ||
+    normalized.includes("auth.") ||
+    normalized.includes("401") ||
+    normalized.includes("403")
+  );
+}
+
 export function WorkspaceSwitcher({
   compact = false,
   variant = "default",
@@ -54,6 +72,7 @@ export function WorkspaceSwitcher({
   const selectWorkspace = ws?.selectWorkspace;
   const loading = ws?.loading ?? false;
   const error = ws?.error ?? null;
+  const isAuth = Boolean(ws?.isAuthError || isAuthorizationError(error));
 
   const currentName = useMemo(
     () =>
@@ -87,6 +106,24 @@ export function WorkspaceSwitcher({
   }
 
   if (error && workspaces.length === 0) {
+    if (isAuth) {
+      return (
+        <div
+          data-variant={variant}
+          className={`flex items-center gap-2 rounded-full border px-3 py-1.5 ${
+            variant === "hero"
+              ? "border-danger/40 bg-danger/20 text-danger"
+              : "border-danger/30 bg-danger-tint text-danger"
+          } ${
+            compact ? "text-xs" : "text-sm"
+          }`}
+        >
+          <span className="h-2 w-2 rounded-full bg-danger" />
+          <span className="truncate">Não autorizado</span>
+        </div>
+      );
+    }
+
     return (
       <div
         data-variant={variant}

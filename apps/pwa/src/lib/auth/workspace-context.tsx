@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { isApiConfigured, clearActiveWorkspaceId, setActiveWorkspaceId } from "@/lib/api/client";
+import { isApiConfigured, clearActiveWorkspaceId, setActiveWorkspaceId, ApiError } from "@/lib/api/client";
 import { clearSensitiveSession } from "@/lib/session";
 import { closeAllSockets } from "./socket-registry";
 import {
@@ -27,6 +27,37 @@ import {
   type WorkspaceMember,
 } from "@/lib/api/workspaces";
 
+function isAuthFailure(cause: unknown): boolean {
+  if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) {
+    return true;
+  }
+  if (
+    cause &&
+    typeof cause === "object" &&
+    "status" in cause &&
+    ((cause as { status: unknown }).status === 401 || (cause as { status: unknown }).status === 403)
+  ) {
+    return true;
+  }
+  if (cause instanceof Error) {
+    const msg = cause.message.toLowerCase();
+    return (
+      msg.includes("token inválido") ||
+      msg.includes("token invalido") ||
+      msg.includes("unauthorized") ||
+      msg.includes("não autorizado") ||
+      msg.includes("nao autorizado") ||
+      msg.includes("forbidden") ||
+      msg.includes("sessão expirada") ||
+      msg.includes("sessao expirada") ||
+      msg.includes("auth.") ||
+      msg.includes("401") ||
+      msg.includes("403")
+    );
+  }
+  return false;
+}
+
 const MOCK_DEFAULT_WORKSPACE: Workspace = {
   id: "mock-workspace",
   name: "Minhas Finanças",
@@ -46,6 +77,7 @@ export interface WorkspaceContextValue {
   pendingInvitesLoading: boolean;
   ownershipTransfersLoading: boolean;
   error: string | null;
+  isAuthError?: boolean;
   selectWorkspace: (workspaceId: string) => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
   refreshMembers: () => Promise<void>;
@@ -85,6 +117,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [pendingInvitesLoading, setPendingInvitesLoading] = useState(false);
   const [ownershipTransfersLoading, setOwnershipTransfersLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAuthError, setIsAuthError] = useState(false);
 
   const refreshWorkspaces = useCallback(async () => {
     if (!isApiConfigured()) {
@@ -97,6 +130,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     try {
       const next = await fetchWorkspaces();
       setError(null);
+      setIsAuthError(false);
       setWorkspaces(next);
       const current = activeWorkspaceIdRef.current;
        const selected = next.some((workspace) => workspace.id === current && workspace.status !== "archived")
@@ -112,6 +146,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (selected) setActiveWorkspaceId(selected);
       else clearActiveWorkspaceId();
     } catch (cause) {
+      setIsAuthError(isAuthFailure(cause));
       setError(cause instanceof Error ? cause.message : "Não foi possível carregar os workspaces.");
       throw cause;
     } finally {
@@ -128,6 +163,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       try {
         const next = await fetchWorkspaces();
         if (cancelled) return;
+        setError(null);
+        setIsAuthError(false);
         setWorkspaces(next);
         const current = activeWorkspaceIdRef.current;
          const selected = next.some((workspace) => workspace.id === current && workspace.status !== "archived")
@@ -144,6 +181,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         else clearActiveWorkspaceId();
       } catch (cause) {
         if (!cancelled) {
+          setIsAuthError(isAuthFailure(cause));
           setError(cause instanceof Error ? cause.message : "Não foi possível carregar os workspaces.");
         }
       } finally {
@@ -355,6 +393,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     pendingInvitesLoading,
     ownershipTransfersLoading,
     error,
+    isAuthError,
     selectWorkspace,
     refreshWorkspaces,
     refreshMembers,
@@ -372,7 +411,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     transferOwnership,
     acceptTransfer,
     leave,
-  }), [workspaces, activeWorkspace, members, pendingInvites, ownershipTransfers, loading, membersLoading, pendingInvitesLoading, ownershipTransfersLoading, error, selectWorkspace, refreshWorkspaces, refreshMembers, refreshPendingInvites, refreshOwnershipTransfers, createWorkspace, renameWorkspace, archiveWorkspace, restoreWorkspace, inviteMember, resendInvite, revokeInvite, acceptInvite, removeMember, transferOwnership, acceptTransfer, leave]);
+  }), [workspaces, activeWorkspace, members, pendingInvites, ownershipTransfers, loading, membersLoading, pendingInvitesLoading, ownershipTransfersLoading, error, isAuthError, selectWorkspace, refreshWorkspaces, refreshMembers, refreshPendingInvites, refreshOwnershipTransfers, createWorkspace, renameWorkspace, archiveWorkspace, restoreWorkspace, inviteMember, resendInvite, revokeInvite, acceptInvite, removeMember, transferOwnership, acceptTransfer, leave]);
 
   if (loading) return <main className="flex h-dvh items-center justify-center text-text-secondary">Carregando workspaces…</main>;
   return (

@@ -62,13 +62,17 @@ export type OwnershipTransfer = {
 };
 
 export async function fetchWorkspaces(): Promise<Workspace[]> {
-  const response = await apiFetch<{ items: Workspace[] }>("/workspaces", { responseSchema: workspaceListSchema });
+  const response = await apiFetch<{ items: Workspace[] }>("/workspaces", {
+    headers: sessionAuthHeader(),
+    responseSchema: workspaceListSchema,
+  });
   return response.items;
 }
 
 export async function createWorkspace(input: { name: string; kind: "personal" | "shared" }): Promise<Workspace> {
   return apiFetch<Workspace>("/workspaces", {
     method: "POST",
+    headers: sessionAuthHeader(),
     body: JSON.stringify(input),
     idempotencyKey: createIdempotencyKey(),
     responseSchema: workspaceSchema,
@@ -78,6 +82,7 @@ export async function createWorkspace(input: { name: string; kind: "personal" | 
 export async function renameWorkspace(workspaceId: string, name: string): Promise<Workspace> {
   return apiFetch<Workspace>(`/workspaces/${encodeURIComponent(workspaceId)}`, {
     method: "PATCH",
+    headers: sessionAuthHeader(),
     body: JSON.stringify({ name: name.trim() }),
     idempotencyKey: createIdempotencyKey(),
     responseSchema: workspaceSchema,
@@ -95,6 +100,7 @@ export async function restoreWorkspace(workspaceId: string): Promise<Workspace> 
 async function updateWorkspaceStatus(workspaceId: string, action: "archive" | "restore"): Promise<Workspace> {
   return apiFetch<Workspace>(`/workspaces/${encodeURIComponent(workspaceId)}/${action}`, {
     method: "POST",
+    headers: sessionAuthHeader(),
     idempotencyKey: createIdempotencyKey(),
     responseSchema: workspaceSchema,
   });
@@ -102,6 +108,7 @@ async function updateWorkspaceStatus(workspaceId: string, action: "archive" | "r
 
 export async function fetchWorkspaceMembers(workspaceId: string): Promise<WorkspaceMember[]> {
   const response = await apiFetch<{ items: WorkspaceMember[] }>(`/workspaces/${encodeURIComponent(workspaceId)}/members`, {
+    headers: sessionAuthHeader(),
     responseSchema: workspaceMemberListSchema,
   });
   return response.items;
@@ -109,6 +116,7 @@ export async function fetchWorkspaceMembers(workspaceId: string): Promise<Worksp
 
 export async function fetchPendingInvites(workspaceId: string): Promise<PendingInvite[]> {
   const response = await apiFetch<{ items: PendingInvite[] }>(`/workspaces/${encodeURIComponent(workspaceId)}/invites`, {
+    headers: sessionAuthHeader(),
     responseSchema: pendingInviteListSchema,
   });
   return response.items;
@@ -122,6 +130,7 @@ export async function resendWorkspaceInvite(
     `/workspaces/${encodeURIComponent(workspaceId)}/invites/${encodeURIComponent(inviteId)}/resend`,
     {
       method: "POST",
+      headers: sessionAuthHeader(),
       idempotencyKey: createIdempotencyKey(),
       responseSchema: resendInviteResponseSchema,
     },
@@ -136,6 +145,7 @@ export async function revokeWorkspaceInvite(
     `/workspaces/${encodeURIComponent(workspaceId)}/invites/${encodeURIComponent(inviteId)}`,
     {
       method: "DELETE",
+      headers: sessionAuthHeader(),
       idempotencyKey: createIdempotencyKey(),
       responseSchema: revokeInviteResponseSchema,
     },
@@ -146,6 +156,7 @@ export async function fetchOwnershipTransfers(workspaceId: string): Promise<Owne
   const response = await apiFetch<{ items: OwnershipTransfer[] }>(
     `/workspaces/${encodeURIComponent(workspaceId)}/ownership-transfers`,
     {
+      headers: sessionAuthHeader(),
       responseSchema: ownershipTransferListSchema,
     },
   );
@@ -160,6 +171,7 @@ export async function createOwnershipTransfer(
     `/workspaces/${encodeURIComponent(workspaceId)}/ownership-transfers`,
     {
       method: "POST",
+      headers: sessionAuthHeader(),
       body: JSON.stringify({ toUserId }),
       idempotencyKey: createIdempotencyKey(),
       responseSchema: ownershipTransferSchema,
@@ -175,6 +187,7 @@ export async function acceptOwnershipTransfer(
     `/workspaces/${encodeURIComponent(workspaceId)}/ownership-transfers/${encodeURIComponent(transferId)}/accept`,
     {
       method: "POST",
+      headers: sessionAuthHeader(),
       idempotencyKey: createIdempotencyKey(),
       responseSchema: ownershipTransferSchema,
     },
@@ -217,6 +230,7 @@ export async function verifyWorkspaceInvite(token: string): Promise<{ email: str
 export async function removeWorkspaceMember(workspaceId: string, memberUserId: string): Promise<void> {
   return apiFetch<void>(`/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(memberUserId)}`, {
     method: "DELETE",
+    headers: sessionAuthHeader(),
     idempotencyKey: createIdempotencyKey(),
     responseSchema: emptyResponseSchema,
   });
@@ -225,6 +239,7 @@ export async function removeWorkspaceMember(workspaceId: string, memberUserId: s
 export async function leaveWorkspace(workspaceId: string): Promise<void> {
   return apiFetch<void>(`/workspaces/${encodeURIComponent(workspaceId)}/leave`, {
     method: "POST",
+    headers: sessionAuthHeader(),
     idempotencyKey: createIdempotencyKey(),
     responseSchema: emptyResponseSchema,
   });

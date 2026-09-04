@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "./client";
+import { getSessionToken } from "@/lib/auth/token-store";
 import { acceptWorkspaceInvite, archiveWorkspace, createWorkspace, createWorkspaceInvite, fetchWorkspaceMembers, fetchWorkspaces, leaveWorkspace, removeWorkspaceMember, renameWorkspace, restoreWorkspace } from "./workspaces";
 
 vi.mock("./client", () => ({ apiFetch: vi.fn() }));
@@ -16,12 +17,26 @@ const mocked = vi.mocked(apiFetch);
 beforeEach(() => {
   mocked.mockReset();
   mocked.mockResolvedValue({ items: [] } as never);
+  vi.mocked(getSessionToken).mockReturnValue(null);
 });
 
 describe("workspace API", () => {
   it("lists workspaces through the session boundary", async () => {
     await fetchWorkspaces();
     expect(mocked).toHaveBeenCalledWith("/workspaces", expect.objectContaining({ responseSchema: expect.anything() }));
+  });
+
+  it("forwards the bearer token saved in pi-finance:session-token when fetching workspaces", async () => {
+    vi.mocked(getSessionToken).mockReturnValue("valid-better-auth-session-token");
+    await fetchWorkspaces();
+    expect(mocked).toHaveBeenCalledWith(
+      "/workspaces",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer valid-better-auth-session-token",
+        }),
+      }),
+    );
   });
 
   it("selects workspace metadata and manages members", async () => {
