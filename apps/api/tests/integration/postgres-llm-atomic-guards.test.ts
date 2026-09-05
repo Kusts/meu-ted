@@ -1,0 +1,161 @@
+import type { Pool } from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createPool } from '../../src/db/pool.js';
+import { createPostgresLlmConfigStore } from '../../src/agent/llm-config-postgres.js';
+import { runMigrations } from '../../src/read-models/sql/migrate.js';
+
+const DB_URL = process.env.DATABASE_URL_TEST_ATOMIC ?? process.env.DATABASE_URL_TEST;
+const ENABLED = Boolean(DB_URL && process.env.DB_TEST_MARKER);
+const itIfDatabase = ENABLED ? it : it.skip;
+let pool: Pool | undefined;
+
+/** Isolated reset: this file owns its database, so truncating is safe. */
+const resetLlmTables = async (): Promise<void> => {
+  if (!pool) throw new Error('database pool not initialized');
+  await pool.query(`TRUNCATE agent_llm_models, agent_llm_providers, agent_llm_runtime_config CASCADE`);
+  await pool.query(
+    `INSERT INTO agent_llm_runtime_config (singleton, rollout_mode, security_epoch, version)
+     VALUES ('active', 'disabled', 1, 1)`,
+  );
+};
+
+const seedPair = async (store: ReturnType<typeof createPostgresLlmConfigStore>, providerId: string, modelId: string) => {
+  const kinds: Record<string, { kind: 'openai-api' | 'opencode-zen'; alias: 'OPENAI_API_KEY' | 'OPENCODE_ZEN_API_KEY' }> = {
+    'openai-api': { kind: 'openai-api', alias: 'OPENAI_API_KEY' },
+    'opencode-zen': { kind: 'opencode-zen', alias: 'OPENCODE_ZEN_API_KEY' },
+  };
+  const spec = kinds[providerId] ?? { kind: 'openai-api' as const, alias: 'OPENAI_API_KEY' as const };
+  await store.upsertProvider({
+    id: providerId,
+    kind: spec.kind,
+    transport: 'direct',
+    authMode: 'api-key',
+    secretAlias: spec.alias,
+    enabled: true,
+    eligibility: 'approved',
+  });
+  return store.upsertModel({
+    providerId,
+    modelId,
+    protocol: 'chat-completions',
+    privacyClass: 'training_prohibited',
+    enabled: true,
+  });
+};
+
+describe('Postgres LLM atomic runtime-conditional guards (Fase 1b F4 RED)', () => {
+  beforeAll(async () => {
+    if (DB_URL) {
+      pool = createPool({ connectionString: DB_URL, max: 4 });
+      await runMigrations(pool);
+    }
+  });
+
+  afterAll(async () => {
+    await pool?.end();
+  });
+
+  itIfDatabase('toggle-off of the active provider is rejected atomically on Postgres', async () => {
+    if (!pool) throw new Error('database pool not initialized');
+    await resetLlmTables();
+    const store = createPostgresLlmConfigStore(pool);
+    const model = await seedPair(store, 'openai-api', 'guard-a');
+    const rt = await store.getRuntime();
+    await store.updateRuntime({
+      providerId: 'openai-api',
+      modelId: model.id,
+      expectedVersion: rt.version,
+      updatedBy: 'atomic@test.com',
+    });
+    await expect(store.setProviderEnabled('openai-api', false)).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'agent.runtime_in_use',
+      reason: 'active_provider',
+    });
+    expect((await store.getProvider('openai-api'))?.enabled).toBe(true);
+  });
+
+  itIfDatabase('concurrent toggle-off and activate never leave runtime pointing at a disabled provider', async () => {
+    if (!pool) throw new Error('database pool not initialized');
+    for (let round = 0; round < 6; round += 1) {
+      await resetLlmTables();
+      const store = createPostgresLlmConfigStore(pool);
+      const modelA = await seedPair(store, 'openai-api', `race-a-${round}`);
+      const modelB = await seedPair(store, 'opencode-zen', `race-b-${round}`);
+      let rt = await store.getRuntime();
+      rt = await store.updateRuntime({
+        providerId: 'openai-api',
+        modelId: modelA.id,
+        expectedVersion: rt.version,
+        updatedBy: 'atomic@test.com',
+      });
+
+      const settled = await Promise.allSettled([
+        store.setProviderEnabled('openai-api', false),
+        store.updateRuntime({
+          providerId: 'opencode-zen',
+          modelId: modelB.id,
+          expectedVersion: rt.version,
+          updatedBy: 'atomic@test.com',
+        }),
+      ]);
+      for (const s of settled) {
+        if (s.status === 'rejected') {
+          const err = s.reason as { statusCode?: number; code?: string };
+          // Only optimistic-concurrency or runtime-in-use conflicts are legal losers.
+          expect([409]).toContain(err.statusCode);
+          expect(['agent.runtime_in_use', 'agent.version_conflict']).toContain(err.code);
+        }
+      }
+
+      const [finalRuntime, providers] = await Promise.all([store.getRuntime(), store.listProviders()]);
+      const referenced = providers.filter(
+        (p) => p.id === finalRuntime.providerId || p.id === finalRuntime.fallbackProviderId,
+      );
+      for (const p of referenced) {
+        expect(p.enabled).toBe(true);
+      }
+      const activeModel =
+        finalRuntime.modelId === null ? null : await store.getModel(finalRuntime.modelId);
+      if (activeModel) expect(activeModel.enabled).toBe(true);
+    }
+  });
+
+  itIfDatabase('concurrent model toggle-off and activate never disable the referenced model', async () => {
+    if (!pool) throw new Error('database pool not initialized');
+    await resetLlmTables();
+    const store = createPostgresLlmConfigStore(pool);
+    const modelA = await seedPair(store, 'openai-api', 'mrace-a');
+    const modelB = await seedPair(store, 'opencode-zen', 'mrace-b');
+    let rt = await store.getRuntime();
+    rt = await store.updateRuntime({
+      providerId: 'openai-api',
+      modelId: modelA.id,
+      expectedVersion: rt.version,
+      updatedBy: 'atomic@test.com',
+    });
+
+    const settled = await Promise.allSettled([
+      store.setModelEnabled(modelA.id, false),
+      store.updateRuntime({
+        providerId: 'opencode-zen',
+        modelId: modelB.id,
+        expectedVersion: rt.version,
+        updatedBy: 'atomic@test.com',
+      }),
+    ]);
+    for (const s of settled) {
+      if (s.status === 'rejected') {
+        const err = s.reason as { statusCode?: number; code?: string };
+        expect([409]).toContain(err.statusCode);
+        expect(['agent.runtime_in_use', 'agent.version_conflict']).toContain(err.code);
+      }
+    }
+
+    const finalRuntime = await store.getRuntime();
+    if (finalRuntime.modelId !== null) {
+      const activeModel = await store.getModel(finalRuntime.modelId);
+      expect(activeModel?.enabled).toBe(true);
+    }
+  });
+});
