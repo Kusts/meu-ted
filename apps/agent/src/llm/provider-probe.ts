@@ -1,8 +1,8 @@
 import {
   FIXED_ENDPOINTS,
+  PROVIDER_SECRET_MAP,
   resolveSecret,
   validateModelId,
-  type SecretAlias,
 } from './provider-registry.js';
 import { createSafeFetch } from './model-factory.js';
 
@@ -16,10 +16,39 @@ export type ProbeResult = {
   code: string;
 };
 
-const PROVIDER_SECRET_MAP: Record<string, SecretAlias> = {
-  'opencode-zen': 'OPENCODE_ZEN_API_KEY',
-  'opencode-go': 'OPENCODE_GO_API_KEY',
-  'openai-api': 'OPENAI_API_KEY',
+/**
+ * Health-check target per kind. Only OpenAI-spec protocols expose
+ * GET /models with Bearer auth (B-L4): anthropic needs x-api-key plus
+ * the version header, google lists models with the key as query param.
+ */
+const probeTarget = (
+  providerKind: string,
+  baseUrl: string,
+  apiKey: string,
+): { url: string; headers: Record<string, string> } => {
+  if (providerKind === 'anthropic') {
+    return {
+      url: `${baseUrl}/models`,
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        accept: 'application/json',
+      },
+    };
+  }
+  if (providerKind === 'google') {
+    return {
+      url: `${baseUrl}/models?key=${encodeURIComponent(apiKey)}`,
+      headers: { accept: 'application/json' },
+    };
+  }
+  return {
+    url: `${baseUrl}/models`,
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      accept: 'application/json',
+    },
+  };
 };
 
 export const probeProvider = async (
@@ -98,18 +127,15 @@ export const probeProvider = async (
   }
 
   const safeFetch = createSafeFetch(customFetch);
-  const probeUrl = `${baseUrl}/models`;
+  const target = probeTarget(providerKind, baseUrl, apiKey);
 
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
 
-    const res = await safeFetch(probeUrl, {
+    const res = await safeFetch(target.url, {
       method: 'GET',
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        accept: 'application/json',
-      },
+      headers: target.headers,
       signal: controller.signal,
     });
     clearTimeout(timer);

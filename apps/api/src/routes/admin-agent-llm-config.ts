@@ -434,6 +434,10 @@ export const registerAdminAgentLlmConfigRoutes = (
       if (e?.code === 'agent.runtime_in_use' && e?.statusCode === 409) {
         return reply.code(409).send({ code: e.code, reason: e.reason ?? 'runtime_in_use' });
       }
+      // V042 model FKs (active and fallback) reject bypass deletes with 23503.
+      if ((e as { code?: string })?.code === '23503') {
+        return reply.code(409).send({ code: 'agent.runtime_in_use', reason: 'runtime_in_use' });
+      }
       throw err;
     }
     return reply.send({ ok: true });

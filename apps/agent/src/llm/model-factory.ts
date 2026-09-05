@@ -5,10 +5,10 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import type { LanguageModel } from 'ai';
 import {
   FIXED_ENDPOINTS,
+  PROVIDER_SECRET_MAP,
   resolveSecret,
   validateModelId,
   type Protocol,
-  type SecretAlias,
 } from './provider-registry.js';
 
 export type ModelInstance = {
@@ -18,11 +18,7 @@ export type ModelInstance = {
   model: LanguageModel;
 };
 
-const PROVIDER_SECRET_MAP: Record<string, SecretAlias> = {
-  'opencode-zen': 'OPENCODE_ZEN_API_KEY',
-  'opencode-go': 'OPENCODE_GO_API_KEY',
-  'openai-api': 'OPENAI_API_KEY',
-};
+const OPENAI_NATIVE_KINDS = new Set(['openai-api', 'openai']);
 
 export const createSafeFetch = (customFetch = fetch): typeof fetch => {
   return async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -70,7 +66,7 @@ export const createLanguageModel = (
 
   switch (protocol) {
     case 'chat-completions': {
-      if (providerKind === 'openai-api') {
+      if (OPENAI_NATIVE_KINDS.has(providerKind)) {
         const openai = createOpenAI({
           baseURL: baseUrl,
           apiKey,
