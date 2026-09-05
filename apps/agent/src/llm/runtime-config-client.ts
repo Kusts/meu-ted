@@ -1,6 +1,18 @@
-import type { InternalLlmSnapshot, RuntimeSnapshot } from '@pi-finance/llm-contracts/types';
+import { internalSnapshotSchema } from '@pi-finance/llm-contracts/schemas';
+import type { RuntimeSnapshot } from '@pi-finance/llm-contracts/types';
 
 export type { RuntimeSnapshot };
+
+export class RuntimeSnapshotError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly excerpt: string,
+  ) {
+    super(message);
+    this.name = 'RuntimeSnapshotError';
+  }
+}
 
 export const fetchRuntimeConfig = async (
   apiOrigin: string,
@@ -24,25 +36,34 @@ export const fetchRuntimeConfig = async (
     throw new Error(`Failed to fetch runtime config: HTTP ${res.status} ${errorText}`);
   }
 
-  const data = (await res.json()) as Partial<InternalLlmSnapshot>;
-  const runtime = data.runtime;
-  if (!runtime || typeof runtime !== 'object') {
-    throw new Error('Invalid runtime snapshot: missing runtime object');
+  const rawText = await res.text().catch(() => '');
+  let data: unknown = null;
+  try {
+    data = rawText ? (JSON.parse(rawText) as unknown) : null;
+  } catch {
+    data = null;
+  }
+  const parsed = internalSnapshotSchema.safeParse(data);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const where = issue && issue.path.length > 0 ? ` at ${issue.path.join('.')}` : '';
+    throw new RuntimeSnapshotError(
+      `Invalid runtime snapshot${where}: ${issue?.message ?? 'parse failed'}`,
+      res.status,
+      rawText.slice(0, 200),
+    );
   }
 
-  // Explicit active* contract only: legacy `providerId`/`modelId` names and
-  // provider/model slots are never read here. A fail-closed snapshot carries
-  // null active ids, which surface here as an unusable (null) configuration.
+  // The schema is the contract: no defensive re-reads of legacy names or slots.
+  const runtime = parsed.data.runtime;
   return {
-    version: typeof runtime.version === 'number' ? runtime.version : 1,
-    securityEpoch: typeof runtime.securityEpoch === 'number' ? runtime.securityEpoch : 1,
-    activeProviderId: typeof runtime.activeProviderId === 'string' ? runtime.activeProviderId : null,
-    activeModelId: typeof runtime.activeModelId === 'string' ? runtime.activeModelId : null,
-    activeProtocol: typeof runtime.activeProtocol === 'string' ? runtime.activeProtocol : null,
-    activeRolloutPercentage:
-      typeof runtime.activeRolloutPercentage === 'number' ? runtime.activeRolloutPercentage : 100,
-    fallbackProviderId:
-      typeof runtime.fallbackProviderId === 'string' ? runtime.fallbackProviderId : null,
-    fallbackModelId: typeof runtime.fallbackModelId === 'string' ? runtime.fallbackModelId : null,
+    version: runtime.version,
+    securityEpoch: runtime.securityEpoch,
+    activeProviderId: runtime.activeProviderId,
+    activeModelId: runtime.activeModelId,
+    activeProtocol: runtime.activeProtocol,
+    activeRolloutPercentage: runtime.activeRolloutPercentage,
+    fallbackProviderId: runtime.fallbackProviderId,
+    fallbackModelId: runtime.fallbackModelId,
   };
 };

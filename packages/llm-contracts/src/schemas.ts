@@ -111,3 +111,47 @@ export const patchProviderSchema = z
   .strict();
 
 export const securityEpochSchema = z.object({}).strict();
+
+export const llmProviderSlotSchema = z.object({
+  id: z.string(),
+  kind: providerKindSchema,
+  transport: transportSchema,
+  authMode: authModeSchema,
+  secretAlias: secretAliasSchema.nullable(),
+  serviceAlias: z.string().nullable(),
+  eligibility: providerEligibilitySchema,
+});
+
+export const llmModelSlotSchema = z.object({
+  id: z.string(),
+  modelId: z.string(),
+  protocol: protocolSchema,
+  privacyClass: privacyClassSchema,
+});
+
+export const internalRuntimeDtoSchema = z.object({
+  singleton: z.literal('active'),
+  version: z.number(),
+  securityEpoch: z.number(),
+  activeProviderId: z.string().nullable(),
+  activeModelId: z.string().nullable(),
+  activeProtocol: protocolSchema.nullable(),
+  activeRolloutPercentage: z.number(),
+  activeRolloutMode: rolloutModeSchema,
+  canaryAllowlist: z.array(z.string()).optional(),
+  fallbackProviderId: z.string().nullable(),
+  fallbackModelId: z.string().nullable(),
+  updatedBy: z.string().nullable(),
+  updatedAt: z.string().optional(),
+});
+
+/** Internal snapshot boundary schema: unknown keys are ignored (forward compat), known keys are strict. */
+export const internalSnapshotSchema = z.object({
+  runtime: internalRuntimeDtoSchema,
+  activeProvider: llmProviderSlotSchema.nullable(),
+  activeModel: llmModelSlotSchema.nullable(),
+  fallbackProvider: llmProviderSlotSchema.nullable(),
+  fallbackModel: llmModelSlotSchema.nullable(),
+  activeDisabled: z.boolean(),
+  fallbackDisabled: z.boolean(),
+});

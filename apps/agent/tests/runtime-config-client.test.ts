@@ -7,13 +7,24 @@ describe('Runtime Config Client (Task 5)', () => {
       new Response(
         JSON.stringify({
           runtime: {
+            singleton: 'active',
             version: 3,
+            securityEpoch: 2,
             activeProviderId: 'openai-api',
             activeModelId: 'gpt-4o-mini',
             activeProtocol: 'chat-completions',
             activeRolloutPercentage: 100,
-            securityEpoch: 2,
+            activeRolloutMode: 'all',
+            fallbackProviderId: null,
+            fallbackModelId: null,
+            updatedBy: null,
           },
+          activeProvider: null,
+          activeModel: null,
+          fallbackProvider: null,
+          fallbackModel: null,
+          activeDisabled: false,
+          fallbackDisabled: false,
         }),
         { status: 200 },
       ),
@@ -30,7 +41,6 @@ describe('Runtime Config Client (Task 5)', () => {
       activeProtocol: 'chat-completions',
       activeRolloutPercentage: 100,
       securityEpoch: 2,
-      catalogVersion: undefined,
     });
 
     expect(fetchMock).toHaveBeenCalledWith('https://api.example.test/internal/agent/llm-config', {

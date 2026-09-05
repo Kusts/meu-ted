@@ -26,8 +26,21 @@ describe('Runtime Config Client — explicit active* contract (Fase 1a RED)', ()
             providerId: 'legacy-provider-must-be-ignored',
             modelId: 'legacy-model-must-be-ignored',
           },
-          activeProvider: { id: 'openai-api' },
-          activeModel: { id: 'openai-api:other', modelId: 'other-model-must-be-ignored' },
+          activeProvider: {
+            id: 'openai-api',
+            kind: 'openai-api',
+            transport: 'direct',
+            authMode: 'api-key',
+            secretAlias: 'OPENAI_API_KEY',
+            serviceAlias: null,
+            eligibility: 'approved',
+          },
+          activeModel: {
+            id: 'openai-api:gpt-4o',
+            modelId: 'openai-api:gpt-4o',
+            protocol: 'chat-completions',
+            privacyClass: 'training_prohibited',
+          },
           fallbackProvider: null,
           fallbackModel: null,
           activeDisabled: false,
@@ -82,5 +95,75 @@ describe('Runtime Config Client — explicit active* contract (Fase 1a RED)', ()
     globalThis.fetch = fetchMock;
 
     await expect(fetchRuntimeConfig('https://api.example.test', 'token-123')).rejects.toThrow();
+  });
+
+  it('rejects a malformed snapshot with a typed error (Fase 1b F5 RED)', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          runtime: {
+            singleton: 'active',
+            version: 'three',
+            securityEpoch: 2,
+            activeProviderId: 42,
+            activeModelId: 'openai-api:gpt-4o',
+            activeProtocol: 'chat-completions',
+            activeRolloutPercentage: 100,
+            activeRolloutMode: 'all',
+            fallbackProviderId: null,
+            fallbackModelId: null,
+            updatedBy: null,
+          },
+          activeProvider: null,
+          activeModel: null,
+          fallbackProvider: null,
+          fallbackModel: null,
+          activeDisabled: true,
+          fallbackDisabled: false,
+        }),
+        { status: 200 },
+      ),
+    );
+    globalThis.fetch = fetchMock;
+
+    await expect(fetchRuntimeConfig('https://api.example.test', 'token-123')).rejects.toThrow(
+      /Invalid runtime snapshot/,
+    );
+  });
+
+  it('rejects an activeProtocol outside the contract enum (Fase 1b F5 RED)', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          runtime: {
+            ...contractRuntime,
+            activeProtocol: 'carrier-pigeon',
+          },
+          activeProvider: null,
+          activeModel: null,
+          fallbackProvider: null,
+          fallbackModel: null,
+          activeDisabled: false,
+          fallbackDisabled: false,
+        }),
+        { status: 200 },
+      ),
+    );
+    globalThis.fetch = fetchMock;
+
+    await expect(fetchRuntimeConfig('https://api.example.test', 'token-123')).rejects.toThrow(
+      /Invalid runtime snapshot/,
+    );
+  });
+
+  it('rejects a non-JSON body with status context and an excerpt (Fase 1b F5 RED)', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response('<html>not json at all</html>', { status: 200 }),
+    );
+    globalThis.fetch = fetchMock;
+
+    await expect(fetchRuntimeConfig('https://api.example.test', 'token-123')).rejects.toThrow(
+      /Invalid runtime snapshot/,
+    );
   });
 });
