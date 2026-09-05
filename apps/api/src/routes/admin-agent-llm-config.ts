@@ -144,8 +144,16 @@ export const registerAdminAgentLlmConfigRoutes = (
       if (typeof enabled !== 'boolean') {
         return reply.code(400).send({ code: 'agent.invalid_enabled', message: 'enabled deve ser boolean' });
       }
-      const provider = await deps.store.setProviderEnabled(id, enabled);
-      return reply.send({ provider });
+      try {
+        const provider = await deps.store.setProviderEnabled(id, enabled);
+        return reply.send({ provider });
+      } catch (err) {
+        const e = err as { code?: string; reason?: string; statusCode?: number; message?: string };
+        if (e?.code === 'agent.runtime_in_use' && e?.statusCode === 409) {
+          return reply.code(409).send({ code: e.code, reason: e.reason ?? 'runtime_in_use' });
+        }
+        throw err;
+      }
     },
   );
 
@@ -159,8 +167,16 @@ export const registerAdminAgentLlmConfigRoutes = (
       if (typeof enabled !== 'boolean') {
         return reply.code(400).send({ code: 'agent.invalid_enabled', message: 'enabled deve ser boolean' });
       }
-      const model = await deps.store.setModelEnabled(id, enabled);
-      return reply.send({ model });
+      try {
+        const model = await deps.store.setModelEnabled(id, enabled);
+        return reply.send({ model });
+      } catch (err) {
+        const e = err as { code?: string; reason?: string; statusCode?: number };
+        if (e?.code === 'agent.runtime_in_use' && e?.statusCode === 409) {
+          return reply.code(409).send({ code: e.code, reason: e.reason ?? 'runtime_in_use' });
+        }
+        throw err;
+      }
     },
   );
 
@@ -212,6 +228,10 @@ export const registerAdminAgentLlmConfigRoutes = (
     const provider = await deps.store.getProvider(providerId);
     const models = await deps.store.listModels();
     const model = models.find((m) => m.id === modelId || (m.providerId === providerId && m.modelId === modelId));
+
+    if (model && model.providerId !== providerId) {
+      return reply.code(422).send({ code: 'agent.activation_blocked', reason: 'model does not belong to provider' });
+    }
 
     const err = canActivate(provider, model);
     if (err) {
@@ -308,14 +328,19 @@ export const registerAdminAgentLlmConfigRoutes = (
     const patch = req.body ?? {};
     const existing = await deps.store.getProvider(id);
     if (!existing) return reply.code(404).send({ code: 'agent.provider_not_found', message: `Provider ${id} não encontrado` });
-    if (typeof patch.enabled === 'boolean') {
-      const updated = await deps.store.setProviderEnabled(id, patch.enabled);
-      return reply.send({ provider: updated });
-    }
     const merged = { ...existing, ...patch } as never;
     const { validateProvider } = await import('../agent/llm-config.js');
     const err = validateProvider(merged);
     if (err) return reply.code(400).send({ code: 'agent.invalid_provider', message: err });
+    if (typeof patch.enabled === 'boolean' && !patch.enabled) {
+      const rt = await deps.store.getRuntime();
+      if (rt.providerId === id) {
+        return reply.code(409).send({ code: 'agent.runtime_in_use', reason: 'active_provider' });
+      }
+      if (rt.fallbackProviderId === id) {
+        return reply.code(409).send({ code: 'agent.runtime_in_use', reason: 'fallback_provider' });
+      }
+    }
     const provider = await deps.store.upsertProvider({
       id: existing.id,
       kind: existing.kind,
@@ -332,13 +357,32 @@ export const registerAdminAgentLlmConfigRoutes = (
     const { id } = req.params;
     const existing = await deps.store.getProvider(id);
     if (!existing) return reply.code(404).send({ code: 'agent.provider_not_found', message: `Provider ${id} não encontrado` });
-    await deps.store.deleteProvider(id);
+    try {
+      await deps.store.deleteProvider(id);
+    } catch (err) {
+      const e = err as { code?: string; reason?: string; statusCode?: number };
+      if (e?.code === 'agent.runtime_in_use' && e?.statusCode === 409) {
+        return reply.code(409).send({ code: e.code, reason: e.reason ?? 'runtime_in_use' });
+      }
+      if ((e as { code?: string })?.code === '23503') {
+        return reply.code(409).send({ code: 'agent.runtime_in_use', reason: 'active_provider' });
+      }
+      throw err;
+    }
     return reply.send({ ok: true });
   });
 
   app.delete<{ Params: { id: string } }>('/admin/agent/llm-config/models/:id', { preHandler: guard }, async (req, reply) => {
     const { id } = req.params;
-    await deps.store.deleteModel(id);
+    try {
+      await deps.store.deleteModel(id);
+    } catch (err) {
+      const e = err as { code?: string; reason?: string; statusCode?: number };
+      if (e?.code === 'agent.runtime_in_use' && e?.statusCode === 409) {
+        return reply.code(409).send({ code: e.code, reason: e.reason ?? 'runtime_in_use' });
+      }
+      throw err;
+    }
     return reply.send({ ok: true });
   });
 
@@ -355,6 +399,9 @@ export const registerAdminAgentLlmConfigRoutes = (
       const provider = await deps.store.getProvider(providerId);
       const models = await deps.store.listModels();
       const model = models.find((m) => m.id === modelId || (m.providerId === providerId && m.modelId === modelId));
+      if (model && model.providerId !== providerId) {
+        return reply.code(422).send({ code: 'agent.activation_blocked', reason: 'model does not belong to provider' });
+      }
       const { canActivate } = await import('../agent/llm-config.js');
       const err = canActivate(provider, model);
       if (err) return reply.code(422).send({ code: 'agent.activation_blocked', reason: err });

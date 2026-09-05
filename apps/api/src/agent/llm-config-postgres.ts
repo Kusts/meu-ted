@@ -220,6 +220,7 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
         });
       }
       let r: Record<string, unknown>;
+      await client.query('SAVEPOINT pre_fallback_check');
       try {
         const res = await client.query(
           `UPDATE agent_llm_runtime_config
@@ -247,7 +248,11 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
           ],
         );
         r = res.rows[0] as Record<string, unknown>;
-      } catch {
+        await client.query('RELEASE SAVEPOINT pre_fallback_check');
+      } catch (err) {
+        const code = (err as { code?: string })?.code;
+        if (code !== '42703') throw err;
+        await client.query('ROLLBACK TO SAVEPOINT pre_fallback_check');
         const res = await client.query(
           `UPDATE agent_llm_runtime_config
            SET provider_id = $1,
@@ -268,6 +273,7 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
           ],
         );
         r = res.rows[0] as Record<string, unknown>;
+        await client.query('RELEASE SAVEPOINT pre_fallback_check');
       }
       await client.query('COMMIT');
       return {
@@ -292,6 +298,28 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
   },
 
   async setProviderEnabled(id, enabled) {
+    if (!enabled) {
+      const rt = await pool.query(
+        `SELECT provider_id, fallback_provider_id FROM agent_llm_runtime_config WHERE singleton = 'active'`,
+      );
+      const row = rt.rows[0] as Record<string, unknown> | undefined;
+      if (row) {
+        if (row['provider_id'] === id) {
+          throw Object.assign(new Error('provider is active runtime'), {
+            statusCode: 409,
+            code: 'agent.runtime_in_use',
+            reason: 'active_provider',
+          });
+        }
+        if (row['fallback_provider_id'] === id) {
+          throw Object.assign(new Error('provider is fallback runtime'), {
+            statusCode: 409,
+            code: 'agent.runtime_in_use',
+            reason: 'fallback_provider',
+          });
+        }
+      }
+    }
     const res = await pool.query(
       `UPDATE agent_llm_providers
        SET enabled = $2, updated_at = NOW()
@@ -392,10 +420,64 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
   },
 
   async deleteProvider(id: string) {
-    await pool.query(`DELETE FROM agent_llm_providers WHERE id = $1`, [id]);
+    const rt = await pool.query(
+      `SELECT provider_id, fallback_provider_id FROM agent_llm_runtime_config WHERE singleton = 'active'`,
+    );
+    const row = rt.rows[0] as Record<string, unknown> | undefined;
+    if (row) {
+      if (row['provider_id'] === id) {
+        throw Object.assign(new Error('provider is active runtime'), {
+          statusCode: 409,
+          code: 'agent.runtime_in_use',
+          reason: 'active_provider',
+        });
+      }
+      if (row['fallback_provider_id'] === id) {
+        throw Object.assign(new Error('provider is fallback runtime'), {
+          statusCode: 409,
+          code: 'agent.runtime_in_use',
+          reason: 'fallback_provider',
+        });
+      }
+    }
+    try {
+      await pool.query(`DELETE FROM agent_llm_providers WHERE id = $1`, [id]);
+    } catch (err) {
+      const code = (err as { code?: string })?.code;
+      if (code === '23503') {
+        throw Object.assign(new Error('provider is in use by runtime'), {
+          statusCode: 409,
+          code: 'agent.runtime_in_use',
+          reason: 'active_provider',
+        });
+      }
+      throw err;
+    }
   },
 
   async setModelEnabled(id, enabled) {
+    if (!enabled) {
+      const rt = await pool.query(
+        `SELECT model_id, fallback_model_id FROM agent_llm_runtime_config WHERE singleton = 'active'`,
+      );
+      const row = rt.rows[0] as Record<string, unknown> | undefined;
+      if (row) {
+        if (row['model_id'] === id) {
+          throw Object.assign(new Error('model is active runtime'), {
+            statusCode: 409,
+            code: 'agent.runtime_in_use',
+            reason: 'active_model',
+          });
+        }
+        if (row['fallback_model_id'] === id) {
+          throw Object.assign(new Error('model is fallback runtime'), {
+            statusCode: 409,
+            code: 'agent.runtime_in_use',
+            reason: 'fallback_model',
+          });
+        }
+      }
+    }
     const res = await pool.query(
       `UPDATE agent_llm_models
        SET enabled = $2
@@ -447,6 +529,26 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
   },
 
   async deleteModel(id: string) {
+    const rt = await pool.query(
+      `SELECT model_id, fallback_model_id FROM agent_llm_runtime_config WHERE singleton = 'active'`,
+    );
+    const row = rt.rows[0] as Record<string, unknown> | undefined;
+    if (row) {
+      if (row['model_id'] === id) {
+        throw Object.assign(new Error('model is active runtime'), {
+          statusCode: 409,
+          code: 'agent.runtime_in_use',
+          reason: 'active_model',
+        });
+      }
+      if (row['fallback_model_id'] === id) {
+        throw Object.assign(new Error('model is fallback runtime'), {
+          statusCode: 409,
+          code: 'agent.runtime_in_use',
+          reason: 'fallback_model',
+        });
+      }
+    }
     await pool.query(`DELETE FROM agent_llm_models WHERE id = $1`, [id]);
   },
 
@@ -623,6 +725,20 @@ export const createInMemoryLlmConfigStore = (seed?: {
       return { ...provider };
     },
     async deleteProvider(id: string) {
+      if (runtime.providerId === id) {
+        throw Object.assign(new Error('provider is active runtime'), {
+          statusCode: 409,
+          code: 'agent.runtime_in_use',
+          reason: 'active_provider',
+        });
+      }
+      if (runtime.fallbackProviderId === id) {
+        throw Object.assign(new Error('provider is fallback runtime'), {
+          statusCode: 409,
+          code: 'agent.runtime_in_use',
+          reason: 'fallback_provider',
+        });
+      }
       providers = providers.filter((p) => p.id !== id);
       models = models.filter((m) => m.providerId !== id);
     },
@@ -660,6 +776,22 @@ export const createInMemoryLlmConfigStore = (seed?: {
     async setProviderEnabled(id, enabled) {
       const p = providers.find((x) => x.id === id);
       if (!p) throw Object.assign(new Error(`provider ${id} not found`), { statusCode: 404 });
+      if (!enabled) {
+        if (runtime.providerId === id) {
+          throw Object.assign(new Error('provider is active runtime'), {
+            statusCode: 409,
+            code: 'agent.runtime_in_use',
+            reason: 'active_provider',
+          });
+        }
+        if (runtime.fallbackProviderId === id) {
+          throw Object.assign(new Error('provider is fallback runtime'), {
+            statusCode: 409,
+            code: 'agent.runtime_in_use',
+            reason: 'fallback_provider',
+          });
+        }
+      }
       p.enabled = enabled;
       p.updatedAt = new Date().toISOString();
       return { ...p };
@@ -674,6 +806,22 @@ export const createInMemoryLlmConfigStore = (seed?: {
     async setModelEnabled(id, enabled) {
       const m = models.find((x) => x.id === id);
       if (!m) throw Object.assign(new Error(`model ${id} not found`), { statusCode: 404 });
+      if (!enabled) {
+        if (runtime.modelId === id) {
+          throw Object.assign(new Error('model is active runtime'), {
+            statusCode: 409,
+            code: 'agent.runtime_in_use',
+            reason: 'active_model',
+          });
+        }
+        if (runtime.fallbackModelId === id) {
+          throw Object.assign(new Error('model is fallback runtime'), {
+            statusCode: 409,
+            code: 'agent.runtime_in_use',
+            reason: 'fallback_model',
+          });
+        }
+      }
       m.enabled = enabled;
       return { ...m };
     },
@@ -700,6 +848,20 @@ export const createInMemoryLlmConfigStore = (seed?: {
       return { ...model };
     },
     async deleteModel(id: string) {
+      if (runtime.modelId === id) {
+        throw Object.assign(new Error('model is active runtime'), {
+          statusCode: 409,
+          code: 'agent.runtime_in_use',
+          reason: 'active_model',
+        });
+      }
+      if (runtime.fallbackModelId === id) {
+        throw Object.assign(new Error('model is fallback runtime'), {
+          statusCode: 409,
+          code: 'agent.runtime_in_use',
+          reason: 'fallback_model',
+        });
+      }
       models = models.filter((m) => m.id !== id);
     },
     async bumpSecurityEpoch(updatedBy?: string) {

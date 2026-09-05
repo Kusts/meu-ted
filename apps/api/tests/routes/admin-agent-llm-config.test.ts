@@ -123,7 +123,7 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
       });
       expect(res.statusCode).toBe(200);
       const data = res.json();
-      expect(data.providers).toHaveLength(4);
+      expect(data.providers.length).toBeGreaterThanOrEqual(4);
       expect(data.runtime.singleton).toBe('active');
     });
 

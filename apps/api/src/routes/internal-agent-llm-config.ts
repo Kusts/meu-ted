@@ -32,10 +32,18 @@ export const registerInternalAgentLlmConfigRoutes = (
       deps.store.getRuntime(),
     ]);
 
-    const activeProvider = providers.find((p) => p.id === runtime.providerId);
-    const activeModel = models.find((m) => m.id === runtime.modelId);
-    const fallbackProvider = providers.find((p) => p.id === runtime.fallbackProviderId);
-    const fallbackModel = models.find((m) => m.id === runtime.fallbackModelId || (m.providerId === runtime.fallbackProviderId && m.modelId === runtime.fallbackModelId));
+    let activeProvider = providers.find((p) => p.id === runtime.providerId) ?? null;
+    let activeModel = models.find((m) => m.id === runtime.modelId) ?? null;
+    const fallbackProvider = providers.find((p) => p.id === runtime.fallbackProviderId) ?? null;
+    const fallbackModel = models.find((m) => m.id === runtime.fallbackModelId || (m.providerId === runtime.fallbackProviderId && m.modelId === runtime.fallbackModelId)) ?? null;
+    // Defesa em profundidade: se provider ou model ativo estiver desabilitado, não exponha config utilizável
+    if (activeProvider && !activeProvider.enabled) {
+      activeProvider = null;
+      activeModel = null;
+    } else if (activeModel && !activeModel.enabled) {
+      activeProvider = null;
+      activeModel = null;
+    }
 
     return reply.send({
       provider: activeProvider
