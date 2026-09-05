@@ -5,6 +5,7 @@ import AuditPage from "../AuditPage";
 
 describe("AuditPage", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
     localStorage.setItem("pi-finance:token", "tok-123");
   });
@@ -13,6 +14,7 @@ describe("AuditPage", () => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
     localStorage.clear();
+    vi.clearAllMocks();
   });
 
   it("lista filtrada respeita household (workspace isolamento) — filtros enviam entityType/entityId/operation com X-Workspace-Id", async () => {
@@ -151,9 +153,10 @@ describe("AuditPage", () => {
 
     await user.click(screen.getByTestId("filter-clear"));
     await waitFor(() => {
-      const lastCall = String(fetchMock.mock.calls.at(-1)?.[0] ?? "");
-      expect(lastCall).not.toContain("entityType=account");
-      expect(lastCall).toContain("/audit-logs");
+      const auditCalls = fetchMock.mock.calls.map(([url]) => String(url)).filter((u) => u.includes("/audit-logs"));
+      const lastAuditCall = auditCalls.at(-1) ?? "";
+      expect(lastAuditCall).not.toContain("entityType=account");
+      expect(lastAuditCall).toContain("/audit-logs");
     });
   });
 });

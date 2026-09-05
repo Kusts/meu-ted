@@ -84,6 +84,7 @@ import { registerAgentLlmRelayRoutes } from "./internal-agent-llm-relay.js";
 import { createInMemoryLlmConfigStore } from "../agent/llm-config-postgres.js";
 import type { LlmConfigStore } from "../agent/llm-config-postgres.js";
 import { createInMemoryAgentReplayStore, type AgentReplayStore } from "../auth/agent-connection-token-replay.js";
+import { registerWorkspaceAliasRoutes } from "../auth/workspace-alias.js";
 
 export type RouteDeps = {
   store: ReadModelStore;
@@ -131,6 +132,7 @@ export type RouteDeps = {
   agentRuntimeAdminToken?: string;
   trustedOrigins?: string[];
   inviteSignupGuard?: import('../auth/invite-signup-guard.js').InviteSignupGuard;
+  pool?: { query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }> } | null;
 };
 
 
@@ -496,6 +498,12 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     connectionSecret: deps.agentConnectionSecret ?? process.env.AGENT_CONNECTION_TOKEN_SECRET ?? 'dev-agent-connection-secret-at-least-32-chars!',
     agentAuthServiceToken: agentServiceToken,
     replayStore,
+    pool: deps.pool ?? null,
+  });
+
+  registerWorkspaceAliasRoutes(app, {
+    pool: deps.pool ?? null,
+    serviceToken: agentServiceToken,
   });
 
   registerAgentLlmRelayRoutes(app, {

@@ -476,9 +476,15 @@ export type WorkspaceAuthorization = { actorId: string; role: DelegatedRole; wor
 
 export async function authorizeWorkspaceMembership(
   request: Request,
-  env: { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string },
+  env: { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string; AGENT_AUTH_SERVICE_TOKEN?: string },
   workspaceId: string,
 ): Promise<Response | WorkspaceAuthorization> {
+  const serviceToken = env.AGENT_AUTH_SERVICE_TOKEN?.trim();
+  if (!serviceToken) {
+    return Response.json({ code: "agent.service_token_missing", message: "AGENT_AUTH_SERVICE_TOKEN is required" }, { status: 500 });
+  }
+  const { resolveCanonicalHouseholdId } = await import("./auth/workspace-alias.js");
+  const canonicalWorkspaceId = await resolveCanonicalHouseholdId(env.API_ORIGIN, serviceToken, workspaceId);
   // Preferred path: short-lived connection token (JWT) issued by the API —
   // browsers cannot forward the api.synkroo.com.br session cookie cross-site
   // to the Worker, so cookie fallback below only serves same-origin clients.
@@ -486,16 +492,17 @@ export async function authorizeWorkspaceMembership(
   if (connectionToken && env.AGENT_CONNECTION_TOKEN_SECRET) {
     const { verifyAgentConnectionToken } = await import("./auth/connection-token.js");
     try {
-      const claims = await verifyAgentConnectionToken(connectionToken, env.AGENT_CONNECTION_TOKEN_SECRET, workspaceId);
-      if (claims.workspace !== workspaceId) return Response.json({ code: "agent.workspace_forbidden" }, { status: 403 });
+      const claims = await verifyAgentConnectionToken(connectionToken, env.AGENT_CONNECTION_TOKEN_SECRET, canonicalWorkspaceId);
+      if (claims.workspace !== canonicalWorkspaceId) return Response.json({ code: "agent.workspace_forbidden" }, { status: 403 });
       const role = claims.role === "owner" ? "owner" as DelegatedRole : "member" as DelegatedRole;
-      return { actorId: claims.sub, role, workspaceId };
+      return { actorId: claims.sub, role, workspaceId: canonicalWorkspaceId };
     } catch {
       return Response.json({ code: "agent.workspace_forbidden" }, { status: 403 });
     }
   }
 
-  const apiUrl = new URL(`/workspaces/${encodeURIComponent(workspaceId)}/members`, env.API_ORIGIN);
+
+  const apiUrl = new URL(`/workspaces/${encodeURIComponent(canonicalWorkspaceId)}/members`, env.API_ORIGIN);
   const headers = new Headers();
   const cookie = request.headers.get("cookie");
   const origin = request.headers.get("origin");
@@ -517,7 +524,7 @@ export async function authorizeWorkspaceMembership(
   const membership = await response.clone().json() as { items?: Array<{ userId?: unknown; role?: unknown }> };
   const member = membership.items?.find((item) => item.userId === actorId);
   if (!member || (member.role !== 'owner' && member.role !== 'member')) return Response.json({ code: "agent.workspace_forbidden" }, { status: 403 });
-  return { actorId, role: member.role, workspaceId };
+  return { actorId, role: member.role, workspaceId: canonicalWorkspaceId };
 }
 
 const worker = {

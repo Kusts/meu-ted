@@ -6,6 +6,7 @@ import type { WorkspaceAccessStore } from '../auth/workspace-access.js';
 import { createAgentConnectionToken } from '../auth/agent-connection-token.js';
 import type { AgentReplayStore } from '../auth/agent-connection-token-replay.js';
 import { hashJti } from '../auth/agent-connection-token-replay-postgres.js';
+import { resolveCanonicalHouseholdId } from '../auth/workspace-alias.js';
 
 export type AgentAuthDeps = {
   auth?: BetterAuth | undefined;
@@ -13,6 +14,7 @@ export type AgentAuthDeps = {
   connectionSecret: string;
   agentAuthServiceToken: string;
   replayStore: AgentReplayStore;
+  pool?: { query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }> } | null;
 };
 
 const verifyServiceToken = (req: FastifyRequest, serviceToken: string): boolean => {
@@ -62,10 +64,11 @@ export const registerAgentAuthRoutes = (app: FastifyInstance, deps: AgentAuthDep
     }
 
     const workspaceHeader = req.headers['x-workspace-id'] ?? req.headers['X-Workspace-Id'];
-    const ws = (Array.isArray(workspaceHeader) ? workspaceHeader[0] : workspaceHeader)?.trim();
-    if (!ws) {
+    const rawWs = (Array.isArray(workspaceHeader) ? workspaceHeader[0] : workspaceHeader)?.trim();
+    if (!rawWs) {
       return reply.code(400).send({ code: 'auth.workspace_required', message: 'Workspace header required' });
     }
+    const ws = deps.pool ? await resolveCanonicalHouseholdId(deps.pool, rawWs) : rawWs;
 
     const access = await deps.workspaceAccess.resolve(session.userId, ws);
     if (!access) {

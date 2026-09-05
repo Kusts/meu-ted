@@ -171,7 +171,7 @@ const start = async (): Promise<void> => {
         timer.unref();
         app.addHook("onClose", async () => clearInterval(timer));
       }
-      registerRoutes(app, {
+       registerRoutes(app, {
         store,
         writes,
         tokenStore,
@@ -203,6 +203,7 @@ const start = async (): Promise<void> => {
         agentRuntimeAdminToken: cfg.agentRuntimeAdminToken,
         trustedOrigins: cfg.trustedOrigins,
         disableDeviceRegistration: cfg.disableDeviceRegistration,
+        pool,
         ...(vapid?.publicKey ? { vapidPublicKey: vapid.publicKey } : {}),
         ...(pushDelivery ? { pushDelivery } : {}),
       });
@@ -297,6 +298,7 @@ const start = async (): Promise<void> => {
         agentRuntimeAdminToken: cfg.agentRuntimeAdminToken,
         trustedOrigins: cfg.trustedOrigins,
         disableDeviceRegistration: cfg.disableDeviceRegistration,
+        pool,
         ...(vapid?.publicKey ? { vapidPublicKey: vapid.publicKey } : {}),
         ...(pushDelivery ? { pushDelivery } : {}),
       });

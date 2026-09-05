@@ -29,6 +29,7 @@ type Env = {
   FINANCE_CHAT_AGENT: TypedAgentNamespace<FinanceAgentStub>;
   API_ORIGIN: string;
   AGENT_CONNECTION_TOKEN_SECRET?: string;
+  AGENT_AUTH_SERVICE_TOKEN?: string;
   AGENT_DELEGATION_SECRET?: string;
   AGENT_CONFIG_TOKEN?: string;
   AGENT_RUNTIME_ADMIN_TOKEN?: string;
