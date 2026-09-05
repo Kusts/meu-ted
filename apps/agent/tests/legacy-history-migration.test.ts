@@ -326,9 +326,39 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
       const url = String(info);
       if (url.includes('/internal/agent/llm-config')) {
         return new Response(JSON.stringify({
-          activeProviderId: 'opencode-zen',
-          activeModelId: 'zen-free',
-          providers: [{ id: 'opencode-zen', name: 'OpenCode Zen', enabled: true }],
+          runtime: {
+            singleton: 'active',
+            version: 2,
+            securityEpoch: 1,
+            activeProviderId: 'opencode-zen',
+            activeModelId: 'opencode-zen:zen-free',
+            activeProtocol: 'chat-completions',
+            activeRolloutPercentage: 100,
+            activeRolloutMode: 'all',
+            canaryAllowlist: [],
+            fallbackProviderId: null,
+            fallbackModelId: null,
+            updatedBy: 'admin@test.com',
+          },
+          activeProvider: {
+            id: 'opencode-zen',
+            kind: 'opencode-zen',
+            transport: 'direct',
+            authMode: 'api-key',
+            secretAlias: 'OPENCODE_ZEN_API_KEY',
+            serviceAlias: null,
+            eligibility: 'approved',
+          },
+          activeModel: {
+            id: 'opencode-zen:zen-free',
+            modelId: 'zen-free',
+            protocol: 'chat-completions',
+            privacyClass: 'training_prohibited',
+          },
+          fallbackProvider: null,
+          fallbackModel: null,
+          activeDisabled: false,
+          fallbackDisabled: false,
         }), { status: 200, headers: { 'content-type': 'application/json' } });
       }
       return new Response('Not found', { status: 404 });

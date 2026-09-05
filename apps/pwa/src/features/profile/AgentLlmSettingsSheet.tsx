@@ -16,8 +16,10 @@ import {
   type LlmModel,
   type LlmRuntime,
 } from "@/lib/api/admin-agent-llm-config";
+import type { Protocol } from "@pi-finance/llm-contracts/types";
 import { Cpu, CheckCircle2, AlertCircle, Plus, Trash2, Sparkles } from "lucide-react";
-import { LLM_PROVIDER_PRESETS, ALLOWED_PROVIDER_KINDS } from "@/lib/llm-presets";
+import { LLM_PROVIDER_PRESETS } from "@/lib/llm-presets";
+import { isProtocol, isProviderKind } from "@pi-finance/llm-contracts/types";
 
 interface AgentLlmSettingsSheetProps {
   open: boolean;
@@ -39,7 +41,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
   const [newProviderId, setNewProviderId] = useState("");
   const [newProviderSecretAlias, setNewProviderSecretAlias] = useState("OPENCODE_ZEN_API_KEY");
   const [newModelIdInput, setNewModelIdInput] = useState("");
-  const [newModelProtocol, setNewModelProtocol] = useState<"chat-completions" | "messages" | "responses" | "google-generative-ai">("chat-completions");
+  const [newModelProtocol, setNewModelProtocol] = useState<Protocol>("chat-completions");
 
   const selectedProviderIdRef = useRef(selectedProviderId);
   const selectedProviderModelIdRef = useRef(selectedProviderModelId);
@@ -66,7 +68,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
       }
       if (data.runtime) {
         const active = data.runtime.activeModelId ?? "";
-        const fallback = (data.runtime as unknown as { fallbackModelId?: string | null }).fallbackModelId ?? "";
+        const fallback = data.runtime.fallbackModelId ?? "";
         setActiveModelChoice(active);
         setFallbackModelChoice(fallback ?? "");
         const currentModelId = selectedProviderModelIdRef.current;
@@ -166,7 +168,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
       setError("ID do provedor é obrigatório");
       return;
     }
-    if (!(ALLOWED_PROVIDER_KINDS as readonly string[]).includes(id)) {
+    if (!isProviderKind(id)) {
       setError(`kind inválido: ${id}`);
       return;
     }
@@ -175,7 +177,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
       await createProvider({
         id,
         secretAlias: newProviderSecretAlias,
-        kind: id as never,
+        kind: id,
       });
       setNewProviderId("");
       await loadConfig();
@@ -204,9 +206,9 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
         await createProvider({
           id: preset.id,
           name: preset.name,
-          kind: preset.kind as never,
-          transport: preset.transport as never,
-          authMode: preset.authMode as never,
+          kind: preset.kind,
+          transport: preset.transport,
+          authMode: preset.authMode,
           secretAlias: preset.secretAlias ?? "OPENAI_API_KEY",
           eligibility: "approved",
           enabled: true,
@@ -224,8 +226,8 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
           await createModel({
             providerId: preset.id,
             modelId: m.modelId,
-            protocol: m.protocol as never,
-            privacyClass: m.privacyClass as never,
+            protocol: m.protocol,
+            privacyClass: m.privacyClass,
             enabled: true,
           });
         } catch (e) {
@@ -332,10 +334,10 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
               <div className="mt-1 truncate font-mono text-[13px] font-bold text-text-primary">{runtime?.activeModelId ?? "— Nenhum"}</div>
             </div>
           </div>
-          {(runtime as unknown as { fallbackProviderId?: string | null; fallbackModelId?: string | null })?.fallbackModelId && (
+          {runtime?.fallbackModelId && (
             <div className="mt-2 rounded-[12px] bg-surface-1 p-2.5 border border-border-subtle">
               <div className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Fallback</div>
-              <div className="mt-1 font-mono text-[12px] text-text-primary">{(runtime as unknown as { fallbackProviderId?: string | null; fallbackModelId?: string | null }).fallbackModelId}</div>
+              <div className="mt-1 font-mono text-[12px] text-text-primary">{runtime.fallbackModelId}</div>
             </div>
           )}
         </div>
@@ -515,7 +517,9 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                     <select
                       id="new-model-protocol"
                       value={newModelProtocol}
-                      onChange={(e) => setNewModelProtocol(e.target.value as never)}
+                      onChange={(e) => {
+                        if (isProtocol(e.target.value)) setNewModelProtocol(e.target.value);
+                      }}
                       className="h-9 w-full rounded-[10px] border border-border-subtle bg-surface-2 px-2 text-[12px] text-text-primary"
                     >
                       <option value="chat-completions">chat-completions</option>

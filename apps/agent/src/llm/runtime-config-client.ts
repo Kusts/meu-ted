@@ -1,14 +1,6 @@
-export type RuntimeSnapshot = {
-  version: number;
-  activeProviderId: string | null;
-  activeModelId: string | null;
-  activeProtocol: string | null;
-  activeRolloutPercentage: number;
-  securityEpoch: number;
-  fallbackProviderId?: string | null;
-  fallbackModelId?: string | null;
-  catalogVersion?: number;
-};
+import type { InternalLlmSnapshot, RuntimeSnapshot } from '@pi-finance/llm-contracts/types';
+
+export type { RuntimeSnapshot };
 
 export const fetchRuntimeConfig = async (
   apiOrigin: string,
@@ -32,46 +24,25 @@ export const fetchRuntimeConfig = async (
     throw new Error(`Failed to fetch runtime config: HTTP ${res.status} ${errorText}`);
   }
 
-  const data = (await res.json()) as Record<string, unknown>;
-  const runtime = (data.runtime as Record<string, unknown>) ?? data;
-  const model = (data.model as Record<string, unknown>) ?? null;
-  const fallbackModel = (data.fallbackModel as Record<string, unknown>) ?? null;
+  const data = (await res.json()) as Partial<InternalLlmSnapshot>;
+  const runtime = data.runtime;
+  if (!runtime || typeof runtime !== 'object') {
+    throw new Error('Invalid runtime snapshot: missing runtime object');
+  }
 
-  const providerId = typeof runtime.activeProviderId === 'string'
-    ? runtime.activeProviderId
-    : typeof runtime.providerId === 'string'
-      ? runtime.providerId
-      : null;
-  const rawModelId = typeof runtime.activeModelId === 'string'
-    ? runtime.activeModelId
-    : typeof runtime.modelId === 'string'
-      ? runtime.modelId
-      : null;
-  const modelId = typeof model?.modelId === 'string' ? model.modelId : rawModelId;
-
-  const fallbackProviderId = typeof runtime.fallbackProviderId === 'string'
-    ? runtime.fallbackProviderId
-    : null;
-  const rawFallbackModelId = typeof runtime.fallbackModelId === 'string'
-    ? runtime.fallbackModelId
-    : null;
-  const fallbackModelId = typeof fallbackModel?.modelId === 'string' ? fallbackModel.modelId : rawFallbackModelId;
-
+  // Explicit active* contract only: legacy `providerId`/`modelId` names and
+  // provider/model slots are never read here. A fail-closed snapshot carries
+  // null active ids, which surface here as an unusable (null) configuration.
   return {
     version: typeof runtime.version === 'number' ? runtime.version : 1,
-    activeProviderId: providerId,
-    activeModelId: modelId,
-    fallbackProviderId,
-    fallbackModelId,
-    activeProtocol: typeof model?.protocol === 'string'
-      ? model.protocol
-      : typeof runtime.activeProtocol === 'string'
-        ? runtime.activeProtocol
-        : null,
-    activeRolloutPercentage: typeof runtime.activeRolloutPercentage === 'number'
-      ? runtime.activeRolloutPercentage
-      : 100,
     securityEpoch: typeof runtime.securityEpoch === 'number' ? runtime.securityEpoch : 1,
-    catalogVersion: typeof runtime.catalogVersion === 'number' ? runtime.catalogVersion : undefined,
+    activeProviderId: typeof runtime.activeProviderId === 'string' ? runtime.activeProviderId : null,
+    activeModelId: typeof runtime.activeModelId === 'string' ? runtime.activeModelId : null,
+    activeProtocol: typeof runtime.activeProtocol === 'string' ? runtime.activeProtocol : null,
+    activeRolloutPercentage:
+      typeof runtime.activeRolloutPercentage === 'number' ? runtime.activeRolloutPercentage : 100,
+    fallbackProviderId:
+      typeof runtime.fallbackProviderId === 'string' ? runtime.fallbackProviderId : null,
+    fallbackModelId: typeof runtime.fallbackModelId === 'string' ? runtime.fallbackModelId : null,
   };
 };

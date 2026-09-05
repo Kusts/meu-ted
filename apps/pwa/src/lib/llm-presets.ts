@@ -1,17 +1,27 @@
+import type {
+  AuthMode,
+  PrivacyClass,
+  Protocol,
+  ProviderKind,
+  SecretAlias,
+  Transport,
+} from "@pi-finance/llm-contracts/types";
+import { PROVIDER_KINDS } from "@pi-finance/llm-contracts/types";
+
 export type LlmPresetModel = {
   modelId: string;
-  protocol: "chat-completions" | "messages" | "responses" | "google-generative-ai";
-  privacyClass: "training_prohibited" | "training_allowed";
+  protocol: Protocol;
+  privacyClass: PrivacyClass;
   displayName: string;
 };
 
 export type LlmProviderPreset = {
   id: string;
   name: string;
-  kind: string;
-  secretAlias: string | null;
-  transport: "direct" | "private-broker";
-  authMode: "api-key" | "chatgpt-browser";
+  kind: ProviderKind;
+  secretAlias: SecretAlias | null;
+  transport: Transport;
+  authMode: AuthMode;
   description: string;
   autoModels: LlmPresetModel[];
 };
@@ -136,20 +146,8 @@ export const LLM_PROVIDER_PRESETS: LlmProviderPreset[] = [
   },
 ];
 
-export const ALLOWED_PROVIDER_KINDS = [
-  "opencode-zen",
-  "opencode-go",
-  "openai-api",
-  "openai-codex-subscription",
-  "openai",
-  "anthropic",
-  "deepseek",
-  "qwen",
-  "glm",
-  "minimax",
-  "google",
-  "openrouter",
-] as const;
+/** Single source: provider kinds come from the shared contract. */
+export const ALLOWED_PROVIDER_KINDS = PROVIDER_KINDS;
 
 export function getLlmPreset(id: string): LlmProviderPreset | undefined {
   return LLM_PROVIDER_PRESETS.find((p) => p.id === id || p.kind === id);

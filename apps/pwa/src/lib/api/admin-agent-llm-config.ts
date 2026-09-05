@@ -1,9 +1,13 @@
 import { apiFetch } from "./client";
+import type {
+  AdminRuntimeDto,
+  PrivacyClass,
+  Protocol,
+  ProviderEligibility,
+  RolloutMode,
+} from "@pi-finance/llm-contracts/types";
 
-export type Protocol = "chat-completions" | "messages" | "responses" | "google-generative-ai";
-export type PrivacyClass = "training_prohibited" | "zero_retention_required" | "enterprise_standard";
-export type RolloutMode = "disabled" | "canary" | "all";
-export type ProviderEligibility = "approved" | "candidate" | "experimental_blocked";
+export type { PrivacyClass, Protocol, ProviderEligibility, RolloutMode };
 
 export type LlmProvider = {
   id: string;
@@ -28,19 +32,8 @@ export type LlmModel = {
   enabled: boolean;
 };
 
-export type LlmRuntime = {
-  fallbackProviderId?: string | null;
-  fallbackModelId?: string | null;
-  id: number;
-  version: number;
-  activeProviderId: string | null;
-  activeModelId: string | null;
-  activeProtocol: Protocol | null;
-  activeRolloutPercentage: number;
-  securityEpoch: number;
-  updatedBy: string;
-  updatedAt: string;
-};
+/** Explicit runtime DTO published by the API mapper (active* names are the contract). */
+export type LlmRuntime = AdminRuntimeDto;
 
 export type AdminLlmConfigResponse = {
   providers: LlmProvider[];
