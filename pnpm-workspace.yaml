@@ -3,6 +3,7 @@ packages:
   - 'apps/api'
   - 'apps/agent'
   - 'apps/codex-broker'
+  - 'packages/llm-contracts'
 
 ignoredBuiltDependencies:
   - sharp

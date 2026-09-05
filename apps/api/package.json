@@ -23,6 +23,7 @@
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\""
   },
   "dependencies": {
+    "@pi-finance/llm-contracts": "workspace:*",
     "fastify": "^5.2.0",
     "pg": "^8.21.0",
     "web-push": "^3.6.7",

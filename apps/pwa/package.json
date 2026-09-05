@@ -18,6 +18,7 @@
     "deploy": "pnpm build:cloudflare && wrangler deploy"
   },
   "dependencies": {
+    "@pi-finance/llm-contracts": "workspace:*",
     "@ai-sdk/react": "^2.0.0",
     "@cloudflare/ai-chat": "^0.1.0",
     "@serwist/next": "9.5.11",

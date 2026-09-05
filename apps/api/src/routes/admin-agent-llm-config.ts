@@ -2,13 +2,25 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getBetterAuthSessionContext, type BetterAuth } from '../auth/better-auth.js';
 import { isUserAdmin } from '../auth/admin-invite-service.js';
 import type { LlmConfigStore } from '../agent/llm-config-postgres.js';
+import { toAdminRuntimeDto } from '../agent/runtime-mapper.js';
+import {
+  createModelSchema,
+  createProviderSchema,
+  syncCatalogSchema,
+} from '@pi-finance/llm-contracts';
 import {
   canActivate,
   validateModel,
-  type Protocol,
   type PrivacyClass,
+  type Protocol,
   type RolloutMode,
 } from '../agent/llm-config.js';
+
+const invalidBody = (
+  reply: FastifyReply,
+  code: 'agent.invalid_provider' | 'agent.invalid_model',
+  reason: string,
+) => reply.code(400).send({ code, message: reason, reason });
 
 export interface AdminAgentLlmConfigDeps {
   auth: BetterAuth;
@@ -94,23 +106,28 @@ export const registerAdminAgentLlmConfigRoutes = (
     (req as unknown as Record<string, unknown>)['_session'] = session;
   };
 
-  // GET /admin/agent/llm-config - List full config (providers, models, runtime)
+  // GET /admin/agent/llm-config - List full config (providers, models, runtime DTO)
   app.get('/admin/agent/llm-config', { preHandler: guard }, async () => {
     const [providers, models, runtime] = await Promise.all([
       deps.store.listProviders(),
       deps.store.listModels(),
       deps.store.getRuntime(),
     ]);
-    return { providers, models, runtime };
+    return { providers, models, runtime: toAdminRuntimeDto(runtime, models) };
   });
 
   // POST /admin/agent/llm-config/sync-catalog - Sync model catalogue
   app.post('/admin/agent/llm-config/sync-catalog', { preHandler: guard }, async (req, reply) => {
-    const body = (req.body as { items?: Array<{ providerId: string; modelId: string; protocol?: Protocol; privacyClass?: PrivacyClass; retention?: string }> }) ?? {};
+    const parsed = syncCatalogSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const reason = parsed.error.issues[0]?.message ?? 'invalid sync catalog payload';
+      return invalidBody(reply, 'agent.invalid_model', reason);
+    }
+    const { items } = parsed.data;
     let synced = 0;
 
-    if (Array.isArray(body.items) && body.items.length > 0) {
-      for (const item of body.items) {
+    if (items.length > 0) {
+      for (const item of items) {
         const err = validateModel({
           providerId: item.providerId,
           modelId: item.modelId,
@@ -146,7 +163,8 @@ export const registerAdminAgentLlmConfigRoutes = (
       }
       try {
         const provider = await deps.store.setProviderEnabled(id, enabled);
-        return reply.send({ provider });
+        const [models, runtime] = await Promise.all([deps.store.listModels(), deps.store.getRuntime()]);
+        return reply.send({ provider, runtime: toAdminRuntimeDto(runtime, models) });
       } catch (err) {
         const e = err as { code?: string; reason?: string; statusCode?: number; message?: string };
         if (e?.code === 'agent.runtime_in_use' && e?.statusCode === 409) {
@@ -169,7 +187,8 @@ export const registerAdminAgentLlmConfigRoutes = (
       }
       try {
         const model = await deps.store.setModelEnabled(id, enabled);
-        return reply.send({ model });
+        const [models, runtime] = await Promise.all([deps.store.listModels(), deps.store.getRuntime()]);
+        return reply.send({ model, runtime: toAdminRuntimeDto(runtime, models) });
       } catch (err) {
         const e = err as { code?: string; reason?: string; statusCode?: number };
         if (e?.code === 'agent.runtime_in_use' && e?.statusCode === 409) {
@@ -191,10 +210,20 @@ export const registerAdminAgentLlmConfigRoutes = (
       enabled?: boolean;
     };
   }>('/admin/agent/llm-config/models', { preHandler: guard }, async (req, reply) => {
-    const body = req.body ?? ({} as never);
-    const err = validateModel(body);
+    const parsed = createModelSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const reason = parsed.error.issues[0]?.message ?? 'invalid model';
+      return invalidBody(reply, 'agent.invalid_model', reason);
+    }
+    const body = parsed.data;
+    const err = validateModel({
+      providerId: body.providerId,
+      modelId: body.modelId,
+      protocol: body.protocol,
+      privacyClass: body.privacyClass,
+    });
     if (err) {
-      return reply.code(400).send({ code: 'agent.invalid_model', message: err });
+      return invalidBody(reply, 'agent.invalid_model', err);
     }
     const provider = await deps.store.getProvider(body.providerId);
     if (!provider) {
@@ -246,7 +275,7 @@ export const registerAdminAgentLlmConfigRoutes = (
       expectedVersion,
       updatedBy: session.email,
     });
-    return reply.send({ runtime });
+    return reply.send({ runtime: toAdminRuntimeDto(runtime, models) });
   });
 
   // POST /admin/agent/llm-config/rollout - Change rollout mode or canary allowlist
@@ -274,30 +303,32 @@ export const registerAdminAgentLlmConfigRoutes = (
       expectedVersion,
       updatedBy: session.email,
     });
-    return reply.send({ runtime: updated });
+    const models = await deps.store.listModels();
+    return reply.send({ runtime: toAdminRuntimeDto(updated, models) });
   });
 
   // POST /admin/agent/llm-config/security-epoch - Increment security epoch for emergency revocation
   app.post('/admin/agent/llm-config/security-epoch', { preHandler: guard }, async (req, reply) => {
     const session = (req as unknown as { _session: { email: string } })._session;
     const runtime = await deps.store.bumpSecurityEpoch(session.email);
-    return reply.send({ runtime });
+    const models = await deps.store.listModels();
+    return reply.send({ runtime: toAdminRuntimeDto(runtime, models) });
   });
 
   // POST /admin/agent/llm-config/providers - Create / upsert provider (CRUD)
   app.post<{
     Body: { id: string; kind?: string; transport?: string; authMode?: string; secretAlias?: string | null; name?: string; baseUrl?: string; eligibility?: string; enabled?: boolean };
   }>('/admin/agent/llm-config/providers', { preHandler: guard }, async (req, reply) => {
-    const body = req.body ?? ({} as never);
-    const id = (body.id ?? body.name ?? '').trim();
-    if (!id) return reply.code(400).send({ code: 'agent.invalid_provider', message: 'id é obrigatório' });
-    let kind = body.kind as string | undefined;
-    let transport = body.transport as string | undefined;
-    let authMode = body.authMode as string | undefined;
-    let secretAlias = body.secretAlias as string | null | undefined;
-    if (!kind && body.name) {
+    const raw = (req.body ?? {}) as Record<string, unknown>;
+    const id = String(raw['id'] ?? raw['name'] ?? '').trim();
+    if (!id) return invalidBody(reply, 'agent.invalid_provider', 'id é obrigatório');
+    let kind = raw['kind'] as string | undefined;
+    let transport = raw['transport'] as string | undefined;
+    let authMode = raw['authMode'] as string | undefined;
+    let secretAlias = raw['secretAlias'] as string | null | undefined;
+    if (!kind && typeof raw['name'] === 'string') {
       const map: Record<string, string> = { 'opencode-zen': 'opencode-zen', 'opencode-go': 'opencode-go', 'openai-api': 'openai-api', 'openai-codex-subscription': 'openai-codex-subscription' };
-      kind = map[id] ?? map[body.name] ?? 'openai-api';
+      kind = map[id] ?? map[raw['name']] ?? 'openai-api';
     }
     if (!transport) transport = kind === 'openai-codex-subscription' ? 'private-broker' : 'direct';
     if (!authMode) authMode = transport === 'private-broker' ? 'chatgpt-browser' : 'api-key';
@@ -305,17 +336,39 @@ export const registerAdminAgentLlmConfigRoutes = (
       const aliasMap: Record<string, string | null> = { 'opencode-zen': 'OPENCODE_ZEN_API_KEY', 'opencode-go': 'OPENCODE_GO_API_KEY', 'openai-api': 'OPENAI_API_KEY', 'openai-codex-subscription': null };
       secretAlias = (aliasMap[kind ?? 'openai-api'] as string | null) ?? null;
     }
-    const { validateProvider } = await import('../agent/llm-config.js');
-    const errs = validateProvider({ kind: kind as never, transport: transport as never, authMode: authMode as never, secretAlias: secretAlias as never });
-    if (errs) return reply.code(400).send({ code: 'agent.invalid_provider', message: errs });
-    const provider = await deps.store.upsertProvider({
+    const parsed = createProviderSchema.safeParse({
       id,
-      kind: kind as never,
-      transport: transport as never,
-      authMode: authMode as never,
-      secretAlias: secretAlias as never,
-      enabled: body.enabled ?? false,
-      eligibility: (body.eligibility as never) ?? 'approved',
+      kind,
+      transport,
+      authMode,
+      secretAlias,
+      ...(typeof raw['name'] === 'string' ? { name: raw['name'] } : {}),
+      ...(typeof raw['eligibility'] === 'string' ? { eligibility: raw['eligibility'] } : {}),
+      ...(typeof raw['enabled'] === 'boolean' ? { enabled: raw['enabled'] } : {}),
+    });
+    if (!parsed.success) {
+      const reason = parsed.error.issues[0]?.message ?? 'invalid provider';
+      return invalidBody(reply, 'agent.invalid_provider', reason);
+    }
+    if (parsed.data.eligibility === 'candidate') {
+      return invalidBody(reply, 'agent.invalid_provider', 'eligibility candidate is not persistable');
+    }
+    const { validateProvider } = await import('../agent/llm-config.js');
+    const errs = validateProvider({
+      kind: parsed.data.kind,
+      transport: parsed.data.transport,
+      authMode: parsed.data.authMode,
+      secretAlias: parsed.data.secretAlias,
+    });
+    if (errs) return invalidBody(reply, 'agent.invalid_provider', errs);
+    const provider = await deps.store.upsertProvider({
+      id: parsed.data.id,
+      kind: parsed.data.kind,
+      transport: parsed.data.transport,
+      authMode: parsed.data.authMode,
+      secretAlias: parsed.data.secretAlias,
+      enabled: parsed.data.enabled ?? false,
+      eligibility: parsed.data.eligibility ?? 'approved',
     });
     return reply.code(201).send({ provider });
   });
@@ -425,7 +478,8 @@ export const registerAdminAgentLlmConfigRoutes = (
       expectedVersion,
       updatedBy: session.email,
     });
-    return reply.send({ ok: true, runtime: updated });
+    const modelsAfter = await deps.store.listModels();
+    return reply.send({ ok: true, runtime: toAdminRuntimeDto(updated, modelsAfter) });
   });
 
   // POST /admin/agent/llm-config/test-connection - Test provider connection (sanitized response)

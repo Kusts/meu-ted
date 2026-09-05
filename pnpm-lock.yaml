@@ -46,6 +46,9 @@ importers:
       '@cloudflare/ai-chat':
         specifier: ^0.1.0
         version: 0.1.9(@ai-sdk/react@2.0.251(react@19.2.4)(zod@4.4.3))(agents@0.2.35(@ai-sdk/openai@2.0.122(zod@4.4.3))(@ai-sdk/react@2.0.251(react@19.2.4)(zod@4.4.3))(@cloudflare/workers-types@4.20260702.1)(ai@5.0.248(zod@4.4.3))(react@19.2.4)(typescript@5.9.3)(zod@4.4.3))(ai@5.0.248(zod@4.4.3))(react@19.2.4)(zod@4.4.3)
+      '@pi-finance/llm-contracts':
+        specifier: workspace:*
+        version: link:../../packages/llm-contracts
       '@sinclair/typebox':
         specifier: ^0.34.0
         version: 0.34.52
@@ -65,6 +68,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@pi-finance/llm-contracts':
+        specifier: workspace:*
+        version: link:../../packages/llm-contracts
       better-auth:
         specifier: ^1.6.26
         version: 1.6.30(@cloudflare/workers-types@4.20260702.1)(@opentelemetry/api@1.9.0)(next@16.2.12(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(pg@8.21.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(vitest@3.2.6(@types/node@22.19.19)(esbuild@0.28.1)(jiti@2.7.0)(jsdom@29.1.1(@noble/hashes@2.3.0))(terser@5.16.9)(tsx@4.22.3)(yaml@2.9.0))
@@ -142,6 +148,9 @@ importers:
       '@cloudflare/ai-chat':
         specifier: ^0.1.0
         version: 0.1.9(@ai-sdk/react@2.0.251(react@19.2.4)(zod@3.25.76))(agents@0.2.35(@ai-sdk/openai@2.0.122(zod@3.25.76))(@ai-sdk/react@2.0.251(react@19.2.4)(zod@3.25.76))(@cloudflare/workers-types@4.20260702.1)(ai@5.0.248(zod@3.25.76))(react@19.2.4)(typescript@5.9.3)(zod@3.25.76))(ai@5.0.248(zod@3.25.76))(react@19.2.4)(zod@3.25.76)
+      '@pi-finance/llm-contracts':
+        specifier: workspace:*
+        version: link:../../packages/llm-contracts
       '@serwist/next':
         specifier: 9.5.11
         version: 9.5.11(next@16.2.12(@babel/core@7.29.7)(@opentelemetry/api@1.9.0)(@playwright/test@1.61.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react@19.2.4)(typescript@5.9.3)
@@ -248,6 +257,16 @@ importers:
       wrangler:
         specifier: ^4.104.0
         version: 4.104.0(@cloudflare/workers-types@4.20260702.1)
+
+  packages/llm-contracts:
+    dependencies:
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
 
 packages:
 

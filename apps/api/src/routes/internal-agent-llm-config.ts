@@ -1,5 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { LlmConfigStore } from '../agent/llm-config-postgres.js';
+import { toInternalRuntimeDto } from '../agent/runtime-mapper.js';
+import type { InternalLlmSnapshot, LlmModelSlot, LlmProviderSlot } from '@pi-finance/llm-contracts';
 import { timingSafeEqual } from 'node:crypto';
 
 const safeCompare = (a: string, b: string): boolean => {
@@ -8,6 +10,27 @@ const safeCompare = (a: string, b: string): boolean => {
   if (bufA.length !== bufB.length) return false;
   return timingSafeEqual(bufA, bufB);
 };
+
+const toProviderSlot = (
+  p: { id: string; kind: LlmProviderSlot['kind']; transport: LlmProviderSlot['transport']; authMode: LlmProviderSlot['authMode']; secretAlias: LlmProviderSlot['secretAlias']; serviceAlias?: string | null | undefined; eligibility: LlmProviderSlot['eligibility'] },
+): LlmProviderSlot => ({
+  id: p.id,
+  kind: p.kind,
+  transport: p.transport,
+  authMode: p.authMode,
+  secretAlias: p.secretAlias,
+  serviceAlias: p.serviceAlias ?? null,
+  eligibility: p.eligibility,
+});
+
+const toModelSlot = (
+  m: { id: string; modelId: string; protocol: LlmModelSlot['protocol']; privacyClass: LlmModelSlot['privacyClass'] },
+): LlmModelSlot => ({
+  id: m.id,
+  modelId: m.modelId,
+  protocol: m.protocol,
+  privacyClass: m.privacyClass,
+});
 
 export const registerInternalAgentLlmConfigRoutes = (
   app: FastifyInstance,
@@ -32,70 +55,52 @@ export const registerInternalAgentLlmConfigRoutes = (
       deps.store.getRuntime(),
     ]);
 
-    let activeProvider = providers.find((p) => p.id === runtime.providerId) ?? null;
-    let activeModel = models.find((m) => m.id === runtime.modelId) ?? null;
-    const fallbackProvider = providers.find((p) => p.id === runtime.fallbackProviderId) ?? null;
-    const fallbackModel = models.find((m) => m.id === runtime.fallbackModelId || (m.providerId === runtime.fallbackProviderId && m.modelId === runtime.fallbackModelId)) ?? null;
-    // Defesa em profundidade: se provider ou model ativo estiver desabilitado, não exponha config utilizável
-    if (activeProvider && !activeProvider.enabled) {
-      activeProvider = null;
-      activeModel = null;
-    } else if (activeModel && !activeModel.enabled) {
-      activeProvider = null;
-      activeModel = null;
-    }
+    const activeProviderRaw = providers.find((p) => p.id === runtime.providerId) ?? null;
+    const activeModelRaw = models.find((m) => m.id === runtime.modelId) ?? null;
+    const fallbackProviderRaw = providers.find((p) => p.id === runtime.fallbackProviderId) ?? null;
+    const fallbackModelRaw =
+      models.find(
+        (m) => m.id === runtime.fallbackModelId || (m.providerId === runtime.fallbackProviderId && m.modelId === runtime.fallbackModelId),
+      ) ?? null;
 
-    return reply.send({
-      provider: activeProvider
-        ? {
-            id: activeProvider.id,
-            kind: activeProvider.kind,
-            transport: activeProvider.transport,
-            authMode: activeProvider.authMode,
-            secretAlias: activeProvider.secretAlias,
-            serviceAlias: activeProvider.serviceAlias ?? null,
-            eligibility: activeProvider.eligibility,
-          }
-        : null,
-      model: activeModel
-        ? {
-            id: activeModel.id,
-            modelId: activeModel.modelId,
-            protocol: activeModel.protocol,
-            privacyClass: activeModel.privacyClass,
-          }
-        : null,
-      fallbackProvider: fallbackProvider
-        ? {
-            id: fallbackProvider.id,
-            kind: fallbackProvider.kind,
-            transport: fallbackProvider.transport,
-            authMode: fallbackProvider.authMode,
-            secretAlias: fallbackProvider.secretAlias,
-            serviceAlias: fallbackProvider.serviceAlias ?? null,
-            eligibility: fallbackProvider.eligibility,
-          }
-        : null,
-      fallbackModel: fallbackModel
-        ? {
-            id: fallbackModel.id,
-            modelId: fallbackModel.modelId,
-            protocol: fallbackModel.protocol,
-            privacyClass: fallbackModel.privacyClass,
-          }
-        : null,
-      runtime: {
-        singleton: runtime.singleton,
-        providerId: runtime.providerId,
-        modelId: runtime.modelId,
-        fallbackProviderId: runtime.fallbackProviderId ?? null,
-        fallbackModelId: runtime.fallbackModelId ?? null,
-        rolloutMode: runtime.rolloutMode,
-        canaryAllowlist: runtime.canaryAllowlist,
-        securityEpoch: runtime.securityEpoch,
-        version: runtime.version,
-      },
-    });
+    // Fail-closed: a configured pair is usable only when provider and model
+    // exist, are enabled, and the model belongs to the provider.
+    const activeConfigured = runtime.providerId != null || runtime.modelId != null;
+    const activeUsable =
+      activeProviderRaw !== null &&
+      activeProviderRaw.enabled &&
+      activeModelRaw !== null &&
+      activeModelRaw.enabled &&
+      activeModelRaw.providerId === runtime.providerId;
+    const activeDisabled = activeConfigured && !activeUsable;
+
+    const fallbackConfigured = runtime.fallbackProviderId != null || runtime.fallbackModelId != null;
+    const fallbackUsable =
+      fallbackProviderRaw !== null &&
+      fallbackProviderRaw.enabled &&
+      fallbackModelRaw !== null &&
+      fallbackModelRaw.enabled &&
+      fallbackModelRaw.providerId === runtime.fallbackProviderId;
+    const fallbackDisabled = fallbackConfigured && !fallbackUsable;
+
+    const dto = toInternalRuntimeDto(runtime, models);
+    // Never expose ids of an unusable pair: the consumer only reads active*,
+    // so nulling them here fails closed without extra consumer logic.
+    const runtimeDto = {
+      ...dto,
+      ...(activeDisabled ? { activeProviderId: null, activeModelId: null, activeProtocol: null } : {}),
+      ...(fallbackDisabled ? { fallbackProviderId: null, fallbackModelId: null } : {}),
+    };
+
+    const snapshot: InternalLlmSnapshot = {
+      runtime: runtimeDto,
+      activeProvider: activeUsable && activeProviderRaw ? toProviderSlot(activeProviderRaw) : null,
+      activeModel: activeUsable && activeModelRaw ? toModelSlot(activeModelRaw) : null,
+      fallbackProvider: fallbackUsable && fallbackProviderRaw ? toProviderSlot(fallbackProviderRaw) : null,
+      fallbackModel: fallbackUsable && fallbackModelRaw ? toModelSlot(fallbackModelRaw) : null,
+      activeDisabled,
+      fallbackDisabled,
+    };
+    return reply.send(snapshot);
   });
 };
-

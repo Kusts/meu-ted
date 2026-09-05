@@ -154,6 +154,18 @@ describe('LLM Config Domain Validation (RED -> GREEN)', () => {
         }),
       ).toBe('invalid secret alias');
     });
+
+    it('rejects secret alias that does not belong to the kind', () => {
+      expect(
+        validateProvider({
+          id: 'custom-anthropic',
+          kind: 'anthropic',
+          transport: 'direct',
+          authMode: 'api-key',
+          secretAlias: 'OPENCODE_ZEN_API_KEY',
+        }),
+      ).toBe('invalid secret alias for kind anthropic: OPENCODE_ZEN_API_KEY');
+    });
   });
 
   describe('validateModel', () => {

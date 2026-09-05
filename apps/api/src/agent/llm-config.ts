@@ -1,58 +1,35 @@
-export type ProviderKind = 'opencode-zen' | 'opencode-go' | 'openai-api' | 'openai-codex-subscription' | 'openai' | 'anthropic' | 'deepseek' | 'qwen' | 'glm' | 'minimax' | 'google' | 'openrouter';
-export type Transport = 'direct' | 'private-broker';
-export type AuthMode = 'api-key' | 'chatgpt-browser';
-export type Protocol = 'responses' | 'messages' | 'chat-completions' | 'google-generative-ai';
+import {
+  AUTH_MODES,
+  KIND_SECRET_ALIASES,
+  PRIVACY_CLASSES,
+  PROTOCOLS,
+  PROVIDER_KINDS,
+  ROLLOUT_MODES,
+  SECRET_ALIASES,
+  type AuthMode,
+  type PrivacyClass,
+  type Protocol,
+  type ProviderKind,
+  type RolloutMode,
+  type RuntimeStatus,
+  type SecretAlias,
+  type Transport,
+} from '@pi-finance/llm-contracts';
+
+export type { AuthMode, PrivacyClass, Protocol, ProviderKind, RolloutMode, RuntimeStatus, SecretAlias, Transport };
 export type Eligibility = 'experimental_blocked' | 'approved';
-export type RuntimeStatus = 'not_configured' | 'ready' | 'reauth_required' | 'unavailable';
-export type RolloutMode = 'disabled' | 'canary' | 'all';
-export type PrivacyClass = 'training_prohibited' | 'training_allowed';
 
-export const ALLOWED_KINDS: readonly ProviderKind[] = [
-  'opencode-zen',
-  'opencode-go',
-  'openai-api',
-  'openai-codex-subscription',
-  'openai',
-  'anthropic',
-  'deepseek',
-  'qwen',
-  'glm',
-  'minimax',
-  'google',
-  'openrouter',
-] as const;
+export const ALLOWED_KINDS: readonly ProviderKind[] = PROVIDER_KINDS;
 
-export const ALLOWED_SECRET_ALIASES = [
-  'OPENCODE_ZEN_API_KEY',
-  'OPENCODE_GO_API_KEY',
-  'OPENAI_API_KEY',
-  'ANTHROPIC_API_KEY',
-  'DEEPSEEK_API_KEY',
-  'QWEN_API_KEY',
-  'GLM_API_KEY',
-  'MINIMAX_API_KEY',
-  'GOOGLE_API_KEY',
-  'OPENROUTER_API_KEY',
-] as const;
-export type SecretAlias = typeof ALLOWED_SECRET_ALIASES[number];
+export const ALLOWED_SECRET_ALIASES = SECRET_ALIASES;
 
-export const ALLOWED_PROTOCOLS: readonly Protocol[] = [
-  'responses',
-  'messages',
-  'chat-completions',
-  'google-generative-ai',
-] as const;
+export const ALLOWED_PROTOCOLS: readonly Protocol[] = PROTOCOLS;
 
-export const ALLOWED_ROLLOUT_MODES: readonly RolloutMode[] = [
-  'disabled',
-  'canary',
-  'all',
-] as const;
+export const ALLOWED_ROLLOUT_MODES: readonly RolloutMode[] = ROLLOUT_MODES;
 
-export const ALLOWED_PRIVACY_CLASSES: readonly PrivacyClass[] = [
-  'training_prohibited',
-  'training_allowed',
-] as const;
+export const ALLOWED_PRIVACY_CLASSES: readonly PrivacyClass[] = PRIVACY_CLASSES;
+
+export { AUTH_MODES, KIND_SECRET_ALIASES };
 
 export interface LlmProvider {
   id: string;
@@ -109,6 +86,11 @@ export const validateProvider = (p: Partial<LlmProvider>): string | null => {
   if (p.kind !== 'openai-codex-subscription') {
     if (!p.secretAlias || !ALLOWED_SECRET_ALIASES.includes(p.secretAlias as SecretAlias)) {
       return 'invalid secret alias';
+    }
+    const kind = p.kind as ProviderKind;
+    const allowedForKind = KIND_SECRET_ALIASES[kind];
+    if (!allowedForKind.includes(p.secretAlias as SecretAlias)) {
+      return `invalid secret alias for kind ${kind}: ${String(p.secretAlias)}`;
     }
   }
   return null;

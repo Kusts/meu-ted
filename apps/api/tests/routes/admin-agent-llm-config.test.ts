@@ -374,9 +374,11 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
       });
       expect(actOk.statusCode).toBe(200);
       expect(actOk.json().runtime).toMatchObject({
-        providerId: 'openai-api',
-        modelId: 'openai-api:gpt-4o',
-        rolloutMode: 'all',
+        activeProviderId: 'openai-api',
+        activeModelId: 'openai-api:gpt-4o',
+        activeProtocol: 'chat-completions',
+        activeRolloutMode: 'all',
+        activeRolloutPercentage: 100,
         version: 2,
       });
     });
@@ -395,7 +397,7 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
       });
       expect(rolloutRes.statusCode).toBe(200);
       expect(rolloutRes.json().runtime).toMatchObject({
-        rolloutMode: 'canary',
+        activeRolloutMode: 'canary',
         canaryAllowlist: ['ws-canary-1', 'ws-canary-2'],
         version: 2,
       });
@@ -490,35 +492,37 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
       });
       expect(res.statusCode).toBe(200);
       const data = res.json();
-      expect(data).toEqual({
-        provider: {
-          id: 'openai-api',
-          kind: 'openai-api',
-          transport: 'direct',
-          authMode: 'api-key',
-          secretAlias: 'OPENAI_API_KEY',
-          serviceAlias: null,
-          eligibility: 'approved',
-        },
-        model: {
-          id: 'openai-api:gpt-4o',
-          modelId: 'gpt-4o',
-          protocol: 'chat-completions',
-          privacyClass: 'training_prohibited',
-        },
-        fallbackProvider: null,
-        fallbackModel: null,
-        runtime: {
-          singleton: 'active',
-          providerId: 'openai-api',
-          modelId: 'openai-api:gpt-4o',
-          fallbackProviderId: null,
-          fallbackModelId: null,
-          rolloutMode: 'all',
-          canaryAllowlist: [],
-          securityEpoch: 1,
-          version: 2,
-        },
+      expect(data.activeProvider).toEqual({
+        id: 'openai-api',
+        kind: 'openai-api',
+        transport: 'direct',
+        authMode: 'api-key',
+        secretAlias: 'OPENAI_API_KEY',
+        serviceAlias: null,
+        eligibility: 'approved',
+      });
+      expect(data.activeModel).toEqual({
+        id: 'openai-api:gpt-4o',
+        modelId: 'gpt-4o',
+        protocol: 'chat-completions',
+        privacyClass: 'training_prohibited',
+      });
+      expect(data.fallbackProvider).toBeNull();
+      expect(data.fallbackModel).toBeNull();
+      expect(data.activeDisabled).toBe(false);
+      expect(data.fallbackDisabled).toBe(false);
+      expect(data.runtime).toMatchObject({
+        singleton: 'active',
+        activeProviderId: 'openai-api',
+        activeModelId: 'openai-api:gpt-4o',
+        activeProtocol: 'chat-completions',
+        activeRolloutMode: 'all',
+        activeRolloutPercentage: 100,
+        fallbackProviderId: null,
+        fallbackModelId: null,
+        canaryAllowlist: [],
+        securityEpoch: 1,
+        version: 2,
       });
     });
 
@@ -567,6 +571,7 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
         id: 'opencode-zen:zen-fallback',
         modelId: 'zen-fallback',
       });
+      expect(data.fallbackDisabled).toBe(false);
       expect(data.runtime.fallbackProviderId).toBe('opencode-zen');
       expect(data.runtime.fallbackModelId).toBe(fallbackModel.id);
     });

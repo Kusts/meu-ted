@@ -223,9 +223,13 @@ describe('Phase0 route invariants — RED→GREEN', () => {
     });
     expect(res.statusCode).toBe(200);
     const data = res.json();
-    expect(data.provider).toBeNull();
-    expect(data.model).toBeNull();
-    // runtime snapshot still contains ids but provider/model null — agent fails closed
-    expect(data.runtime.providerId).toBe('openai-api');
+    expect(data.activeProvider).toBeNull();
+    expect(data.activeModel).toBeNull();
+    expect(data.activeDisabled).toBe(true);
+    // Fail-closed: the runtime DTO exposes no usable active ids either,
+    // so a consumer reading only active* fields cannot use the disabled pair.
+    expect(data.runtime.activeProviderId).toBeNull();
+    expect(data.runtime.activeModelId).toBeNull();
+    expect(JSON.stringify(data)).not.toContain('OPENAI_API_KEY');
   });
 });
