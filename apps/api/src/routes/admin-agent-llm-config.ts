@@ -4,21 +4,20 @@ import { isUserAdmin } from '../auth/admin-invite-service.js';
 import type { LlmConfigStore } from '../agent/llm-config-postgres.js';
 import { toAdminRuntimeDto } from '../agent/runtime-mapper.js';
 import {
+  activateSchema,
   createModelSchema,
   createProviderSchema,
+  fallbackSchema,
+  patchProviderSchema,
+  rolloutSchema,
+  securityEpochSchema,
   syncCatalogSchema,
 } from '@pi-finance/llm-contracts';
-import {
-  canActivate,
-  validateModel,
-  type PrivacyClass,
-  type Protocol,
-  type RolloutMode,
-} from '../agent/llm-config.js';
+import { canActivate, validateModel, type PrivacyClass, type Protocol } from '../agent/llm-config.js';
 
 const invalidBody = (
   reply: FastifyReply,
-  code: 'agent.invalid_provider' | 'agent.invalid_model',
+  code: 'agent.invalid_provider' | 'agent.invalid_model' | 'agent.invalid_activate' | 'agent.invalid_rollout' | 'agent.invalid_fallback' | 'agent.invalid_parameters',
   reason: string,
 ) => reply.code(400).send({ code, message: reason, reason });
 
@@ -241,18 +240,13 @@ export const registerAdminAgentLlmConfigRoutes = (
   });
 
   // POST /admin/agent/llm-config/activate - Activate an approved provider/model pair
-  app.post<{
-    Body: {
-      providerId: string;
-      modelId: string;
-      rolloutMode?: RolloutMode;
-      expectedVersion: number;
-    };
-  }>('/admin/agent/llm-config/activate', { preHandler: guard }, async (req, reply) => {
-    const { providerId, modelId, rolloutMode, expectedVersion } = req.body ?? {};
-    if (!providerId || !modelId || expectedVersion === undefined) {
-      return reply.code(400).send({ code: 'agent.invalid_activate', message: 'providerId, modelId e expectedVersion são obrigatórios' });
+  app.post('/admin/agent/llm-config/activate', { preHandler: guard }, async (req, reply) => {
+    const parsed = activateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const reason = parsed.error.issues[0]?.message ?? 'invalid activate payload';
+      return invalidBody(reply, 'agent.invalid_activate', reason);
     }
+    const { providerId, modelId, rolloutMode, expectedVersion } = parsed.data;
 
     const provider = await deps.store.getProvider(providerId);
     const models = await deps.store.listModels();
@@ -279,17 +273,13 @@ export const registerAdminAgentLlmConfigRoutes = (
   });
 
   // POST /admin/agent/llm-config/rollout - Change rollout mode or canary allowlist
-  app.post<{
-    Body: {
-      rolloutMode?: RolloutMode;
-      canaryAllowlist?: string[];
-      expectedVersion: number;
-    };
-  }>('/admin/agent/llm-config/rollout', { preHandler: guard }, async (req, reply) => {
-    const { rolloutMode, canaryAllowlist, expectedVersion } = req.body ?? {};
-    if (expectedVersion === undefined) {
-      return reply.code(400).send({ code: 'agent.invalid_rollout', message: 'expectedVersion é obrigatório' });
+  app.post('/admin/agent/llm-config/rollout', { preHandler: guard }, async (req, reply) => {
+    const parsed = rolloutSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const reason = parsed.error.issues[0]?.message ?? 'invalid rollout payload';
+      return invalidBody(reply, 'agent.invalid_rollout', reason);
     }
+    const { rolloutMode, canaryAllowlist, expectedVersion } = parsed.data;
     const runtime = await deps.store.getRuntime();
     if (runtime.version !== expectedVersion) {
       return reply.code(409).send({ code: 'agent.version_conflict', message: 'Conflito de versão de configuração' });
@@ -309,6 +299,11 @@ export const registerAdminAgentLlmConfigRoutes = (
 
   // POST /admin/agent/llm-config/security-epoch - Increment security epoch for emergency revocation
   app.post('/admin/agent/llm-config/security-epoch', { preHandler: guard }, async (req, reply) => {
+    const parsed = securityEpochSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const reason = parsed.error.issues[0]?.message ?? 'security-epoch takes no parameters';
+      return invalidBody(reply, 'agent.invalid_parameters', reason);
+    }
     const session = (req as unknown as { _session: { email: string } })._session;
     const runtime = await deps.store.bumpSecurityEpoch(session.email);
     const models = await deps.store.listModels();
@@ -350,9 +345,6 @@ export const registerAdminAgentLlmConfigRoutes = (
       const reason = parsed.error.issues[0]?.message ?? 'invalid provider';
       return invalidBody(reply, 'agent.invalid_provider', reason);
     }
-    if (parsed.data.eligibility === 'candidate') {
-      return invalidBody(reply, 'agent.invalid_provider', 'eligibility candidate is not persistable');
-    }
     const { validateProvider } = await import('../agent/llm-config.js');
     const errs = validateProvider({
       kind: parsed.data.kind,
@@ -373,19 +365,26 @@ export const registerAdminAgentLlmConfigRoutes = (
     return reply.code(201).send({ provider });
   });
 
-  app.patch<{
-    Params: { id: string };
-    Body:Partial<{ enabled: boolean; eligibility: string; secretAlias: string | null }>;
-  }>('/admin/agent/llm-config/providers/:id', { preHandler: guard }, async (req, reply) => {
+  app.patch<{ Params: { id: string } }>('/admin/agent/llm-config/providers/:id', { preHandler: guard }, async (req, reply) => {
     const { id } = req.params;
-    const patch = req.body ?? {};
+    const parsed = patchProviderSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const reason = parsed.error.issues[0]?.message ?? 'invalid provider patch';
+      return invalidBody(reply, 'agent.invalid_provider', reason);
+    }
+    const patch = parsed.data;
     const existing = await deps.store.getProvider(id);
     if (!existing) return reply.code(404).send({ code: 'agent.provider_not_found', message: `Provider ${id} não encontrado` });
-    const merged = { ...existing, ...patch } as never;
+    const merged = {
+      ...existing,
+      enabled: patch.enabled ?? existing.enabled,
+      eligibility: patch.eligibility ?? existing.eligibility,
+      secretAlias: patch.secretAlias !== undefined ? patch.secretAlias : existing.secretAlias,
+    };
     const { validateProvider } = await import('../agent/llm-config.js');
     const err = validateProvider(merged);
-    if (err) return reply.code(400).send({ code: 'agent.invalid_provider', message: err });
-    if (typeof patch.enabled === 'boolean' && !patch.enabled) {
+    if (err) return invalidBody(reply, 'agent.invalid_provider', err);
+    if (patch.enabled === false) {
       const rt = await deps.store.getRuntime();
       if (rt.providerId === id) {
         return reply.code(409).send({ code: 'agent.runtime_in_use', reason: 'active_provider' });
@@ -399,9 +398,9 @@ export const registerAdminAgentLlmConfigRoutes = (
       kind: existing.kind,
       transport: existing.transport,
       authMode: existing.authMode,
-      secretAlias: (patch.secretAlias !== undefined ? patch.secretAlias : existing.secretAlias) as never,
-      enabled: patch.enabled ?? existing.enabled,
-      eligibility: (patch.eligibility as never) ?? existing.eligibility,
+      secretAlias: merged.secretAlias,
+      enabled: merged.enabled,
+      eligibility: merged.eligibility,
     });
     return reply.send({ provider });
   });
@@ -444,14 +443,13 @@ export const registerAdminAgentLlmConfigRoutes = (
   });
 
   // POST /admin/agent/llm-config/fallback - Set fallback provider/model
-  app.post<{
-    Body: { providerId: string | null; modelId: string | null; expectedVersion: number };
-  }>('/admin/agent/llm-config/fallback', { preHandler: guard }, async (req, reply) => {
-    const { providerId, modelId, expectedVersion } = req.body ?? {};
-    if (expectedVersion === undefined) return reply.code(400).send({ code: 'agent.invalid_fallback', message: 'expectedVersion é obrigatório' });
-    if ((providerId && !modelId) || (!providerId && modelId)) {
-      return reply.code(400).send({ code: 'agent.invalid_fallback', message: 'providerId e modelId devem ser ambos nulos ou ambos preenchidos' });
+  app.post('/admin/agent/llm-config/fallback', { preHandler: guard }, async (req, reply) => {
+    const parsed = fallbackSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const reason = parsed.error.issues[0]?.message ?? 'invalid fallback payload';
+      return invalidBody(reply, 'agent.invalid_fallback', reason);
     }
+    const { providerId, modelId, expectedVersion } = parsed.data;
     if (providerId && modelId) {
       const provider = await deps.store.getProvider(providerId);
       const models = await deps.store.listModels();

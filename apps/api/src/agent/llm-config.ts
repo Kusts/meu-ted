@@ -9,6 +9,7 @@ import {
   type AuthMode,
   type PrivacyClass,
   type Protocol,
+  type ProviderEligibility,
   type ProviderKind,
   type RolloutMode,
   type RuntimeStatus,
@@ -17,7 +18,7 @@ import {
 } from '@pi-finance/llm-contracts';
 
 export type { AuthMode, PrivacyClass, Protocol, ProviderKind, RolloutMode, RuntimeStatus, SecretAlias, Transport };
-export type Eligibility = 'experimental_blocked' | 'approved';
+export type Eligibility = ProviderEligibility;
 
 export const ALLOWED_KINDS: readonly ProviderKind[] = PROVIDER_KINDS;
 

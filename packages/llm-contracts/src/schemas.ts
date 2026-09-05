@@ -66,3 +66,48 @@ export const syncCatalogItemSchema = z.object({
 export const syncCatalogSchema = z.object({
   items: z.array(syncCatalogItemSchema).max(100, 'at most 100 items per sync').default([]),
 });
+
+export const expectedVersionSchema = z
+  .number({ invalid_type_error: 'expectedVersion must be a number' })
+  .int('expectedVersion must be an integer')
+  .min(1, 'expectedVersion must be at least 1');
+
+export const canaryAllowlistSchema = z
+  .array(z.string().trim().min(1, 'canary entry must not be empty').max(64, 'canary entry too long'))
+  .max(32, 'at most 32 canary entries');
+
+/** Composite `provider:model` ids travel through activate/fallback lookups. */
+export const modelRefSchema = z.string().trim().min(1, 'model id is required').max(185, 'model id too long');
+
+export const activateSchema = z.object({
+  providerId: providerIdSchema,
+  modelId: modelRefSchema,
+  rolloutMode: rolloutModeSchema.optional(),
+  expectedVersion: expectedVersionSchema,
+});
+
+export const rolloutSchema = z.object({
+  rolloutMode: rolloutModeSchema.optional(),
+  canaryAllowlist: canaryAllowlistSchema.optional(),
+  expectedVersion: expectedVersionSchema,
+});
+
+export const fallbackSchema = z
+  .object({
+    providerId: providerIdSchema.nullable(),
+    modelId: modelRefSchema.nullable(),
+    expectedVersion: expectedVersionSchema,
+  })
+  .refine((v) => (v.providerId === null) === (v.modelId === null), {
+    message: 'providerId and modelId must both be null or both be set',
+  });
+
+export const patchProviderSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    eligibility: providerEligibilitySchema.optional(),
+    secretAlias: secretAliasSchema.nullable().optional(),
+  })
+  .strict();
+
+export const securityEpochSchema = z.object({}).strict();
