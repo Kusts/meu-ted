@@ -59,7 +59,7 @@ vi.mock("@/lib/api/endpoints", async (orig) => {
 });
 
 vi.mock("@/lib/api/client", async () => {
-  const actual = await vi.importActual("@/lib/api/client") as any;
+  const actual = await vi.importActual<Record<string, unknown>>("@/lib/api/client");
   return {
     ...actual,
     apiFetch: vi.fn().mockImplementation((path: string) => {
@@ -122,11 +122,7 @@ describe("WorkspaceManagerPage card enhancements (RED -> GREEN)", () => {
     // Personal card should not have members list - but shared does
     // We verify that personal workspace name exists but doesn't have invite field for personal
     expect(screen.getByRole("heading", { name: "Pessoal" })).toBeInTheDocument();
-    // Count invite fields - should equal number of shared workspaces (1), not 2
-    const inviteInputs = screen.getAllByLabelText(/E-mail do convidado/i);
-    // Sidebar also has invite field for active shared workspace, plus card has one => at least 2?
-    // But personal card should not add extra invite field beyond shared
-    // We check that personal card article does not contain invite input
+    expect(screen.getAllByLabelText(/E-mail do convidado/i).length).toBeGreaterThan(0);
     const personalCard = Array.from(document.querySelectorAll("article")).find(el => el.textContent?.includes("Pessoal"));
     expect(personalCard).toBeDefined();
     expect(personalCard!.querySelector("input[type='email']")).toBeNull();

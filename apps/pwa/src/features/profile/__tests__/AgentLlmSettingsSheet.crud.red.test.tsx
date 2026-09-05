@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@/lib/test-utils";
+import { render, screen } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import { AgentLlmSettingsSheet } from "../AgentLlmSettingsSheet";
 import * as adminLlmConfig from "@/lib/api/admin-agent-llm-config";
@@ -30,10 +30,9 @@ describe("AgentLlmSettingsSheet CRUD with selectors (RED -> GREEN)", () => {
         securityEpoch: 1,
         updatedBy: "admin@test.com",
         updatedAt: "2026-08-27T10:00:00Z",
-        // extended for fallback
         fallbackProviderId: "openai-api",
         fallbackModelId: "gpt-4o",
-      } as any,
+      } as unknown as adminLlmConfig.AgentRuntimeConfig,
     });
   });
 
@@ -59,7 +58,9 @@ describe("AgentLlmSettingsSheet CRUD with selectors (RED -> GREEN)", () => {
 
   it("allows registering a new provider via form", async () => {
     const user = userEvent.setup();
-    const createSpy = vi.spyOn(adminLlmConfig, "createProvider" as any).mockResolvedValue({ provider: { id: "new-provider" } });
+    const createSpy = vi.spyOn(adminLlmConfig, "createProvider").mockResolvedValue({
+      provider: { id: "new-provider", name: "New", baseUrl: "https://example.com", secretAlias: "SEC", eligibility: "approved", enabled: true },
+    });
     render(<AgentLlmSettingsSheet open={true} onClose={onCloseMock} />);
     await screen.findByLabelText("Provedor");
     // Try to find add provider button
@@ -71,7 +72,9 @@ describe("AgentLlmSettingsSheet CRUD with selectors (RED -> GREEN)", () => {
 
   it("allows registering a new model for selected provider", async () => {
     const user = userEvent.setup();
-    const createModelSpy = vi.spyOn(adminLlmConfig, "createModel" as any).mockResolvedValue({ model: { id: "new-model" } });
+    const createModelSpy = vi.spyOn(adminLlmConfig, "createModel").mockResolvedValue({
+      model: { id: "new-model", providerId: "opencode-zen", modelId: "test-model", protocol: "chat-completions", privacyClass: "training_prohibited", retention: null, enabled: true },
+    });
     render(<AgentLlmSettingsSheet open={true} onClose={onCloseMock} />);
     await screen.findByLabelText("Modelo do provedor");
     await user.type(screen.getByLabelText("Novo modelo ID"), "test-model");

@@ -71,28 +71,12 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
   }, [selectedProviderId, selectedProviderModelId]);
 
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    const timer = setTimeout(() => {
       void loadConfig();
-    }
+    }, 0);
+    return () => clearTimeout(timer);
   }, [open, loadConfig]);
-
-  useEffect(() => {
-    if (providers.length > 0 && !selectedProviderId) setSelectedProviderId(providers[0]!.id);
-    if (runtime) {
-      setActiveModelChoice(runtime.activeModelId ?? "");
-      const fb = (runtime as unknown as { fallbackModelId?: string | null }).fallbackModelId ?? "";
-      setFallbackModelChoice(fb ?? "");
-    }
-  }, [providers, runtime, selectedProviderId]);
-
-  useEffect(() => {
-    const filtered = models.filter((m) => m.providerId === selectedProviderId);
-    if (filtered.length > 0 && !filtered.find((m) => m.id === selectedProviderModelId)) {
-      setSelectedProviderModelId(filtered[0]!.id);
-    } else if (filtered.length === 0) {
-      setSelectedProviderModelId("");
-    }
-  }, [models, selectedProviderId, selectedProviderModelId]);
 
   const handleToggleProvider = async (providerId: string, current: boolean) => {
     setError(null);

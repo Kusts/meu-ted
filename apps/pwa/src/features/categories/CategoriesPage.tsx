@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, createElement } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
@@ -33,7 +33,6 @@ function IconPicker({
           <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">{group.label}</span>
           <div className="grid grid-cols-6 gap-2">
             {group.icons.map((iconName) => {
-              const Icon = getIconComponent(iconName);
               const selected = value === iconName;
               return (
                 <button
@@ -47,7 +46,7 @@ function IconPicker({
                     selected ? "border-primary bg-primary text-white shadow-fab scale-[1.02]" : "border-border-subtle bg-surface-2 text-text-secondary hover:border-primary/40 hover:bg-surface-1"
                   }`}
                 >
-                  <Icon size={18} />
+                  <CategoryIcon name={iconName} size={18} />
                 </button>
               );
             })}
@@ -88,6 +87,11 @@ function ColorPicker({
   );
 }
 
+function CategoryIcon({ name, size = 18, className }: { name: string; size?: number; className?: string }) {
+  const comp = getIconComponent(name);
+  return createElement(comp, { size, className });
+}
+
 function NewCategorySheet({
   open,
   onClose,
@@ -102,13 +106,12 @@ function NewCategorySheet({
   const [icon, setIcon] = useState<string | null>(null);
   const [color, setColor] = useState<string | null>(null);
 
-  // Reset when opening
-  useEffect(() => {
-    if (open) {
-      setIcon(null);
-      setColor(null);
-    }
-  }, [open]);
+  const handleClose = () => {
+    setName("");
+    setIcon(null);
+    setColor(null);
+    onClose();
+  };
 
   async function handleSave() {
     if (!name.trim()) return;
@@ -131,10 +134,9 @@ function NewCategorySheet({
 
   const previewColor = color ?? (name ? getCategoryColor(name) : "#0E8C5A");
   const previewIcon = icon ?? (name ? getCategoryIconName(name) : "Tag");
-  const PreviewIcon = getIconComponent(previewIcon);
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Nova categoria">
+    <BottomSheet open={open} onClose={handleClose} title="Nova categoria">
       <div className="flex flex-col gap-5 pb-[env(safe-area-inset-bottom)]">
         {/* Preview elegante */}
         <div data-testid="category-preview" className="flex items-center gap-3 rounded-[16px] border border-border-subtle bg-gradient-to-br from-surface-2 to-surface-1 p-3.5 shadow-sm">
@@ -142,7 +144,7 @@ function NewCategorySheet({
             className="flex h-12 w-12 items-center justify-center rounded-[14px] text-white shadow-sm"
             style={{ background: previewColor }}
           >
-            <PreviewIcon size={22} />
+            <CategoryIcon name={previewIcon} size={22} />
           </span>
           <div className="min-w-0 flex-1">
             <div className="truncate text-[15px] font-bold text-text-primary">{name.trim() || "Prévia da categoria"}</div>
@@ -222,7 +224,7 @@ function CategoryRow({ cat, onAddSub, onEdit, onDeactivate }: CategoryRowProps) 
   const [adding, setAdding] = useState(false);
   const [newSub, setNewSub] = useState("");
   const color = (cat.color as string | undefined) ?? getCategoryColor(cat.name);
-  const Icon = getIconComponent((cat.icon as string | undefined) ?? getCategoryIconName(cat.name));
+  const iconName = (cat.icon as string | undefined) ?? getCategoryIconName(cat.name);
 
   function handleAdd() {
     if (!newSub.trim() || !onAddSub) return;
@@ -236,7 +238,7 @@ function CategoryRow({ cat, onAddSub, onEdit, onDeactivate }: CategoryRowProps) 
       <div className="absolute inset-x-0 top-0 h-[3px] rounded-t-[16px] opacity-60 group-hover:opacity-100 transition-opacity" style={{ background: color }} />
       <div className="flex items-center gap-3">
         <div className="relative flex h-10 w-10 flex-none items-center justify-center rounded-[12px] shadow-sm" style={{ background: color }}>
-          <Icon size={18} className="text-white" />
+          <CategoryIcon name={iconName} size={18} className="text-white" />
           <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-surface-1 text-[10px] font-bold text-text-primary shadow-sm ring-1 ring-border-subtle" aria-hidden="true">
             {cat.name.slice(0,1).toUpperCase()}
           </span>
@@ -386,6 +388,21 @@ export default function CategoriesPage() {
   const [confirmDeactivate, setConfirmDeactivate] = useState<{ id: string; name: string } | null>(null);
   const [query, setQuery] = useState("");
 
+  const expenseCategories = useMemo(() => categories.filter((c) => c.kind === "expense"), [categories]);
+  const incomeCategories = useMemo(() => categories.filter((c) => c.kind === "income"), [categories]);
+
+  const filteredExpenses = useMemo(() => {
+    if (!query.trim()) return expenseCategories;
+    const q = query.toLowerCase();
+    return expenseCategories.filter((c) => c.name.toLowerCase().includes(q) || (c.subcategories ?? []).some((s) => s.toLowerCase().includes(q)));
+  }, [expenseCategories, query]);
+
+  const filteredIncomes = useMemo(() => {
+    if (!query.trim()) return incomeCategories;
+    const q = query.toLowerCase();
+    return incomeCategories.filter((c) => c.name.toLowerCase().includes(q) || (c.subcategories ?? []).some((s) => s.toLowerCase().includes(q)));
+  }, [incomeCategories, query]);
+
   if (loading) {
     return (
       <div className="flex min-h-dvh flex-col bg-bg">
@@ -399,21 +416,6 @@ export default function CategoriesPage() {
       </div>
     );
   }
-
-  const expenseCategories = categories.filter((c) => c.kind === "expense");
-  const incomeCategories = categories.filter((c) => c.kind === "income");
-
-  const filteredExpenses = useMemo(() => {
-    if (!query.trim()) return expenseCategories;
-    const q = query.toLowerCase();
-    return expenseCategories.filter((c) => c.name.toLowerCase().includes(q) || (c.subcategories ?? []).some((s) => s.toLowerCase().includes(q)));
-  }, [expenseCategories, query]);
-
-  const filteredIncomes = useMemo(() => {
-    if (!query.trim()) return incomeCategories;
-    const q = query.toLowerCase();
-    return incomeCategories.filter((c) => c.name.toLowerCase().includes(q) || (c.subcategories ?? []).some((s) => s.toLowerCase().includes(q)));
-  }, [incomeCategories, query]);
 
   const hasNoResults = query.trim() && filteredExpenses.length === 0 && filteredIncomes.length === 0;
 

@@ -86,12 +86,15 @@ export default function WorkspaceManagerPage() {
   const active = workspaces.filter((workspace) => workspace.status !== "archived");
   const archived = workspaces.filter((workspace) => workspace.status === "archived");
   const activeMembers = activeWorkspace?.kind === "shared" ? members.length : 0;
+
+  const handleCloseLogs = () => {
+    setLogsWorkspace(null);
+    setAuditLogs([]);
+    setLogsError(null);
+  };
+
   useEffect(() => {
-    if (!logsWorkspace) {
-      setAuditLogs([]);
-      setLogsError(null);
-      return;
-    }
+    if (!logsWorkspace) return;
     let cancelled = false;
     async function loadLogs() {
       setLogsLoading(true);
@@ -739,7 +742,7 @@ export default function WorkspaceManagerPage() {
         </div>
       </Dialog>
 
-      <Dialog open={logsWorkspace !== null} onClose={() => setLogsWorkspace(null)} title={`Histórico · ${logsWorkspace?.name ?? ""}`} description="Histórico de alterações auditadas deste workspace.">
+      <Dialog open={logsWorkspace !== null} onClose={handleCloseLogs} title={`Histórico · ${logsWorkspace?.name ?? ""}`} description="Histórico de alterações auditadas deste workspace.">
         <div className="max-h-[50vh] overflow-y-auto">
           {logsLoading ? (
             <div className="flex items-center justify-center py-8 text-sm text-text-muted">
@@ -767,7 +770,7 @@ export default function WorkspaceManagerPage() {
           )}
         </div>
         <div className="mt-4 flex justify-end">
-          <Button type="button" variant="ghost" onClick={() => setLogsWorkspace(null)}>Fechar</Button>
+          <Button type="button" variant="ghost" onClick={handleCloseLogs}>Fechar</Button>
         </div>
       </Dialog>
 

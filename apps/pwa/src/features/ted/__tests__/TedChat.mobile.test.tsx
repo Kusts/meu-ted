@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@/lib/test-utils";
 import { TedChat } from "../TedChat";
-import * as agentClient from "@/lib/api/agent-client";
 import * as agentAuth from "@/lib/api/agent-auth";
 
 vi.mock("@/lib/auth/workspace-context", async (importOriginal) => {
