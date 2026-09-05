@@ -25,6 +25,8 @@ export type LlmModel = {
 };
 
 export type LlmRuntime = {
+  fallbackProviderId?: string | null;
+  fallbackModelId?: string | null;
   id: number;
   version: number;
   activeProviderId: string | null;
@@ -69,6 +71,73 @@ export const activateModel = async (input: {
   rolloutMode?: RolloutMode;
 }): Promise<{ ok: boolean; runtime: LlmRuntime }> => {
   return apiFetch<{ ok: boolean; runtime: LlmRuntime }>("/admin/agent/llm-config/activate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+};
+
+export const createProvider = async (input: {
+  id: string;
+  name?: string;
+  kind?: string;
+  transport?: string;
+  authMode?: string;
+  baseUrl?: string;
+  secretAlias: string;
+  eligibility?: ProviderEligibility;
+}): Promise<{ provider: LlmProvider }> => {
+  return apiFetch<{ provider: LlmProvider }>("/admin/agent/llm-config/providers", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+};
+
+export const updateProvider = async (
+  providerId: string,
+  patch: Partial<Pick<LlmProvider, "name" | "baseUrl" | "secretAlias" | "eligibility" | "enabled">>,
+): Promise<{ provider: LlmProvider }> => {
+  return apiFetch<{ provider: LlmProvider }>(`/admin/agent/llm-config/providers/${encodeURIComponent(providerId)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+};
+
+export const deleteProvider = async (providerId: string): Promise<{ ok: boolean }> => {
+  return apiFetch<{ ok: boolean }>(`/admin/agent/llm-config/providers/${encodeURIComponent(providerId)}`, {
+    method: "DELETE",
+  });
+};
+
+export const createModel = async (input: {
+  providerId: string;
+  modelId: string;
+  protocol?: Protocol;
+  privacyClass?: PrivacyClass;
+  retention?: string | null;
+  enabled?: boolean;
+}): Promise<{ model: LlmModel }> => {
+  return apiFetch<{ model: LlmModel }>("/admin/agent/llm-config/models", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+};
+
+export const deleteModel = async (modelId: string): Promise<{ ok: boolean }> => {
+  return apiFetch<{ ok: boolean }>(`/admin/agent/llm-config/models/${encodeURIComponent(modelId)}`, {
+    method: "DELETE",
+  });
+};
+
+export const setFallbackModel = async (input: {
+  providerId: string | null;
+  modelId: string | null;
+  expectedVersion: number;
+}): Promise<{ ok: boolean; runtime: LlmRuntime }> => {
+  return apiFetch<{ ok: boolean; runtime: LlmRuntime }>("/admin/agent/llm-config/fallback", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),

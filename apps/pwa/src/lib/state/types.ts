@@ -44,6 +44,7 @@ export interface Category {
   name: string;
   kind: "expense" | "income";
   icon: string;
+  color?: string | null;
   subcategories?: string[];
   parentId?: string;
   status?: string;

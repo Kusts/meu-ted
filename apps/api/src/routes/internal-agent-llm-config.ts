@@ -34,6 +34,8 @@ export const registerInternalAgentLlmConfigRoutes = (
 
     const activeProvider = providers.find((p) => p.id === runtime.providerId);
     const activeModel = models.find((m) => m.id === runtime.modelId);
+    const fallbackProvider = providers.find((p) => p.id === runtime.fallbackProviderId);
+    const fallbackModel = models.find((m) => m.id === runtime.fallbackModelId || (m.providerId === runtime.fallbackProviderId && m.modelId === runtime.fallbackModelId));
 
     return reply.send({
       provider: activeProvider
@@ -55,10 +57,31 @@ export const registerInternalAgentLlmConfigRoutes = (
             privacyClass: activeModel.privacyClass,
           }
         : null,
+      fallbackProvider: fallbackProvider
+        ? {
+            id: fallbackProvider.id,
+            kind: fallbackProvider.kind,
+            transport: fallbackProvider.transport,
+            authMode: fallbackProvider.authMode,
+            secretAlias: fallbackProvider.secretAlias,
+            serviceAlias: fallbackProvider.serviceAlias ?? null,
+            eligibility: fallbackProvider.eligibility,
+          }
+        : null,
+      fallbackModel: fallbackModel
+        ? {
+            id: fallbackModel.id,
+            modelId: fallbackModel.modelId,
+            protocol: fallbackModel.protocol,
+            privacyClass: fallbackModel.privacyClass,
+          }
+        : null,
       runtime: {
         singleton: runtime.singleton,
         providerId: runtime.providerId,
         modelId: runtime.modelId,
+        fallbackProviderId: runtime.fallbackProviderId ?? null,
+        fallbackModelId: runtime.fallbackModelId ?? null,
         rolloutMode: runtime.rolloutMode,
         canaryAllowlist: runtime.canaryAllowlist,
         securityEpoch: runtime.securityEpoch,

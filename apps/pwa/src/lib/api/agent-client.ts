@@ -2,6 +2,12 @@ import { z } from "zod";
 import { apiFetch, isApiConfigured } from "./client";
 import { fetchAgentConnectionToken } from "./agent-auth";
 
+export const attachmentSchema = z.object({
+  type: z.enum(["image", "pdf", "audio"]),
+  url: z.string(),
+  name: z.string().optional(),
+});
+
 const historyItemSchema = z.object({
   id: z.string(),
   actorId: z.string().optional(),
@@ -10,6 +16,7 @@ const historyItemSchema = z.object({
   text: z.string().optional(),
   createdAt: z.string().optional(),
   isOwn: z.boolean(),
+  attachments: z.array(attachmentSchema).optional(),
 }).transform((item) => ({
   id: item.id,
   actorId: item.actorId ?? (item.role === "assistant" ? "ted" : "unknown"),
@@ -17,6 +24,7 @@ const historyItemSchema = z.object({
   content: item.content ?? item.text ?? "",
   createdAt: item.createdAt,
   isOwn: item.isOwn,
+  attachments: item.attachments,
 }));
 
 const historySchema = z.object({
@@ -94,7 +102,11 @@ async function agentAuthHeaders(workspaceId: string): Promise<Record<string, str
   return { "x-agent-connection-token": token };
 }
 
-export async function sendAgentMessage(workspaceId: string, content: string): Promise<AgentTurn> {
+export async function sendAgentMessage(
+  workspaceId: string,
+  content: string,
+  opts?: { attachments?: Array<{ type: string; url: string; name: string }> },
+): Promise<AgentTurn> {
   const baseUrl = agentBaseUrl();
   const authHeaders = await agentAuthHeaders(workspaceId);
   const response = await fetch(
@@ -107,7 +119,7 @@ export async function sendAgentMessage(workspaceId: string, content: string): Pr
         "X-Workspace-Id": workspaceId,
         ...authHeaders,
       },
-      body: JSON.stringify({ text: content }),
+      body: JSON.stringify({ text: content, attachments: opts?.attachments }),
     },
   );
   if (!response.ok) {

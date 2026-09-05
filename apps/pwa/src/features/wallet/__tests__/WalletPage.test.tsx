@@ -95,9 +95,9 @@ describe("WalletPage", () => {
     });
     it("renders accounts section", () => {
       render(<WalletPage />);
-      expect(screen.getByText("Nubank")).toBeInTheDocument();
-      expect(screen.getByText("Itaú")).toBeInTheDocument();
-      expect(screen.getByText("Inter")).toBeInTheDocument();
+      expect(screen.getAllByText("Nubank").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("Itaú").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("Inter").length).toBeGreaterThanOrEqual(1);
     });
     it("renders credit cards", () => {
       render(<WalletPage />);

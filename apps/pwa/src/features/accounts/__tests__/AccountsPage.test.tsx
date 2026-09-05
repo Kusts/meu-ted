@@ -38,7 +38,7 @@ describe("AccountsPage", () => {
   describe("with data", () => {
     it("renders page header", () => { render(<AccountsPage />); expect(screen.getByText("Contas")).toBeInTheDocument(); });
     it("shows total balance", () => { render(<AccountsPage />); expect(screen.getByText(/2\.072,\d{2}/)).toBeInTheDocument(); });
-    it("renders account names", () => { render(<AccountsPage />); expect(screen.getByText("Nubank")).toBeInTheDocument(); expect(screen.getByText("Itaú")).toBeInTheDocument(); expect(screen.getByText("Inter")).toBeInTheDocument(); });
+    it("renders account names", () => { render(<AccountsPage />); expect(screen.getAllByText("Nubank").length).toBeGreaterThanOrEqual(1); expect(screen.getAllByText("Itaú").length).toBeGreaterThanOrEqual(1); expect(screen.getAllByText("Inter").length).toBeGreaterThanOrEqual(1); });
     it("does not render credit cards", () => { render(<AccountsPage />); expect(screen.queryByText("Nubank Crédito")).not.toBeInTheDocument(); });
     it("shows individual balances", () => { render(<AccountsPage />); expect(screen.getByText(/1\.543,20/)).toBeInTheDocument(); expect(screen.getByText(/28,90/)).toBeInTheDocument(); expect(screen.getByText(/500,00/)).toBeInTheDocument(); });
     it("shows mini history inside detail sheet when card is clicked", () => {
@@ -155,7 +155,7 @@ describe("AccountsPage", () => {
       setUrlSearch("?accountId=acc-does-not-exist");
       render(<AccountsPage />);
       expect(screen.queryByText("Detalhes da conta")).not.toBeInTheDocument();
-      expect(screen.getByText("Nubank")).toBeInTheDocument();
+      expect(screen.getAllByText("Nubank").length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -179,7 +179,7 @@ describe("AccountsPage", () => {
       render(<AccountsPage />);
       fireEvent.click(screen.getByText("Nova"));
       const dialog = screen.getByRole("dialog");
-      fireEvent.click(within(dialog).getByText("Caixa"));
+      fireEvent.click(within(dialog).getByText("Caixa Econômica"));
       fireEvent.click(within(dialog).getByText("Salvar conta"));
       expect(addSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "#005CA9" }));
     });

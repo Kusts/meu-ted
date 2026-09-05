@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import { Archive, Check, FolderKanban, Pencil, Plus, RotateCcw, Users, X } from "lucide-react";
+import { useState, useEffect, type FormEvent } from "react";
+import { Archive, Check, FolderKanban, Pencil, Plus, RotateCcw, Users, X, History, Send } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import StatusBar from "@/components/StatusBar";
 import { Button } from "@/components/ui/Button";
@@ -10,7 +10,9 @@ import Dialog from "@/components/ui/Dialog";
 import EmptyState from "@/components/ui/EmptyState";
 import { useWorkspace } from "@/lib/auth/workspace-context";
 import type { Workspace } from "@/lib/api/workspaces";
-import { ApiError } from "@/lib/api/client";
+import { createWorkspaceInvite } from "@/lib/api/workspaces";
+import { ApiError, apiFetch } from "@/lib/api/client";
+import type { AuditLog } from "@/lib/api/endpoints";
 
 type WorkspaceKind = Workspace["kind"];
 
@@ -71,9 +73,69 @@ export default function WorkspaceManagerPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
 
+  // Card-specific invite state for shared workspace cards
+  const [cardInviteEmails, setCardInviteEmails] = useState<Record<string, string>>({});
+  const [cardInviteBusy, setCardInviteBusy] = useState<Record<string, boolean>>({});
+
+  // Audit logs modal state
+  const [logsWorkspace, setLogsWorkspace] = useState<Workspace | null>(null);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState<string | null>(null);
+
   const active = workspaces.filter((workspace) => workspace.status !== "archived");
   const archived = workspaces.filter((workspace) => workspace.status === "archived");
   const activeMembers = activeWorkspace?.kind === "shared" ? members.length : 0;
+  useEffect(() => {
+    if (!logsWorkspace) {
+      setAuditLogs([]);
+      setLogsError(null);
+      return;
+    }
+    let cancelled = false;
+    async function loadLogs() {
+      setLogsLoading(true);
+      setLogsError(null);
+      try {
+        const result = await apiFetch<{ items: AuditLog[]; total: number }>(`/audit-logs?limit=20`, {
+          headers: { "X-Workspace-Id": logsWorkspace!.id },
+        });
+        if (!cancelled) setAuditLogs(result.items);
+      } catch (cause) {
+        if (!cancelled) setLogsError(cause instanceof Error ? cause.message : "Não foi possível carregar logs");
+      } finally {
+        if (!cancelled) setLogsLoading(false);
+      }
+    }
+    void loadLogs();
+    return () => { cancelled = true; };
+  }, [logsWorkspace]);
+
+  async function handleCardInvite(event: FormEvent<HTMLFormElement>, workspaceId: string) {
+    event.preventDefault();
+    const email = (cardInviteEmails[workspaceId] ?? "").trim();
+    if (!email) return;
+    setCardInviteBusy((prev) => ({ ...prev, [workspaceId]: true }));
+    setActionError(null);
+    try {
+      if (activeWorkspace?.id === workspaceId) {
+        await inviteMember(email);
+      } else {
+        await createWorkspaceInvite(workspaceId, email);
+      }
+      setCardInviteEmails((prev) => ({ ...prev, [workspaceId]: "" }));
+    } catch (cause) {
+      const message =
+        cause instanceof ApiError && cause.code === "auth.invite_forbidden"
+          ? "Apenas o owner pode convidar quem ainda não possui conta."
+          : cause instanceof Error
+            ? cause.message
+            : "Não foi possível enviar o convite.";
+      setActionError(message);
+    } finally {
+      setCardInviteBusy((prev) => ({ ...prev, [workspaceId]: false }));
+    }
+  }
   const otherMembers = members.filter((m) => m.role !== "owner");
   const activePendingTransfer = ownershipTransfers?.find((t) => t.status === "pending");
   const pendingTransferForMember = activeWorkspace?.role === "member" ? activePendingTransfer : null;
@@ -315,6 +377,71 @@ export default function WorkspaceManagerPage() {
             )}
           </div>
         </div>
+
+        {workspace.kind === "shared" && !isArchived && (
+          <div className="mt-4 space-y-3 rounded-[14px] border border-border-subtle bg-surface-2/40 p-3">
+            <div>
+              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-text-muted">
+                <Users size={12} /> Membros {isActive ? `· ${members.length}` : ""}
+              </p>
+              {isActive && members.length > 0 ? (
+                <ul className="space-y-1.5">
+                  {members.map((m) => (
+                    <li key={m.userId} className="flex items-center justify-between gap-2 rounded-[10px] bg-surface-1 px-2.5 py-1.5 border border-border-subtle">
+                      <div className="min-w-0">
+                        <p className="truncate text-[12px] font-bold text-text-primary">{m.name || m.email}</p>
+                        <p className="truncate text-[10px] text-text-muted">{m.email}</p>
+                      </div>
+                      <span className={`flex-none rounded-full px-2 py-0.5 text-[10px] font-bold ${m.role === "owner" ? "bg-primary-tint text-primary" : "bg-surface-2 text-text-muted"}`}>
+                        {m.role === "owner" ? "Owner" : "Membro"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : isActive && members.length === 0 ? (
+                <p className="text-[12px] text-text-muted">Nenhum membro encontrado.</p>
+              ) : (
+                <p className="text-[11px] text-text-muted">Membros visíveis quando o workspace estiver ativo.</p>
+              )}
+            </div>
+            <form onSubmit={(e) => void handleCardInvite(e, workspace.id)} className="space-y-2">
+              <label htmlFor={`card-invite-${workspace.id}`} className="block text-[11px] font-bold uppercase tracking-wider text-text-muted">
+                Convidar por e-mail
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id={`card-invite-${workspace.id}`}
+                  aria-label="E-mail do convidado"
+                  type="email"
+                  value={cardInviteEmails[workspace.id] ?? ""}
+                  onChange={(e) => setCardInviteEmails((prev) => ({ ...prev, [workspace.id]: e.target.value }))}
+                  placeholder="email@exemplo.com"
+                  className="h-9 flex-1 rounded-[10px] border border-border-subtle bg-surface-1 px-3 text-[12px] font-medium text-text-primary outline-none focus:border-primary"
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  aria-label={`Convidar para ${workspace.name}`}
+                  loading={!!cardInviteBusy[workspace.id]}
+                  disabled={!(cardInviteEmails[workspace.id] ?? "").trim()}
+                  className="flex-none"
+                >
+                  <Send size={14} /> Convidar
+                </Button>
+              </div>
+            </form>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label={`Ver logs de ${workspace.name}`}
+              onClick={() => setLogsWorkspace(workspace)}
+              className="w-full"
+            >
+              <History size={14} /> Logs
+            </Button>
+          </div>
+        )}
       </article>
     );
   }
@@ -609,6 +736,38 @@ export default function WorkspaceManagerPage() {
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={() => setTransferConfirmOpen(false)}>Cancelar</Button>
           <Button type="button" variant="primary" loading={transferBusy} onClick={() => void handleTransferOwnership()}>Confirmar transferência</Button>
+        </div>
+      </Dialog>
+
+      <Dialog open={logsWorkspace !== null} onClose={() => setLogsWorkspace(null)} title={`Histórico · ${logsWorkspace?.name ?? ""}`} description="Histórico de alterações auditadas deste workspace.">
+        <div className="max-h-[50vh] overflow-y-auto">
+          {logsLoading ? (
+            <div className="flex items-center justify-center py-8 text-sm text-text-muted">
+              <span className="h-5 w-5 animate-spin rounded-full border-2 border-border-subtle border-t-primary mr-2" />
+              Carregando logs...
+            </div>
+          ) : logsError ? (
+            <div className="rounded-[12px] border border-danger/20 bg-danger-tint p-3 text-[13px] text-danger">{logsError}</div>
+          ) : auditLogs.length === 0 ? (
+            <p className="py-4 text-center text-[13px] text-text-muted">Nenhum histórico encontrado.</p>
+          ) : (
+            <div className="space-y-2">
+              {auditLogs.map((log) => (
+                <div key={log.id} className="rounded-[12px] border border-border-subtle bg-surface-1 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-bold text-text-secondary">{log.operation}</span>
+                    <span className="text-[11px] text-text-muted">{new Date(log.createdAt).toLocaleString("pt-BR")}</span>
+                  </div>
+                  <p className="mt-1.5 text-[12px] font-medium text-text-primary">{log.eventType}</p>
+                  <p className="text-[11px] text-text-muted">Actor: {log.actorType} · {log.actorId.slice(0, 8)}…</p>
+                  {log.effectRef && <p className="text-[11px] text-text-muted">Ref: {log.effectRef.slice(0, 8)}…</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button type="button" variant="ghost" onClick={() => setLogsWorkspace(null)}>Fechar</Button>
         </div>
       </Dialog>
 

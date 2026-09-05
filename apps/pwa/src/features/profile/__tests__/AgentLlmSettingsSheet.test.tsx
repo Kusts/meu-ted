@@ -54,7 +54,7 @@ describe("AgentLlmSettingsSheet Component (Task 11)", () => {
     expect(screen.getByText(/v1/)).toBeInTheDocument();
     expect(screen.getByText("OpenCode Zen")).toBeInTheDocument();
     expect(screen.getAllByText("opencode-zen").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("OPENCODE_ZEN_API_KEY")).toBeInTheDocument();
+    expect(screen.getAllByText("OPENCODE_ZEN_API_KEY").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("gpt-4o").length).toBeGreaterThanOrEqual(1);
   });
 

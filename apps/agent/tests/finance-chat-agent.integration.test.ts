@@ -9,6 +9,7 @@ describe("FinanceChatAgent & Worker Integration (Task 4)", () => {
 
   const mockEnv: WorkerEnv = {
     API_ORIGIN,
+    AGENT_AUTH_SERVICE_TOKEN: "test-auth-service-token",
     AGENT: {
       idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
       get: vi.fn(() => ({

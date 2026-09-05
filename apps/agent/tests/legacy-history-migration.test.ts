@@ -166,6 +166,7 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
       },
       API_ORIGIN: 'https://api.test.local',
       AGENT_CONNECTION_TOKEN_SECRET: SECRET,
+      AGENT_AUTH_SERVICE_TOKEN: 'test-auth-service-token',
     };
 
     const req1 = new Request(
@@ -202,6 +203,7 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
       },
       API_ORIGIN: 'https://api.test.local',
       AGENT_CONNECTION_TOKEN_SECRET: SECRET,
+      AGENT_AUTH_SERVICE_TOKEN: 'test-auth-service-token',
     };
 
     const req2 = new Request(
@@ -241,6 +243,7 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
       },
       API_ORIGIN: 'https://api.test.local',
       AGENT_CONNECTION_TOKEN_SECRET: SECRET,
+      AGENT_AUTH_SERVICE_TOKEN: 'test-auth-service-token',
     };
 
     const req3 = new Request(
@@ -357,6 +360,7 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
       },
       API_ORIGIN: 'https://api.test.local',
       AGENT_CONNECTION_TOKEN_SECRET: SECRET,
+      AGENT_AUTH_SERVICE_TOKEN: 'test-auth-service-token',
       AGENT_CONFIG_TOKEN: 'test-config-token',
     };
 

@@ -58,6 +58,7 @@ describe("Gateway history_migration_failed/idempotency (RED for live block)", ()
       },
       API_ORIGIN: "https://api.test.local",
       AGENT_CONNECTION_TOKEN_SECRET: SECRET,
+      AGENT_AUTH_SERVICE_TOKEN: "service-token",
     };
 
     const req = new Request(`https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/history`, {
@@ -93,6 +94,7 @@ describe("Gateway history_migration_failed/idempotency (RED for live block)", ()
       },
       API_ORIGIN: "https://api.test.local",
       AGENT_CONNECTION_TOKEN_SECRET: SECRET,
+      AGENT_AUTH_SERVICE_TOKEN: "service-token",
     };
 
     const req = new Request(`https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/chat`, {
@@ -125,6 +127,7 @@ describe("Gateway history_migration_failed/idempotency (RED for live block)", ()
       },
       API_ORIGIN: "https://api.test.local",
       AGENT_CONNECTION_TOKEN_SECRET: SECRET,
+      AGENT_AUTH_SERVICE_TOKEN: "service-token",
     };
 
     const req = new Request(`https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/history`, {

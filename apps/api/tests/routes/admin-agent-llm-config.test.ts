@@ -126,6 +126,34 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
       expect(data.providers).toHaveLength(4);
       expect(data.runtime.singleton).toBe('active');
     });
+
+    it('rejects attempt to spoof admin via x-user-email or x-user-role headers without session', async () => {
+      const getRes = await app.inject({
+        method: 'GET',
+        url: '/admin/agent/llm-config',
+        headers: {
+          'x-user-email': ADMIN_EMAIL,
+          'x-user-role': 'admin',
+        },
+      });
+      expect(getRes.statusCode).toBe(401);
+      expect(getRes.json()).toMatchObject({ code: 'auth.session_required' });
+
+      const postRes = await app.inject({
+        method: 'POST',
+        url: '/admin/agent/llm-config/security-epoch',
+        headers: {
+          'x-user-email': ADMIN_EMAIL,
+          'x-user-role': 'admin',
+          origin: 'http://localhost:3000',
+        },
+        payload: {
+          reason: 'spoofing-attempt',
+        },
+      });
+      expect(postRes.statusCode).toBe(401);
+      expect(postRes.json()).toMatchObject({ code: 'auth.session_required' });
+    });
   });
 
   describe('CSRF & SSRF Protections', () => {
@@ -478,16 +506,69 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
           protocol: 'chat-completions',
           privacyClass: 'training_prohibited',
         },
+        fallbackProvider: null,
+        fallbackModel: null,
         runtime: {
           singleton: 'active',
           providerId: 'openai-api',
           modelId: 'openai-api:gpt-4o',
+          fallbackProviderId: null,
+          fallbackModelId: null,
           rolloutMode: 'all',
           canaryAllowlist: [],
           securityEpoch: 1,
           version: 2,
         },
       });
+    });
+
+    it('returns configured fallback provider and model when set', async () => {
+      await llmStore.upsertProvider({
+        id: 'opencode-zen',
+        kind: 'opencode-zen',
+        transport: 'direct',
+        authMode: 'api-key',
+        secretAlias: 'OPENCODE_ZEN_API_KEY',
+        enabled: true,
+        eligibility: 'approved',
+      });
+      const fallbackModel = await llmStore.upsertModel({
+        providerId: 'opencode-zen',
+        modelId: 'zen-fallback',
+        protocol: 'chat-completions',
+        privacyClass: 'training_prohibited',
+        enabled: true,
+      });
+
+      const currentRuntime = await llmStore.getRuntime();
+      await llmStore.updateRuntime({
+        providerId: currentRuntime.providerId,
+        modelId: currentRuntime.modelId,
+        fallbackProviderId: 'opencode-zen',
+        fallbackModelId: fallbackModel.id,
+        expectedVersion: currentRuntime.version,
+        updatedBy: ADMIN_EMAIL,
+      });
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/internal/agent/llm-config',
+        headers: {
+          'x-agent-config-token': CONFIG_TOKEN,
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const data = res.json();
+      expect(data.fallbackProvider).toMatchObject({
+        id: 'opencode-zen',
+        kind: 'opencode-zen',
+      });
+      expect(data.fallbackModel).toMatchObject({
+        id: 'opencode-zen:zen-fallback',
+        modelId: 'zen-fallback',
+      });
+      expect(data.runtime.fallbackProviderId).toBe('opencode-zen');
+      expect(data.runtime.fallbackModelId).toBe(fallbackModel.id);
     });
   });
 });

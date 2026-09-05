@@ -11,6 +11,7 @@ import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
 import { Plus, ChevronRight, FileText } from "lucide-react";
+import { BANK_PRESETS, resolveBankPreset } from "@/lib/bank-presets";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -34,15 +35,10 @@ const ACCOUNT_KINDS = [
   { value: "investment", label: "Investimento" },
 ];
 
-const BANK_COLORS = [
-  { value: "#820AD1", label: "Nubank" },
-  { value: "#EC7000", label: "Itaú" },
-  { value: "#003882", label: "Bradesco" },
-  { value: "#005CA9", label: "Caixa" },
-  { value: "#FF7A00", label: "Banco Inter" },
-  { value: "#21C25E", label: "C6" },
-  { value: "#4A5568", label: "Outro" },
-];
+const BANK_COLORS = BANK_PRESETS.filter((p) => !p.id.includes("prime") && !p.id.includes("personnalite")).map((p) => ({
+  value: p.primaryColor,
+  label: p.name,
+})).concat([{ value: "#4A5568", label: "Outro" }]);
 
 /**
  * Maps the UI subkinds to the kinds the authoritative API accepts on account
@@ -278,15 +274,30 @@ function AccountDetailSheet({
     }
   }
 
+  const preset = account ? resolveBankPreset({ name: account.name, color: account.color }) : null;
   return (
     <BottomSheet open={open} onClose={onClose} title="Detalhes da conta">
       <div className="flex flex-col gap-4">
-        {/* Header */}
-        <div className="flex items-center gap-3 rounded-[16px] border border-border-subtle bg-surface-2 p-3.5">
-          <Badge label={account.name} color={account.color ?? "#4A5568"} size="md" />
+        {/* Header with bank identity */}
+        <div className="flex items-center gap-3 rounded-[16px] border p-3.5" style={{ background: preset ? `linear-gradient(135deg, ${preset.primaryColor}14, var(--surface-2))` : undefined, borderColor: preset ? `${preset.primaryColor}30` : undefined }}>
+          <span
+            className="flex h-10 w-10 items-center justify-center rounded-[12px] text-[12px] font-black text-white shadow-sm"
+            style={{ background: preset?.gradient ?? "#4A5568", color: preset?.textColor ?? "#fff" }}
+            aria-hidden="true"
+          >
+            {preset ? preset.shortName.slice(0, 2).toUpperCase() : account.name.slice(0, 2).toUpperCase()}
+          </span>
           <div className="flex-1 min-w-0">
             <div className="truncate text-[14px] font-bold text-text-primary">{account.name}</div>
-            <div className="text-[11px] font-medium text-text-muted">{kindLabel(account.kind)}</div>
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
+              <span>{kindLabel(account.kind)}</span>
+              {preset && (
+                <>
+                  <span className="h-1 w-1 rounded-full bg-border-subtle" />
+                  <span style={{ color: preset.primaryColor }}>{preset.name}</span>
+                </>
+              )}
+            </div>
           </div>
           <div className="font-mono tabular-nums text-[15px] font-bold text-text-primary">
             {formatBRL(account.balanceCents)}
@@ -461,54 +472,79 @@ export default function AccountsPage() {
             </div>
           </div>
 
-          {/* Account cards */}
+          {/* Account cards with bank identity */}
           <div className="flex flex-col gap-3">
-            {checkingAccounts.map((acc) => (
-              <button
-                type="button"
-                key={acc.id}
-                data-testid="account-card"
-                data-account-id={acc.id}
-                data-highlighted={detailAccount?.id === acc.id ? "true" : "false"}
-                onClick={() => setDetailAccount(acc)}
-                className={`relative w-full rounded-[18px] border bg-surface-1 px-4 py-3.5 pr-11 shadow-card transition-all text-left hover:bg-surface-2/60 ${
-                  detailAccount?.id === acc.id
-                    ? "border-primary ring-2 ring-primary/30"
-                    : "border-border-subtle"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <Badge label={acc.name} color={acc.color ?? "#4A5568"} size="md" />
-                  <div className="flex-1 min-w-0">
-                    <div className="truncate text-[14px] font-bold text-text-primary">
-                      {acc.name}
+            {checkingAccounts.map((acc) => {
+              const preset = resolveBankPreset({ name: acc.name, color: acc.color });
+              return (
+                <button
+                  type="button"
+                  key={acc.id}
+                  data-testid="account-card"
+                  data-account-id={acc.id}
+                  data-bank={preset.id}
+                  data-highlighted={detailAccount?.id === acc.id ? "true" : "false"}
+                  onClick={() => setDetailAccount(acc)}
+                  className={`relative w-full overflow-hidden rounded-[18px] border bg-surface-1 px-4 py-3.5 pr-11 shadow-card transition-all text-left hover:bg-surface-2/60 ${
+                    detailAccount?.id === acc.id
+                      ? "border-primary ring-2 ring-primary/30"
+                      : "border-border-subtle"
+                  }`}
+                  style={{
+                    borderColor: detailAccount?.id === acc.id ? undefined : `${preset.primaryColor}22`,
+                    background: `linear-gradient(90deg, ${preset.primaryColor}0F 0%, transparent 45%), var(--surface-1)`,
+                  }}
+                >
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute left-0 top-0 h-full w-[4px]"
+                    style={{ background: preset.gradient }}
+                  />
+                  <div className="flex items-center gap-3">
+                    <span
+                      className="flex h-9 w-9 items-center justify-center rounded-[10px] text-[11px] font-black text-white shadow-sm"
+                      style={{ background: preset.gradient, color: preset.textColor }}
+                      aria-hidden="true"
+                    >
+                      {preset.shortName.slice(0, 2).toUpperCase()}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate text-[14px] font-bold text-text-primary">
+                        {acc.name}
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
+                        <span>
+                          {acc.kind === "credit_card"
+                            ? "Cartão"
+                            : acc.kind === "checking"
+                              ? "Conta corrente"
+                              : acc.kind === "savings"
+                                ? "Poupança"
+                                : acc.kind === "investment"
+                                  ? "Investimento"
+                                  : acc.kind === "cash"
+                                    ? "Dinheiro"
+                                    : acc.kind === "bank"
+                                      ? "Conta"
+                                      : "Outro"}
+                        </span>
+                        <span className="h-1 w-1 rounded-full bg-border-subtle" />
+                        <span className="truncate font-semibold" style={{ color: preset.primaryColor }}>
+                          {preset.name}
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-[11px] font-medium text-text-muted">
-                      {acc.kind === "credit_card"
-                        ? "Cartão"
-                        : acc.kind === "checking"
-                          ? "Conta corrente"
-                          : acc.kind === "savings"
-                            ? "Poupança"
-                            : acc.kind === "investment"
-                              ? "Investimento"
-                              : acc.kind === "cash"
-                                ? "Dinheiro"
-                                : acc.kind === "bank"
-                                  ? "Conta"
-                                  : "Outro"}
+                    <div className="font-mono tabular-nums text-[14px] font-bold text-text-primary">
+                      {formatBRL(acc.balanceCents)}
                     </div>
                   </div>
-                  <div className="font-mono tabular-nums text-[14px] font-bold text-text-primary">
-                    {formatBRL(acc.balanceCents)}
+                  {/* chevron */}
+                  <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted">
+                    <ChevronRight size={16} />
                   </div>
-                </div>
-                {/* chevron */}
-                <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted">
-                  <ChevronRight size={16} />
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
             {checkingAccounts.length === 0 && (
               <div className="rounded-[18px] border border-dashed border-border-subtle bg-surface-1 px-4 py-8 text-center text-[13px] text-text-muted">
                 Nenhuma conta cadastrada. Toque em Nova.

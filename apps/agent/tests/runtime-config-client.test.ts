@@ -25,6 +25,8 @@ describe('Runtime Config Client (Task 5)', () => {
       version: 3,
       activeProviderId: 'openai-api',
       activeModelId: 'gpt-4o-mini',
+      fallbackProviderId: null,
+      fallbackModelId: null,
       activeProtocol: 'chat-completions',
       activeRolloutPercentage: 100,
       securityEpoch: 2,

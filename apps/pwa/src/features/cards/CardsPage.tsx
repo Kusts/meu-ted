@@ -11,6 +11,8 @@ import { fetchStatementDetail, updateCardPurchase } from "@/lib/api/endpoints";
 import type { StatementDetail, StatementPurchase } from "@/lib/state/types";
 import { useAppState } from "@/lib/state/app-state-context";
 import { Plus, ChevronLeft, CreditCard as CreditCardIcon, Edit3 } from "lucide-react";
+import BankCard from "@/components/BankCard";
+import { BANK_PRESETS, resolveBankPreset, formatMaskedNumber } from "@/lib/bank-presets";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -58,41 +60,22 @@ interface CardData {
   currentStmtId?: string;
 }
 
-const BANK_GRADIENTS: Record<string, string> = {
-  "#820AD1": "linear-gradient(145deg, #820AD1, #4A0080)",
-  "#4A0080": "linear-gradient(145deg, #820AD1, #4A0080)",
-  "#EC7000": "linear-gradient(145deg, #EC7000, #C45A00)",
-  "#C45A00": "linear-gradient(145deg, #EC7000, #C45A00)",
-  "#CC092F": "linear-gradient(145deg, #CC092F, #A0001F)",
-  "#EC0000": "linear-gradient(145deg, #EC0000, #B80000)",
-  "#003882": "linear-gradient(145deg, #003882, #002060)",
-  "#005CA9": "linear-gradient(145deg, #005CA9, #003D73)",
-  "#FF7A00": "linear-gradient(145deg, #FF7A00, #D46400)",
-  "#1A1A1A": "linear-gradient(145deg, #1A1A1A, #000000)",
-  "#009A3E": "linear-gradient(145deg, #009A3E, #006B2B)",
-  "#C9A84C": "linear-gradient(145deg, #C9A84C, #9A7A2F)",
-  "#00C1D4": "linear-gradient(145deg, #00C1D4, #009BAB)",
-  "#21C25E": "linear-gradient(145deg, #21C25E, #148040)",
-};
-
 function gradientFor(color: string | undefined): string {
   if (!color) return "linear-gradient(145deg, #4A5568, #2D3748)";
-  return BANK_GRADIENTS[color] ?? `linear-gradient(145deg, ${color}, ${color}dd)`;
+  const preset = BANK_PRESETS.find((p) => p.primaryColor.toLowerCase() === color.toLowerCase());
+  if (preset) return preset.cardGradient;
+  return `linear-gradient(145deg, ${color}, ${color}dd)`;
 }
 
-const CARD_BRANDS = [
-  { name: "Nubank", color: "#820AD1" },
-  { name: "Itaú", color: "#EC7000" },
-  { name: "Bradesco", color: "#CC092F" },
-  { name: "Caixa", color: "#005CA9" },
-  { name: "Santander", color: "#EC0000" },
-  { name: "Banco Inter", color: "#FF7A00" },
-  { name: "C6", color: "#1A1A1A" },
-  { name: "BTG", color: "#003882" },
-  { name: "Will Bank", color: "#00C1D4" },
-  { name: "BMG", color: "#009A3E" },
-  { name: "Outro", color: "#4A5568" },
-];
+const CARD_BRANDS = BANK_PRESETS.map((p) => ({ name: p.name, color: p.primaryColor, id: p.id }));
+
+function getLastFour(id: string): string {
+  const digits = id.replace(/\D/g, "");
+  if (digits.length >= 4) return digits.slice(-4);
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) % 10000;
+  return String(hash).padStart(4, "0");
+}
 
 function NewCardSheet({
   open,
@@ -141,29 +124,46 @@ function NewCardSheet({
     }
   }
 
+  const selectedPreset = BANK_PRESETS.find((p) => p.name === brand) ?? BANK_PRESETS[0]!;
   return (
     <BottomSheet open={open} onClose={onClose} title="Novo cartão">
       <div className="flex flex-col gap-4" onChangeCapture={markDirty}>
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
-            Bandeira / banco
+            Banco / bandeira
           </label>
+          <div className="mb-3">
+            <BankCard
+              bankId={selectedPreset.id}
+              cardName={name.trim() || selectedPreset.name}
+              maskedNumber="•••• •••• •••• 0000"
+              holderName="SEU NOME"
+              expiry="12/30"
+              network={selectedPreset.network}
+              compact
+            />
+          </div>
           <div className="flex flex-wrap gap-2">
-            {CARD_BRANDS.map((b) => (
-              <button
-                key={b.name}
-                type="button"
-                onClick={() => { markDirty(); setBrand(b.name); }}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-all ${
-                  brand === b.name
-                    ? "bg-primary text-white shadow-xs"
-                    : "bg-surface-2 text-text-secondary hover:bg-surface-3"
-                }`}
-              >
-                <span className="h-2.5 w-2.5 rounded-full shadow-xs" style={{ background: b.color }} />
-                {b.name}
-              </button>
-            ))}
+            {CARD_BRANDS.map((b) => {
+              const p = BANK_PRESETS.find((x) => x.name === b.name) ?? BANK_PRESETS[0]!;
+              const isSelected = brand === b.name;
+              return (
+                <button
+                  key={b.name}
+                  type="button"
+                  onClick={() => { markDirty(); setBrand(b.name); }}
+                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold transition-all border ${
+                    isSelected
+                      ? "text-white shadow-xs border-transparent"
+                      : "bg-surface-2 text-text-secondary hover:bg-surface-3 border-border-subtle"
+                  }`}
+                  style={isSelected ? { background: p.gradient, color: p.textColor } : undefined}
+                >
+                  <span className="h-2.5 w-2.5 rounded-full shadow-xs border border-white/30" style={{ background: p.primaryColor }} />
+                  {b.name}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -698,24 +698,32 @@ export default function CardsPage() {
               </div>
             )}
             {cardsData.map((card) => {
-              const bgGrad = gradientFor(card.color);
+              const preset = resolveBankPreset({ name: card.name, color: card.color });
               const availCents = card.creditLimitCents - card.spentCents;
+              const masked = formatMaskedNumber(getLastFour(card.id));
               return (
-                <div key={card.id} onClick={() => setSelectedCardId(card.id)} className="cursor-pointer">
-                  <div className="overflow-hidden rounded-[22px] p-5 text-white shadow-elevated transition-transform duration-200 hover:scale-[1.01]" style={{ background: bgGrad, minHeight: 160 }}>
-                    <div className="mb-[22px] flex items-start justify-between">
-                      <div>
-                        <div className="text-[15px] font-bold tracking-tight">{card.name}</div>
-                        <div className="text-[11px] font-medium text-white/70">Fecha dia {card.closingDay} · vence dia {card.dueDay}</div>
-                      </div>
-                      <CreditCardIcon size={26} className="text-white/85" />
+                <div key={card.id} onClick={() => setSelectedCardId(card.id)} className="cursor-pointer flex flex-col gap-2">
+                  <BankCard
+                    bankId={preset.id}
+                    cardName={card.name}
+                    maskedNumber={masked}
+                    holderName="TITULAR"
+                    expiry={`${String(card.dueDay).padStart(2, "0")}/30`}
+                    network={preset.network}
+                  />
+                  <div className="rounded-[16px] border border-border-subtle bg-surface-1 p-3 shadow-card">
+                    <div className="flex items-center justify-between text-[11px] font-medium text-text-muted">
+                      <span>Fecha dia {card.closingDay} · vence dia {card.dueDay}</span>
+                      <span className="font-bold" style={{ color: preset.primaryColor }}>
+                        {preset.name}
+                      </span>
                     </div>
-                    <div className="mb-[3px] text-[11px] font-medium text-white/70">Fatura atual</div>
-                    <div className="mb-3 font-mono tabular-nums text-[26px] font-bold leading-none">{formatBRL(card.spentCents)}</div>
-                    <div className="mb-[7px] h-[6px] rounded-full bg-white/20 overflow-hidden">
-                      <div className="h-full rounded-full bg-white transition-all duration-300" style={{ width: `${card.pct}%` }} />
+                    <div className="mt-1 text-[11px] font-medium text-text-muted">Fatura atual</div>
+                    <div className="font-mono tabular-nums text-[18px] font-bold text-text-primary">{formatBRL(card.spentCents)}</div>
+                    <div className="mt-2 h-[6px] rounded-full bg-surface-2 overflow-hidden">
+                      <div className="h-full rounded-full transition-all duration-300" style={{ width: `${card.pct}%`, background: preset.gradient }} />
                     </div>
-                    <div className="flex justify-between font-mono tabular-nums text-[11px] font-semibold text-white/80">
+                    <div className="mt-1.5 flex justify-between font-mono tabular-nums text-[11px] font-semibold text-text-muted">
                       <span>{formatPct(card.pct)} de {formatBRL(card.creditLimitCents)}</span>
                       <span>{formatBRL(availCents)} livre</span>
                     </div>
@@ -743,8 +751,9 @@ export default function CardsPage() {
             const detailDueDay = selectedStmtSummary
               ? new Date(`${selectedStmtSummary.dueDate}T12:00:00`).getDate()
               : card.dueDay;
-            const bgGrad = gradientFor(card.color);
+            const preset = resolveBankPreset({ name: card.name, color: card.color });
             const availCents = card.creditLimitCents - detailSpent;
+            const masked = formatMaskedNumber(getLastFour(card.id));
 
             return (
               <div className="flex flex-col gap-4 px-5 sm:px-8 lg:px-12">
@@ -762,21 +771,29 @@ export default function CardsPage() {
                   </button>
                 </div>
 
+                <BankCard
+                  bankId={preset.id}
+                  cardName={card.name}
+                  maskedNumber={masked}
+                  holderName="TITULAR"
+                  expiry={`${String(detailDueDay).padStart(2, "0")}/30`}
+                  network={preset.network}
+                />
+
                 {/* Hero KPIs */}
-                <div className="rounded-[22px] p-5 text-white shadow-elevated" style={{ background: bgGrad }}>
-                  <div className="mb-3.5 text-[15px] font-bold tracking-tight">{card.name}</div>
+                <div className="rounded-[16px] border border-border-subtle bg-surface-1 p-4 shadow-card">
                   <div className="flex justify-between">
                     <div>
-                      <div className="text-[11px] font-medium text-white/70">Fatura</div>
-                      <div className="font-mono tabular-nums text-[18px] font-bold">{formatBRL(detailSpent)}</div>
+                      <div className="text-[11px] font-medium text-text-muted">Fatura</div>
+                      <div className="font-mono tabular-nums text-[18px] font-bold text-text-primary">{formatBRL(detailSpent)}</div>
                     </div>
                     <div>
-                      <div className="text-[11px] font-medium text-white/70">Vence dia</div>
-                      <div className="font-mono tabular-nums text-[18px] font-bold">{detailDueDay}</div>
+                      <div className="text-[11px] font-medium text-text-muted">Vence dia</div>
+                      <div className="font-mono tabular-nums text-[18px] font-bold text-text-primary">{detailDueDay}</div>
                     </div>
                     <div>
-                      <div className="text-[11px] font-medium text-white/70">Limite livre</div>
-                      <div className="font-mono tabular-nums text-[18px] font-bold">{formatBRL(availCents)}</div>
+                      <div className="text-[11px] font-medium text-text-muted">Limite livre</div>
+                      <div className="font-mono tabular-nums text-[18px] font-bold text-primary">{formatBRL(availCents)}</div>
                     </div>
                   </div>
                 </div>

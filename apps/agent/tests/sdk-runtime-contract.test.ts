@@ -50,6 +50,7 @@ describe("Agents SDK Runtime Contract & Isolation (Steps 2 & 6)", () => {
           AGENT: {} as DurableObjectNamespace,
           FINANCE_CHAT_AGENT: {} as DurableObjectNamespace,
           API_ORIGIN: "http://api.local",
+          AGENT_AUTH_SERVICE_TOKEN: "service-token",
         }, {});
         expect([401, 403]).toContain(res.status);
       } finally {

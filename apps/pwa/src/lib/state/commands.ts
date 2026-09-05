@@ -130,6 +130,8 @@ export interface CategoryInput {
   name: string;
   kind: "expense" | "income";
   parentId?: string;
+  icon?: string | null;
+  color?: string | null;
   idempotencyKey?: string;
 }
 

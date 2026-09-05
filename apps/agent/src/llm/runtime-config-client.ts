@@ -5,6 +5,8 @@ export type RuntimeSnapshot = {
   activeProtocol: string | null;
   activeRolloutPercentage: number;
   securityEpoch: number;
+  fallbackProviderId?: string | null;
+  fallbackModelId?: string | null;
   catalogVersion?: number;
 };
 
@@ -33,6 +35,7 @@ export const fetchRuntimeConfig = async (
   const data = (await res.json()) as Record<string, unknown>;
   const runtime = (data.runtime as Record<string, unknown>) ?? data;
   const model = (data.model as Record<string, unknown>) ?? null;
+  const fallbackModel = (data.fallbackModel as Record<string, unknown>) ?? null;
 
   const providerId = typeof runtime.activeProviderId === 'string'
     ? runtime.activeProviderId
@@ -44,14 +47,22 @@ export const fetchRuntimeConfig = async (
     : typeof runtime.modelId === 'string'
       ? runtime.modelId
       : null;
-  // Prefer the pure model ID from the catalog record over the composite
-  // "<providerId>:<modelId>" DB key when both are present.
   const modelId = typeof model?.modelId === 'string' ? model.modelId : rawModelId;
+
+  const fallbackProviderId = typeof runtime.fallbackProviderId === 'string'
+    ? runtime.fallbackProviderId
+    : null;
+  const rawFallbackModelId = typeof runtime.fallbackModelId === 'string'
+    ? runtime.fallbackModelId
+    : null;
+  const fallbackModelId = typeof fallbackModel?.modelId === 'string' ? fallbackModel.modelId : rawFallbackModelId;
 
   return {
     version: typeof runtime.version === 'number' ? runtime.version : 1,
     activeProviderId: providerId,
     activeModelId: modelId,
+    fallbackProviderId,
+    fallbackModelId,
     activeProtocol: typeof model?.protocol === 'string'
       ? model.protocol
       : typeof runtime.activeProtocol === 'string'
@@ -59,7 +70,7 @@ export const fetchRuntimeConfig = async (
         : null,
     activeRolloutPercentage: typeof runtime.activeRolloutPercentage === 'number'
       ? runtime.activeRolloutPercentage
-      : typeof runtime.activeRolloutPercentage === 'number' ? runtime.activeRolloutPercentage : 100,
+      : 100,
     securityEpoch: typeof runtime.securityEpoch === 'number' ? runtime.securityEpoch : 1,
     catalogVersion: typeof runtime.catalogVersion === 'number' ? runtime.catalogVersion : undefined,
   };

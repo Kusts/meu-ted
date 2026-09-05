@@ -77,15 +77,6 @@ export const registerAdminAgentLlmConfigRoutes = (
       // Ignore session retrieval errors
     }
 
-    // Fallback: check headers in development/test if session missing and x-user-email provided
-    if (!session && req.headers['x-user-email']) {
-      const email = String(req.headers['x-user-email']).trim();
-      const role = String(req.headers['x-user-role'] || 'user').trim();
-      if (role === 'admin' || isUserAdmin(email, deps.adminEmails)) {
-        session = { userId: 'admin-header-user', email };
-      }
-    }
-
     if (!session) {
       return reply.code(401).send({
         code: 'auth.session_required',
@@ -271,6 +262,123 @@ export const registerAdminAgentLlmConfigRoutes = (
     const session = (req as unknown as { _session: { email: string } })._session;
     const runtime = await deps.store.bumpSecurityEpoch(session.email);
     return reply.send({ runtime });
+  });
+
+  // POST /admin/agent/llm-config/providers - Create / upsert provider (CRUD)
+  app.post<{
+    Body: { id: string; kind?: string; transport?: string; authMode?: string; secretAlias?: string | null; name?: string; baseUrl?: string; eligibility?: string; enabled?: boolean };
+  }>('/admin/agent/llm-config/providers', { preHandler: guard }, async (req, reply) => {
+    const body = req.body ?? ({} as never);
+    const id = (body.id ?? body.name ?? '').trim();
+    if (!id) return reply.code(400).send({ code: 'agent.invalid_provider', message: 'id é obrigatório' });
+    let kind = body.kind as string | undefined;
+    let transport = body.transport as string | undefined;
+    let authMode = body.authMode as string | undefined;
+    let secretAlias = body.secretAlias as string | null | undefined;
+    if (!kind && body.name) {
+      const map: Record<string, string> = { 'opencode-zen': 'opencode-zen', 'opencode-go': 'opencode-go', 'openai-api': 'openai-api', 'openai-codex-subscription': 'openai-codex-subscription' };
+      kind = map[id] ?? map[body.name] ?? 'openai-api';
+    }
+    if (!transport) transport = kind === 'openai-codex-subscription' ? 'private-broker' : 'direct';
+    if (!authMode) authMode = transport === 'private-broker' ? 'chatgpt-browser' : 'api-key';
+    if (secretAlias === undefined) {
+      const aliasMap: Record<string, string | null> = { 'opencode-zen': 'OPENCODE_ZEN_API_KEY', 'opencode-go': 'OPENCODE_GO_API_KEY', 'openai-api': 'OPENAI_API_KEY', 'openai-codex-subscription': null };
+      secretAlias = (aliasMap[kind ?? 'openai-api'] as string | null) ?? null;
+    }
+    const { validateProvider } = await import('../agent/llm-config.js');
+    const errs = validateProvider({ kind: kind as never, transport: transport as never, authMode: authMode as never, secretAlias: secretAlias as never });
+    if (errs) return reply.code(400).send({ code: 'agent.invalid_provider', message: errs });
+    const provider = await deps.store.upsertProvider({
+      id,
+      kind: kind as never,
+      transport: transport as never,
+      authMode: authMode as never,
+      secretAlias: secretAlias as never,
+      enabled: body.enabled ?? false,
+      eligibility: (body.eligibility as never) ?? 'approved',
+    });
+    return reply.code(201).send({ provider });
+  });
+
+  app.patch<{
+    Params: { id: string };
+    Body:Partial<{ enabled: boolean; eligibility: string; secretAlias: string | null }>;
+  }>('/admin/agent/llm-config/providers/:id', { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params;
+    const patch = req.body ?? {};
+    const existing = await deps.store.getProvider(id);
+    if (!existing) return reply.code(404).send({ code: 'agent.provider_not_found', message: `Provider ${id} não encontrado` });
+    if (typeof patch.enabled === 'boolean') {
+      const updated = await deps.store.setProviderEnabled(id, patch.enabled);
+      return reply.send({ provider: updated });
+    }
+    const merged = { ...existing, ...patch } as never;
+    const { validateProvider } = await import('../agent/llm-config.js');
+    const err = validateProvider(merged);
+    if (err) return reply.code(400).send({ code: 'agent.invalid_provider', message: err });
+    const provider = await deps.store.upsertProvider({
+      id: existing.id,
+      kind: existing.kind,
+      transport: existing.transport,
+      authMode: existing.authMode,
+      secretAlias: (patch.secretAlias !== undefined ? patch.secretAlias : existing.secretAlias) as never,
+      enabled: patch.enabled ?? existing.enabled,
+      eligibility: (patch.eligibility as never) ?? existing.eligibility,
+    });
+    return reply.send({ provider });
+  });
+
+  app.delete<{ Params: { id: string } }>('/admin/agent/llm-config/providers/:id', { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params;
+    const existing = await deps.store.getProvider(id);
+    if (!existing) return reply.code(404).send({ code: 'agent.provider_not_found', message: `Provider ${id} não encontrado` });
+    await deps.store.deleteProvider(id);
+    return reply.send({ ok: true });
+  });
+
+  app.delete<{ Params: { id: string } }>('/admin/agent/llm-config/models/:id', { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params;
+    await deps.store.deleteModel(id);
+    return reply.send({ ok: true });
+  });
+
+  // POST /admin/agent/llm-config/fallback - Set fallback provider/model
+  app.post<{
+    Body: { providerId: string | null; modelId: string | null; expectedVersion: number };
+  }>('/admin/agent/llm-config/fallback', { preHandler: guard }, async (req, reply) => {
+    const { providerId, modelId, expectedVersion } = req.body ?? {};
+    if (expectedVersion === undefined) return reply.code(400).send({ code: 'agent.invalid_fallback', message: 'expectedVersion é obrigatório' });
+    if ((providerId && !modelId) || (!providerId && modelId)) {
+      return reply.code(400).send({ code: 'agent.invalid_fallback', message: 'providerId e modelId devem ser ambos nulos ou ambos preenchidos' });
+    }
+    if (providerId && modelId) {
+      const provider = await deps.store.getProvider(providerId);
+      const models = await deps.store.listModels();
+      const model = models.find((m) => m.id === modelId || (m.providerId === providerId && m.modelId === modelId));
+      const { canActivate } = await import('../agent/llm-config.js');
+      const err = canActivate(provider, model);
+      if (err) return reply.code(422).send({ code: 'agent.activation_blocked', reason: err });
+    }
+    const runtime = await deps.store.getRuntime();
+    if (runtime.version !== expectedVersion) {
+      return reply.code(409).send({ code: 'agent.version_conflict', message: 'Conflito de versão' });
+    }
+    const session = (req as unknown as { _session: { email: string } })._session;
+    let fallbackModelId: string | null = modelId;
+    if (providerId && modelId) {
+      const models = await deps.store.listModels();
+      const found = models.find((m) => m.id === modelId || (m.providerId === providerId && m.modelId === modelId));
+      fallbackModelId = found ? found.id : modelId;
+    }
+    const updated = await deps.store.updateRuntime({
+      providerId: runtime.providerId,
+      modelId: runtime.modelId,
+      fallbackProviderId: providerId,
+      fallbackModelId: fallbackModelId,
+      expectedVersion,
+      updatedBy: session.email,
+    });
+    return reply.send({ ok: true, runtime: updated });
   });
 
   // POST /admin/agent/llm-config/test-connection - Test provider connection (sanitized response)

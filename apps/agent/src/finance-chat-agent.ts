@@ -18,6 +18,9 @@ import {
   type MigrationResult,
   type SdkUIMessage,
 } from "./migration/legacy-history.js";
+import { generatedHttpTools } from "./generated/http-tools.js";
+import { setGlobalApiContext } from "./tools/api-client.js";
+import { createDelegatedTurnToken } from "./delegated-token.js";
 
 export type Env = {
   AGENT_DELEGATION_SECRET?: string;
@@ -42,6 +45,8 @@ export type IntentionSnapshotRow = {
   protocol: string;
   rollout_percentage: number;
   security_epoch: number;
+  fallback_provider_id?: string | null;
+  fallback_model_id?: string | null;
   created_at: string;
 };
 
@@ -50,7 +55,8 @@ Suas diretrizes fundamentais são:
 1. Comunicação sempre em Português do Brasil (pt-BR), com tom profissional, encorajador, claro e objetivo.
 2. Todas as informações financeiras pertencem estritamente ao workspace ativo; nunca assuma dados de terceiros.
 3. Forneça respostas analíticas, projeções mensais, análises de gastos e sugestões orçamentárias fundamentadas nos dados do usuário.
-4. Jamais divulgue segredos de infraestrutura, tokens ou chaves internas.`;
+4. Jamais divulgue segredos de infraestrutura, tokens ou chaves internas.
+5. Você tem acesso a ferramentas (tools) autorizadas e isoladas por workspace: saldo e contas (get_balance, list_accounts), transações e extratos (list_recent_transactions, create_expense, create_income, update_transaction), metas financeiras (list_goals, create_goal, contribute_to_goal), orçamentos (list_budgets, check_budgets, create_budget), cartões e faturas (list_statements, get_statement_details, pay_statement, create_credit_card_account), contas a pagar (list_accounts_payable, create_account_payable) e auditoria. Sempre utilize a ferramenta adequada em vez de responder "sem autorização" ou "não tenho acesso".`;
 
 export class FinanceChatAgent extends AIChatAgent<Env> {
   static override readonly messageConcurrency = "queue" as const;
@@ -69,6 +75,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             protocol TEXT NOT NULL,
             rollout_percentage INTEGER NOT NULL DEFAULT 100,
             security_epoch INTEGER NOT NULL DEFAULT 1,
+            fallback_provider_id TEXT,
+            fallback_model_id TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
           );
         `);
@@ -80,12 +88,16 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
 
   private async resolveIntentionSnapshot(intentionId: string): Promise<IntentionSnapshotRow | null> {
     if (this.state?.storage?.sql) {
-      const rows = [...this.state.storage.sql.exec<IntentionSnapshotRow>(
-        `SELECT * FROM intention_snapshots WHERE intention_id = ?`,
-        intentionId,
-      )];
-      if (rows.length > 0 && rows[0]) {
-        return rows[0];
+      try {
+        const rows = [...this.state.storage.sql.exec<IntentionSnapshotRow>(
+          `SELECT * FROM intention_snapshots WHERE intention_id = ?`,
+          intentionId,
+        )];
+        if (rows.length > 0 && rows[0]) {
+          return rows[0];
+        }
+      } catch {
+        // Continue if sql exec fails
       }
     }
 
@@ -114,6 +126,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       protocol: config.activeProtocol ?? "chat-completions",
       rollout_percentage: config.activeRolloutPercentage,
       security_epoch: config.securityEpoch,
+      fallback_provider_id: config.fallbackProviderId ?? null,
+      fallback_model_id: config.fallbackModelId ?? null,
       created_at: new Date().toISOString(),
     };
 
@@ -214,16 +228,17 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         return Response.json({ code: "agent.unauthorized", message: "Missing authenticated actor or workspace" }, { status: 401 });
       }
 
-      let body: { text?: unknown; content?: unknown; intentionId?: unknown };
+      let body: { text?: unknown; content?: unknown; intentionId?: unknown; attachments?: unknown };
       try {
-        body = (await request.json()) as { text?: unknown; content?: unknown; intentionId?: unknown };
+        body = (await request.json()) as { text?: unknown; content?: unknown; intentionId?: unknown; attachments?: unknown };
       } catch {
         return Response.json({ code: "agent.invalid_message" }, { status: 400 });
       }
       const rawText = typeof body.text === "string" ? body.text : (typeof body.content === "string" ? body.content : "");
       const unredactedText = rawText.trim();
-      if (!unredactedText) return Response.json({ code: "agent.invalid_message" }, { status: 400 });
-      const text = redactTranscript(unredactedText);
+      const incomingAttachments = Array.isArray(body.attachments) ? (body.attachments as Array<{ type: string; url: string; name: string }>) : [];
+      if (!unredactedText && incomingAttachments.length === 0) return Response.json({ code: "agent.invalid_message" }, { status: 400 });
+      const text = unredactedText ? redactTranscript(unredactedText) : incomingAttachments.length > 0 ? `[anexo ${incomingAttachments.map((a) => a.name).join(", ")}]` : "";
       const intentionId = typeof body.intentionId === "string" && body.intentionId.trim()
         ? body.intentionId.trim()
         : `intent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -251,8 +266,9 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             actorId,
             workspaceId,
             createdAt: userCreatedAt,
+            ...(incomingAttachments.length > 0 ? { attachments: incomingAttachments } : {}),
           },
-        };
+        } as unknown as UIMessage;
 
         if (typeof this.persistMessages !== "function") {
           return Response.json(
@@ -265,7 +281,58 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         try {
           const relayOrigin = this.env?.API_ORIGIN ?? "https://api.synkroo.com.br";
           const adminToken = this.env?.AGENT_RUNTIME_ADMIN_TOKEN ?? "";
-          const relayRes = await fetch(`${relayOrigin.replace(/\/$/, "")}/internal/agent/llm-relay`, {
+
+          // --- Integração de ferramentas TED: preparar contexto delegado e enriquecer prompt com dados financeiros ---
+          let enrichedPrompt = text;
+          try {
+            const delegationSecret = this.env?.AGENT_DELEGATION_SECRET;
+            if (delegationSecret) {
+              const roleHeader = (this as unknown as { env: Env }).env ? "member" : "member";
+              // Criar token delegado workspace-isolado para chamadas de ferramentas
+              const delegatedToken = await createDelegatedTurnToken(
+                {
+                  actorId,
+                  workspaceId,
+                  role: "member",
+                  capabilities: ["financial.read", "financial.write"],
+                  requestId: intentionId,
+                },
+                delegationSecret,
+              );
+              setGlobalApiContext({ delegatedToken, apiOrigin: relayOrigin });
+
+              // Heurística leve para chamar ferramentas relevantes antes do LLM, garantindo que TED não negue acesso
+              const lower = text.toLowerCase();
+              const toolCalls: Array<{ name: string; params: Record<string, unknown> }> = [];
+              if (/(saldo|balance|conta|accounts)/i.test(lower)) toolCalls.push({ name: "get_balance", params: { householdId: workspaceId } });
+              if (/(transa[çc][aã]o|extrato|gastos|despesa|transactions)/i.test(lower)) toolCalls.push({ name: "list_recent_transactions", params: { householdId: workspaceId, limit: 10 } });
+              if (/(meta|goal)/i.test(lower)) toolCalls.push({ name: "list_goals", params: { householdId: workspaceId } });
+              if (/(or[çc]amento|budget)/i.test(lower)) toolCalls.push({ name: "list_budgets", params: { householdId: workspaceId } });
+              if (/(cart[aã]o|fatura|statement|cartao)/i.test(lower)) toolCalls.push({ name: "list_statements", params: { householdId: workspaceId } });
+              if (toolCalls.length === 0) {
+                // Fallback: sempre oferecer contexto mínimo para evitar "sem autorização"
+                toolCalls.push({ name: "get_balance", params: { householdId: workspaceId } });
+                toolCalls.push({ name: "list_recent_transactions", params: { householdId: workspaceId, limit: 5 } });
+              }
+              // Executar até 2 ferramentas para não estourar tempo, com fail-open
+              for (const call of toolCalls.slice(0, 2)) {
+                const tool = generatedHttpTools.find((t) => t.name === call.name);
+                if (!tool) continue;
+                try {
+                  const result = await (tool.execute as unknown as (p: Record<string, unknown>) => Promise<unknown>)(call.params);
+                  const snippet = JSON.stringify(result).slice(0, 800);
+                  // Enriquecer prompt com resultado da ferramenta (isolado por workspace)
+                  enrichedPrompt += `\n\n[Dados da ferramenta ${call.name} (workspace ${workspaceId}): ${snippet}]`;
+                } catch {
+                  // fail-open: não bloquear chat se ferramenta falhar
+                }
+              }
+            }
+          } catch {
+            // fail-open para enriquecimento
+          }
+
+          let relayRes = await fetch(`${relayOrigin.replace(/\/$/, "")}/internal/agent/llm-relay`, {
             method: "POST",
             headers: {
               "content-type": "application/json",
@@ -274,13 +341,49 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             body: JSON.stringify({
               provider: snapshot.provider_id,
               model: snapshot.model_id,
-              prompt: text,
+              prompt: enrichedPrompt,
               system: TED_SYSTEM_PROMPT,
             }),
           });
-          const relayRaw = await relayRes.text().catch(() => "");
+          let relayRaw = await relayRes.text().catch(() => "");
           let relayBody: { text?: string; code?: string; message?: string } = {};
           try { relayBody = JSON.parse(relayRaw || "{}") as { text?: string; code?: string; message?: string }; } catch { relayBody = {}; }
+          let effectiveProvider = snapshot.provider_id;
+          let effectiveModel = snapshot.model_id;
+          let usedFallback = false;
+
+          // Se a inferência primária falhar e houver fallback configurado, tenta o fallback
+          if ((!relayRes.ok || typeof relayBody.text !== "string" || !relayBody.text) && snapshot.fallback_provider_id && snapshot.fallback_model_id) {
+            try {
+              const fallbackRes = await fetch(`${relayOrigin.replace(/\/$/, "")}/internal/agent/llm-relay`, {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  "x-agent-runtime-admin-token": adminToken,
+                },
+                body: JSON.stringify({
+                  provider: snapshot.fallback_provider_id,
+                  model: snapshot.fallback_model_id,
+                  prompt: enrichedPrompt,
+                  system: TED_SYSTEM_PROMPT,
+                }),
+              });
+              if (fallbackRes.ok) {
+                const fbRaw = await fallbackRes.text().catch(() => "");
+                const fbBody = JSON.parse(fbRaw || "{}") as { text?: string };
+                if (typeof fbBody.text === "string" && fbBody.text) {
+                  relayBody = fbBody;
+                  relayRes = fallbackRes;
+                  effectiveProvider = snapshot.fallback_provider_id;
+                  effectiveModel = snapshot.fallback_model_id;
+                  usedFallback = true;
+                }
+              }
+            } catch {
+              // Silenciosamente segue para retorno de erro primário caso fallback também falhe
+            }
+          }
+
           if (!relayRes.ok || typeof relayBody.text !== "string" || !relayBody.text) {
             const safeRelayRaw = redactTranscript(String(relayRaw)).slice(0, 200);
             const safeErrorMessage = redactTranscript(relayBody.message ?? "Falha ao processar a inferência.");
@@ -311,6 +414,9 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             metadata: {
               actorId: "ted",
               workspaceId,
+              provider: effectiveProvider,
+              model: effectiveModel,
+              fallback: usedFallback,
               createdAt: assistantCreatedAt,
             },
           };
@@ -346,7 +452,12 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         return Response.json({ code: "agent.unauthorized", message: "Missing authenticated actor or workspace" }, { status: 401 });
       }
 
-      const rawMessages = Array.isArray(this.messages) ? this.messages : [];
+      const allMessages = Array.isArray(this.messages) ? this.messages : [];
+      // Isolamento por workspace: filtrar mensagens cujo workspaceId difere (defesa em profundidade, DO já é por workspace)
+      const rawMessages = allMessages.filter((msg) => {
+        const ws = (msg.metadata as { workspaceId?: string } | undefined)?.workspaceId;
+        return !ws || ws === workspaceId;
+      });
 
       const items = rawMessages.map((msg) => {
         const msgActorId = (msg.metadata as { actorId?: string } | undefined)?.actorId ?? (msg.role === "assistant" ? "ted" : "unknown");
@@ -356,6 +467,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         }
         const isOwn = msg.role === "user" && msgActorId === actorId;
         const createdAt = (msg.metadata as { createdAt?: string } | undefined)?.createdAt ?? undefined;
+        const attachments = (msg.metadata as { attachments?: Array<{ type: string; url: string; name: string }> } | undefined)?.attachments;
         return {
           id: String(msg.id ?? `msg-${Date.now()}`),
           actorId: msgActorId,
@@ -364,6 +476,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           text: contentText,
           createdAt: typeof createdAt === "string" ? createdAt : undefined,
           isOwn,
+          ...(attachments ? { attachments } : {}),
         };
       });
 

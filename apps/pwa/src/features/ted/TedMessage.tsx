@@ -53,6 +53,48 @@ export function TedMessage({ message, isCurrentUser, senderName }: TedMessagePro
           }`}
         >
           <div className="whitespace-pre-wrap break-words">{message.content}</div>
+          {Array.isArray((message as unknown as { attachments?: Array<{ type: string; url: string; name?: string }> }).attachments) &&
+            (message as unknown as { attachments: Array<{ type: string; url: string; name?: string }> }).attachments.length > 0 && (
+              <div className="mt-2 flex flex-col gap-2">
+                {(message as unknown as { attachments: Array<{ type: string; url: string; name?: string }> }).attachments.map((att, idx) => {
+                  if (att.type === "image") {
+                    return (
+                      <img
+                        key={`${att.url}-${idx}`}
+                        src={att.url}
+                        alt={att.name || "imagem anexada"}
+                        className="max-h-[220px] max-w-full rounded-[10px] border border-border-subtle object-cover"
+                      />
+                    );
+                  }
+                  if (att.type === "audio") {
+                    return (
+                      <audio
+                        key={`${att.url}-${idx}`}
+                        controls
+                        src={att.url}
+                        className="w-full max-w-[260px] rounded-[10px]"
+                      />
+                    );
+                  }
+                  if (att.type === "pdf") {
+                    return (
+                      <a
+                        key={`${att.url}-${idx}`}
+                        href={att.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-[10px] border border-border-subtle bg-surface-1 px-3 py-2 text-xs font-semibold text-primary hover:bg-surface-2"
+                      >
+                        <span>📄</span>
+                        <span>{att.name || "documento.pdf"}</span>
+                      </a>
+                    );
+                  }
+                  return null;
+                })}
+              </div>
+            )}
         </div>
       </div>
       {isCurrentUser && (

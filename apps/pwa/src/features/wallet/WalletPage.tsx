@@ -7,6 +7,7 @@ import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 import { Plus } from "lucide-react";
+import { resolveBankPreset } from "@/lib/bank-presets";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -172,26 +173,40 @@ export default function WalletPage() {
           </div>
 
           <div className="mb-5 flex flex-col gap-2.5">
-            {checkingAccounts.map((acc) => (
-              <Link
-                key={acc.id}
-                href={`/contas?accountId=${acc.id}`}
-                className="flex cursor-pointer items-center gap-3 rounded-[16px] border border-border-subtle bg-surface-1 px-3.5 py-3 shadow-card hover:bg-surface-2/60 transition-colors"
-              >
-                <Badge label={acc.name} color={acc.color ?? "#4A5568"} size="md" />
-                <div className="flex-1 min-w-0">
-                  <div className="truncate text-[14px] font-bold text-text-primary">
-                    {acc.name}
+            {checkingAccounts.map((acc) => {
+              const preset = resolveBankPreset({ name: acc.name, color: acc.color });
+              return (
+                <Link
+                  key={acc.id}
+                  href={`/contas?accountId=${acc.id}`}
+                  data-bank={preset.id}
+                  className="relative flex cursor-pointer items-center gap-3 overflow-hidden rounded-[16px] border bg-surface-1 px-3.5 py-3 shadow-card hover:bg-surface-2/60 transition-colors"
+                  style={{ borderColor: `${preset.primaryColor}22`, background: `linear-gradient(90deg, ${preset.primaryColor}0F, transparent 50%), var(--surface-1)` }}
+                >
+                  <span className="absolute left-0 top-0 h-full w-[4px]" style={{ background: preset.gradient }} aria-hidden="true" />
+                  <span
+                    className="flex h-9 w-9 items-center justify-center rounded-[10px] text-[11px] font-black text-white shadow-sm"
+                    style={{ background: preset.gradient, color: preset.textColor }}
+                    aria-hidden="true"
+                  >
+                    {preset.shortName.slice(0, 2).toUpperCase()}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate text-[14px] font-bold text-text-primary">
+                      {acc.name}
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
+                      <span>{accountKindLabel(acc.kind)}</span>
+                      <span className="h-1 w-1 rounded-full bg-border-subtle" />
+                      <span style={{ color: preset.primaryColor }}>{preset.name}</span>
+                    </div>
                   </div>
-                  <div className="text-[11px] font-medium text-text-muted">
-                    {accountKindLabel(acc.kind)}
+                  <div className="font-mono tabular-nums text-[14px] font-bold text-text-primary">
+                    {formatBRL(acc.balanceCents)}
                   </div>
-                </div>
-                <div className="font-mono tabular-nums text-[14px] font-bold text-text-primary">
-                  {formatBRL(acc.balanceCents)}
-                </div>
-              </Link>
-            ))}
+                </Link>
+              );
+            })}
 
             <Link
               href="/contas"
@@ -224,21 +239,32 @@ export default function WalletPage() {
                       100,
                     )
                   : 0;
-
+              const preset = resolveBankPreset({ name: card.name, color: (card as { color?: string }).color });
               return (
                 <Link
                   key={card.id}
                   href={`/cartoes?cardId=${card.id}`}
-                  className="cursor-pointer rounded-[16px] border border-border-subtle bg-surface-1 px-3.5 py-3 shadow-card hover:bg-surface-2/60 transition-colors"
+                  data-bank={preset.id}
+                  className="relative cursor-pointer overflow-hidden rounded-[16px] border bg-surface-1 px-3.5 py-3 shadow-card hover:bg-surface-2/60 transition-colors"
+                  style={{ borderColor: `${preset.primaryColor}22` }}
                 >
+                  <span className="absolute left-0 top-0 h-full w-[4px]" style={{ background: preset.gradient }} aria-hidden="true" />
                   <div className="mb-2.5 flex items-center gap-3">
-                    <Badge label={card.name} color={card.color ?? "#4A5568"} size="md" />
+                    <span
+                      className="flex h-9 w-9 items-center justify-center rounded-[10px] text-[11px] font-black text-white shadow-sm"
+                      style={{ background: preset.gradient, color: preset.textColor }}
+                      aria-hidden="true"
+                    >
+                      {preset.shortName.slice(0, 2).toUpperCase()}
+                    </span>
                     <div className="flex-1 min-w-0">
                       <div className="truncate text-[14px] font-bold text-text-primary">
                         {card.name}
                       </div>
-                      <div className="text-[11px] font-medium text-text-muted">
-                        Vence dia {card.dueDay}
+                      <div className="flex items-center gap-1.5 text-[11px] font-medium text-text-muted">
+                        <span>Vence dia {card.dueDay}</span>
+                        <span className="h-1 w-1 rounded-full bg-border-subtle" />
+                        <span style={{ color: preset.primaryColor }}>{preset.name}</span>
                       </div>
                     </div>
                     <div className="text-right">

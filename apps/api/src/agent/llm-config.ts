@@ -69,6 +69,8 @@ export interface RuntimeConfig {
   singleton: 'active';
   providerId: string | null;
   modelId: string | null;
+  fallbackProviderId?: string | null;
+  fallbackModelId?: string | null;
   rolloutMode: RolloutMode;
   canaryAllowlist: string[];
   securityEpoch: number;

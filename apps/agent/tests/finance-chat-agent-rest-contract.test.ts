@@ -290,6 +290,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
       },
       API_ORIGIN: "https://api.test.local",
       AGENT_CONNECTION_TOKEN_SECRET: SECRET,
+      AGENT_AUTH_SERVICE_TOKEN: "test-auth-service-token",
     };
 
     // Client sends request with valid signed token, but also tries to inject forged header x-agent-actor
@@ -411,6 +412,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
       },
       API_ORIGIN: "https://api.test.local",
       AGENT_CONNECTION_TOKEN_SECRET: SECRET,
+      AGENT_AUTH_SERVICE_TOKEN: "test-auth-service-token",
     };
 
     // Non-RPC subpath, e.g. /other-action or /websocket
