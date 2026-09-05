@@ -114,10 +114,23 @@ export default function WorkspaceManagerPage() {
     return () => { cancelled = true; };
   }, [logsWorkspace]);
 
+  function isDuplicateEmail(email: string): boolean {
+    const lower = email.trim().toLowerCase();
+    if (!lower) return false;
+    const memberDup = members.some((m) => m.email.toLowerCase() === lower);
+    const pendingDup = pendingInvites.some((i) => i.email.toLowerCase() === lower);
+    return memberDup || pendingDup;
+  }
+
   async function handleCardInvite(event: FormEvent<HTMLFormElement>, workspaceId: string) {
     event.preventDefault();
     const email = (cardInviteEmails[workspaceId] ?? "").trim();
     if (!email) return;
+    // Validacao email duplicado (apenas quando workspace do card é o ativo, onde temos dados de membros)
+    if (activeWorkspace?.id === workspaceId && isDuplicateEmail(email)) {
+      setActionError("Este e-mail já é membro ou possui convite pendente.");
+      return;
+    }
     setCardInviteBusy((prev) => ({ ...prev, [workspaceId]: true }));
     setActionError(null);
     try {
@@ -202,6 +215,10 @@ export default function WorkspaceManagerPage() {
     event.preventDefault();
     const email = inviteEmail.trim();
     if (!email) return;
+    if (isDuplicateEmail(email)) {
+      setActionError("Este e-mail já é membro ou possui convite pendente.");
+      return;
+    }
     setInviteBusy(true);
     setActionError(null);
     try {

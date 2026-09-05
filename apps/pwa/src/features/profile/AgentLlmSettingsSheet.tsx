@@ -16,7 +16,8 @@ import {
   type LlmModel,
   type LlmRuntime,
 } from "@/lib/api/admin-agent-llm-config";
-import { Cpu, CheckCircle2, AlertCircle, Plus, Trash2 } from "lucide-react";
+import { Cpu, CheckCircle2, AlertCircle, Plus, Trash2, Sparkles } from "lucide-react";
+import { LLM_PROVIDER_PRESETS } from "@/lib/llm-presets";
 
 interface AgentLlmSettingsSheetProps {
   open: boolean;
@@ -169,6 +170,55 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
     }
   };
 
+  const handleCreatePreset = async (presetId: string) => {
+    const preset = LLM_PROVIDER_PRESETS.find((p) => p.id === presetId);
+    if (!preset) {
+      setError(`Preset ${presetId} não encontrado`);
+      return;
+    }
+    if (providers.some((p) => p.id === preset.id)) {
+      setError(`Provedor ${preset.name} já existe`);
+      setSelectedProviderId(preset.id);
+      return;
+    }
+    setError(null);
+    try {
+      await createProvider({
+        id: preset.id,
+        name: preset.name,
+        kind: preset.kind as never,
+        transport: preset.transport as never,
+        authMode: preset.authMode as never,
+        secretAlias: preset.secretAlias ?? "OPENAI_API_KEY",
+        eligibility: "approved",
+        enabled: true,
+      });
+      try {
+        await toggleProvider(preset.id, true);
+      } catch {}
+      for (const m of preset.autoModels) {
+        try {
+          await createModel({
+            providerId: preset.id,
+            modelId: m.modelId,
+            protocol: m.protocol as never,
+            privacyClass: m.privacyClass as never,
+            enabled: true,
+          });
+        } catch {}
+        try {
+          const modelId = `${preset.id}:${m.modelId}`;
+          await toggleModel(modelId, true);
+        } catch {}
+      }
+      await loadConfig();
+      setActionSuccess(`Provedor ${preset.name} cadastrado com ${preset.autoModels.length} modelos`);
+      setSelectedProviderId(preset.id);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   const handleCreateModel = async () => {
     const modelId = newModelIdInput.trim();
     if (!modelId) {
@@ -296,10 +346,38 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                     ))}
                   </select>
                 </div>
+                <div>
+                  <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                    <Sparkles size={12} /> Presets Populares
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {LLM_PROVIDER_PRESETS.map((preset) => {
+                      const exists = providers.some((p) => p.id === preset.id);
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          disabled={exists}
+                          onClick={() => void handleCreatePreset(preset.id)}
+                          className={`rounded-[12px] border px-3 py-2.5 text-left transition-all ${
+                            exists
+                              ? "border-border-subtle bg-surface-2 text-text-muted cursor-not-allowed opacity-60"
+                              : "border-border-subtle bg-surface-2 hover:bg-surface-3 hover:border-primary/30 text-text-primary hover:shadow-sm active:scale-[0.98]"
+                          }`}
+                          title={exists ? "Já cadastrado" : `Cadastrar ${preset.name} com ${preset.autoModels.length} modelos`}
+                        >
+                          <div className="text-[12px] font-bold leading-tight">{preset.name}</div>
+                          <div className="text-[10px] font-medium text-text-muted truncate">{preset.description}</div>
+                          <div className="mt-1 text-[10px] font-mono text-text-muted">{preset.autoModels.length} modelos • {preset.secretAlias ?? "sem segredo"}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
                   <div>
                     <label htmlFor="new-provider-id" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-text-muted">
-                      Novo provedor ID
+                      Novo provedor ID (custom)
                     </label>
                     <input
                       id="new-provider-id"
@@ -323,6 +401,13 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                       <option value="OPENCODE_ZEN_API_KEY">OPENCODE_ZEN_API_KEY</option>
                       <option value="OPENCODE_GO_API_KEY">OPENCODE_GO_API_KEY</option>
                       <option value="OPENAI_API_KEY">OPENAI_API_KEY</option>
+                      <option value="ANTHROPIC_API_KEY">ANTHROPIC_API_KEY</option>
+                      <option value="DEEPSEEK_API_KEY">DEEPSEEK_API_KEY</option>
+                      <option value="QWEN_API_KEY">QWEN_API_KEY</option>
+                      <option value="GLM_API_KEY">GLM_API_KEY</option>
+                      <option value="MINIMAX_API_KEY">MINIMAX_API_KEY</option>
+                      <option value="GOOGLE_API_KEY">GOOGLE_API_KEY</option>
+                      <option value="OPENROUTER_API_KEY">OPENROUTER_API_KEY</option>
                     </select>
                   </div>
                 </div>

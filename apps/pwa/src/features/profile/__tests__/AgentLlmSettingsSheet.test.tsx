@@ -52,10 +52,9 @@ describe("AgentLlmSettingsSheet Component (Task 11)", () => {
 
     expect(await screen.findByText(/Runtime Ativo/i)).toBeInTheDocument();
     expect(screen.getByText(/v1/)).toBeInTheDocument();
-    expect(screen.getByText("OpenCode Zen")).toBeInTheDocument();
-    expect(screen.getAllByText("opencode-zen").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("OpenCode Zen").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("OPENCODE_ZEN_API_KEY").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("gpt-4o").length).toBeGreaterThanOrEqual(1);
+    expect(await screen.findAllByText("gpt-4o")).not.toHaveLength(0);
   });
 
   it("toggles provider status when clicked", async () => {

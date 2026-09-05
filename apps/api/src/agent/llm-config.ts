@@ -1,4 +1,4 @@
-export type ProviderKind = 'opencode-zen' | 'opencode-go' | 'openai-api' | 'openai-codex-subscription';
+export type ProviderKind = 'opencode-zen' | 'opencode-go' | 'openai-api' | 'openai-codex-subscription' | 'openai' | 'anthropic' | 'deepseek' | 'qwen' | 'glm' | 'minimax' | 'google' | 'openrouter';
 export type Transport = 'direct' | 'private-broker';
 export type AuthMode = 'api-key' | 'chatgpt-browser';
 export type Protocol = 'responses' | 'messages' | 'chat-completions' | 'google-generative-ai';
@@ -12,12 +12,27 @@ export const ALLOWED_KINDS: readonly ProviderKind[] = [
   'opencode-go',
   'openai-api',
   'openai-codex-subscription',
+  'openai',
+  'anthropic',
+  'deepseek',
+  'qwen',
+  'glm',
+  'minimax',
+  'google',
+  'openrouter',
 ] as const;
 
 export const ALLOWED_SECRET_ALIASES = [
   'OPENCODE_ZEN_API_KEY',
   'OPENCODE_GO_API_KEY',
   'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'DEEPSEEK_API_KEY',
+  'QWEN_API_KEY',
+  'GLM_API_KEY',
+  'MINIMAX_API_KEY',
+  'GOOGLE_API_KEY',
+  'OPENROUTER_API_KEY',
 ] as const;
 export type SecretAlias = typeof ALLOWED_SECRET_ALIASES[number];
 

@@ -9,7 +9,7 @@ import { CategoryBadge, getCategoryColor } from "@/components/ui/CategoryBadge";
 import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
-import { Plus, Search, X, Check, Sparkles, Tag } from "lucide-react";
+import { Plus, Search, X, Check, Sparkles, Tag, ChevronDown } from "lucide-react";
 import * as LucideIcons from "lucide-react";
 import { ICON_GROUPS, COLOR_PALETTE, getCategoryIconName } from "./category-constants";
 
@@ -387,6 +387,8 @@ export default function CategoriesPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState<{ id: string; name: string } | null>(null);
   const [query, setQuery] = useState("");
+  const [expenseOpen, setExpenseOpen] = useState(true);
+  const [incomeOpen, setIncomeOpen] = useState(true);
 
   const expenseCategories = useMemo(() => categories.filter((c) => c.kind === "expense"), [categories]);
   const incomeCategories = useMemo(() => categories.filter((c) => c.kind === "income"), [categories]);
@@ -493,51 +495,77 @@ export default function CategoriesPage() {
           ) : (
             <>
               <section>
-                <div className="mb-3 flex items-center justify-between rounded-[12px] bg-danger-tint/30 px-3.5 py-2">
+                <button
+                  type="button"
+                  aria-expanded={expenseOpen}
+                  aria-controls="expenses-grid"
+                  onClick={() => setExpenseOpen((o) => !o)}
+                  className="mb-3 flex w-full items-center justify-between rounded-[12px] bg-danger-tint/30 px-3.5 py-2 text-left transition-colors hover:bg-danger-tint/50"
+                >
                   <span className="text-[11px] font-bold uppercase tracking-wider text-danger">Despesas</span>
-                  <span className="text-[10px] font-bold text-text-muted">{filteredExpenses.length} categoria{filteredExpenses.length !== 1 ? "s" : ""}</span>
-                </div>
-                {filteredExpenses.length === 0 ? (
-                  <div className="rounded-[18px] border border-dashed border-border-subtle bg-surface-1 px-4 py-8 text-center text-[12px] text-text-muted">Nenhuma categoria de despesa.</div>
-                ) : (
-                  <div data-testid="categories-grid" className="categories-grid grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {filteredExpenses.map((cat) => (
-                      <CategoryRow
-                        key={cat.id}
-                        cat={cat as unknown as { id: string; name: string; icon?: string | null; color?: string | null; subcategories?: string[] }}
-                        onAddSub={addCategory as unknown as (input: { name: string; kind: "expense" | "income"; parentId: string }) => void}
-                        onEdit={(c) => {
-                          setEditCategory(c);
-                          setEditOpen(true);
-                        }}
-                        onDeactivate={(c) => setConfirmDeactivate(c)}
-                      />
-                    ))}
-                  </div>
+                  <span className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-text-muted">{filteredExpenses.length} categoria{filteredExpenses.length !== 1 ? "s" : ""}</span>
+                    <ChevronDown size={14} className={`text-danger transition-transform ${expenseOpen ? "rotate-180" : ""}`} />
+                  </span>
+                </button>
+                {expenseOpen && (
+                  <>
+                    {filteredExpenses.length === 0 ? (
+                      <div className="rounded-[18px] border border-dashed border-border-subtle bg-surface-1 px-4 py-8 text-center text-[12px] text-text-muted">Nenhuma categoria de despesa.</div>
+                    ) : (
+                      <div id="expenses-grid" data-testid="categories-grid" className="categories-grid grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {filteredExpenses.map((cat) => (
+                          <CategoryRow
+                            key={cat.id}
+                            cat={cat as unknown as { id: string; name: string; icon?: string | null; color?: string | null; subcategories?: string[] }}
+                            onAddSub={addCategory as unknown as (input: { name: string; kind: "expense" | "income"; parentId: string }) => void}
+                            onEdit={(c) => {
+                              setEditCategory(c);
+                              setEditOpen(true);
+                            }}
+                            onDeactivate={(c) => setConfirmDeactivate(c)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </section>
               <section>
-                <div className="mb-3 flex items-center justify-between rounded-[12px] bg-primary-tint/30 px-3.5 py-2">
+                <button
+                  type="button"
+                  aria-expanded={incomeOpen}
+                  aria-controls="incomes-grid"
+                  onClick={() => setIncomeOpen((o) => !o)}
+                  className="mb-3 flex w-full items-center justify-between rounded-[12px] bg-primary-tint/30 px-3.5 py-2 text-left transition-colors hover:bg-primary-tint/50"
+                >
                   <span className="text-[11px] font-bold uppercase tracking-wider text-primary">Receitas</span>
-                  <span className="text-[10px] font-bold text-text-muted">{filteredIncomes.length} categoria{filteredIncomes.length !== 1 ? "s" : ""}</span>
-                </div>
-                {filteredIncomes.length === 0 ? (
-                  <div className="rounded-[18px] border border-dashed border-border-subtle bg-surface-1 px-4 py-8 text-center text-[12px] text-text-muted">Nenhuma categoria de receita.</div>
-                ) : (
-                  <div data-testid="categories-grid" className="categories-grid grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {filteredIncomes.map((cat) => (
-                      <CategoryRow
-                        key={cat.id}
-                        cat={cat as unknown as { id: string; name: string; icon?: string | null; color?: string | null; subcategories?: string[] }}
-                        onAddSub={addCategory as unknown as (input: { name: string; kind: "expense" | "income"; parentId: string }) => void}
-                        onEdit={(c) => {
-                          setEditCategory(c);
-                          setEditOpen(true);
-                        }}
-                        onDeactivate={(c) => setConfirmDeactivate(c)}
-                      />
-                    ))}
-                  </div>
+                  <span className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-text-muted">{filteredIncomes.length} categoria{filteredIncomes.length !== 1 ? "s" : ""}</span>
+                    <ChevronDown size={14} className={`text-primary transition-transform ${incomeOpen ? "rotate-180" : ""}`} />
+                  </span>
+                </button>
+                {incomeOpen && (
+                  <>
+                    {filteredIncomes.length === 0 ? (
+                      <div className="rounded-[18px] border border-dashed border-border-subtle bg-surface-1 px-4 py-8 text-center text-[12px] text-text-muted">Nenhuma categoria de receita.</div>
+                    ) : (
+                      <div id="incomes-grid" data-testid="categories-grid" className="categories-grid grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {filteredIncomes.map((cat) => (
+                          <CategoryRow
+                            key={cat.id}
+                            cat={cat as unknown as { id: string; name: string; icon?: string | null; color?: string | null; subcategories?: string[] }}
+                            onAddSub={addCategory as unknown as (input: { name: string; kind: "expense" | "income"; parentId: string }) => void}
+                            onEdit={(c) => {
+                              setEditCategory(c);
+                              setEditOpen(true);
+                            }}
+                            onDeactivate={(c) => setConfirmDeactivate(c)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </section>
             </>

@@ -7,10 +7,14 @@ export type ProviderEligibility = "approved" | "candidate" | "experimental_block
 
 export type LlmProvider = {
   id: string;
-  name: string;
-  baseUrl: string;
-  secretAlias: string;
+  kind: string;
+  transport: string;
+  authMode: string;
+  name?: string | null;
+  baseUrl?: string | null;
+  secretAlias: string | null;
   eligibility: ProviderEligibility;
+  runtimeStatus?: string | null;
   enabled: boolean;
 };
 
@@ -86,6 +90,7 @@ export const createProvider = async (input: {
   baseUrl?: string;
   secretAlias: string;
   eligibility?: ProviderEligibility;
+  enabled?: boolean;
 }): Promise<{ provider: LlmProvider }> => {
   return apiFetch<{ provider: LlmProvider }>("/admin/agent/llm-config/providers", {
     method: "POST",
@@ -96,7 +101,7 @@ export const createProvider = async (input: {
 
 export const updateProvider = async (
   providerId: string,
-  patch: Partial<Pick<LlmProvider, "name" | "baseUrl" | "secretAlias" | "eligibility" | "enabled">>,
+  patch: Partial<Pick<LlmProvider, "secretAlias" | "eligibility" | "enabled">>,
 ): Promise<{ provider: LlmProvider }> => {
   return apiFetch<{ provider: LlmProvider }>(`/admin/agent/llm-config/providers/${encodeURIComponent(providerId)}`, {
     method: "PATCH",

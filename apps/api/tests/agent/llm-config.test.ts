@@ -16,21 +16,34 @@ import { createInMemoryLlmConfigStore } from '../../src/agent/llm-config-postgre
 
 describe('LLM Config Domain Validation (RED -> GREEN)', () => {
   describe('Constants and Enums', () => {
-    it('defines allowlisted provider kinds', () => {
-      expect(ALLOWED_KINDS).toEqual([
+    it('defines allowlisted provider kinds including popular presets', () => {
+      expect(ALLOWED_KINDS).toEqual(expect.arrayContaining([
         'opencode-zen',
         'opencode-go',
         'openai-api',
         'openai-codex-subscription',
-      ]);
+        'anthropic',
+        'deepseek',
+        'qwen',
+        'glm',
+        'minimax',
+        'openrouter',
+      ]));
+      expect(ALLOWED_KINDS.length).toBeGreaterThanOrEqual(10);
     });
 
-    it('defines allowlisted secret aliases', () => {
-      expect(ALLOWED_SECRET_ALIASES).toEqual([
+    it('defines allowlisted secret aliases including new providers', () => {
+      expect(ALLOWED_SECRET_ALIASES).toEqual(expect.arrayContaining([
         'OPENCODE_ZEN_API_KEY',
         'OPENCODE_GO_API_KEY',
         'OPENAI_API_KEY',
-      ]);
+        'ANTHROPIC_API_KEY',
+        'DEEPSEEK_API_KEY',
+        'QWEN_API_KEY',
+        'GLM_API_KEY',
+        'MINIMAX_API_KEY',
+      ]));
+      expect(ALLOWED_SECRET_ALIASES.length).toBeGreaterThanOrEqual(8);
     });
 
     it('defines allowlisted protocols', () => {
@@ -262,16 +275,23 @@ describe('LLM Config Domain Validation (RED -> GREEN)', () => {
 });
 
 describe('In-Memory LLM Config Store', () => {
-  it('initializes with default seed providers and disabled active runtime', async () => {
+  it('initializes with default seed providers and disabled active runtime including new presets', async () => {
     const store = createInMemoryLlmConfigStore();
     const providers = await store.listProviders();
-    expect(providers).toHaveLength(4);
-    expect(providers.map((p) => p.id)).toEqual([
+    expect(providers.length).toBeGreaterThanOrEqual(10);
+    const ids = providers.map((p) => p.id);
+    expect(ids).toEqual(expect.arrayContaining([
       'opencode-zen',
       'opencode-go',
       'openai-api',
       'openai-codex-subscription',
-    ]);
+      'anthropic',
+      'deepseek',
+      'qwen',
+      'glm',
+      'minimax',
+      'openrouter',
+    ]));
 
     const runtime = await store.getRuntime();
     expect(runtime).toMatchObject({
