@@ -50,6 +50,35 @@ export type IntentionSnapshotRow = {
   created_at: string;
 };
 
+export const INTENTION_SNAPSHOT_FALLBACK_COLUMNS = ['fallback_provider_id', 'fallback_model_id'] as const;
+
+/**
+ * Backfills the fallback columns on pre-existing Durable Object tables.
+ * CREATE TABLE IF NOT EXISTS never upgrades legacy tables, so missing
+ * columns are added explicitly (PRAGMA first, so concurrent initializers
+ * and mock storage without PRAGMA support stay safe).
+ */
+export const ensureIntentionSnapshotColumns = (sql: {
+  exec<T>(query: string, ...bindings: unknown[]): Iterable<T>;
+}): void => {
+  let existing: Set<string>;
+  try {
+    const rows = [...sql.exec<{ name: string }>(`PRAGMA table_info(intention_snapshots)`)];
+    existing = new Set(rows.map((row) => row.name));
+  } catch {
+    return;
+  }
+  for (const column of INTENTION_SNAPSHOT_FALLBACK_COLUMNS) {
+    if (!existing.has(column)) {
+      try {
+        sql.exec(`ALTER TABLE intention_snapshots ADD COLUMN ${column} TEXT`);
+      } catch {
+        // A concurrent initializer won the race; the column now exists.
+      }
+    }
+  }
+};
+
 export const TED_SYSTEM_PROMPT = `Você é o TED, o assistente financeiro inteligente, seguro e proativo do Pi Financeiro.
 Suas diretrizes fundamentais são:
 1. Comunicação sempre em Português do Brasil (pt-BR), com tom profissional, encorajador, claro e objetivo.
@@ -80,6 +109,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
           );
         `);
+        ensureIntentionSnapshotColumns(state.storage.sql);
       } catch {
         // Ignored if table already exists or mock storage
       }
@@ -94,7 +124,12 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           intentionId,
         )];
         if (rows.length > 0 && rows[0]) {
-          return rows[0];
+          // Legacy rows predate the fallback columns: normalize to nulls.
+          return {
+            fallback_provider_id: null,
+            fallback_model_id: null,
+            ...rows[0],
+          };
         }
       } catch {
         // Continue if sql exec fails
@@ -134,8 +169,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     if (this.state?.storage?.sql) {
       try {
         this.state.storage.sql.exec(
-          `INSERT INTO intention_snapshots (intention_id, version, provider_id, model_id, protocol, rollout_percentage, security_epoch, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO intention_snapshots (intention_id, version, provider_id, model_id, protocol, rollout_percentage, security_epoch, fallback_provider_id, fallback_model_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           snapshot.intention_id,
           snapshot.version,
           snapshot.provider_id,
@@ -143,6 +178,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           snapshot.protocol,
           snapshot.rollout_percentage,
           snapshot.security_epoch,
+          snapshot.fallback_provider_id ?? null,
+          snapshot.fallback_model_id ?? null,
           snapshot.created_at,
         );
       } catch {
