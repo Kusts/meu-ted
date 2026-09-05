@@ -136,6 +136,21 @@ export const LLM_PROVIDER_PRESETS: LlmProviderPreset[] = [
   },
 ];
 
+export const ALLOWED_PROVIDER_KINDS = [
+  "opencode-zen",
+  "opencode-go",
+  "openai-api",
+  "openai-codex-subscription",
+  "openai",
+  "anthropic",
+  "deepseek",
+  "qwen",
+  "glm",
+  "minimax",
+  "google",
+  "openrouter",
+] as const;
+
 export function getLlmPreset(id: string): LlmProviderPreset | undefined {
   return LLM_PROVIDER_PRESETS.find((p) => p.id === id || p.kind === id);
 }

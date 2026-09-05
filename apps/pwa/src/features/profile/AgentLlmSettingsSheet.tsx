@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import BottomSheet from "@/components/BottomSheet";
 import {
   fetchAdminLlmConfig,
@@ -17,7 +17,7 @@ import {
   type LlmRuntime,
 } from "@/lib/api/admin-agent-llm-config";
 import { Cpu, CheckCircle2, AlertCircle, Plus, Trash2, Sparkles } from "lucide-react";
-import { LLM_PROVIDER_PRESETS } from "@/lib/llm-presets";
+import { LLM_PROVIDER_PRESETS, ALLOWED_PROVIDER_KINDS } from "@/lib/llm-presets";
 
 interface AgentLlmSettingsSheetProps {
   open: boolean;
@@ -41,6 +41,15 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
   const [newModelIdInput, setNewModelIdInput] = useState("");
   const [newModelProtocol, setNewModelProtocol] = useState<"chat-completions" | "messages" | "responses" | "google-generative-ai">("chat-completions");
 
+  const selectedProviderIdRef = useRef(selectedProviderId);
+  const selectedProviderModelIdRef = useRef(selectedProviderModelId);
+  useEffect(() => {
+    selectedProviderIdRef.current = selectedProviderId;
+  }, [selectedProviderId]);
+  useEffect(() => {
+    selectedProviderModelIdRef.current = selectedProviderModelId;
+  }, [selectedProviderModelId]);
+
   const loadConfig = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -49,9 +58,10 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
       setProviders(data.providers);
       setModels(data.models);
       setRuntime(data.runtime);
-      if (data.providers.length > 0 && !selectedProviderId) {
+      const currentProviderId = selectedProviderIdRef.current;
+      if (data.providers.length > 0 && !currentProviderId) {
         setSelectedProviderId(data.providers[0]!.id);
-      } else if (data.providers.length > 0 && !data.providers.find((p) => p.id === selectedProviderId)) {
+      } else if (data.providers.length > 0 && !data.providers.find((p) => p.id === currentProviderId)) {
         setSelectedProviderId(data.providers[0]!.id);
       }
       if (data.runtime) {
@@ -59,8 +69,10 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
         const fallback = (data.runtime as unknown as { fallbackModelId?: string | null }).fallbackModelId ?? "";
         setActiveModelChoice(active);
         setFallbackModelChoice(fallback ?? "");
-        const filtered = data.models.filter((m) => m.providerId === (selectedProviderId || data.providers[0]?.id));
-        if (filtered.length > 0 && !selectedProviderModelId) {
+        const currentModelId = selectedProviderModelIdRef.current;
+        const providerForFilter = currentProviderId || data.providers[0]?.id;
+        const filtered = data.models.filter((m) => m.providerId === providerForFilter);
+        if (filtered.length > 0 && !currentModelId) {
           setSelectedProviderModelId(filtered[0]!.id);
         }
       }
@@ -69,7 +81,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
     } finally {
       setLoading(false);
     }
-  }, [selectedProviderId, selectedProviderModelId]);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -154,6 +166,10 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
       setError("ID do provedor é obrigatório");
       return;
     }
+    if (!(ALLOWED_PROVIDER_KINDS as readonly string[]).includes(id)) {
+      setError(`kind inválido: ${id}`);
+      return;
+    }
     setError(null);
     try {
       await createProvider({
@@ -183,19 +199,26 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
     }
     setError(null);
     try {
-      await createProvider({
-        id: preset.id,
-        name: preset.name,
-        kind: preset.kind as never,
-        transport: preset.transport as never,
-        authMode: preset.authMode as never,
-        secretAlias: preset.secretAlias ?? "OPENAI_API_KEY",
-        eligibility: "approved",
-        enabled: true,
-      });
+      const failures: string[] = [];
+      try {
+        await createProvider({
+          id: preset.id,
+          name: preset.name,
+          kind: preset.kind as never,
+          transport: preset.transport as never,
+          authMode: preset.authMode as never,
+          secretAlias: preset.secretAlias ?? "OPENAI_API_KEY",
+          eligibility: "approved",
+          enabled: true,
+        });
+      } catch (e) {
+        failures.push(`createProvider ${preset.id}: ${(e as Error).message}`);
+      }
       try {
         await toggleProvider(preset.id, true);
-      } catch {}
+      } catch (e) {
+        failures.push(`toggleProvider ${preset.id}: ${(e as Error).message}`);
+      }
       for (const m of preset.autoModels) {
         try {
           await createModel({
@@ -205,14 +228,22 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
             privacyClass: m.privacyClass as never,
             enabled: true,
           });
-        } catch {}
+        } catch (e) {
+          failures.push(`createModel ${m.modelId}: ${(e as Error).message}`);
+        }
         try {
           const modelId = `${preset.id}:${m.modelId}`;
           await toggleModel(modelId, true);
-        } catch {}
+        } catch (e) {
+          failures.push(`toggleModel ${m.modelId}: ${(e as Error).message}`);
+        }
       }
       await loadConfig();
-      setActionSuccess(`Provedor ${preset.name} cadastrado com ${preset.autoModels.length} modelos`);
+      if (failures.length === 0) {
+        setActionSuccess(`Provedor ${preset.name} cadastrado com ${preset.autoModels.length} modelos`);
+      } else {
+        setError(`Preset parcial: ${failures.join(", ")}`);
+      }
       setSelectedProviderId(preset.id);
     } catch (e) {
       setError((e as Error).message);
@@ -249,8 +280,12 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
     if (typeof window !== "undefined" && !window.confirm(`Tem certeza que deseja excluir o provedor ${providerId} e seus modelos?`)) return;
     setError(null);
     try {
+      const providerModelIds = new Set(models.filter((m) => m.providerId === providerId).map((m) => m.id));
       await deleteProvider(providerId);
       if (selectedProviderId === providerId) setSelectedProviderId("");
+      if (providerModelIds.has(selectedProviderModelId)) setSelectedProviderModelId("");
+      if (providerModelIds.has(activeModelChoice)) setActiveModelChoice("");
+      if (providerModelIds.has(fallbackModelChoice)) setFallbackModelChoice("");
       await loadConfig();
       setActionSuccess(`Provedor ${providerId} excluído com sucesso.`);
     } catch (e) {
@@ -336,7 +371,12 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                     id="provider-select"
                     aria-label="Provedor"
                     value={selectedProviderId}
-                    onChange={(e) => setSelectedProviderId(e.target.value)}
+                    onChange={(e) => {
+                      const newId = e.target.value;
+                      setSelectedProviderId(newId);
+                      const firstModel = models.find((m) => m.providerId === newId);
+                      setSelectedProviderModelId(firstModel ? firstModel.id : "");
+                    }}
                     className="h-10 w-full rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] font-medium text-text-primary outline-none focus:border-primary"
                   >
                     {providers.map((p) => (

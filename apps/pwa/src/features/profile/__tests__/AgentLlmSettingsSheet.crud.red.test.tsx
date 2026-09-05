@@ -65,7 +65,7 @@ describe("AgentLlmSettingsSheet CRUD with selectors (RED -> GREEN)", () => {
     await screen.findByLabelText("Provedor");
     // Try to find add provider button
     const addBtn = screen.getByRole("button", { name: /Cadastrar Provedor/i });
-    await user.type(screen.getByLabelText("Novo provedor ID"), "test-provider");
+    await user.type(screen.getByLabelText("Novo provedor ID"), "deepseek");
     await user.click(addBtn);
     expect(createSpy).toHaveBeenCalled();
   });
