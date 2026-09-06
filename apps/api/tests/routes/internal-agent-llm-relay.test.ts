@@ -115,6 +115,43 @@ describe('Fase 2 item 8 — dynamic relay allowlist (RED)', () => {
     expect(listSpy).toHaveBeenCalledTimes(2);
   });
 
+  it('fail-closed: store failure returns 503 without silent fallback (Fase 3 item 5/D3)', async () => {
+    const store = createInMemoryLlmConfigStore();
+    vi.spyOn(store, 'listModels').mockRejectedValueOnce(new Error('db down'));
+    registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, llmConfigStore: store });
+    await app.ready();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-zen', model: 'anything', prompt: 'hi' },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ code: 'agent.relay_allowlist_unavailable' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('blocks an enabled model whose provider is disabled (Fase 3 item 5/D3)', async () => {
+    const store = createInMemoryLlmConfigStore();
+    await store.upsertProvider({
+      id: 'zen-extra', kind: 'opencode-zen', transport: 'direct', authMode: 'api-key',
+      secretAlias: 'OPENCODE_ZEN_API_KEY', enabled: false, eligibility: 'approved',
+    });
+    const m = await store.upsertModel({
+      providerId: 'zen-extra', modelId: 'orphan-model', protocol: 'chat-completions',
+      privacyClass: 'training_prohibited', enabled: true,
+    });
+    await store.setModelEnabled(m.id, true);
+    registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, llmConfigStore: store });
+    await app.ready();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(upstreamOk()));
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-zen', model: 'orphan-model', prompt: 'hi' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ code: 'agent.model_not_allowlisted' });
+  });
+
   it('clears its timer when the upstream request fails (Fase 3 item 1)', async () => {
     registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY });
     await app.ready();

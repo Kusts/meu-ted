@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { safeCompareTokens as safeCompare } from '../auth/safe-compare.js';
+import { isKindExecutable } from '../agent/llm-config.js';
 
 const relayBody = z.object({
   provider: z.literal('opencode-zen').or(z.literal('opencode-go')),
@@ -32,15 +33,18 @@ const parseEnvAllowlist = (raw: string | undefined): string[] | null => {
 };
 
 export interface RelayModelSource {
-  listModels(): Promise<Array<{ modelId: string; enabled: boolean }>>;
+  listModels(): Promise<Array<{ providerId: string; modelId: string; enabled: boolean }>>;
+  listProviders(): Promise<Array<{ id: string; enabled: boolean; kind: string }>>;
 }
 
 /**
- * Fase 2 item 8: resolves the relay model allowlist by priority —
+ * Fase 2 item 8 + Fase 3 D3: resolves the relay model allowlist by priority —
  * RELAY_ALLOWED_MODELS env (csv, explicit admin override) wins, then the
  * enabled agent_llm_models (60s cache), then the built-in default set.
- * Env entries are authoritative as written; DB entries are filtered to
- * enabled models only, so a disabled model is never relayable via the DB.
+ * Env entries are authoritative as written; DB entries pass only when the
+ * model is enabled AND its provider exists, is enabled and has an
+ * executable kind — a disabled model or provider is never relayable.
+ * A failing store does NOT fall back silently (see route handler: 503).
  */
 export const createRelayModelResolver = (deps: {
   store?: RelayModelSource;
@@ -55,8 +59,19 @@ export const createRelayModelResolver = (deps: {
     if (envList) return new Set(envList);
     if (deps.store) {
       if (!cache || now() - cache.at >= ttl) {
-        const models = await deps.store.listModels();
-        cache = { at: now(), models: new Set(models.filter((m) => m.enabled).map((m) => m.modelId)) };
+        const [models, providers] = await Promise.all([
+          deps.store.listModels(),
+          deps.store.listProviders(),
+        ]);
+        const usableProviders = new Set(
+          providers.filter((p) => p.enabled && isKindExecutable(p.kind)).map((p) => p.id),
+        );
+        cache = {
+          at: now(),
+          models: new Set(
+            models.filter((m) => m.enabled && usableProviders.has(m.providerId)).map((m) => m.modelId),
+          ),
+        };
       }
       return cache.models;
     }
@@ -97,7 +112,17 @@ export const registerAgentLlmRelayRoutes = (
     }
     const { provider, model, prompt, system } = parsed.data;
 
-    const allowedModels = await resolveAllowedModels();
+    // Fase 3 D3: a configured store that fails resolves fail-closed with an
+    // explicit operational code — never a silent fallback to the built-in set.
+    let allowedModels: Set<string>;
+    try {
+      allowedModels = await resolveAllowedModels();
+    } catch {
+      return reply.code(503).send({
+        code: 'agent.relay_allowlist_unavailable',
+        message: 'Allowlist do relay indisponível (store de configuração inacessível).',
+      });
+    }
     if (!allowedModels.has(model)) {
       return reply.code(403).send({ code: 'agent.model_not_allowlisted', message: 'Modelo não permitido no relay.' });
     }
