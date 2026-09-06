@@ -7,8 +7,22 @@ import BottomSheet from "@/components/BottomSheet";
 import NewTransactionSheet from "@/components/NewTransactionSheet";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import SidebarRail from "@/components/SidebarRail";
-import { Icon, type IconName } from "@/components/ui/Icon";
-import { Bell } from "lucide-react";
+// T2: drawer "Mais" usa lucide direto (v1 decidiu lucide; Icon.tsx legado fica
+// só com BottomNav/SidebarRail até a migração paralela do Coder 1 concluir).
+import {
+  Bell,
+  Wallet,
+  Home,
+  CreditCard,
+  Tag,
+  PieChart,
+  Target,
+  FolderOpen,
+  Layers,
+  AlertTriangle,
+  FileText,
+  type LucideIcon,
+} from "lucide-react";
 import { useIsOverlayOpen } from "@/lib/ui/overlay-a11y";
 import type { NavItem } from "@/components/BottomNav";
 import type { SaveData } from "@/components/NewTransactionSheet";
@@ -224,17 +238,17 @@ export default function AppShell({ children }: AppShellProps) {
     }
   }
 
-  const moreItems: { label: string; route: string; icon: IconName }[] = [
-    { label: "Patrimônio", route: "/patrimonio", icon: "wallet" },
-    { label: "Contas", route: "/contas", icon: "home" },
-    { label: "Cartões", route: "/cartoes", icon: "credit-card" },
-    { label: "Assinaturas", route: "/assinaturas", icon: "tag" },
-    { label: "Orçamentos", route: "/orcamentos", icon: "pie-chart" },
-    { label: "Metas & Dívidas", route: "/metas", icon: "target" },
-    { label: "Categorias", route: "/categorias", icon: "folder-open" },
-    { label: "Workspaces", route: "/workspaces", icon: "layers" },
-    { label: "Aprovações", route: "/pending", icon: "alert-triangle" },
-    { label: "Relatórios", route: "/relatorios", icon: "file-text" },
+  const moreItems: { label: string; route: string; icon: LucideIcon }[] = [
+    { label: "Patrimônio", route: "/patrimonio", icon: Wallet },
+    { label: "Contas", route: "/contas", icon: Home },
+    { label: "Cartões", route: "/cartoes", icon: CreditCard },
+    { label: "Assinaturas", route: "/assinaturas", icon: Tag },
+    { label: "Orçamentos", route: "/orcamentos", icon: PieChart },
+    { label: "Metas & Dívidas", route: "/metas", icon: Target },
+    { label: "Categorias", route: "/categorias", icon: FolderOpen },
+    { label: "Workspaces", route: "/workspaces", icon: Layers },
+    { label: "Aprovações", route: "/pending", icon: AlertTriangle },
+    { label: "Relatórios", route: "/relatorios", icon: FileText },
   ];
 
   return (
@@ -300,7 +314,7 @@ export default function AppShell({ children }: AppShellProps) {
                   className="flex flex-col items-center gap-2 rounded-[16px] border border-border-subtle bg-surface-2 p-3.5 transition-all hover:bg-surface-3 active:scale-[0.98]"
                 >
                   <span className="flex h-11 w-11 items-center justify-center rounded-[12px] bg-primary-tint text-primary shadow-xs">
-                    <Icon name={item.icon} size={20} />
+                    <item.icon size={20} strokeWidth={1.9} />
                   </span>
                   <span className="text-center text-[12px] font-semibold text-text-primary">
                     {item.label}
