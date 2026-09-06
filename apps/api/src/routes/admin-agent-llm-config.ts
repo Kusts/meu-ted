@@ -101,19 +101,34 @@ export const registerAdminAgentLlmConfigRoutes = (
       }
     }
 
-    // CSRF check for mutations (Fase 3 D4): the Origin allowlist protects
-    // cookie-session callers only. A request carrying an explicit
-    // `Authorization: Bearer ...` header cannot be forged by a simple
-    // cross-site request (custom headers trigger a CORS preflight the
-    // attacker cannot satisfy), so Bearer callers skip this check — they
-    // still go through session/service auth below.
+    // CSRF check for mutations (Fase 3 D4, hardened Fase 3-FIX D4-rev): the
+    // Origin/Referer allowlist protects cookie-session callers only. A
+    // request carrying an explicit `Authorization: Bearer ...` header cannot
+    // be forged by a simple cross-site request (custom headers trigger a
+    // CORS preflight the attacker cannot satisfy), so Bearer callers skip
+    // this check — they still go through session/service auth below.
+    // Cookie-session mutations MUST present a trusted Origin (or, when no
+    // Origin is sent, a trusted Referer); an absent attestation is rejected
+    // fail-closed instead of treated as "no evidence of forgery".
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       const authHeader = req.headers['authorization'];
       const hasBearer = typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ');
-      const origin = req.headers['origin'] || headers.get('origin');
-      if (!hasBearer && origin && typeof origin === 'string') {
-        const normalizedOrigin = origin.toLowerCase().trim();
-        if (!trustedOrigins.has(normalizedOrigin)) {
+      if (!hasBearer) {
+        const origin = req.headers['origin'] || headers.get('origin');
+        const isTrustedOrigin =
+          typeof origin === 'string' && trustedOrigins.has(origin.toLowerCase().trim());
+        let isTrustedReferer = false;
+        if (!isTrustedOrigin) {
+          const referer = req.headers['referer'] || headers.get('referer');
+          if (typeof referer === 'string') {
+            try {
+              isTrustedReferer = trustedOrigins.has(new URL(referer).origin.toLowerCase());
+            } catch {
+              isTrustedReferer = false;
+            }
+          }
+        }
+        if (!isTrustedOrigin && !isTrustedReferer) {
           return reply.code(403).send({
             code: 'auth.csrf_rejected',
             message: 'Origem não permitida para operações administrativas.',

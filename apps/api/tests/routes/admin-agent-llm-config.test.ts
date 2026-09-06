@@ -197,6 +197,53 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
       expect(res.json()).toMatchObject({ code: 'auth.session_required' });
     });
 
+    it('Fase 3-FIX D4-rev: the four CSRF branches (Bearer/cookie × origin present/absent)', async () => {
+      const payload = {
+        providerId: 'opencode-zen',
+        modelId: 'zen-default',
+        expectedVersion: 1,
+      };
+      // 1. Bearer + no Origin/Referer → skips CSRF (401: no session here).
+      const bearerNoOrigin = await app.inject({
+        method: 'POST',
+        url: '/admin/agent/llm-config/activate',
+        headers: { authorization: 'Bearer service-token-value' },
+        payload,
+      });
+      expect(bearerNoOrigin.statusCode).toBe(401);
+      expect(bearerNoOrigin.json()).toMatchObject({ code: 'auth.session_required' });
+      // 2. Cookie-session + no Origin/Referer → fail-closed 403.
+      const cookieNoOrigin = await app.inject({
+        method: 'POST',
+        url: '/admin/agent/llm-config/activate',
+        headers: { cookie: adminCookie },
+        payload,
+      });
+      expect(cookieNoOrigin.statusCode).toBe(403);
+      expect(cookieNoOrigin.json()).toMatchObject({ code: 'auth.csrf_rejected' });
+      // 3. Cookie-session + hostile Origin → 403 (pinned by the earlier test).
+      const cookieHostile = await app.inject({
+        method: 'POST',
+        url: '/admin/agent/llm-config/activate',
+        headers: { cookie: adminCookie, origin: 'https://malicious-site.attacker.com' },
+        payload,
+      });
+      expect(cookieHostile.statusCode).toBe(403);
+      expect(cookieHostile.json()).toMatchObject({ code: 'auth.csrf_rejected' });
+      // 4. Bearer + hostile Origin → not a CSRF block (401: no session here).
+      const bearerHostile = await app.inject({
+        method: 'POST',
+        url: '/admin/agent/llm-config/activate',
+        headers: {
+          authorization: 'Bearer service-token-value',
+          origin: 'https://malicious-site.attacker.com',
+        },
+        payload,
+      });
+      expect(bearerHostile.statusCode).toBe(401);
+      expect(bearerHostile.json()).toMatchObject({ code: 'auth.session_required' });
+    });
+
     it('rejects attempt to inject custom baseUrl or raw apiKey (SSRF defense)', async () => {
       const res = await app.inject({
         method: 'POST',
