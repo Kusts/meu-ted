@@ -12,9 +12,9 @@ type CaptureManifest = MetadataRoute.Manifest & {
 
 export default function manifest(): CaptureManifest {
   return {
-    name: "Pi Financeiro",
-    short_name: "Pi Financeiro",
-    description: "Controle financeiro pessoal inteligente com assistente IA TED",
+    name: "Meu Ted",
+    short_name: "Meu Ted",
+    description: "Meu Ted. Tudo em dia. Controle financeiro pessoal com o assistente TED.",
     start_url: "/",
     share_target: {
       action: "/capture",
@@ -27,7 +27,7 @@ export default function manifest(): CaptureManifest {
       },
     },
     display: "standalone",
-    background_color: "#F7F8F5",
+    background_color: "#F8F9FA",
     theme_color: "#0E8C5A",
     orientation: "portrait-primary",
     icons: [
@@ -60,7 +60,7 @@ export default function manifest(): CaptureManifest {
     categories: ["finance"],
     shortcuts: [
       {
-        name: "Novo gasto",
+        name: "Novo gasto no Meu Ted",
         url: "/capture?kind=expense",
       },
     ],

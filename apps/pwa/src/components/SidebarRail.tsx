@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useTheme } from "@/lib/theme";
 import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
@@ -52,15 +53,19 @@ export function SidebarRail({
     >
       {/* Header: Logo & Branding */}
       <div className="flex items-center gap-3 px-2 mb-6">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-primary-dark text-white font-mono font-bold text-[16px] shadow-sm">
-          π
-        </div>
+        <Image
+          src="/logo.svg"
+          alt="Meu Ted"
+          width={36}
+          height={36}
+          className="h-9 w-9 flex-none"
+        />
         <div className="flex flex-col">
           <span className="text-[15px] font-bold tracking-tight text-text-primary">
-            Pi Financeiro
+            Meu Ted
           </span>
           <span className="text-[10px] font-medium text-text-muted">
-            Titanium Edition
+            tudo em dia.
           </span>
         </div>
       </div>

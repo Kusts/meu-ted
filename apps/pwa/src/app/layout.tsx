@@ -20,16 +20,17 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "Pi Financeiro",
-  description: "Controle financeiro pessoal e familiar com assistente inteligente",
-  applicationName: "Pi Financeiro",
+  title: "Meu Ted",
+  description: "Seu dinheiro em conversa. Tudo em dia.",
+  applicationName: "Meu Ted",
   appleWebApp: {
     capable: true,
-    title: "Pi Financeiro",
+    title: "Meu Ted",
     statusBarStyle: "default",
   },
   icons: {
     icon: [
+      { url: "/favicon.png", sizes: "32x32", type: "image/png" },
       { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
       { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
     ],
@@ -43,9 +44,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  minimumScale: 1,
-  userScalable: false,
+  // A5: zoom liberado (WCAG 1.4.4) — iOS só aplica pinch-zoom em inputs
+  // com font-size >= 16px; ver AuthGate (16px) e NewTransactionSheet/Input.
   viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: dark)", color: "#0B0F0E" },

@@ -69,6 +69,18 @@ describe("AuthGate", () => {
     expect(screen.getByRole("button", { name: /Entrar/i })).toBeInTheDocument();
   });
 
+  it("brands the login screen as Meu Ted with logo and tagline", async () => {
+    render(
+      <AuthGate>
+        <div data-testid="app">App Content</div>
+      </AuthGate>,
+    );
+    await screen.findByPlaceholderText(/seu\.email@exemplo\.com/, {}, { timeout: 3000 });
+    expect(screen.getByRole("heading", { level: 1, name: "Meu Ted" })).toBeInTheDocument();
+    expect(screen.getByText("tudo em dia.")).toBeInTheDocument();
+    expect(screen.getByAltText("Meu Ted")).toHaveAttribute("src", "/logo.svg");
+  });
+
   it("shows app content when token exists and is valid", async () => {
     store["pi-finance:token"] = "valid-token";
 

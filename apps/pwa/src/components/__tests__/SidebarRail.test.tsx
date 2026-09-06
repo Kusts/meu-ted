@@ -14,9 +14,10 @@ describe("SidebarRail", () => {
     mockPath = "/";
   });
 
-  it("renders the Pi Financeiro logo and branding", () => {
+  it("renders the Meu Ted logo and branding", () => {
     render(<SidebarRail onNewTransaction={vi.fn()} />);
-    expect(screen.getByText("Pi Financeiro")).toBeInTheDocument();
+    expect(screen.getByText("Meu Ted")).toBeInTheDocument();
+    expect(screen.getByAltText("Meu Ted")).toBeInTheDocument();
   });
 
   it("renders primary navigation items (Resumo, Registros, A pagar, Cartões, Contas)", () => {

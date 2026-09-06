@@ -6,9 +6,9 @@ vi.mock("next/navigation", () => ({
 
 describe("smoke", () => {
   it("renders app shell", () => {
-    render(<div data-testid="app">Pi Financeiro</div>);
+    render(<div data-testid="app">Meu Ted</div>);
     expect(screen.getByTestId("app")).toBeInTheDocument();
-    expect(screen.getByText("Pi Financeiro")).toBeInTheDocument();
+    expect(screen.getByText("Meu Ted")).toBeInTheDocument();
   });
 });
 
@@ -16,8 +16,8 @@ describe("manifest", () => {
   it("exports name and short_name", async () => {
     const { default: manifest } = await import("@/app/manifest");
     const result = manifest();
-    expect(result.name).toBe("Pi Financeiro");
-    expect(result.short_name).toBe("Pi Financeiro");
+    expect(result.name).toBe("Meu Ted");
+    expect(result.short_name).toBe("Meu Ted");
   });
 
   it("sets display to standalone", async () => {
@@ -30,7 +30,7 @@ describe("manifest", () => {
     const { default: manifest } = await import("@/app/manifest");
     const result = manifest();
     expect(result.theme_color).toBe("#0E8C5A");
-    expect(result.background_color).toBe("#F7F8F5");
+    expect(result.background_color).toBe("#F8F9FA");
   });
 
   it("references at least two icon sizes", async () => {

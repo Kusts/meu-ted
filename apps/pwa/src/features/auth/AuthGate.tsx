@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Image from "next/image";
 import { getToken, setToken, setSessionToken } from "@/lib/auth/token-store";
 import { ApiError, clearActiveWorkspaceId } from "@/lib/api/client";
 import { signInWithEmail, registerDeviceToken, verifyDeviceToken } from "@/lib/api/auth";
@@ -175,12 +176,17 @@ function LoginForm({
       >
         <div className="text-center space-y-2">
           {/* Logo Badge */}
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[16px] bg-gradient-to-br from-primary to-[#0A3A28] text-white shadow-fab">
-            <span className="font-mono text-[22px] font-bold">π</span>
-          </div>
-          <h1 className="text-[22px] font-bold tracking-tight text-text-primary">Pi Financeiro</h1>
+          <Image
+            src="/logo.svg"
+            alt="Meu Ted"
+            width={48}
+            height={48}
+            priority
+            className="mx-auto h-12 w-12 drop-shadow-[0_4px_18px_rgba(14,140,90,0.35)]"
+          />
+          <h1 className="text-[22px] font-bold tracking-tight text-text-primary">Meu Ted</h1>
           <p className="text-[13px] font-medium text-text-muted">
-            Acesse com seu e-mail e senha.
+            tudo em dia.
           </p>
         </div>
 
@@ -210,7 +216,7 @@ function LoginForm({
                 autoFocus
                 required
                 disabled={submitting}
-                className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-10 pr-3.5 text-[14px] font-medium text-text-primary outline-none focus:border-primary disabled:opacity-50 transition-colors"
+                className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-10 pr-3.5 text-[16px] font-medium text-text-primary outline-none focus:border-primary disabled:opacity-50 transition-colors"
               />
             </div>
           </fieldset>
@@ -239,7 +245,7 @@ function LoginForm({
                 autoComplete="current-password"
                 required
                 disabled={submitting}
-                className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-10 pr-3.5 text-[14px] font-medium text-text-primary outline-none focus:border-primary disabled:opacity-50 transition-colors"
+                className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-10 pr-3.5 text-[16px] font-medium text-text-primary outline-none focus:border-primary disabled:opacity-50 transition-colors"
               />
             </div>
           </fieldset>
