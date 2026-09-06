@@ -166,6 +166,27 @@ export const createInMemoryLlmConfigStore = (seed?: {
         if (input.kind !== existing.kind && !isKindExecutable(input.kind)) {
           throw kindUnsupported(input.kind);
         }
+        // Fase 3-FIX R1: switching between two executable kinds must keep the
+        // referenced pair executable — revalidate the pair (new kind × the
+        // referenced model's protocol) or the active model silently stops
+        // being activatable while the runtime still points at it.
+        if (input.kind !== existing.kind) {
+          const refModelId = slot === 'active_provider' ? runtime.modelId : runtime.fallbackModelId;
+          const refModel = refModelId ? models.find((m) => m.id === refModelId) : undefined;
+          if (
+            refModel &&
+            refModel.providerId === input.id &&
+            !isProtocolCompatibleWithKind(input.kind, refModel.protocol)
+          ) {
+            const label = slot === 'active_provider' ? 'active' : 'fallback';
+            throw Object.assign(
+              new Error(
+                `provider kind change to ${input.kind} is not compatible with the referenced ${label} model protocol ${refModel.protocol}`,
+              ),
+              { statusCode: 409, code: 'agent.runtime_in_use', reason: slot },
+            );
+          }
+        }
         const merged = {
           kind: input.kind,
           transport: input.transport,

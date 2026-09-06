@@ -196,12 +196,26 @@ export const registerAdminAgentLlmConfigRoutes = (
 
     if (items.length > 0) {
       for (const item of items) {
-        const err = validateModel({
-          providerId: item.providerId,
-          modelId: item.modelId,
-          protocol: item.protocol ?? 'chat-completions',
-          privacyClass: item.privacyClass ?? 'training_prohibited',
-        });
+        // Fase 3-FIX R1: resolve the kind before validating. An unknown
+        // provider fails the whole batch fast with a clear error (a bulk
+        // import must never silently create orphan models); semantic
+        // conflicts of known providers keep the Fase 2 item 6 skip policy.
+        const provider = await deps.store.getProvider(item.providerId);
+        if (!provider) {
+          return reply.code(404).send({
+            code: 'agent.provider_not_found',
+            message: `Provider ${item.providerId} não encontrado`,
+          });
+        }
+        const err = validateModel(
+          {
+            providerId: item.providerId,
+            modelId: item.modelId,
+            protocol: item.protocol ?? 'chat-completions',
+            privacyClass: item.privacyClass ?? 'training_prohibited',
+          },
+          provider.kind,
+        );
         if (!err) {
           try {
             await deps.store.upsertModel({
@@ -305,18 +319,24 @@ export const registerAdminAgentLlmConfigRoutes = (
       return invalidBody(reply, 'agent.invalid_model', reason);
     }
     const body = parsed.data;
-    const err = validateModel({
-      providerId: body.providerId,
-      modelId: body.modelId,
-      protocol: body.protocol,
-      privacyClass: body.privacyClass,
-    });
-    if (err) {
-      return invalidBody(reply, 'agent.invalid_model', err);
-    }
+    // Fase 3-FIX R1: resolve the provider kind BEFORE validating — an
+    // unknown provider is a clear 404, and compatibility is judged against
+    // the real kind, never a flat protocol list.
     const provider = await deps.store.getProvider(body.providerId);
     if (!provider) {
       return reply.code(404).send({ code: 'agent.provider_not_found', message: `Provider ${body.providerId} não encontrado` });
+    }
+    const err = validateModel(
+      {
+        providerId: body.providerId,
+        modelId: body.modelId,
+        protocol: body.protocol,
+        privacyClass: body.privacyClass,
+      },
+      provider.kind,
+    );
+    if (err) {
+      return invalidBody(reply, 'agent.invalid_model', err);
     }
     try {
       const model = await deps.store.upsertModel({

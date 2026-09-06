@@ -173,53 +173,132 @@ describe('LLM Config Domain Validation (RED -> GREEN)', () => {
   describe('validateModel', () => {
     it('accepts valid model definitions', () => {
       expect(
-        validateModel({
-          providerId: 'openai-api',
-          modelId: 'gpt-4o',
-          protocol: 'chat-completions',
-          privacyClass: 'training_prohibited',
-        }),
+        validateModel(
+          {
+            providerId: 'openai-api',
+            modelId: 'gpt-4o',
+            protocol: 'chat-completions',
+            privacyClass: 'training_prohibited',
+          },
+          'openai-api',
+        ),
       ).toBeNull();
     });
 
     it('rejects missing providerId or modelId', () => {
       expect(
-        validateModel({
-          providerId: '',
-          modelId: 'gpt-4o',
-          protocol: 'chat-completions',
-          privacyClass: 'training_prohibited',
-        }),
+        validateModel(
+          {
+            providerId: '',
+            modelId: 'gpt-4o',
+            protocol: 'chat-completions',
+            privacyClass: 'training_prohibited',
+          },
+          'openai-api',
+        ),
       ).toBe('providerId is required');
 
       expect(
-        validateModel({
-          providerId: 'openai-api',
-          modelId: '',
-          protocol: 'chat-completions',
-          privacyClass: 'training_prohibited',
-        }),
+        validateModel(
+          {
+            providerId: 'openai-api',
+            modelId: '',
+            protocol: 'chat-completions',
+            privacyClass: 'training_prohibited',
+          },
+          'openai-api',
+        ),
       ).toBe('modelId is required');
     });
 
-    it('rejects invalid protocol or privacy class', () => {
+    it('rejects a missing provider kind (Fase 3-FIX R1)', () => {
       expect(
-        validateModel({
-          providerId: 'openai-api',
-          modelId: 'gpt-4o',
-          protocol: 'unknown-protocol' as never,
-          privacyClass: 'training_prohibited',
-        }),
-      ).toBe('invalid protocol');
+        validateModel(
+          {
+            providerId: 'openai-api',
+            modelId: 'gpt-4o',
+            protocol: 'chat-completions',
+            privacyClass: 'training_prohibited',
+          },
+          undefined as unknown as string,
+        ),
+      ).toBe('provider kind is required');
+    });
 
+    it('rejects an incompatible kind/protocol pair as the single protocol rule (Fase 3-FIX R1)', () => {
+      // Audit repro 4.1: anthropic + chat-completions must not validate.
       expect(
-        validateModel({
-          providerId: 'openai-api',
-          modelId: 'gpt-4o',
-          protocol: 'chat-completions',
-          privacyClass: 'invalid-privacy' as never,
-        }),
+        validateModel(
+          {
+            providerId: 'anthropic',
+            modelId: 'claude-x',
+            protocol: 'chat-completions',
+            privacyClass: 'training_prohibited',
+          },
+          'anthropic',
+        ),
+      ).toBe('model protocol chat-completions is not compatible with provider kind anthropic');
+    });
+
+    it('rejects invalid privacy class', () => {
+      expect(
+        validateModel(
+          {
+            providerId: 'openai-api',
+            modelId: 'gpt-4o',
+            protocol: 'chat-completions',
+            privacyClass: 'invalid-privacy' as never,
+          },
+          'openai-api',
+        ),
       ).toBe('invalid privacy class');
+    });
+
+    it.each(Object.entries(KIND_PROTOCOL_COMPAT))(
+      'accepts the compatible protocols of kind %s (Fase 3-FIX R1 matrix)',
+      (kind, protocols) => {
+        for (const protocol of protocols) {
+          expect(
+            validateModel(
+              {
+                providerId: kind,
+                modelId: 'm',
+                protocol,
+                privacyClass: 'training_prohibited',
+              },
+              kind,
+            ),
+          ).toBeNull();
+        }
+      },
+    );
+
+    it.each([
+      ['openai-api', 'messages'],
+      ['openai', 'messages'],
+      ['opencode-zen', 'messages'],
+      ['opencode-go', 'google-generative-ai'],
+      ['deepseek', 'messages'],
+      ['qwen', 'messages'],
+      ['glm', 'google-generative-ai'],
+      ['minimax', 'messages'],
+      ['openrouter', 'messages'],
+      ['anthropic', 'chat-completions'],
+      ['anthropic', 'responses'],
+      ['google', 'chat-completions'],
+      ['google', 'messages'],
+    ])('rejects incompatible protocol %s for kind %s (Fase 3-FIX R1 matrix)', (kind, protocol) => {
+      expect(
+        validateModel(
+          {
+            providerId: kind,
+            modelId: 'm',
+            protocol: protocol as LlmModel['protocol'],
+            privacyClass: 'training_prohibited',
+          },
+          kind,
+        ),
+      ).toBe(`model protocol ${protocol} is not compatible with provider kind ${kind}`);
     });
   });
 

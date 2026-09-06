@@ -324,6 +324,33 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
               },
             );
           }
+          // Fase 3-FIX R1: same kind-switch revalidation as the memory store
+          // (see llm-config-memory.ts) — under the runtime lock.
+          if (input.kind !== existing['kind']) {
+            const refModelId =
+              slot === 'active_provider' ? row?.['model_id'] : row?.['fallback_model_id'];
+            if (typeof refModelId === 'string' && refModelId.length > 0) {
+              const mcur = await client.query(
+                `SELECT provider_id, protocol FROM agent_llm_models WHERE id = $1`,
+                [refModelId],
+              );
+              const refModel = mcur.rows[0] as Record<string, unknown> | undefined;
+              if (
+                refModel &&
+                refModel['provider_id'] === input.id &&
+                typeof refModel['protocol'] === 'string' &&
+                !isProtocolCompatibleWithKind(input.kind, refModel['protocol'] as string)
+              ) {
+                const label = slot === 'active_provider' ? 'active' : 'fallback';
+                const reason = `provider kind change to ${input.kind} is not compatible with the referenced ${label} model protocol ${String(refModel['protocol'])}`;
+                throw Object.assign(new Error(reason), {
+                  statusCode: 409,
+                  code: 'agent.runtime_in_use',
+                  reason: slot,
+                });
+              }
+            }
+          }
           const merged = {
             kind: input.kind,
             transport: input.transport,

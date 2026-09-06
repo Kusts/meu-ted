@@ -148,8 +148,10 @@ describe('Fase 1b-FIX routes (items 3/8)', () => {
     expect(String(res.json().reason ?? '')).toMatch(/executable|support/i);
   });
 
-  it('Fase 3 item 2: activate rejects a kind/protocol mismatch (anthropic + chat-completions)', async () => {
-    // Creation of the mismatched pair is allowed; activation is not.
+  it('Fase 3-FIX R1: POST /models rejects a kind/protocol mismatch at creation (anthropic + chat-completions)', async () => {
+    // Fase 3-FIX R1: the mismatched pair is rejected at registration time,
+    // not only at activation. Activation-time defense stays covered by the
+    // canActivate matrix and the R3 projection tests (direct-seeded rows).
     const p = await app.inject({
       method: 'POST',
       url: '/admin/agent/llm-config/providers',
@@ -163,15 +165,6 @@ describe('Fase 1b-FIX routes (items 3/8)', () => {
       },
     });
     expect(p.statusCode).toBe(201);
-    for (const payload of [{ enabled: true }, { eligibility: 'approved' }]) {
-      const r = await app.inject({
-        method: 'PATCH',
-        url: '/admin/agent/llm-config/providers/anthropic',
-        headers: adminHeaders(),
-        payload,
-      });
-      expect(r.statusCode).toBe(200);
-    }
     const m = await app.inject({
       method: 'POST',
       url: '/admin/agent/llm-config/models',
@@ -183,24 +176,72 @@ describe('Fase 1b-FIX routes (items 3/8)', () => {
         privacyClass: 'training_prohibited',
       },
     });
-    expect(m.statusCode).toBe(201);
-    const modelId = String(m.json().model.id);
-    const t = await app.inject({
+    expect(m.statusCode).toBe(400);
+    expect(m.json()).toMatchObject({ code: 'agent.invalid_model' });
+    expect(String(m.json().reason ?? '')).toMatch(/not compatible/);
+    expect(await llmStore.getModel('anthropic:claude-x')).toBeNull();
+    // A compatible registration still succeeds.
+    const ok = await app.inject({
       method: 'POST',
-      url: `/admin/agent/llm-config/models/${encodeURIComponent(modelId)}/toggle`,
+      url: '/admin/agent/llm-config/models',
       headers: adminHeaders(),
-      payload: { enabled: true },
+      payload: {
+        providerId: 'anthropic',
+        modelId: 'claude-x',
+        protocol: 'messages',
+        privacyClass: 'training_prohibited',
+      },
     });
-    expect(t.statusCode).toBe(200);
+    expect(ok.statusCode).toBe(201);
+  });
+
+  it('Fase 3-FIX R1: POST /models resolves the kind first — unknown provider is 404', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: '/admin/agent/llm-config/activate',
+      url: '/admin/agent/llm-config/models',
       headers: adminHeaders(),
-      payload: { providerId: 'anthropic', modelId, expectedVersion: 1 },
+      payload: {
+        providerId: 'no-such-provider',
+        modelId: 'm',
+        protocol: 'chat-completions',
+        privacyClass: 'training_prohibited',
+      },
     });
-    expect(res.statusCode).toBe(422);
-    expect(res.json()).toMatchObject({ code: 'agent.activation_blocked' });
-    expect(String(res.json().reason ?? '')).toMatch(/not compatible/);
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ code: 'agent.provider_not_found' });
+  });
+
+  it('Fase 3-FIX R1: sync-catalog fails fast on an unknown provider and skips incompatible entries', async () => {
+    const unknown = await app.inject({
+      method: 'POST',
+      url: '/admin/agent/llm-config/sync-catalog',
+      headers: adminHeaders(),
+      payload: {
+        items: [{ providerId: 'no-such-provider', modelId: 'm', protocol: 'chat-completions' }],
+      },
+    });
+    expect(unknown.statusCode).toBe(404);
+    expect(unknown.json()).toMatchObject({ code: 'agent.provider_not_found' });
+
+    // Known provider, incompatible protocol: skipped, batch still 200.
+    await llmStore.upsertProvider({
+      id: 'anthropic',
+      kind: 'anthropic',
+      transport: 'direct',
+      authMode: 'api-key',
+      secretAlias: 'ANTHROPIC_API_KEY',
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/agent/llm-config/sync-catalog',
+      headers: adminHeaders(),
+      payload: {
+        items: [{ providerId: 'anthropic', modelId: 'claude-x', protocol: 'chat-completions' }],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, synced: 0 });
+    expect(await llmStore.getModel('anthropic:claude-x')).toBeNull();
   });
 
   it('item 8: toggle rejects unknown keys with a strict schema', async () => {

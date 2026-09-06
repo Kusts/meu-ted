@@ -404,6 +404,61 @@ describe('Postgres LLM pre-V042 legacy base (item 5)', () => {
     expect((await store.getRuntime()).version).toBe(rt.version);
   });
 
+  itIfDatabase('Fase 3-FIX R1: provider kind switch revalidates the active pair on Postgres', async () => {
+    if (!pool) throw new Error('database pool not initialized');
+    await resetLlmTables();
+    const store = createPostgresLlmConfigStore(pool);
+    await store.upsertProvider({
+      id: 'openai-api',
+      kind: 'openai-api',
+      transport: 'direct',
+      authMode: 'api-key',
+      secretAlias: 'OPENAI_API_KEY',
+      enabled: true,
+      eligibility: 'approved',
+    });
+    const model = await store.upsertModel({
+      providerId: 'openai-api',
+      modelId: 'gpt-4o',
+      protocol: 'chat-completions',
+      privacyClass: 'training_prohibited',
+      enabled: true,
+    });
+    let rt = await store.getRuntime();
+    rt = await store.updateRuntime({
+      providerId: 'openai-api',
+      modelId: model.id,
+      expectedVersion: rt.version,
+      updatedBy: 'fase3fix@test.com',
+    });
+    // Audit repro 4.2: switching the referenced provider to an executable
+    // kind that cannot run the active model protocol is rejected.
+    await expect(
+      store.upsertProvider({
+        id: 'openai-api',
+        kind: 'anthropic',
+        transport: 'direct',
+        authMode: 'api-key',
+        secretAlias: 'ANTHROPIC_API_KEY',
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'agent.runtime_in_use',
+      reason: 'active_provider',
+    });
+    expect((await store.getProvider('openai-api'))?.kind).toBe('openai-api');
+    // A switch between compatible executable kinds still applies.
+    const switched = await store.upsertProvider({
+      id: 'openai-api',
+      kind: 'openai',
+      transport: 'direct',
+      authMode: 'api-key',
+      secretAlias: 'OPENAI_API_KEY',
+    });
+    expect(switched.kind).toBe('openai');
+    expect((await store.getRuntime()).version).toBe(rt.version);
+  });
+
   itIfDatabase('item 6: concurrent activate and toggle-off-target never reference a disabled pair', async () => {
     if (!pool) throw new Error('database pool not initialized');
     await resetLlmTables();

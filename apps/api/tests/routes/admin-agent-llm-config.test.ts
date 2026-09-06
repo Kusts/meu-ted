@@ -325,19 +325,17 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
       expect(act1.statusCode).toBe(422);
       expect(act1.json()).toMatchObject({ code: 'agent.activation_blocked', reason: 'provider is disabled' });
 
-      // 2. Try activating experimental_blocked provider (Codex subscription) -> blocked 422
-      await app.inject({
-        method: 'POST',
-        url: '/admin/agent/llm-config/models',
-        headers: { cookie: adminCookie, origin: 'http://localhost:3000' },
-        payload: {
-          providerId: 'openai-codex-subscription',
-          modelId: 'codex-preview',
-          protocol: 'responses',
-          privacyClass: 'training_prohibited',
-          enabled: true,
-        },
+      // 2. Try activating experimental_blocked provider (Codex subscription) -> blocked 422.
+      // Fase 3-FIX R1: incompatible pairs are rejected at creation, so the
+      // activation-blocking fixtures below are seeded directly (legacy rows).
+      await llmStore.upsertModel({
+        providerId: 'openai-codex-subscription',
+        modelId: 'codex-preview',
+        protocol: 'responses',
+        privacyClass: 'training_prohibited',
+        enabled: true,
       });
+      await llmStore.setModelEnabled('openai-codex-subscription:codex-preview', true);
       await llmStore.setProviderEnabled('openai-codex-subscription', true);
 
       const actCodex = await app.inject({
@@ -354,18 +352,15 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
       expect(actCodex.json().reason).toBe('provider is not approved for activation');
 
       // 3. Try activating model with training_allowed -> blocked 422
-      await app.inject({
-        method: 'POST',
-        url: '/admin/agent/llm-config/models',
-        headers: { cookie: adminCookie, origin: 'http://localhost:3000' },
-        payload: {
-          providerId: 'opencode-go',
-          modelId: 'go-training',
-          protocol: 'messages',
-          privacyClass: 'training_allowed',
-          enabled: true,
-        },
+      // (seeded directly: opencode-go + messages is rejected at creation).
+      await llmStore.upsertModel({
+        providerId: 'opencode-go',
+        modelId: 'go-training',
+        protocol: 'messages',
+        privacyClass: 'training_allowed',
+        enabled: true,
       });
+      await llmStore.setModelEnabled('opencode-go:go-training', true);
       await llmStore.setProviderEnabled('opencode-go', true);
 
       const actTraining = await app.inject({

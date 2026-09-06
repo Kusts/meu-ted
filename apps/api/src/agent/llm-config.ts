@@ -103,15 +103,23 @@ export const validateProvider = (p: Partial<LlmProvider>): string | null => {
   return null;
 };
 
-export const validateModel = (m: Partial<LlmModel>): string | null => {
+export const validateModel = (m: Partial<LlmModel>, providerKind: string): string | null => {
   if (!m.providerId || typeof m.providerId !== 'string' || m.providerId.trim() === '') {
     return 'providerId is required';
   }
   if (!m.modelId || typeof m.modelId !== 'string' || m.modelId.trim() === '') {
     return 'modelId is required';
   }
-  if (!m.protocol || !ALLOWED_PROTOCOLS.includes(m.protocol)) {
-    return 'invalid protocol';
+  // Fase 3-FIX R1: kind↔protocol compatibility is the SINGLE protocol rule.
+  // The kind is required: routes resolve it from the provider before calling
+  // (unknown provider is a clear error there, never a silent pass here).
+  // Every compatible protocol is a known protocol, so no flat allowlist is
+  // needed on top — one rule, one source (KIND_PROTOCOL_COMPAT).
+  if (!providerKind || typeof providerKind !== 'string' || providerKind.trim() === '') {
+    return 'provider kind is required';
+  }
+  if (!isProtocolCompatibleWithKind(providerKind, m.protocol ?? '')) {
+    return `model protocol ${m.protocol} is not compatible with provider kind ${providerKind}`;
   }
   if (!m.privacyClass || !ALLOWED_PRIVACY_CLASSES.includes(m.privacyClass)) {
     return 'invalid privacy class';
