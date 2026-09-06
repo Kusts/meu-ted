@@ -9,7 +9,6 @@ describe("AgentLlmSettingsSheet Component (Task 11)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     vi.spyOn(adminLlmConfig, "fetchAdminLlmConfig").mockResolvedValue({
       providers: [

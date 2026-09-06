@@ -9,7 +9,6 @@ describe("AgentLlmSettingsSheet CRUD with selectors (RED -> GREEN)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.spyOn(adminLlmConfig, "fetchAdminLlmConfig").mockResolvedValue({
       providers: [
         { id: "opencode-zen", name: "OpenCode Zen", baseUrl: "https://zen.opencode.ai/v1", secretAlias: "OPENCODE_ZEN_API_KEY", eligibility: "approved", enabled: true },

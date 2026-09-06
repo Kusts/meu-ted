@@ -1,313 +1,105 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect } from "react";
 import BottomSheet from "@/components/BottomSheet";
-import {
-  fetchAdminLlmConfig,
-  toggleProvider,
-  toggleModel,
-  activateModel,
-  createProvider,
-  createModel,
-  deleteProvider,
-  deleteModel,
-  setFallbackModel,
-  type LlmProvider,
-  type LlmModel,
-  type LlmRuntime,
-} from "@/lib/api/admin-agent-llm-config";
+import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import type { Protocol } from "@pi-finance/llm-contracts/types";
 import { Cpu, CheckCircle2, AlertCircle, Plus, Trash2, Sparkles } from "lucide-react";
 import { LLM_PROVIDER_PRESETS } from "@/lib/llm-presets";
-import { isProtocol, isProviderKind } from "@pi-finance/llm-contracts/types";
+import { isProtocol } from "@pi-finance/llm-contracts/types";
+import { useAdminLlmConfig } from "./useAdminLlmConfig";
 
 interface AgentLlmSettingsSheetProps {
   open: boolean;
   onClose: () => void;
 }
 
-export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetProps) {
-  const [providers, setProviders] = useState<LlmProvider[]>([]);
-  const [models, setModels] = useState<LlmModel[]>([]);
-  const [runtime, setRuntime] = useState<LlmRuntime | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+interface PendingConfirm {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger: boolean;
+  run: () => void;
+}
 
-  const [selectedProviderId, setSelectedProviderId] = useState<string>("");
-  const [selectedProviderModelId, setSelectedProviderModelId] = useState<string>("");
-  const [activeModelChoice, setActiveModelChoice] = useState<string>("");
-  const [fallbackModelChoice, setFallbackModelChoice] = useState<string>("");
+/**
+ * Presenter over useAdminLlmConfig: renders server/selection state from the
+ * hook, owns only form inputs and the confirm dialog. Destructive actions
+ * go through an accessible ConfirmActionDialog instead of window.confirm.
+ */
+export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetProps) {
+  const llm = useAdminLlmConfig();
+  const {
+    providers,
+    models,
+    runtime,
+    loading,
+    error,
+    actionSuccess,
+    isMutating,
+    selectedProviderId,
+    selectedProviderModelId,
+    activeModelChoice,
+    fallbackModelChoice,
+    providerModels,
+  } = llm;
+
   const [newProviderId, setNewProviderId] = useState("");
   const [newProviderSecretAlias, setNewProviderSecretAlias] = useState("OPENCODE_ZEN_API_KEY");
   const [newModelIdInput, setNewModelIdInput] = useState("");
   const [newModelProtocol, setNewModelProtocol] = useState<Protocol>("chat-completions");
-
-  const selectedProviderIdRef = useRef(selectedProviderId);
-  const selectedProviderModelIdRef = useRef(selectedProviderModelId);
-  useEffect(() => {
-    selectedProviderIdRef.current = selectedProviderId;
-  }, [selectedProviderId]);
-  useEffect(() => {
-    selectedProviderModelIdRef.current = selectedProviderModelId;
-  }, [selectedProviderModelId]);
-
-  const loadConfig = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await fetchAdminLlmConfig();
-      setProviders(data.providers);
-      setModels(data.models);
-      setRuntime(data.runtime);
-      const currentProviderId = selectedProviderIdRef.current;
-      if (data.providers.length > 0 && !currentProviderId) {
-        setSelectedProviderId(data.providers[0]!.id);
-      } else if (data.providers.length > 0 && !data.providers.find((p) => p.id === currentProviderId)) {
-        setSelectedProviderId(data.providers[0]!.id);
-      }
-      if (data.runtime) {
-        const active = data.runtime.activeModelId ?? "";
-        const fallback = data.runtime.fallbackModelId ?? "";
-        setActiveModelChoice(active);
-        setFallbackModelChoice(fallback ?? "");
-        const currentModelId = selectedProviderModelIdRef.current;
-        const providerForFilter = currentProviderId || data.providers[0]?.id;
-        const filtered = data.models.filter((m) => m.providerId === providerForFilter);
-        if (filtered.length > 0 && !currentModelId) {
-          setSelectedProviderModelId(filtered[0]!.id);
-        }
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
 
   useEffect(() => {
     if (!open) return;
     const timer = setTimeout(() => {
-      void loadConfig();
+      void llm.load();
     }, 0);
     return () => clearTimeout(timer);
-  }, [open, loadConfig]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open ]);
 
-  const handleToggleProvider = async (providerId: string, current: boolean) => {
-    setError(null);
-    try {
-      await toggleProvider(providerId, !current);
-      await loadConfig();
-      setActionSuccess(`Provedor ${providerId} ${!current ? "habilitado" : "desabilitado"}.`);
-    } catch (e) {
-      setError((e as Error).message);
-    }
+  const closeConfirm = () => setPendingConfirm(null);
+
+  const handleActivate = (providerId: string, modelId: string) => {
+    setPendingConfirm({
+      title: "Ativar modelo",
+      message: `Confirma a ativação global de ${providerId}/${modelId} para todos os workspaces?`,
+      confirmLabel: "Ativar",
+      danger: false,
+      run: () => void llm.activate(providerId, modelId),
+    });
   };
 
-  const handleToggleModel = async (modelId: string, current: boolean) => {
-    setError(null);
-    try {
-      await toggleModel(modelId, !current);
-      await loadConfig();
-      setActionSuccess(`Modelo ${modelId} ${!current ? "habilitado" : "desabilitado"}.`);
-    } catch (e) {
-      setError((e as Error).message);
-    }
+  const handleDeleteProvider = (providerId: string) => {
+    setPendingConfirm({
+      title: "Excluir provedor",
+      message: `Tem certeza que deseja excluir o provedor ${providerId} e seus modelos?`,
+      confirmLabel: "Excluir",
+      danger: true,
+      run: () => void llm.deleteProvider(providerId),
+    });
   };
 
-  const handleActivate = async (providerId: string, modelId: string) => {
-    if (!runtime) return;
-    if (!window.confirm(`Confirma a ativação global de ${providerId}/${modelId} para todos os workspaces?`)) return;
-    setError(null);
-    try {
-      await activateModel({
-        providerId,
-        modelId,
-        expectedVersion: runtime.version,
-        rolloutMode: "all",
-      });
-      await loadConfig();
-      setActionSuccess(`Modelo ${modelId} ativado com sucesso como padrão global!`);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
-  const handleSetActiveViaSelector = async () => {
-    if (!runtime || !activeModelChoice) return;
-    const model = models.find((m) => m.id === activeModelChoice || m.modelId === activeModelChoice);
-    if (!model) {
-      setError("Modelo atual não encontrado");
-      return;
-    }
-    await handleActivate(model.providerId, model.modelId);
-  };
-
-  const handleSetFallback = async () => {
-    if (!runtime) return;
-    setError(null);
-    try {
-      const fallbackModel = fallbackModelChoice ? models.find((m) => m.id === fallbackModelChoice || m.modelId === fallbackModelChoice) : null;
-      const providerId = fallbackModel ? fallbackModel.providerId : null;
-      const modelId = fallbackModel ? fallbackModel.modelId : null;
-      await setFallbackModel({
-        providerId,
-        modelId,
-        expectedVersion: runtime.version,
-      });
-      await loadConfig();
-      setActionSuccess(fallbackModel ? `Fallback definido para ${fallbackModel.modelId}` : "Fallback removido");
-    } catch (e) {
-      setError((e as Error).message);
-    }
+  const handleDeleteModel = (modelId: string) => {
+    setPendingConfirm({
+      title: "Excluir modelo",
+      message: `Tem certeza que deseja excluir o modelo ${modelId}?`,
+      confirmLabel: "Excluir",
+      danger: true,
+      run: () => void llm.deleteModel(modelId),
+    });
   };
 
   const handleCreateProvider = async () => {
-    const id = newProviderId.trim();
-    if (!id) {
-      setError("ID do provedor é obrigatório");
-      return;
-    }
-    if (!isProviderKind(id)) {
-      setError(`kind inválido: ${id}`);
-      return;
-    }
-    setError(null);
-    try {
-      await createProvider({
-        id,
-        secretAlias: newProviderSecretAlias,
-        kind: id,
-      });
-      setNewProviderId("");
-      await loadConfig();
-      setActionSuccess(`Provedor ${id} cadastrado`);
-      setSelectedProviderId(id);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
-  const handleCreatePreset = async (presetId: string) => {
-    const preset = LLM_PROVIDER_PRESETS.find((p) => p.id === presetId);
-    if (!preset) {
-      setError(`Preset ${presetId} não encontrado`);
-      return;
-    }
-    if (providers.some((p) => p.id === preset.id)) {
-      setError(`Provedor ${preset.name} já existe`);
-      setSelectedProviderId(preset.id);
-      return;
-    }
-    setError(null);
-    try {
-      const failures: string[] = [];
-      try {
-        await createProvider({
-          id: preset.id,
-          name: preset.name,
-          kind: preset.kind,
-          transport: preset.transport,
-          authMode: preset.authMode,
-          secretAlias: preset.secretAlias ?? "OPENAI_API_KEY",
-          eligibility: "approved",
-          enabled: true,
-        });
-      } catch (e) {
-        failures.push(`createProvider ${preset.id}: ${(e as Error).message}`);
-      }
-      try {
-        await toggleProvider(preset.id, true);
-      } catch (e) {
-        failures.push(`toggleProvider ${preset.id}: ${(e as Error).message}`);
-      }
-      for (const m of preset.autoModels) {
-        try {
-          await createModel({
-            providerId: preset.id,
-            modelId: m.modelId,
-            protocol: m.protocol,
-            privacyClass: m.privacyClass,
-            enabled: true,
-          });
-        } catch (e) {
-          failures.push(`createModel ${m.modelId}: ${(e as Error).message}`);
-        }
-        try {
-          const modelId = `${preset.id}:${m.modelId}`;
-          await toggleModel(modelId, true);
-        } catch (e) {
-          failures.push(`toggleModel ${m.modelId}: ${(e as Error).message}`);
-        }
-      }
-      await loadConfig();
-      if (failures.length === 0) {
-        setActionSuccess(`Provedor ${preset.name} cadastrado com ${preset.autoModels.length} modelos`);
-      } else {
-        setError(`Preset parcial: ${failures.join(", ")}`);
-      }
-      setSelectedProviderId(preset.id);
-    } catch (e) {
-      setError((e as Error).message);
-    }
+    const ok = await llm.createProvider(newProviderId, newProviderSecretAlias);
+    if (ok) setNewProviderId("");
   };
 
   const handleCreateModel = async () => {
-    const modelId = newModelIdInput.trim();
-    if (!modelId) {
-      setError("Model ID é obrigatório");
-      return;
-    }
-    if (!selectedProviderId) {
-      setError("Selecione um provedor");
-      return;
-    }
-    setError(null);
-    try {
-      await createModel({
-        providerId: selectedProviderId,
-        modelId,
-        protocol: newModelProtocol,
-        privacyClass: "training_prohibited",
-      });
-      setNewModelIdInput("");
-      await loadConfig();
-      setActionSuccess(`Modelo ${modelId} cadastrado para ${selectedProviderId}`);
-    } catch (e) {
-      setError((e as Error).message);
-    }
+    const ok = await llm.createModel(selectedProviderId, newModelIdInput, newModelProtocol);
+    if (ok) setNewModelIdInput("");
   };
-
-  const handleDeleteProvider = async (providerId: string) => {
-    if (typeof window !== "undefined" && !window.confirm(`Tem certeza que deseja excluir o provedor ${providerId} e seus modelos?`)) return;
-    setError(null);
-    try {
-      const providerModelIds = new Set(models.filter((m) => m.providerId === providerId).map((m) => m.id));
-      await deleteProvider(providerId);
-      if (selectedProviderId === providerId) setSelectedProviderId("");
-      if (providerModelIds.has(selectedProviderModelId)) setSelectedProviderModelId("");
-      if (providerModelIds.has(activeModelChoice)) setActiveModelChoice("");
-      if (providerModelIds.has(fallbackModelChoice)) setFallbackModelChoice("");
-      await loadConfig();
-      setActionSuccess(`Provedor ${providerId} excluído com sucesso.`);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
-  const handleDeleteModel = async (modelId: string) => {
-    if (typeof window !== "undefined" && !window.confirm(`Tem certeza que deseja excluir o modelo ${modelId}?`)) return;
-    setError(null);
-    try {
-      await deleteModel(modelId);
-      await loadConfig();
-      setActionSuccess(`Modelo ${modelId} excluído com sucesso.`);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
-  const providerModels = models.filter((m) => m.providerId === selectedProviderId);
 
   return (
     <BottomSheet open={open} onClose={onClose} title="Governança TED · LLM">
@@ -373,12 +165,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                     id="provider-select"
                     aria-label="Provedor"
                     value={selectedProviderId}
-                    onChange={(e) => {
-                      const newId = e.target.value;
-                      setSelectedProviderId(newId);
-                      const firstModel = models.find((m) => m.providerId === newId);
-                      setSelectedProviderModelId(firstModel ? firstModel.id : "");
-                    }}
+                    onChange={(e) => llm.selectProvider(e.target.value)}
                     className="h-10 w-full rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] font-medium text-text-primary outline-none focus:border-primary"
                   >
                     {providers.map((p) => (
@@ -399,8 +186,8 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                         <button
                           key={preset.id}
                           type="button"
-                          disabled={exists}
-                          onClick={() => void handleCreatePreset(preset.id)}
+                          disabled={exists || isMutating}
+                          onClick={() => void llm.createPreset(preset.id)}
                           className={`rounded-[12px] border px-3 py-2.5 text-left transition-all ${
                             exists
                               ? "border-border-subtle bg-surface-2 text-text-muted cursor-not-allowed opacity-60"
@@ -455,8 +242,9 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                 </div>
                 <button
                   type="button"
+                  disabled={isMutating}
                   onClick={() => void handleCreateProvider()}
-                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-[12px] bg-primary px-4 py-2.5 text-[13px] font-bold text-white hover:bg-primary-hover"
+                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-[12px] bg-primary px-4 py-2.5 text-[13px] font-bold text-white hover:bg-primary-hover disabled:opacity-60"
                 >
                   <Plus size={14} /> Cadastrar Provedor
                 </button>
@@ -482,7 +270,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                     id="provider-model-select"
                     aria-label="Modelo do provedor"
                     value={selectedProviderModelId}
-                    onChange={(e) => setSelectedProviderModelId(e.target.value)}
+                    onChange={(e) => llm.setSelectedProviderModelId(e.target.value)}
                     className="h-10 w-full rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] font-medium text-text-primary outline-none focus:border-primary"
                   >
                     {providerModels.length === 0 ? (
@@ -530,8 +318,9 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                   </div>
                   <button
                     type="button"
+                    disabled={isMutating}
                     onClick={() => void handleCreateModel()}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-[10px] bg-primary px-4 py-2.5 text-[13px] font-bold text-white hover:bg-primary-hover h-9"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-[10px] bg-primary px-4 py-2.5 text-[13px] font-bold text-white hover:bg-primary-hover h-9 disabled:opacity-60"
                   >
                     <Plus size={14} /> Cadastrar Modelo
                   </button>
@@ -557,7 +346,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                       id="active-model-select"
                       aria-label="Modelo Atual"
                       value={activeModelChoice}
-                      onChange={(e) => setActiveModelChoice(e.target.value)}
+                      onChange={(e) => llm.setActiveModelChoice(e.target.value)}
                       className="h-10 flex-1 rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] font-medium text-text-primary outline-none focus:border-primary"
                     >
                       <option value="">Selecione...</option>
@@ -569,8 +358,9 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                     </select>
                     <button
                       type="button"
-                      onClick={() => void handleSetActiveViaSelector()}
-                      className="rounded-[12px] bg-primary px-4 py-2 text-[13px] font-bold text-white hover:bg-primary-hover"
+                      disabled={isMutating}
+                      onClick={() => void llm.setActiveViaSelector()}
+                      className="rounded-[12px] bg-primary px-4 py-2 text-[13px] font-bold text-white hover:bg-primary-hover disabled:opacity-60"
                     >
                       Ativar
                     </button>
@@ -585,7 +375,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                       id="fallback-model-select"
                       aria-label="Modelo de Fallback"
                       value={fallbackModelChoice}
-                      onChange={(e) => setFallbackModelChoice(e.target.value)}
+                      onChange={(e) => llm.setFallbackModelChoice(e.target.value)}
                       className="h-10 flex-1 rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] font-medium text-text-primary outline-none focus:border-primary"
                     >
                       <option value="">Nenhum (sem fallback)</option>
@@ -597,8 +387,9 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                     </select>
                     <button
                       type="button"
-                      onClick={() => void handleSetFallback()}
-                      className="rounded-[12px] bg-surface-2 border border-border-subtle px-4 py-2 text-[13px] font-bold text-text-primary hover:bg-surface-3"
+                      disabled={isMutating}
+                      onClick={() => void llm.setFallback()}
+                      className="rounded-[12px] bg-surface-2 border border-border-subtle px-4 py-2 text-[13px] font-bold text-text-primary hover:bg-surface-3 disabled:opacity-60"
                     >
                       Salvar Fallback
                     </button>
@@ -641,8 +432,9 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => void handleToggleProvider(p.id, p.enabled)}
-                        className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all active:scale-95 ${
+                        disabled={isMutating}
+                        onClick={() => void llm.toggleProvider(p.id, p.enabled)}
+                        className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all active:scale-95 disabled:opacity-60 ${
                           p.enabled
                             ? "bg-primary text-white shadow-fab hover:bg-primary-hover"
                             : "bg-surface-2 border border-border-subtle text-text-secondary hover:bg-surface-3"
@@ -654,7 +446,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                       <button
                         type="button"
                         aria-label={`Excluir provedor ${p.id}`}
-                        onClick={() => void handleDeleteProvider(p.id)}
+                        onClick={() => handleDeleteProvider(p.id)}
                         className="rounded-full p-1.5 text-text-muted hover:text-danger hover:bg-danger-tint transition-all"
                       >
                         <Trash2 size={14} />
@@ -699,8 +491,8 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                       <div className="flex items-center gap-2 self-start sm:self-auto">
                         <button
                           type="button"
-                          onClick={() => void handleToggleModel(m.id, m.enabled)}
-                          disabled={isCurrentActive}
+                          onClick={() => void llm.toggleModel(m.id, m.enabled)}
+                          disabled={isCurrentActive || isMutating}
                           aria-disabled={isCurrentActive}
                           title={isCurrentActive ? "Modelo ativo — desative outro modelo antes de desabilitar este" : undefined}
                           className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -712,8 +504,9 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                         {!isCurrentActive && m.enabled && (
                           <button
                             type="button"
-                            onClick={() => void handleActivate(m.providerId, m.modelId)}
-                            className="rounded-full bg-primary px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-primary-hover active:scale-95 transition-all"
+                            disabled={isMutating}
+                            onClick={() => handleActivate(m.providerId, m.modelId)}
+                            className="rounded-full bg-primary px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-primary-hover active:scale-95 transition-all disabled:opacity-60"
                           >
                             Ativar Global
                           </button>
@@ -722,7 +515,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                           <button
                             type="button"
                             aria-label={`Excluir modelo ${m.modelId}`}
-                            onClick={() => void handleDeleteModel(m.id)}
+                            onClick={() => handleDeleteModel(m.id)}
                             className="rounded-full p-1.5 text-text-muted hover:text-danger hover:bg-danger-tint transition-all"
                           >
                             <Trash2 size={14} />
@@ -737,6 +530,21 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
           </>
         )}
       </div>
+      {pendingConfirm && (
+        <ConfirmActionDialog
+          open
+          title={pendingConfirm.title}
+          message={pendingConfirm.message}
+          confirmLabel={pendingConfirm.confirmLabel}
+          danger={pendingConfirm.danger}
+          onConfirm={() => {
+            const run = pendingConfirm.run;
+            closeConfirm();
+            run();
+          }}
+          onCancel={closeConfirm}
+        />
+      )}
     </BottomSheet>
   );
 }

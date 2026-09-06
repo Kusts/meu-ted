@@ -10,7 +10,6 @@ describe("Phase0 PWA — RED→GREEN", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.spyOn(adminLlmConfig, "fetchAdminLlmConfig").mockResolvedValue({
       providers: [
         { id: "openai", name: "OpenAI", kind: "openai", transport: "direct", authMode: "api-key", secretAlias: "OPENAI_API_KEY", eligibility: "approved", enabled: true },
@@ -108,6 +107,7 @@ describe("Phase0 PWA — RED→GREEN", () => {
     await waitFor(() => expect((screen.getByLabelText("Modelo de Fallback") as HTMLSelectElement).value).toBe("openai:gpt-4o"));
     const deleteBtn = screen.getByLabelText("Excluir provedor openai");
     await user.click(deleteBtn);
+    await user.click(screen.getByRole("button", { name: /^Excluir$/ }));
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
     // after delete, the selects should be reset (empty)
     await waitFor(() => {
@@ -116,6 +116,21 @@ describe("Phase0 PWA — RED→GREEN", () => {
       const fb = screen.queryByLabelText("Modelo de Fallback") as HTMLSelectElement | null;
       if (fb) expect(fb.value).toBe("");
     });
+  });
+
+  it("9c: cancelar o diálogo não exclui nada", async () => {
+    const user = userEvent.setup();
+    const deleteSpy = vi.spyOn(adminLlmConfig, "deleteProvider").mockResolvedValue({ ok: true } as any);
+    render(<AgentLlmSettingsSheet open={true} onClose={onCloseMock} />);
+    await screen.findByLabelText("Provedor");
+    await waitFor(() => expect((screen.getByLabelText("Provedor") as HTMLSelectElement).value).toBe("openai"));
+    await user.click(screen.getByLabelText("Excluir provedor openai"));
+    expect(await screen.findByText("Tem certeza que deseja excluir o provedor openai e seus modelos?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Tem certeza que deseja excluir o provedor openai e seus modelos?")).not.toBeInTheDocument(),
+    );
+    expect(deleteSpy).not.toHaveBeenCalled();
   });
 
   it("9b: trocar provider no select reseta selectedProviderModelId", async () => {

@@ -41,8 +41,8 @@ export type AdminLlmConfigResponse = {
   runtime: LlmRuntime | null;
 };
 
-export const fetchAdminLlmConfig = async (): Promise<AdminLlmConfigResponse> => {
-  return apiFetch<AdminLlmConfigResponse>("/admin/agent/llm-config");
+export const fetchAdminLlmConfig = async (signal?: AbortSignal): Promise<AdminLlmConfigResponse> => {
+  return apiFetch<AdminLlmConfigResponse>("/admin/agent/llm-config", signal ? { signal } : {});
 };
 
 export const toggleProvider = async (providerId: string, enabled: boolean): Promise<{ provider: LlmProvider }> => {

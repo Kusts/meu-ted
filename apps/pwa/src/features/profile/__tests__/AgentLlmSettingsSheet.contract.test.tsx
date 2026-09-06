@@ -12,7 +12,6 @@ import * as adminLlmConfig from "@/lib/api/admin-agent-llm-config";
 describe("AgentLlmSettingsSheet runtime contract (Fase 1a)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
   });
 
   it("renders Runtime Ativo from a mapper-shaped DTO without legacy fields", async () => {
