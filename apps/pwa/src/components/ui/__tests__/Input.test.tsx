@@ -47,4 +47,9 @@ describe("Input", () => {
     const input = screen.getByPlaceholderText("Desabilitado");
     expect(input).toBeDisabled();
   });
+
+  it("uses 16px font-size so iOS does not auto-zoom on focus (WCAG/A5)", () => {
+    render(<Input placeholder="Nome" />);
+    expect(screen.getByPlaceholderText("Nome")).toHaveClass("text-[16px]");
+  });
 });

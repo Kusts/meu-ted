@@ -57,7 +57,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             aria-describedby={
               error ? errorId : helperText ? helperId : undefined
             }
-            className={`w-full rounded-[12px] border bg-surface-2 px-3.5 py-2.5 text-[14px] text-text-primary transition-all duration-150 placeholder:text-text-muted focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50 ${
+            className={`w-full rounded-[12px] border bg-surface-2 px-3.5 py-2.5 text-[16px] text-text-primary transition-all duration-150 placeholder:text-text-muted focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50 ${
               prefix ? "pl-11" : ""
             } ${suffix ? "pr-11" : ""} ${
               error

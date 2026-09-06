@@ -453,7 +453,7 @@ export default function NewTransactionSheet({
             border: `1.5px solid ${calOpen ? "var(--color-primary)" : "var(--color-border)"}`,
           }}
         >
-          <span className="text-[14px] text-text-primary">{dateLabel}</span>
+          <span className="text-[16px] text-text-primary">{dateLabel}</span>
           <svg
             width="16"
             height="16"
@@ -539,7 +539,7 @@ export default function NewTransactionSheet({
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Ex: Aluguel, mercado..."
-          className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[14px] text-text-primary outline-none focus:border-primary"
+          className="w-full rounded-[13px] border border-border bg-transparent px-3.5 py-3 text-[16px] text-text-primary outline-none focus:border-primary"
         />
       </fieldset>
 
@@ -685,7 +685,7 @@ export default function NewTransactionSheet({
                       value={newName}
                       onChange={(e) => setNewName(e.target.value)}
                       placeholder="Nome da subcategoria"
-                      className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
+                      className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[16px] text-text-primary outline-none focus:border-primary"
                       autoFocus
                     />
                   }
@@ -694,7 +694,7 @@ export default function NewTransactionSheet({
             )}
 
             {subcategories.length > 0 && (
-              <div className="flex gap-1.5 overflow-x-auto">
+              <div className="flex gap-1.5 overflow-x-auto" data-no-swipe="true">
                 {subcategories.map((sub) => {
                   const isSelected = subcategoryId === sub.id;
                   return (
