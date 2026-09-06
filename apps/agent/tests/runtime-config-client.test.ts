@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchRuntimeConfig } from '../src/llm/runtime-config-client.js';
+import { fetchRuntimeConfig, RuntimeSnapshotError } from '../src/llm/runtime-config-client.js';
 
 describe('Runtime Config Client (Task 5)', () => {
   it('fetches and normalizes runtime configuration with auth header', async () => {
@@ -43,13 +43,13 @@ describe('Runtime Config Client (Task 5)', () => {
       securityEpoch: 2,
     });
 
-    expect(fetchMock).toHaveBeenCalledWith('https://api.example.test/internal/agent/llm-config', {
+    expect(fetchMock).toHaveBeenCalledWith('https://api.example.test/internal/agent/llm-config', expect.objectContaining({
       method: 'GET',
       headers: {
         'x-agent-config-token': 'token-123',
         accept: 'application/json',
       },
-    });
+    }));
   });
 
   it('throws when HTTP status is not ok', async () => {
@@ -62,4 +62,22 @@ describe('Runtime Config Client (Task 5)', () => {
       /HTTP 401/,
     );
   });
+
+  it('throws a typed timeout error when fetch hangs (Fase 3 item 8)', async () => {
+    const fetchMock = vi.fn().mockImplementationOnce(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'TimeoutError' })),
+          );
+        }),
+    );
+    globalThis.fetch = fetchMock;
+
+    const err = await fetchRuntimeConfig('https://api.example.test', 'token-123', {
+      timeoutMs: 50,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RuntimeSnapshotError);
+    expect((err as Error).message).toMatch(/timed out|timeout/i);
+  }, 10_000);
 });

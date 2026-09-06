@@ -14,22 +14,39 @@ export class RuntimeSnapshotError extends Error {
   }
 }
 
+export const RUNTIME_CONFIG_TIMEOUT_MS = 5_000;
+
 export const fetchRuntimeConfig = async (
   apiOrigin: string,
   configToken: string,
+  opts?: { timeoutMs?: number },
 ): Promise<RuntimeSnapshot> => {
   if (!apiOrigin || !configToken) {
     throw new Error('apiOrigin and configToken are required to fetch runtime configuration');
   }
 
   const url = `${apiOrigin.replace(/\/$/, '')}/internal/agent/llm-config`;
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'x-agent-config-token': configToken,
-      accept: 'application/json',
-    },
-  });
+  let res: Response;
+  try {
+    // Fase 3 item 8: bounded fetch so a hung API cannot stall the agent.
+    res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'x-agent-config-token': configToken,
+        accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(opts?.timeoutMs ?? RUNTIME_CONFIG_TIMEOUT_MS),
+    });
+  } catch (err) {
+    // Only the deadline becomes a typed timeout; genuine network errors
+    // keep propagating untouched.
+    if ((err as { name?: string })?.name !== 'TimeoutError') throw err;
+    throw new RuntimeSnapshotError(
+      `Runtime snapshot fetch timed out: ${(err as Error)?.message ?? 'timeout'}`,
+      0,
+      '',
+    );
+  }
 
   if (!res.ok) {
     const errorText = await res.text().catch(() => '');
