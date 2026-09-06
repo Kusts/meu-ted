@@ -90,6 +90,34 @@ export const isProtocol = (value: string): value is Protocol =>
   (PROTOCOLS as readonly string[]).includes(value);
 
 /**
+ * Single source: which protocols each executable kind can actually run.
+ * Derived from the agent model-factory wiring (OpenAI-native vs
+ * OpenAI-compatible vs Anthropic messages vs Google generative-ai).
+ * Unsupported kinds (codex) have no entry: nothing is compatible with them.
+ */
+export const KIND_PROTOCOL_COMPAT: Record<
+  Exclude<ProviderKind, RegistryUnsupportedKind>,
+  readonly Protocol[]
+> = {
+  'opencode-zen': ['chat-completions', 'responses'],
+  'opencode-go': ['chat-completions', 'responses'],
+  'openai-api': ['chat-completions', 'responses'],
+  openai: ['chat-completions', 'responses'],
+  anthropic: ['messages'],
+  deepseek: ['chat-completions', 'responses'],
+  qwen: ['chat-completions', 'responses'],
+  glm: ['chat-completions', 'responses'],
+  minimax: ['chat-completions', 'responses'],
+  google: ['google-generative-ai'],
+  openrouter: ['chat-completions', 'responses'],
+};
+
+export const isProtocolCompatibleWithKind = (kind: string, protocol: string): boolean => {
+  const list = (KIND_PROTOCOL_COMPAT as Record<string, readonly string[]>)[kind];
+  return list !== undefined && list.includes(protocol);
+};
+
+/**
  * Explicit admin runtime DTO. field names with the `active` prefix are the
  * contract — consumers MUST NOT read legacy `providerId`/`modelId` names.
  */

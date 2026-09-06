@@ -1,6 +1,7 @@
 import { activationBlocked, type LlmConfigStore } from './llm-config-store.js';
 import {
   isKindExecutable,
+  isProtocolCompatibleWithKind,
   validateProvider,
   validateRuntimePair,
   type LlmModel,
@@ -320,12 +321,37 @@ export const createInMemoryLlmConfigStore = (seed?: {
       );
       const existingModel = existingIdx >= 0 ? models[existingIdx]! : undefined;
       // Fase 2 item 6: protocol/privacyClass of a referenced model are immutable.
+      // Fase 3 item 2: identity (id/providerId/modelId) is immutable while
+      // referenced, and kind↔protocol compatibility is enforced before the
+      // generic immutability reason so mismatches report the real cause.
       if (
         existingModel &&
-        (runtime.modelId === existingModel.id || runtime.fallbackModelId === existingModel.id) &&
-        (existingModel.protocol !== input.protocol || existingModel.privacyClass !== input.privacyClass)
+        (runtime.modelId === existingModel.id || runtime.fallbackModelId === existingModel.id)
       ) {
-        throw invalidModel('protocol/privacyClass of a referenced model is immutable');
+        const slot = runtime.modelId === existingModel.id ? 'active_model' : 'fallback_model';
+        if (
+          existingModel.providerId !== input.providerId ||
+          existingModel.modelId !== input.modelId ||
+          (input.id !== undefined && input.id !== existingModel.id)
+        ) {
+          const label = slot === 'active_model' ? 'active' : 'fallback';
+          throw Object.assign(
+            new Error(`model identity of the ${label} model is immutable while referenced`),
+            { statusCode: 409, code: 'agent.runtime_in_use', reason: slot },
+          );
+        }
+        const kind = providers.find((p) => p.id === input.providerId)?.kind;
+        if (kind !== undefined && !isProtocolCompatibleWithKind(kind, input.protocol)) {
+          throw invalidModel(
+            `model protocol ${input.protocol} is not compatible with provider kind ${kind}`,
+          );
+        }
+        if (
+          existingModel.protocol !== input.protocol ||
+          existingModel.privacyClass !== input.privacyClass
+        ) {
+          throw invalidModel('protocol/privacyClass of a referenced model is immutable');
+        }
       }
       const model: LlmModel = {
         id,

@@ -7,11 +7,13 @@ import {
   ALLOWED_SECRET_ALIASES,
   canActivate,
   isCompatibleTransportAuth,
+  isProtocolCompatibleWithKind,
   validateModel,
   validateProvider,
   type LlmModel,
   type LlmProvider,
 } from '../../src/agent/llm-config.js';
+import { KIND_PROTOCOL_COMPAT } from '@pi-finance/llm-contracts';
 import { createInMemoryLlmConfigStore } from '../../src/agent/llm-config-memory.js';
 
 describe('LLM Config Domain Validation (RED -> GREEN)', () => {
@@ -282,6 +284,43 @@ describe('LLM Config Domain Validation (RED -> GREEN)', () => {
       expect(
         canActivate(validProvider, { ...validModel, protocol: 'invalid-proto' as never }),
       ).toBe('invalid model protocol');
+    });
+
+    it.each(Object.entries(KIND_PROTOCOL_COMPAT))(
+      'accepts a compatible protocol for kind %s (Fase 3 item 2)',
+      (kind, protocols) => {
+        const provider = { ...validProvider, id: kind, kind: kind as LlmProvider['kind'] };
+        const model = { ...validModel, id: `${kind}:m`, providerId: kind, protocol: protocols[0]! };
+        expect(canActivate(provider, model)).toBeNull();
+      },
+    );
+
+    it.each([
+      ['openai-api', 'messages'],
+      ['openai', 'messages'],
+      ['opencode-zen', 'messages'],
+      ['opencode-go', 'google-generative-ai'],
+      ['deepseek', 'messages'],
+      ['qwen', 'messages'],
+      ['glm', 'google-generative-ai'],
+      ['minimax', 'messages'],
+      ['openrouter', 'messages'],
+      ['anthropic', 'chat-completions'],
+      ['anthropic', 'responses'],
+      ['google', 'chat-completions'],
+      ['google', 'messages'],
+    ])('blocks incompatible protocol %s for kind %s (Fase 3 item 2)', (kind, protocol) => {
+      expect(isProtocolCompatibleWithKind(kind, protocol)).toBe(false);
+      const provider = { ...validProvider, id: kind, kind: kind as LlmProvider['kind'] };
+      const model = {
+        ...validModel,
+        id: `${kind}:m`,
+        providerId: kind,
+        protocol: protocol as LlmModel['protocol'],
+      };
+      expect(canActivate(provider, model)).toBe(
+        `model protocol ${protocol} is not compatible with provider kind ${kind}`,
+      );
     });
 
     it('blocks activation if provider kind is not executable (Fase 1b-FIX item 3)', () => {

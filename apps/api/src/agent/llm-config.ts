@@ -7,6 +7,7 @@ import {
   REGISTRY_UNSUPPORTED_KINDS,
   ROLLOUT_MODES,
   SECRET_ALIASES,
+  isProtocolCompatibleWithKind,
   type AuthMode,
   type PrivacyClass,
   type Protocol,
@@ -31,7 +32,7 @@ export const ALLOWED_ROLLOUT_MODES: readonly RolloutMode[] = ROLLOUT_MODES;
 
 export const ALLOWED_PRIVACY_CLASSES: readonly PrivacyClass[] = PRIVACY_CLASSES;
 
-export { AUTH_MODES, KIND_SECRET_ALIASES, REGISTRY_UNSUPPORTED_KINDS };
+export { AUTH_MODES, KIND_SECRET_ALIASES, REGISTRY_UNSUPPORTED_KINDS, isProtocolCompatibleWithKind };
 
 export const isKindExecutable = (kind: string): boolean =>
   (PROVIDER_KINDS as readonly string[]).includes(kind) &&
@@ -129,6 +130,11 @@ export const canActivate = (
   if (!model.enabled) return 'model is disabled';
   if (model.privacyClass === 'training_allowed') return 'model with training_allowed is blocked';
   if (!ALLOWED_PROTOCOLS.includes(model.protocol)) return 'invalid model protocol';
+  // Fase 3 R2: semantic kind↔protocol compatibility, after the generic
+  // checks so existing reasons (disabled, training_allowed, ...) keep firing first.
+  if (!isProtocolCompatibleWithKind(provider.kind, model.protocol)) {
+    return `model protocol ${model.protocol} is not compatible with provider kind ${provider.kind}`;
+  }
   return null;
 };
 

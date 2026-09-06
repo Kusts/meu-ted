@@ -144,6 +144,61 @@ describe('Fase 1b-FIX routes (items 3/8)', () => {
     expect(String(res.json().reason ?? '')).toMatch(/executable|support/i);
   });
 
+  it('Fase 3 item 2: activate rejects a kind/protocol mismatch (anthropic + chat-completions)', async () => {
+    // Creation of the mismatched pair is allowed; activation is not.
+    const p = await app.inject({
+      method: 'POST',
+      url: '/admin/agent/llm-config/providers',
+      headers: adminHeaders(),
+      payload: {
+        id: 'anthropic',
+        kind: 'anthropic',
+        transport: 'direct',
+        authMode: 'api-key',
+        secretAlias: 'ANTHROPIC_API_KEY',
+      },
+    });
+    expect(p.statusCode).toBe(201);
+    for (const payload of [{ enabled: true }, { eligibility: 'approved' }]) {
+      const r = await app.inject({
+        method: 'PATCH',
+        url: '/admin/agent/llm-config/providers/anthropic',
+        headers: adminHeaders(),
+        payload,
+      });
+      expect(r.statusCode).toBe(200);
+    }
+    const m = await app.inject({
+      method: 'POST',
+      url: '/admin/agent/llm-config/models',
+      headers: adminHeaders(),
+      payload: {
+        providerId: 'anthropic',
+        modelId: 'claude-x',
+        protocol: 'chat-completions',
+        privacyClass: 'training_prohibited',
+      },
+    });
+    expect(m.statusCode).toBe(201);
+    const modelId = String(m.json().model.id);
+    const t = await app.inject({
+      method: 'POST',
+      url: `/admin/agent/llm-config/models/${encodeURIComponent(modelId)}/toggle`,
+      headers: adminHeaders(),
+      payload: { enabled: true },
+    });
+    expect(t.statusCode).toBe(200);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/agent/llm-config/activate',
+      headers: adminHeaders(),
+      payload: { providerId: 'anthropic', modelId, expectedVersion: 1 },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json()).toMatchObject({ code: 'agent.activation_blocked' });
+    expect(String(res.json().reason ?? '')).toMatch(/not compatible/);
+  });
+
   it('item 8: toggle rejects unknown keys with a strict schema', async () => {
     for (const url of [
       '/admin/agent/llm-config/providers/openai-api/toggle',

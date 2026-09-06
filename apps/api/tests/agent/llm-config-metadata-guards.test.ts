@@ -161,3 +161,87 @@ describe('Fase 2 item 6 — upsert metadata guards on referenced items (RED)', (
     expect(m.protocol).toBe('responses');
   });
 });
+
+describe('Fase 3 item 2 — compat + identity guards on referenced models (RED)', () => {
+  const seedAnthropicActivePair = async (
+    store: ReturnType<typeof createInMemoryLlmConfigStore>,
+  ) => {
+    await store.upsertProvider({
+      id: 'anthropic',
+      kind: 'anthropic',
+      transport: 'direct',
+      authMode: 'api-key',
+      secretAlias: 'ANTHROPIC_API_KEY',
+      enabled: true,
+      eligibility: 'approved',
+    });
+    await store.setProviderEnabled('anthropic', true);
+    const model = await store.upsertModel({
+      providerId: 'anthropic',
+      modelId: 'claude-x',
+      protocol: 'messages',
+      privacyClass: 'training_prohibited',
+      enabled: true,
+    });
+    await store.setModelEnabled(model.id, true);
+    const rt = await store.getRuntime();
+    const runtime = await store.updateRuntime({
+      providerId: 'anthropic',
+      modelId: model.id,
+      expectedVersion: rt.version,
+      updatedBy: 'fase3@test.com',
+    });
+    return { model, runtime };
+  };
+
+  it('changing protocol of the active model to a kind-incompatible one is rejected with 422', async () => {
+    const store = createInMemoryLlmConfigStore();
+    const { model } = await seedAnthropicActivePair(store);
+    await expect(
+      store.upsertModel({
+        providerId: 'anthropic',
+        modelId: 'claude-x',
+        protocol: 'chat-completions',
+        privacyClass: 'training_prohibited',
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 422,
+      code: 'agent.invalid_model',
+      reason: 'model protocol chat-completions is not compatible with provider kind anthropic',
+    });
+    expect((await store.getModel(model.id))?.protocol).toBe('messages');
+  });
+
+  it('changing providerId/modelId identity of the active model is rejected with 409', async () => {
+    const store = createInMemoryLlmConfigStore();
+    const { model } = await seedAnthropicActivePair(store);
+    await expect(
+      store.upsertModel({
+        id: model.id,
+        providerId: 'anthropic',
+        modelId: 'claude-y',
+        protocol: 'messages',
+        privacyClass: 'training_prohibited',
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'agent.runtime_in_use',
+      reason: 'active_model',
+    });
+    expect((await store.getModel(model.id))?.modelId).toBe('claude-x');
+  });
+
+  it('compatible protocol change on the active model still applies', async () => {
+    const store = createInMemoryLlmConfigStore();
+    await seedActivePair(store);
+    // openai-api accepts responses: immutability fires (same pair), so use an
+    // unreferenced-but-compatible provider/model to prove compat allows writes.
+    const m = await store.upsertModel({
+      providerId: 'openai-api',
+      modelId: 'gpt-4o-mini',
+      protocol: 'responses',
+      privacyClass: 'training_prohibited',
+    });
+    expect(m.protocol).toBe('responses');
+  });
+});

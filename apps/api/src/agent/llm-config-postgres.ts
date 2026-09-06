@@ -3,6 +3,7 @@ import { activationBlocked, type LlmConfigStore } from './llm-config-store.js';
 import { mapModelRow, mapProviderRow, mapRuntimeRow, emptyRuntime, type DbRow } from './llm-config-row-mapper.js';
 import {
   isKindExecutable,
+  isProtocolCompatibleWithKind,
   validateProvider,
   validateRuntimePair,
   type LlmModel,
@@ -497,21 +498,53 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
         `SELECT model_id, fallback_model_id FROM agent_llm_runtime_config WHERE singleton = 'active' FOR UPDATE`,
       );
       const row = rt.rows[0] as Record<string, unknown> | undefined;
+      // Fase 3 item 2: resolve the referenced row by id OR pair (an upsert
+      // may target the referenced row through either key), then enforce
+      // identity immutability + kind↔protocol compatibility under the lock.
+      const cur = await client.query(
+        `SELECT m.id AS id, m.protocol AS protocol, m.privacy_class AS privacy_class,
+                m.provider_id AS provider_id, m.model_id AS model_id, p.kind AS provider_kind
+         FROM agent_llm_models m LEFT JOIN agent_llm_providers p ON p.id = m.provider_id
+         WHERE m.id = $1 OR (m.provider_id = $2 AND m.model_id = $3)
+         LIMIT 1`,
+        [id, input.providerId, input.modelId],
+      );
+      const existing = cur.rows[0] as Record<string, unknown> | undefined;
       const slot =
-        row?.['model_id'] === id
+        existing && row?.['model_id'] === existing['id']
           ? 'active_model'
-          : row?.['fallback_model_id'] === id
+          : existing && row?.['fallback_model_id'] === existing['id']
             ? 'fallback_model'
             : null;
-      if (slot) {
-        const cur = await client.query(
-          `SELECT protocol, privacy_class FROM agent_llm_models WHERE id = $1`,
-          [id],
-        );
-        const existing = cur.rows[0] as Record<string, unknown> | undefined;
+      if (slot && existing) {
         if (
-          existing &&
-          (existing['protocol'] !== input.protocol || existing['privacy_class'] !== input.privacyClass)
+          existing['provider_id'] !== input.providerId ||
+          existing['model_id'] !== input.modelId ||
+          existing['id'] !== id
+        ) {
+          const label = slot === 'active_model' ? 'active' : 'fallback';
+          const reason = `model identity of the ${label} model is immutable while referenced`;
+          throw Object.assign(new Error(reason), {
+            statusCode: 409,
+            code: 'agent.runtime_in_use',
+            reason: slot,
+          });
+        }
+        const kind = existing['provider_kind'];
+        if (
+          typeof kind === 'string' &&
+          !isProtocolCompatibleWithKind(kind, input.protocol)
+        ) {
+          const reason = `model protocol ${input.protocol} is not compatible with provider kind ${kind}`;
+          throw Object.assign(new Error(reason), {
+            statusCode: 422,
+            code: 'agent.invalid_model',
+            reason,
+          });
+        }
+        if (
+          existing['protocol'] !== input.protocol ||
+          existing['privacy_class'] !== input.privacyClass
         ) {
           const reason = 'protocol/privacyClass of a referenced model is immutable';
           throw Object.assign(new Error(reason), {

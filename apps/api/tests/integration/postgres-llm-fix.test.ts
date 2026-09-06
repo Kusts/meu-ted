@@ -347,6 +347,63 @@ describe('Postgres LLM pre-V042 legacy base (item 5)', () => {
     expect(after.version).toBe(readVersion);
   });
 
+  itIfDatabase('Fase 3 item 2: referenced-model compat + identity guards hold on Postgres', async () => {
+    if (!pool) throw new Error('database pool not initialized');
+    await resetLlmTables();
+    const store = createPostgresLlmConfigStore(pool);
+    await store.upsertProvider({
+      id: 'anthropic',
+      kind: 'anthropic',
+      transport: 'direct',
+      authMode: 'api-key',
+      secretAlias: 'ANTHROPIC_API_KEY',
+      enabled: true,
+      eligibility: 'approved',
+    });
+    const model = await store.upsertModel({
+      providerId: 'anthropic',
+      modelId: 'claude-x',
+      protocol: 'messages',
+      privacyClass: 'training_prohibited',
+      enabled: true,
+    });
+    let rt = await store.getRuntime();
+    rt = await store.updateRuntime({
+      providerId: 'anthropic',
+      modelId: model.id,
+      expectedVersion: rt.version,
+      updatedBy: 'fase3@test.com',
+    });
+    // Incompatible protocol on the referenced model → 422 with the compat reason.
+    await expect(
+      store.upsertModel({
+        providerId: 'anthropic',
+        modelId: 'claude-x',
+        protocol: 'chat-completions',
+        privacyClass: 'training_prohibited',
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 422,
+      code: 'agent.invalid_model',
+      reason: 'model protocol chat-completions is not compatible with provider kind anthropic',
+    });
+    // Identity change of the referenced model → 409 (never a dangling runtime ref).
+    await expect(
+      store.upsertModel({
+        id: model.id,
+        providerId: 'anthropic',
+        modelId: 'claude-y',
+        protocol: 'messages',
+        privacyClass: 'training_prohibited',
+      }),
+    ).rejects.toMatchObject({ statusCode: 409, code: 'agent.runtime_in_use', reason: 'active_model' });
+    const after = await store.getModel(model.id);
+    expect(after?.modelId).toBe('claude-x');
+    expect(after?.protocol).toBe('messages');
+    expect((await store.getRuntime()).modelId).toBe(model.id);
+    expect((await store.getRuntime()).version).toBe(rt.version);
+  });
+
   itIfDatabase('item 6: concurrent activate and toggle-off-target never reference a disabled pair', async () => {
     if (!pool) throw new Error('database pool not initialized');
     await resetLlmTables();
