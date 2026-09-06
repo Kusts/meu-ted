@@ -1503,7 +1503,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const refreshProfile = useCallback(async () => {
     try {
       const fresh = await profileAdapter.refresh();
-      if (fresh) setProfile(fresh);
+      if (fresh) setProfile((prev) => mergeProfileFlags(prev, fresh));
     } catch {
       // ignore — keep previous profile state
     }

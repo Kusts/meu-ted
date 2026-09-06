@@ -82,8 +82,7 @@ describe("AppStateProvider — isAdmin preservation", () => {
     expect(result.current.profile?.isAdmin).toBe(true);
   });
 
-  it("bootstrap with a null profile preserves a locally saved profile", async () => {
-    let resolveProfile!: (value: Profile | null) => void;
+  it("bootstrap with a null profile preserves a locally saved profile", async () => {    let resolveProfile!: (value: Profile | null) => void;
     const profileGate = new Promise<Profile | null>((resolve) => {
       resolveProfile = resolve as (value: Profile | null) => void;
     });
@@ -104,5 +103,21 @@ describe("AppStateProvider — isAdmin preservation", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.profile?.name).toBe("Admin");
+  });
+
+  it("refreshProfile never wipes isAdmin when the refresh projection omits it", async () => {
+    mockBootstrapReads(adminProfile());
+    const { result } = renderHook(() => useAppState(), { wrapper: AppStateProvider });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.profile?.isAdmin).toBe(true);
+
+    const { isAdmin: _omitted, ...refreshed } = adminProfile({ name: "Admin Renomeado" });
+    vi.mocked(endpoints.fetchProfile).mockResolvedValue(refreshed as never);
+    await act(async () => {
+      await result.current.refreshProfile();
+    });
+
+    expect(result.current.profile?.name).toBe("Admin Renomeado");
+    expect(result.current.profile?.isAdmin).toBe(true);
   });
 });
