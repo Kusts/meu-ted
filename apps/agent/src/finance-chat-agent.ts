@@ -1,5 +1,7 @@
 import { AIChatAgent, type UIMessage } from "agents/ai-chat-agent";
 import { streamText, generateText } from "ai";
+import { z } from "zod";
+import { protocolSchema } from "@pi-finance/llm-contracts/schemas";
 import { fetchRuntimeConfig, type RuntimeSnapshot } from "./llm/runtime-config-client.js";
 import { createLanguageModel } from "./llm/model-factory.js";
 import type { Protocol } from "./llm/provider-registry.js";
@@ -64,14 +66,44 @@ export const INTENTION_SNAPSHOT_FALLBACK_COLUMNS = ['fallback_provider_id', 'fal
 export const INTENTION_SNAPSHOT_MODEL_COLUMNS = ['model_name', 'fallback_model_name'] as const;
 
 /**
- * Best-effort bare name for legacy rows without `model_name`: strips the
- * conventional `provider_id:` prefix, otherwise returns the id untouched
- * (custom row ids stay usable when they already are bare names).
+ * Fase 3-FIX R2: resolves the executable upstream name or null. A stored
+ * name wins; otherwise only the conventional `provider_id:` prefix is
+ * derivable. Anything else is an opaque row id — returning it as the bare
+ * model would send a configuration key to the provider, so callers must
+ * fail closed (refetch, never execute with the row id).
  */
-export const deriveBareModelName = (providerId: string, modelId: string): string => {
+export const resolveBareModelName = (
+  providerId: string,
+  modelId: string,
+  storedName?: string | null,
+): string | null => {
+  if (typeof storedName === "string" && storedName.length > 0) return storedName;
   const prefix = `${providerId}:`;
-  return modelId.startsWith(prefix) ? modelId.slice(prefix.length) : modelId;
+  if (modelId.startsWith(prefix) && modelId.length > prefix.length) {
+    return modelId.slice(prefix.length);
+  }
+  return null;
 };
+
+/**
+ * Fase 3-FIX R2: local persisted rows are validated with the same
+ * contract/invariants as the remote snapshot before execution. Corrupted
+ * rows are discarded (miss → remote refetch), never executed.
+ */
+export const intentionSnapshotRowSchema = z.object({
+  intention_id: z.string().min(1),
+  version: z.number(),
+  provider_id: z.string().min(1),
+  model_id: z.string().min(1),
+  protocol: protocolSchema,
+  rollout_percentage: z.number(),
+  security_epoch: z.number(),
+  fallback_provider_id: z.string().nullable().optional(),
+  fallback_model_id: z.string().nullable().optional(),
+  model_name: z.string().min(1).nullable().optional(),
+  fallback_model_name: z.string().min(1).nullable().optional(),
+  created_at: z.string(),
+});
 
 /**
  * Backfills the fallback columns on pre-existing Durable Object tables.
@@ -82,20 +114,40 @@ export const deriveBareModelName = (providerId: string, modelId: string): string
 export const ensureIntentionSnapshotColumns = (sql: {
   exec<T>(query: string, ...bindings: unknown[]): Iterable<T>;
 }): void => {
-  let existing: Set<string>;
+  let existing: Set<string> | null = null;
   try {
     const rows = [...sql.exec<{ name: string }>(`PRAGMA table_info(intention_snapshots)`)];
     existing = new Set(rows.map((row) => row.name));
   } catch {
-    return;
+    // PRAGMA unsupported here (e.g. mock storage): skip structural ADDs,
+    // but still attempt the idempotent value backfill below.
   }
-  for (const column of [...INTENTION_SNAPSHOT_FALLBACK_COLUMNS, ...INTENTION_SNAPSHOT_MODEL_COLUMNS]) {
-    if (!existing.has(column)) {
-      try {
-        sql.exec(`ALTER TABLE intention_snapshots ADD COLUMN ${column} TEXT`);
-      } catch {
-        // A concurrent initializer won the race; the column now exists.
+  if (existing) {
+    for (const column of [...INTENTION_SNAPSHOT_FALLBACK_COLUMNS, ...INTENTION_SNAPSHOT_MODEL_COLUMNS]) {
+      if (!existing.has(column)) {
+        try {
+          sql.exec(`ALTER TABLE intention_snapshots ADD COLUMN ${column} TEXT`);
+        } catch {
+          // A concurrent initializer won the race; the column now exists.
+        }
       }
+    }
+  }
+  // Fase 3-FIX R2: structural backfill — fill names derivable from
+  // conventional `provider_id:model_id` row ids. Opaque ids are left NULL
+  // on purpose (fail-closed at use, never guessed). Idempotent and scoped
+  // to NULL cells only, so concurrent writers cannot clobber real names.
+  for (const [nameColumn, idColumn, providerColumn] of [
+    ['model_name', 'model_id', 'provider_id'],
+    ['fallback_model_name', 'fallback_model_id', 'fallback_provider_id'],
+  ] as const) {
+    try {
+      sql.exec(
+        `UPDATE intention_snapshots SET ${nameColumn} = SUBSTR(${idColumn}, LENGTH(${providerColumn}) + 2) WHERE ${nameColumn} IS NULL AND ${idColumn} LIKE ${providerColumn} || ':%'`,
+      );
+    } catch {
+      // Best effort: ancient tables without the id column, or a concurrent
+      // migration, must never break initialization.
     }
   }
 };
@@ -148,13 +200,26 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         )];
         if (rows.length > 0 && rows[0]) {
           // Legacy rows predate the fallback/model-name columns: normalize to nulls.
-          return {
+          const candidate = {
             fallback_provider_id: null,
             fallback_model_id: null,
             model_name: null,
             fallback_model_name: null,
             ...rows[0],
           };
+          // Fase 3-FIX R2: the persisted row is validated with the same
+          // contract/invariants as the remote snapshot. Corrupted rows and
+          // opaque row ids without a persisted name are discarded (miss →
+          // remote refetch below), never executed.
+          const parsed = intentionSnapshotRowSchema.safeParse(candidate);
+          if (parsed.success) {
+            const valid = parsed.data;
+            if (
+              resolveBareModelName(valid.provider_id, valid.model_id, valid.model_name) !== null
+            ) {
+              return valid;
+            }
+          }
         }
       } catch {
         // Continue if sql exec fails
@@ -188,11 +253,12 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       security_epoch: config.securityEpoch,
       fallback_provider_id: config.fallbackProviderId ?? null,
       fallback_model_id: config.fallbackModelId ?? null,
-      // Fase 3 item 5: bare upstream name from the validated slot; legacy
-      // derivation only when the slot is absent (never string-split blindly).
+      // Fase 3 item 5 + Fase 3-FIX R2: bare upstream name from the validated
+      // slot; legacy derivation only when the slot is absent (conventional
+      // prefix only — opaque ids stay null and fail closed at use).
       model_name:
         config.activeModelName ??
-        deriveBareModelName(config.activeProviderId, config.activeModelId),
+        resolveBareModelName(config.activeProviderId, config.activeModelId, null),
       fallback_model_name: config.fallbackModelName ?? null,
       created_at: new Date().toISOString(),
     };
@@ -247,12 +313,17 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     }
 
     try {
-      // Fase 3 item 5: execute with the bare upstream name, never the store
-      // row id (`provider:model` fails provider-side validation). Legacy rows
-      // without model_name derive it from the conventional prefix.
-      const bareModelId =
-        snapshot.model_name ??
-        deriveBareModelName(snapshot.provider_id, snapshot.model_id);
+      // Fase 3-FIX R2: execute with the bare upstream name, never the store
+      // row id. An unresolvable name is fail-closed here as well (defense in
+      // depth — resolveIntentionSnapshot already refetches such rows).
+      const bareModelId = resolveBareModelName(
+        snapshot.provider_id,
+        snapshot.model_id,
+        snapshot.model_name,
+      );
+      if (!bareModelId) {
+        return { text: "TED ready: provider not configured" };
+      }
       const modelInstance = createLanguageModel(
         snapshot.provider_id,
         bareModelId,

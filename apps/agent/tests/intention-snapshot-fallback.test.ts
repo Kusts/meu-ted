@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   FinanceChatAgent,
-  deriveBareModelName,
   ensureIntentionSnapshotColumns,
+  resolveBareModelName,
   type IntentionSnapshotRow,
 } from '../src/finance-chat-agent.js';
 
@@ -219,10 +219,86 @@ describe('Intention snapshot fallback persistence (Fase 1b F3 RED)', () => {
     expect(insert?.bindings).toContain('gpt-4o');
   });
 
-  it('deriveBareModelName strips only the conventional provider prefix', () => {
-    expect(deriveBareModelName('openai-api', 'openai-api:gpt-4o')).toBe('gpt-4o');
-    expect(deriveBareModelName('openai-api', 'gpt-4o')).toBe('gpt-4o');
-    expect(deriveBareModelName('openai-api', 'custom-row-id')).toBe('custom-row-id');
-    expect(deriveBareModelName('openai-api', 'other:x')).toBe('other:x');
+  it('resolveBareModelName prefers the stored name, derives the convention, else null', () => {
+    expect(resolveBareModelName('openai-api', 'openai-api:gpt-4o', 'gpt-4o')).toBe('gpt-4o');
+    expect(resolveBareModelName('openai-api', 'openai-api:gpt-4o', null)).toBe('gpt-4o');
+    expect(resolveBareModelName('openai-api', 'openai-api:gpt-4o', undefined)).toBe('gpt-4o');
+    // Opaque row ids without a stored name are unresolvable (fail-closed).
+    expect(resolveBareModelName('openai-api', 'custom-row-id', null)).toBeNull();
+    expect(resolveBareModelName('openai-api', 'other:x', null)).toBeNull();
+    expect(resolveBareModelName('openai-api', 'gpt-4o', null)).toBeNull();
+    expect(resolveBareModelName('openai-api', 'openai-api:', null)).toBeNull();
+  });
+
+  it('a corrupted stored row is discarded and forces a remote refetch (Fase 3-FIX R2)', async () => {
+    const corrupted = {
+      intention_id: 'intent-bad',
+      version: 'not-a-number',
+      provider_id: 'openai-api',
+      model_id: 123,
+      protocol: 'carrier-pigeon',
+      created_at: '2026-09-06T00:00:00.000Z',
+    };
+    const { exec, calls } = makeSql({ pragmaColumns: [], selectRows: [corrupted] });
+    const fetchSpy = vi.fn().mockResolvedValueOnce(snapshotResponse(null, null));
+    vi.stubGlobal('fetch', fetchSpy);
+    const snapshot = await callResolve(makeAgent({ exec }), 'intent-bad');
+    // Remotely validated snapshot wins; the corrupted row is never returned.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(snapshot?.model_id).toBe('openai-api:gpt-4o');
+    expect(snapshot?.model_name).toBe('gpt-4o');
+    const insert = calls.find((c) => c.query.startsWith('INSERT INTO intention_snapshots'));
+    expect(insert?.bindings).toContain('gpt-4o');
+  });
+
+  it('an opaque row id without a name triggers a refetch; remote failure stays fail-closed (Fase 3-FIX R2)', async () => {
+    const opaque = {
+      intention_id: 'intent-opaque',
+      version: 2,
+      provider_id: 'openai-api',
+      model_id: 'opaque-xyz',
+      protocol: 'chat-completions',
+      rollout_percentage: 100,
+      security_epoch: 1,
+      created_at: '2026-09-06T00:00:00.000Z',
+    };
+    const { exec } = makeSql({ pragmaColumns: [], selectRows: [opaque] });
+    const fetchSpy = vi.fn().mockRejectedValueOnce(new TypeError('fetch failed'));
+    vi.stubGlobal('fetch', fetchSpy);
+    const snapshot = await callResolve(makeAgent({ exec }), 'intent-opaque');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(snapshot).toBeNull();
+  });
+
+  it('backfills derivable model_name values with UPDATE, leaving opaque NULLs (Fase 3-FIX R2)', async () => {
+    const { exec, calls } = makeSql({ pragmaColumns: [], selectRows: [] });
+    ensureIntentionSnapshotColumns({ exec });
+    const updates = calls.filter((c) => c.query.startsWith('UPDATE intention_snapshots SET'));
+    expect(updates).toHaveLength(2);
+    const names = updates.map((u) => u.query);
+    expect(names[0]).toContain('SET model_name = SUBSTR(model_id, LENGTH(provider_id) + 2)');
+    expect(names[0]).toContain("WHERE model_name IS NULL AND model_id LIKE provider_id || ':%'");
+    expect(names[1]).toContain('SET fallback_model_name = SUBSTR(fallback_model_id');
+    expect(names[1]).toContain('WHERE fallback_model_name IS NULL');
+  });
+
+  it('a fresh stored row with a name is returned without refetch (Fase 3-FIX R2)', async () => {
+    const stored = {
+      intention_id: 'intent-fresh',
+      version: 2,
+      provider_id: 'openai-api',
+      model_id: 'openai-api:gpt-4o',
+      protocol: 'chat-completions',
+      rollout_percentage: 100,
+      security_epoch: 1,
+      model_name: 'gpt-4o',
+      created_at: '2026-09-06T00:00:00.000Z',
+    };
+    const { exec } = makeSql({ pragmaColumns: [], selectRows: [stored] });
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const snapshot = await callResolve(makeAgent({ exec }), 'intent-fresh');
+    expect(snapshot?.model_name).toBe('gpt-4o');
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
