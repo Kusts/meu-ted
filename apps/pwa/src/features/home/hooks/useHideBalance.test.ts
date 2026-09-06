@@ -27,4 +27,14 @@ describe("useHideBalance", () => {
     const { result } = renderHook(() => useHideBalance());
     expect(result.current.hidden).toBe(true);
   });
+
+  it("syncs across hook instances on toggle", () => {
+    const { result: a } = renderHook(() => useHideBalance());
+    const { result: b } = renderHook(() => useHideBalance());
+    act(() => {
+      a.current.toggle();
+    });
+    expect(a.current.hidden).toBe(true);
+    expect(b.current.hidden).toBe(true);
+  });
 });
