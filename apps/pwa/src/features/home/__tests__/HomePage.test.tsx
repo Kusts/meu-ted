@@ -1241,5 +1241,38 @@ describe("HomePage", () => {
       expect(container.querySelector(".pb-24")).toBeInTheDocument();
     });
   });
+
+  describe("P3: hide/show balance", () => {
+    const BALANCE_KEY = "meu-ted:hide-balance";
+
+    beforeEach(() => {
+      window.localStorage.removeItem(BALANCE_KEY);
+    });
+
+    it("masks the hero balance behind the eye toggle with persistence", async () => {
+      const user = userEvent.setup();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(defaultState());
+      render(<HomePage />);
+
+      // Server summary renders the full balance initially.
+      expect(screen.getByText("R$ 2.072,10")).toBeInTheDocument();
+
+      const hideBtn = screen.getByRole("button", { name: "Ocultar saldo" });
+      expect(hideBtn).toHaveAttribute("aria-pressed", "false");
+      await user.click(hideBtn);
+
+      expect(screen.getByText("R$ ••••••")).toBeInTheDocument();
+      expect(screen.queryByText("R$ 2.072,10")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Mostrar saldo" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      expect(window.localStorage.getItem(BALANCE_KEY)).toBe("1");
+
+      await user.click(screen.getByRole("button", { name: "Mostrar saldo" }));
+      expect(screen.queryByText("R$ ••••••")).not.toBeInTheDocument();
+      expect(window.localStorage.getItem(BALANCE_KEY)).toBe("0");
+    });
+  });
 });
 
