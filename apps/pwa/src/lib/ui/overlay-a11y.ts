@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 /**
  * Shared overlay a11y primitives (P1-2/P1-3).
@@ -14,12 +14,22 @@ import { useEffect } from "react";
 let lockCount = 0;
 let originalOverflow: string | null = null;
 
+/** Subscribers notified whenever the overlay count changes. */
+const overlayListeners = new Set<() => void>();
+
+function emitOverlayChange(): void {
+  for (const listener of Array.from(overlayListeners)) {
+    listener();
+  }
+}
+
 export function acquireBodyScrollLock(): void {
   if (lockCount === 0) {
     originalOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
   }
   lockCount += 1;
+  emitOverlayChange();
 }
 
 export function releaseBodyScrollLock(): void {
@@ -29,6 +39,7 @@ export function releaseBodyScrollLock(): void {
     document.body.style.overflow = originalOverflow ?? "";
     originalOverflow = null;
   }
+  emitOverlayChange();
 }
 
 export function bodyScrollLockCount(): number {
@@ -42,6 +53,27 @@ export function useBodyScrollLock(locked: boolean): void {
     acquireBodyScrollLock();
     return () => releaseBodyScrollLock();
   }, [locked]);
+}
+
+function subscribeOverlayCount(listener: () => void): () => void {
+  overlayListeners.add(listener);
+  return () => {
+    overlayListeners.delete(listener);
+  };
+}
+
+/**
+ * True while ANY overlay (BottomSheet, Dialog, ConfirmActionDialog, TED
+ * chat…) holds the shared body scroll lock. Single source of truth for
+ * hiding floating elements (TED FAB, invite badge) under overlays — covers
+ * present and future overlays without per-feature wiring.
+ */
+export function useIsOverlayOpen(): boolean {
+  return useSyncExternalStore(
+    subscribeOverlayCount,
+    () => lockCount > 0,
+    () => false,
+  );
 }
 
 /**
