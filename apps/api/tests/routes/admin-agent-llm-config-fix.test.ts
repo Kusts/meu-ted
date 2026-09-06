@@ -345,4 +345,94 @@ describe('Fase 1b-FIX routes (items 3/8)', () => {
     expect(data.runtime.activeProviderId).toBeNull();
     expect(data.runtime.activeModelId).toBeNull();
   });
+
+  it('Fase 3 item 2 (R3): internal projection fails closed on kind/protocol mismatch', async () => {
+    await app.close();
+    await auth.close();
+    // Legacy/misconfigured row: anthropic is executable+enabled, but the
+    // model speaks chat-completions. updateRuntime would refuse this pair,
+    // so the row is seeded directly to prove the read projection revalidates.
+    await buildApp({
+      providers: [
+        {
+          id: 'anthropic',
+          kind: 'anthropic',
+          transport: 'direct',
+          authMode: 'api-key',
+          secretAlias: 'ANTHROPIC_API_KEY',
+          enabled: true,
+          eligibility: 'approved',
+          runtimeStatus: 'ready',
+        },
+      ],
+      models: [
+        {
+          id: 'anthropic:claude-x',
+          providerId: 'anthropic',
+          modelId: 'claude-x',
+          protocol: 'chat-completions',
+          privacyClass: 'training_prohibited',
+          retention: null,
+          enabled: true,
+        },
+      ],
+      runtime: { providerId: 'anthropic', modelId: 'anthropic:claude-x' },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/internal/agent/llm-config',
+      headers: { 'x-agent-config-token': CONFIG_TOKEN },
+    });
+    expect(res.statusCode).toBe(200);
+    const data = res.json();
+    expect(data.activeProvider).toBeNull();
+    expect(data.activeModel).toBeNull();
+    expect(data.activeDisabled).toBe(true);
+    expect(data.runtime.activeProviderId).toBeNull();
+    expect(data.runtime.activeModelId).toBeNull();
+    expect(data.runtime.activeProtocol).toBeNull();
+  });
+
+  it('Fase 3 item 2 (R3): internal projection fails closed on unapproved active provider', async () => {
+    await app.close();
+    await auth.close();
+    await buildApp({
+      providers: [
+        {
+          id: 'openai-api',
+          kind: 'openai-api',
+          transport: 'direct',
+          authMode: 'api-key',
+          secretAlias: 'OPENAI_API_KEY',
+          enabled: true,
+          eligibility: 'experimental_blocked',
+          runtimeStatus: 'ready',
+        },
+      ],
+      models: [
+        {
+          id: 'openai-api:gpt-4o',
+          providerId: 'openai-api',
+          modelId: 'gpt-4o',
+          protocol: 'chat-completions',
+          privacyClass: 'training_prohibited',
+          retention: null,
+          enabled: true,
+        },
+      ],
+      runtime: { providerId: 'openai-api', modelId: 'openai-api:gpt-4o' },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/internal/agent/llm-config',
+      headers: { 'x-agent-config-token': CONFIG_TOKEN },
+    });
+    expect(res.statusCode).toBe(200);
+    const data = res.json();
+    expect(data.activeProvider).toBeNull();
+    expect(data.activeModel).toBeNull();
+    expect(data.activeDisabled).toBe(true);
+    expect(data.runtime.activeProviderId).toBeNull();
+    expect(data.runtime.activeModelId).toBeNull();
+  });
 });

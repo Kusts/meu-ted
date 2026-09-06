@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { LlmConfigStore } from '../agent/llm-config-store.js';
-import { isKindExecutable } from '../agent/llm-config.js';
+import { canActivate } from '../agent/llm-config.js';
 import { toInternalRuntimeDto } from '../agent/runtime-mapper.js';
 import type { InternalLlmSnapshot, LlmModelSlot, LlmProviderSlot } from '@pi-finance/llm-contracts';
 import { safeCompareTokens as safeCompare } from '../auth/safe-compare.js';
@@ -57,27 +57,24 @@ export const registerInternalAgentLlmConfigRoutes = (
         (m) => m.id === runtime.fallbackModelId || (m.providerId === runtime.fallbackProviderId && m.modelId === runtime.fallbackModelId),
       ) ?? null;
 
-    // Fail-closed: a configured pair is usable only when provider and model
-    // exist, are enabled, the model belongs to the provider, and the
-    // provider kind is executable by the agent runtime (Fase 1b-FIX item 3).
+    // Fail-closed: a configured pair is usable only when it satisfies the
+    // same activation invariants (Fase 3 R3 — single source `canActivate`:
+    // approval, enabled flags, executable kind, privacy, protocol and
+    // kind↔protocol compatibility) plus ownership of the model by the
+    // provider. Never hand-roll a subset here: any pair the write path
+    // refuses must read back as disabled.
     const activeConfigured = runtime.providerId != null || runtime.modelId != null;
     const activeUsable =
-      activeProviderRaw !== null &&
-      activeProviderRaw.enabled &&
-      isKindExecutable(activeProviderRaw.kind) &&
       activeModelRaw !== null &&
-      activeModelRaw.enabled &&
-      activeModelRaw.providerId === runtime.providerId;
+      activeModelRaw.providerId === runtime.providerId &&
+      canActivate(activeProviderRaw ?? undefined, activeModelRaw) === null;
     const activeDisabled = activeConfigured && !activeUsable;
 
     const fallbackConfigured = runtime.fallbackProviderId != null || runtime.fallbackModelId != null;
     const fallbackUsable =
-      fallbackProviderRaw !== null &&
-      fallbackProviderRaw.enabled &&
-      isKindExecutable(fallbackProviderRaw.kind) &&
       fallbackModelRaw !== null &&
-      fallbackModelRaw.enabled &&
-      fallbackModelRaw.providerId === runtime.fallbackProviderId;
+      fallbackModelRaw.providerId === runtime.fallbackProviderId &&
+      canActivate(fallbackProviderRaw ?? undefined, fallbackModelRaw) === null;
     const fallbackDisabled = fallbackConfigured && !fallbackUsable;
 
     const dto = toInternalRuntimeDto(runtime, models);
