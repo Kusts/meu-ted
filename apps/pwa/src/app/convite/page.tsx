@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import Card from "@/components/ui/Card";
@@ -217,16 +218,20 @@ const message =
 
   const inviteTitle = inviteKind === "account" ? "Convite para criar conta" : "Convite de workspace";
   const inviteSubtitle = inviteKind === "account"
-    ? "Você foi convidado a criar sua conta no Pi Financeiro."
+    ? "Você foi convidado a criar sua conta no Meu Ted."
     : "Aceite o convite para acessar o workspace compartilhado.";
 
   return (
     <main className="flex min-h-dvh flex-col bg-bg">
       <div className="mx-auto flex w-full max-w-lg flex-1 flex-col px-5 py-10 sm:px-6">
         <div className="mb-8 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[16px] bg-gradient-to-br from-primary to-[#0A3A28] text-white shadow-fab">
-            <span className="font-mono text-[22px] font-bold">π</span>
-          </div>
+          <Image
+            src="/logo.svg"
+            alt="Meu Ted"
+            width={48}
+            height={48}
+            className="mx-auto h-12 w-12"
+          />
           <h1 className="mt-4 text-[22px] font-extrabold tracking-tight text-text-primary">{inviteTitle}</h1>
           <p className="mt-1 text-[13px] text-text-muted">{inviteSubtitle}</p>
         </div>

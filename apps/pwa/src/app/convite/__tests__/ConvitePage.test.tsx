@@ -141,4 +141,11 @@ it("shows error when token is invalid", async () => {
     render(<ConvitePage />);
     expect(await screen.findByText(/Convite não encontrado/)).toBeInTheDocument();
   });
+
+  it("brands the invite screen as Meu Ted (logo, no Pi Financeiro leftovers)", async () => {
+    render(<ConvitePage />);
+    await waitFor(() => expect(mocks.verifyWorkspaceInvite).toHaveBeenCalled());
+    expect(screen.getByAltText("Meu Ted")).toHaveAttribute("src", "/logo.svg");
+    expect(screen.queryByText(/Pi Financeiro/)).not.toBeInTheDocument();
+  });
 });

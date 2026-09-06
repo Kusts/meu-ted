@@ -185,7 +185,7 @@ self.addEventListener("push", (event: SWEvent) => {
   } catch {
     // Malformed push payloads still receive a generic notification.
   }
-  const title = safeNotificationText(payload.title, "Pi Financeiro");
+  const title = safeNotificationText(payload.title, "Meu Ted");
   const body = safeNotificationText(
     payload.body,
     "Você tem uma nova atualização.",
