@@ -7,12 +7,13 @@
 //   2. Equivalent-set gzip KB does not regress >5% vs budget.json.totalGzipKB.
 //
 // budget.json.totalGzipKB is the equivalent-set baseline (re-baselined
-// 2026-09-06 to 495.04 KB; see budget.json notes for the old->new history).
-// Next.js 16.2.9 per-route AppRouter (624-*) and React error-decoder
-// (3896037c-*) chunks are NOT application code and are excluded from the
-// equivalent set. App/ lazy route chunks ARE part of the equivalent set —
-// they are included, not excluded merely because lazy. The equivalent set is
-// therefore "all chunks minus the 624-*/3896037c-* framework chunks".
+// 2026-09-06 to 495.04 KB; the 2026-07-15 280.7 KB line is kept as historical
+// reference in budget.json notes and in the HISTORICAL fixture below).
+// Next.js framework chunks (currently 89973f52-*/510-*, evidenced via
+// build-manifest.json#rootMainFiles) are NOT application code and are excluded
+// from the equivalent set. App/ lazy route chunks ARE part of the equivalent
+// set — they are included, not excluded merely because lazy. The equivalent
+// set is therefore "all chunks minus the evidenced framework chunks".
 //
 // The regression gate is ONE-SIDED (upper bound): current <= baseline * 1.05.
 // Being under baseline is an improvement, not a regression.
@@ -28,6 +29,7 @@ import {
   summarize,
   passesBudget,
   verifyFrameworkPrefixesAgainstManifest,
+  FRAMEWORK_PREFIXES,
 } from "../../scripts/measure-bundle.mjs";
 
 const APP_ROOT = path.resolve(__dirname, "..", "..");
@@ -171,6 +173,43 @@ describe("bundle measure — fixture proofs", () => {
     expect(passesBudget(300, baseline, 0.05)).toBe(false);
   });
 
+  it("HISTORICAL: the 2026-07-15 baseline (280.7 KB) is kept as reference only", () => {
+    // Fase 3 R4: the old baseline is evidence history, not the gate. The live
+    // gate reads budget.json (re-baselined 2026-09-06 to 495.04 KB).
+    expect(readBudget().totalGzipKB).toBeCloseTo(495.04, 2);
+    expect(readBudget().totalGzipKB).toBeGreaterThan(280.7);
+  });
+
+  it("gate boundary follows the CURRENT budget.json baseline (one-sided, +5%)", () => {
+    const baseline = readBudget().totalGzipKB; // 495.04
+    const limit = readBudget().regressionLimit; // 5
+    const max = baseline * (1 + limit / 100); // 519.792
+    expect(max).toBeCloseTo(519.792, 2);
+    expect(passesBudget(max, baseline, limit / 100)).toBe(true);
+    expect(passesBudget(max + 0.01, baseline, limit / 100)).toBe(false);
+  });
+
+  it("pinned FRAMEWORK_PREFIXES are the currently evidenced Next.js ids", () => {
+    // Fase 3 R4: script and fixtures must name the same framework chunk ids.
+    // 624-/3896037c- (Next 16.2.9 era) were superseded by 89973f52-/510-
+    // (see measure-bundle.mjs history note). A Next upgrade that renames
+    // them must update the script AND this pin together.
+    expect([...FRAMEWORK_PREFIXES]).toEqual(["89973f52-", "510-"]);
+    const manifest = {
+      json: {
+        rootMainFiles: [
+          "static/chunks/webpack-1ea83a7bda9eb7a6.js",
+          "static/chunks/89973f52-cdab712dca2a9cf0.js",
+          "static/chunks/510-abf218878bab7e84.js",
+          "static/chunks/main-app-8cb15600dee149a8.js",
+        ],
+      },
+    };
+    const v = verifyFrameworkPrefixesAgainstManifest(FRAMEWORK_PREFIXES, manifest);
+    expect(v.verified).toBe(true);
+    expect(v.missing).toEqual([]);
+  });
+
   it("equivalent-set membership is stable across repeated classification", () => {
     const entries = E([
       ["framework-abc.js", 10],
@@ -192,27 +231,27 @@ describe("bundle measure — fixture proofs", () => {
   });
 
   it("verifies framework prefixes against build-manifest.json#rootMainFiles when present", () => {
-    // Canonical evidence: Next.js lists 624-* and 3896037c-* as framework root files.
+    // Canonical evidence: Next.js lists 89973f52-* and 510-* as framework root files.
     const manifest = {
       json: {
         rootMainFiles: [
           "static/chunks/webpack-1ea83a7bda9eb7a6.js",
-          "static/chunks/3896037c-5e38c9c2e2ee964a.js",
-          "static/chunks/624-2d0a4df8d0e90c81.js",
+          "static/chunks/89973f52-cdab712dca2a9cf0.js",
+          "static/chunks/510-abf218878bab7e84.js",
           "static/chunks/main-app-8cb15600dee149a8.js",
         ],
       },
     };
-    const v = verifyFrameworkPrefixesAgainstManifest(["624-", "3896037c-"], manifest);
+    const v = verifyFrameworkPrefixesAgainstManifest(["89973f52-", "510-"], manifest);
     expect(v.verified).toBe(true);
     expect(v.missing).toEqual([]);
   });
 
   it("hard-fails verification if a pinned prefix is NOT in the framework manifest", () => {
     const manifest = { json: { rootMainFiles: ["static/chunks/webpack-x.js"] } };
-    const v = verifyFrameworkPrefixesAgainstManifest(["624-", "3896037c-"], manifest);
+    const v = verifyFrameworkPrefixesAgainstManifest(["89973f52-", "510-"], manifest);
     expect(v.verified).toBe(false);
-    expect(v.missing).toEqual(["624-", "3896037c-"]);
+    expect(v.missing).toEqual(["89973f52-", "510-"]);
   });
 });
 
@@ -263,5 +302,51 @@ describe("bundle measure — fail-closed manifest check and composition report",
     expect(report.topChunks).toHaveLength(1);
     expect(report.topChunks[0]?.path).toContain("app-page.js");
     expect(typeof report.topChunks[0]?.kb).toBe("number");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fase 3 R4 — reproducible before/after evidence for the LLM refactor.
+// The refactor's client-bundle impact is bounded by construction: the PWA may
+// only import the zod-free `@pi-finance/llm-contracts/types` subpath, never
+// the zod-powered root or /schemas entries. These tests pin that invariant,
+// so any future import of a zod-bearing entry fails loudly instead of
+// silently growing the client bundle. (Measured 2026-09-06: full build with
+// vs without the contracts change differs by +0.29 KB — see budget.json.)
+// ---------------------------------------------------------------------------
+describe("bundle evidence — llm-contracts client weight", () => {
+  const CONTRACTS_ROOT = path.resolve(APP_ROOT, "..", "..", "packages", "llm-contracts");
+  const SRC_ROOT = path.join(APP_ROOT, "src");
+
+  const walkTs = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const f of fs.readdirSync(dir)) {
+      const fp = path.join(dir, f);
+      const st = fs.statSync(fp);
+      if (st.isDirectory()) out.push(...walkTs(fp));
+      else if (/\.(ts|tsx)$/.test(f)) out.push(fp);
+    }
+    return out;
+  };
+
+  it("the /types entry is zod-free", () => {
+    const typesSrc = fs.readFileSync(path.join(CONTRACTS_ROOT, "src", "types.ts"), "utf-8");
+    expect(typesSrc).not.toMatch(/from\s+["']zod["']/);
+    expect(typesSrc).not.toMatch(/require\(\s*["']zod["']\s*\)/);
+  });
+
+  it("PWA source imports llm-contracts only through the zod-free /types subpath", () => {
+    const offenders: string[] = [];
+    for (const file of walkTs(SRC_ROOT)) {
+      const src = fs.readFileSync(file, "utf-8");
+      const re = /from\s+["'](@pi-finance\/llm-contracts[^"']*)["']/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(src)) !== null) {
+        if (m[1] !== "@pi-finance/llm-contracts/types") {
+          offenders.push(`${path.relative(APP_ROOT, file)} -> ${m[1]}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });

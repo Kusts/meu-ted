@@ -5,20 +5,18 @@
 //
 //   initialGzipKB       — framework- + main- + polyfills- (the initial-load set)
 //   totalGzipKB         — every .js chunk under static/chunks/ (all chunks; informational)
-//   frameworkGzipKB     — Next.js 16.2.9 per-route framework chunks (624-*, 3896037c-*)
+//   frameworkGzipKB     — Next.js framework chunks (currently 89973f52-*, 510-*)
 //   appLevelGzipKB      — lazy route chunks under static/chunks/app/
-//   equivalentSetGzipKB — total minus the post-baseline Next.js-16 framework chunks
+//   equivalentSetGzipKB — total minus the evidenced Next.js framework chunks
 //
-// WHY 624-* and 3896037c-* are subtracted (PROVEN, not asserted):
+// WHY the pinned framework prefixes are subtracted (PROVEN, not asserted):
 //   Next.js's own build manifest (.next/build-manifest.json#rootMainFiles) lists the
-//   files loaded for EVERY route — the framework runtime set. Both
-//   "624-<hash>.js" and "3896037c-<hash>.js" appear in rootMainFiles, i.e. they are
-//   Next.js framework chunks, NOT application/route code (they are also not under
-//   static/chunks/app/). They were not present in the 280.7 baseline (measured before
-//   Next.js 16.2.9), so subtracting exactly these two reconstructs the pre-16.2.9
-//   equivalent set. The exclusion is cross-checked against rootMainFiles at runtime:
-//   if a pinned prefix is absent from the manifest, the script FAILS (no silent,
-//   evidence-free exclusion). See budget.json notes and bundle-budget.test.ts.
+//   files loaded for EVERY route — the framework runtime set. The pinned ids appear
+//   in rootMainFiles, i.e. they are Next.js framework chunks, NOT application/route
+//   code (they are also not under static/chunks/app/). The exclusion is
+//   cross-checked against rootMainFiles at runtime: if a pinned prefix is absent
+//   from the manifest, the script FAILS (no silent, evidence-free exclusion).
+//   See budget.json notes and bundle-budget.test.ts.
 //
 // The 5% regression gate (CI, bundle-budget.test.ts) compares equivalentSetGzipKB to
 // budget.json.totalGzipKB. Exit code 0 always (informational); the wrapper test asserts
