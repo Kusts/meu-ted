@@ -19,6 +19,7 @@
 
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import {
@@ -131,8 +132,8 @@ describe("bundle measure — fixture proofs", () => {
     const r = summarize(
       E([
         ["framework-abc.js", 10],
-        ["624-xyz.js", 100], // framework -> subtracted
-        ["3896037c-q.js", 21.69], // framework -> subtracted
+        ["89973f52-xyz.js", 100], // framework -> subtracted
+        ["510-q.js", 21.69], // framework -> subtracted
         ["app/dashboard/index.js", 30], // app lazy
         ["app/settings/page.js", 5], // app lazy
         ["136-aaa.js", 40], // unknown/other -> included
@@ -144,14 +145,14 @@ describe("bundle measure — fixture proofs", () => {
     // app chunks are part of the equivalent set, never subtracted
     expect(r.equivalentSetGzipKB).toBeGreaterThan(r.appLevelGzipKB);
     expect(isAppLevel("app/dashboard/index.js")).toBe(true);
-    expect(isAppLevel("624-xyz.js")).toBe(false);
+    expect(isAppLevel("89973f52-xyz.js")).toBe(false);
   });
 
   it("treats unknown chunks conservatively (included in equivalent set, never excluded)", () => {
     const r = summarize(
       E([
         ["mystery-chunk-9.js", 50], // matches no known prefix
-        ["624-xyz.js", 100], // framework -> subtracted
+        ["89973f52-xyz.js", 100], // framework -> subtracted
       ]),
     );
     // total = 150, framework = 100 -> equivalent = 50 (mystery MUST stay)
@@ -173,8 +174,8 @@ describe("bundle measure — fixture proofs", () => {
   it("equivalent-set membership is stable across repeated classification", () => {
     const entries = E([
       ["framework-abc.js", 10],
-      ["624-xyz.js", 100],
-      ["3896037c-q.js", 21.69],
+      ["89973f52-xyz.js", 100],
+      ["510-q.js", 21.69],
       ["app/dashboard/index.js", 30],
       ["136-aaa.js", 40],
     ]);
@@ -182,8 +183,8 @@ describe("bundle measure — fixture proofs", () => {
     const b = summarize(entries);
     expect(a).toEqual(b);
     // same name always classifies identically
-    expect(classifyChunk("624-2d0a4df8d0e90c81.js")).toBe("framework");
-    expect(classifyChunk("3896037c-5e38c9c2e2ee964a.js")).toBe("framework");
+    expect(classifyChunk("89973f52-cdab712dca2a9cf0.js")).toBe("framework");
+    expect(classifyChunk("510-abf218878bab7e84.js")).toBe("framework");
     expect(classifyChunk("app/foo/page.js")).toBe("other");
     expect(classifyChunk("mystery-1.js")).toBe("other");
     expect(classifyChunk("framework-9.js")).toBe("initial");
@@ -212,5 +213,55 @@ describe("bundle measure — fixture proofs", () => {
     const v = verifyFrameworkPrefixesAgainstManifest(["624-", "3896037c-"], manifest);
     expect(v.verified).toBe(false);
     expect(v.missing).toEqual(["624-", "3896037c-"]);
+  });
+});
+
+describe("bundle measure — fail-closed manifest check and composition report", () => {
+  const makeFakeBuild = (rootMainFiles: string[]) => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "bundle-measure-"));
+    fs.mkdirSync(path.join(cwd, ".open-next", "assets", "_next", "static", "chunks"), { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, ".open-next", "assets", "_next", "static", "chunks", "app-page.js"),
+      "// fake app chunk for measurement",
+    );
+    fs.mkdirSync(path.join(cwd, ".next"), { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, ".next", "build-manifest.json"),
+      JSON.stringify({ rootMainFiles }),
+    );
+    return cwd;
+  };
+
+  it("exits non-zero when the manifest cannot evidence the pinned framework prefixes", () => {
+    const cwd = makeFakeBuild(["static/chunks/webpack-x.js", "static/chunks/main-app-y.js"]);
+    expect(() =>
+      execFileSync("node", [MEASURE_PATH], { cwd, encoding: "utf-8", stdio: "pipe" }),
+    ).toThrow();
+  });
+
+  it("writes bundle-report.json with composition evidence when asked", () => {
+    const cwd = makeFakeBuild([
+      "static/chunks/webpack-x.js",
+      "static/chunks/89973f52-y.js",
+      "static/chunks/510-z.js",
+      "static/chunks/main-app-w.js",
+    ]);
+    execFileSync("node", [MEASURE_PATH, "--write-report"], { cwd, encoding: "utf-8", stdio: "pipe" });
+    const reportPath = path.join(cwd, "bundle-report.json");
+    expect(fs.existsSync(reportPath)).toBe(true);
+    const report = JSON.parse(fs.readFileSync(reportPath, "utf-8")) as {
+      generatedAt: string;
+      manifestVerified: boolean;
+      chunks: number;
+      equivalentSetGzipKB: number;
+      topChunks: Array<{ path: string; kb: number }>;
+    };
+    expect(typeof report.generatedAt).toBe("string");
+    expect(report.manifestVerified).toBe(true);
+    expect(report.chunks).toBe(1);
+    expect(report.equivalentSetGzipKB).toBeGreaterThan(0);
+    expect(report.topChunks).toHaveLength(1);
+    expect(report.topChunks[0]?.path).toContain("app-page.js");
+    expect(typeof report.topChunks[0]?.kb).toBe("number");
   });
 });

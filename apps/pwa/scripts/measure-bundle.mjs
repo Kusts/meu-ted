@@ -31,10 +31,14 @@ import zlib from "node:zlib";
 
 const dir = ".open-next/assets/_next/static/chunks";
 const INITIAL_PREFIXES = ["framework-", "main-", "polyfills-"];
-// Post-baseline Next.js 16.2.9 framework chunks not present in the 280.7 set.
-// These ids are PROVEN to be framework via build-manifest.json#rootMainFiles
+// Next.js framework chunk ids, PROVEN via build-manifest.json#rootMainFiles
 // (see verifyFrameworkPrefixesAgainstManifest + the runtime cross-check in main()).
-const FRAMEWORK_PREFIXES = ["624-", "3896037c-"];
+// History: 624-/3896037c- (Next 16.2.9 era) were superseded by 89973f52-
+// (React error decoder: contains react.dev/errors minified strings) and
+// 510- (Next deployment-id runtime). These ids are deterministic per Next
+// minor; a Next upgrade that renames them MUST fail the manifest check
+// below so the exclusion is consciously re-evidenced, never silent.
+const FRAMEWORK_PREFIXES = ["89973f52-", "510-"];
 
 // Build-manifest candidates (relative to the app root / cwd). The .next manifest is
 // the authoritative evidence source in this repo, so prefer it; .open-next is only a
@@ -136,7 +140,10 @@ function frameworkBasesFromManifest(manifest) {
 }
 
 function main() {
+  const writeReport = process.argv.includes("--write-report");
   // Cross-check the framework exclusion against Next.js's own manifest evidence.
+  // Fail-closed (Fase 2 item 4): an exclusion the manifest cannot evidence
+  // must never silently shrink the equivalent set.
   const manifest = loadBuildManifest();
   const v = verifyFrameworkPrefixesAgainstManifest(FRAMEWORK_PREFIXES, manifest);
   const frameworkBases = frameworkBasesFromManifest(manifest);
@@ -151,13 +158,13 @@ function main() {
     );
   } else if (!v.verified) {
     console.error(
-      `WARN: framework prefix(es) ${JSON.stringify(
+      `ERROR: framework prefix(es) ${JSON.stringify(
         v.missing,
-      )} are not listed in ${manifest.path}#rootMainFiles. Continuing with the ` +
-        `documented compatibility limitation: current fixtures prove membership and ` +
-        `threshold behavior, but historical absence from the 280.7 KB baseline was not ` +
-        `reproduced from this manifest alone.`,
+      )} are not listed in ${manifest.path}#rootMainFiles. Refusing to ` +
+        `exclude unevidenced chunks from the equivalent set — re-evidence the ` +
+        `framework chunk ids after the Next.js upgrade and update FRAMEWORK_PREFIXES.`,
     );
+    process.exit(1);
   } else {
     console.error(
       `Evidence: framework prefixes ${FRAMEWORK_PREFIXES.join(
@@ -181,12 +188,28 @@ function main() {
   console.log(`chunks:                ${report.chunks}`);
   console.log(`initial gzip KB:       ${report.initialGzipKB}`);
   console.log(`total (all) gzip KB:   ${report.totalGzipKB}`);
-  console.log(`framework 624/3896 KB: ${report.frameworkGzipKB}`);
+  console.log(`framework chunks KB:   ${report.frameworkGzipKB}`);
   console.log(`app/ lazy gzip KB:     ${report.appLevelGzipKB}`);
   console.log(
-    `equivalent-set gzip KB: ${report.equivalentSetGzipKB}  (total - Next.js16 framework chunks)`,
+    `equivalent-set gzip KB: ${report.equivalentSetGzipKB}  (total - Next.js framework chunks)`,
   );
   console.log(`__MEASURE_BUNDLE_JSON__${JSON.stringify(report)}`);
+
+  if (writeReport) {
+    const topChunks = [...entries]
+      .sort((a, b) => b.kb - a.kb)
+      .slice(0, 20)
+      .map((e) => ({ path: e.path.split(/[\\/]/).slice(-2).join("/"), kb: Number(e.kb.toFixed(2)) }));
+    const composition = {
+      generatedAt: new Date().toISOString(),
+      manifest: manifest ? manifest.path : null,
+      manifestVerified: manifest ? v.verified : false,
+      ...report,
+      topChunks,
+    };
+    fs.writeFileSync("bundle-report.json", `${JSON.stringify(composition, null, 2)}\n`);
+    console.error(`Wrote bundle-report.json (${report.chunks} chunks).`);
+  }
 }
 
 const isMain =
