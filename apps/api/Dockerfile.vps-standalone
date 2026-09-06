@@ -3,9 +3,20 @@
 # ("Mecanismo de release da API") and docs/ops/vps-access.md.
 #
 # Build context (staging dir, mirrored at ~/infra/pi-finance-api/app on the VPS):
-#   package.json, pnpm-lock.yaml, pnpm-workspace.yaml  (api package as workspace root)
+#   package.json, pnpm-lock.standalone.yaml, pnpm-workspace.yaml  (api package as workspace root)
 #   packages/llm-contracts/                            (workspace member vendored from packages/)
 #   src/, tests/, scripts/, tsconfig*.json, ...        (apps/api files at root)
+#
+# Determinism (2026-09-06 login outage): this build MUST use
+# `pnpm install --frozen-lockfile` against the versioned
+# `pnpm-lock.standalone.yaml` (copied into the context as `pnpm-lock.yaml`).
+# Rationale: `--no-frozen-lockfile` once resolved `better-auth@^1.6.26` to 1.7.3
+# in production while the repo pinned 1.6.30, shipping a startup schema-check
+# the code was not written for. The exact pin (`better-auth: 1.6.30`, no `^`,
+# in package.json) is still required: a fresh standalone lockfile resolves
+# ranges anew, so frozen alone would just freeze whatever is newest.
+# Sync note: `pnpm-lock.standalone.yaml` lives next to this file in git and
+# must be synced to the staging dir renamed as `pnpm-lock.yaml`.
 #
 # Differs from apps/api/Dockerfile, which builds from the monorepo root.
 # The workspace wrapper exists so the `workspace:*` dependency on
@@ -19,9 +30,11 @@ WORKDIR /app
 
 # Install first (layer cached) — workspace file + member manifests must
 # precede install so `workspace:*` resolves to ./packages/llm-contracts.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# The lockfile is copied under its resolved name; see determinism note above.
+COPY package.json pnpm-workspace.yaml ./
+COPY pnpm-lock.standalone.yaml ./pnpm-lock.yaml
 COPY packages ./packages
-RUN pnpm install --no-frozen-lockfile --ignore-scripts=false
+RUN pnpm install --frozen-lockfile --ignore-scripts=false
 
 # Copy API source (tsx runtime, no build step).
 COPY . .
