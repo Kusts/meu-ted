@@ -22,7 +22,7 @@ describe("Admin Agent LLM Config API Client (Task 11)", () => {
     const data = await fetchAdminLlmConfig();
     expect(data.providers).toHaveLength(1);
     expect(data.models).toHaveLength(1);
-    expect(apiFetchSpy).toHaveBeenCalledWith("/admin/agent/llm-config");
+    expect(apiFetchSpy).toHaveBeenCalledWith("/admin/agent/llm-config", {});
   });
 
   it("calls toggle provider and model endpoints", async () => {
