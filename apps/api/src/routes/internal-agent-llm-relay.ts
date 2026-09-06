@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { safeCompareTokens as safeCompare } from '../auth/safe-compare.js';
 
 const relayBody = z.object({
   provider: z.literal('opencode-zen').or(z.literal('opencode-go')),
@@ -61,13 +62,6 @@ export const createRelayModelResolver = (deps: {
     }
     return DEFAULT_ALLOWED_MODELS;
   };
-};
-
-const safeCompare = (a: string, b: string): boolean => {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
 };
 
 export const registerAgentLlmRelayRoutes = (

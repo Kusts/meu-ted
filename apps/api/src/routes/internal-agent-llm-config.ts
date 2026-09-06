@@ -3,14 +3,7 @@ import type { LlmConfigStore } from '../agent/llm-config-store.js';
 import { isKindExecutable } from '../agent/llm-config.js';
 import { toInternalRuntimeDto } from '../agent/runtime-mapper.js';
 import type { InternalLlmSnapshot, LlmModelSlot, LlmProviderSlot } from '@pi-finance/llm-contracts';
-import { timingSafeEqual } from 'node:crypto';
-
-const safeCompare = (a: string, b: string): boolean => {
-  const bufA = Buffer.from(a, 'utf8');
-  const bufB = Buffer.from(b, 'utf8');
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
-};
+import { safeCompareTokens as safeCompare } from '../auth/safe-compare.js';
 
 const toProviderSlot = (
   p: { id: string; kind: LlmProviderSlot['kind']; transport: LlmProviderSlot['transport']; authMode: LlmProviderSlot['authMode']; secretAlias: LlmProviderSlot['secretAlias']; serviceAlias?: string | null | undefined; eligibility: LlmProviderSlot['eligibility'] },
