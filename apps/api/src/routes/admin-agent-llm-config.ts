@@ -101,12 +101,38 @@ export const registerAdminAgentLlmConfigRoutes = (
       }
     }
 
+    // Order is deliberate (Fase 3-FIX D4-rev): session first, so
+    // unauthenticated callers always get 401 (the auth inventory pins
+    // this); then admin, then the mutation-only CSRF/SSRF checks. A forged
+    // cross-site request always carries a valid session to reach the CSRF
+    // check, which still rejects it — no bypass, only clearer codes.
+    let session: { userId: string; email: string } | null | undefined = null;
+    try {
+      session = await getBetterAuthSessionContext(deps.auth, headers);
+    } catch {
+      // Ignore session retrieval errors
+    }
+
+    if (!session) {
+      return reply.code(401).send({
+        code: 'auth.session_required',
+        message: 'Autenticação de sessão Better-Auth obrigatória.',
+      });
+    }
+
+    if (!isUserAdmin(session.email, deps.adminEmails)) {
+      return reply.code(403).send({
+        code: 'auth.admin_forbidden',
+        message: 'Acesso permitido somente a administradores globais.',
+      });
+    }
+
     // CSRF check for mutations (Fase 3 D4, hardened Fase 3-FIX D4-rev): the
     // Origin/Referer allowlist protects cookie-session callers only. A
     // request carrying an explicit `Authorization: Bearer ...` header cannot
     // be forged by a simple cross-site request (custom headers trigger a
     // CORS preflight the attacker cannot satisfy), so Bearer callers skip
-    // this check — they still go through session/service auth below.
+    // this check — they already passed session/admin auth above.
     // Cookie-session mutations MUST present a trusted Origin (or, when no
     // Origin is sent, a trusted Referer); an absent attestation is rejected
     // fail-closed instead of treated as "no evidence of forgery".
@@ -146,27 +172,6 @@ export const registerAdminAgentLlmConfigRoutes = (
           });
         }
       }
-    }
-
-    let session: { userId: string; email: string } | null | undefined = null;
-    try {
-      session = await getBetterAuthSessionContext(deps.auth, headers);
-    } catch {
-      // Ignore session retrieval errors
-    }
-
-    if (!session) {
-      return reply.code(401).send({
-        code: 'auth.session_required',
-        message: 'Autenticação de sessão Better-Auth obrigatória.',
-      });
-    }
-
-    if (!isUserAdmin(session.email, deps.adminEmails)) {
-      return reply.code(403).send({
-        code: 'auth.admin_forbidden',
-        message: 'Acesso permitido somente a administradores globais.',
-      });
     }
 
     (req as unknown as Record<string, unknown>)['_session'] = session;
