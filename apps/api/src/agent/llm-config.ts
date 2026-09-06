@@ -4,6 +4,7 @@ import {
   PRIVACY_CLASSES,
   PROTOCOLS,
   PROVIDER_KINDS,
+  REGISTRY_UNSUPPORTED_KINDS,
   ROLLOUT_MODES,
   SECRET_ALIASES,
   type AuthMode,
@@ -30,7 +31,11 @@ export const ALLOWED_ROLLOUT_MODES: readonly RolloutMode[] = ROLLOUT_MODES;
 
 export const ALLOWED_PRIVACY_CLASSES: readonly PrivacyClass[] = PRIVACY_CLASSES;
 
-export { AUTH_MODES, KIND_SECRET_ALIASES };
+export { AUTH_MODES, KIND_SECRET_ALIASES, REGISTRY_UNSUPPORTED_KINDS };
+
+export const isKindExecutable = (kind: string): boolean =>
+  (PROVIDER_KINDS as readonly string[]).includes(kind) &&
+  !(REGISTRY_UNSUPPORTED_KINDS as readonly string[]).includes(kind);
 
 export interface LlmProvider {
   id: string;
@@ -119,6 +124,7 @@ export const canActivate = (
 ): string | null => {
   if (!provider || !model) return 'provider and model are required';
   if (provider.eligibility !== 'approved') return 'provider is not approved for activation';
+  if (!isKindExecutable(provider.kind)) return `provider kind ${provider.kind} is not executable by the agent runtime`;
   if (!provider.enabled) return 'provider is disabled';
   if (!model.enabled) return 'model is disabled';
   if (model.privacyClass === 'training_allowed') return 'model with training_allowed is blocked';

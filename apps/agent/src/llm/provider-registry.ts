@@ -1,5 +1,6 @@
 import {
   KIND_SECRET_ALIASES,
+  REGISTRY_UNSUPPORTED_KINDS,
   SECRET_ALIASES,
   type ProviderKind,
   type SecretAlias as ContractSecretAlias,
@@ -22,12 +23,14 @@ export const FIXED_ENDPOINTS: Record<string, string> = {
 
 /**
  * Kinds the direct-execution registry intentionally cannot run.
+ * Single source lives in @pi-finance/llm-contracts (shared with the API);
+ * re-exported here so existing agent imports keep working.
  * `openai-codex-subscription` uses the private-broker transport
  * (chatgpt-browser auth) and has no direct endpoint or secret alias;
  * it stays configured-but-blocked via eligibility, never executable here.
  */
-export const REGISTRY_UNSUPPORTED_KINDS = ['openai-codex-subscription'] as const;
-export type RegistryUnsupportedKind = (typeof REGISTRY_UNSUPPORTED_KINDS)[number];
+export { REGISTRY_UNSUPPORTED_KINDS };
+export type { RegistryUnsupportedKind } from '@pi-finance/llm-contracts/types';
 
 export const ALLOWLISTED_SECRETS = SECRET_ALIASES;
 export type SecretAlias = ContractSecretAlias;

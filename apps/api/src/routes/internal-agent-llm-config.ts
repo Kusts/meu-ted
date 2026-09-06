@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { LlmConfigStore } from '../agent/llm-config-postgres.js';
+import { isKindExecutable } from '../agent/llm-config.js';
 import { toInternalRuntimeDto } from '../agent/runtime-mapper.js';
 import type { InternalLlmSnapshot, LlmModelSlot, LlmProviderSlot } from '@pi-finance/llm-contracts';
 import { timingSafeEqual } from 'node:crypto';
@@ -64,11 +65,13 @@ export const registerInternalAgentLlmConfigRoutes = (
       ) ?? null;
 
     // Fail-closed: a configured pair is usable only when provider and model
-    // exist, are enabled, and the model belongs to the provider.
+    // exist, are enabled, the model belongs to the provider, and the
+    // provider kind is executable by the agent runtime (Fase 1b-FIX item 3).
     const activeConfigured = runtime.providerId != null || runtime.modelId != null;
     const activeUsable =
       activeProviderRaw !== null &&
       activeProviderRaw.enabled &&
+      isKindExecutable(activeProviderRaw.kind) &&
       activeModelRaw !== null &&
       activeModelRaw.enabled &&
       activeModelRaw.providerId === runtime.providerId;
@@ -78,6 +81,7 @@ export const registerInternalAgentLlmConfigRoutes = (
     const fallbackUsable =
       fallbackProviderRaw !== null &&
       fallbackProviderRaw.enabled &&
+      isKindExecutable(fallbackProviderRaw.kind) &&
       fallbackModelRaw !== null &&
       fallbackModelRaw.enabled &&
       fallbackModelRaw.providerId === runtime.fallbackProviderId;

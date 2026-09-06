@@ -34,6 +34,17 @@ export const SECRET_ALIASES = [
 ] as const;
 export type SecretAlias = (typeof SECRET_ALIASES)[number];
 
+/**
+ * Kinds the direct-execution registry intentionally cannot run.
+ * Single source shared by the agent registry, the API domain/routes and V042.
+ */
+export const REGISTRY_UNSUPPORTED_KINDS = ['openai-codex-subscription'] as const;
+export type RegistryUnsupportedKind = (typeof REGISTRY_UNSUPPORTED_KINDS)[number];
+
+export const isKindExecutable = (kind: string): kind is Exclude<ProviderKind, RegistryUnsupportedKind> =>
+  (PROVIDER_KINDS as readonly string[]).includes(kind) &&
+  !(REGISTRY_UNSUPPORTED_KINDS as readonly string[]).includes(kind);
+
 /** Single source: which secret aliases each provider kind may use. */
 export const KIND_SECRET_ALIASES: Record<ProviderKind, readonly SecretAlias[]> = {
   'opencode-zen': ['OPENCODE_ZEN_API_KEY'],

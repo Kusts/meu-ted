@@ -283,6 +283,21 @@ describe('LLM Config Domain Validation (RED -> GREEN)', () => {
         canActivate(validProvider, { ...validModel, protocol: 'invalid-proto' as never }),
       ).toBe('invalid model protocol');
     });
+
+    it('blocks activation if provider kind is not executable (Fase 1b-FIX item 3)', () => {
+      const codexProvider: LlmProvider = {
+        ...validProvider,
+        id: 'openai-codex-subscription',
+        kind: 'openai-codex-subscription',
+        transport: 'private-broker',
+        authMode: 'chatgpt-browser',
+        secretAlias: null,
+        eligibility: 'approved',
+      };
+      expect(canActivate(codexProvider, validModel)).toBe(
+        'provider kind openai-codex-subscription is not executable by the agent runtime',
+      );
+    });
   });
 });
 
