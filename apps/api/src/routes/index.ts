@@ -509,6 +509,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   registerAgentLlmRelayRoutes(app, {
     adminToken: deps.agentRuntimeAdminToken ?? process.env.AGENT_RUNTIME_ADMIN_TOKEN ?? 'dev-agent-runtime-admin-token-32-chars!',
     ...(process.env.OPENCODE_ZEN_API_KEY ? { zenApiKey: process.env.OPENCODE_ZEN_API_KEY } : {}),
+    llmConfigStore: llmStore,
   });
 
   if (deps.auth) {

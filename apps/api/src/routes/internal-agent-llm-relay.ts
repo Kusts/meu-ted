@@ -8,7 +8,7 @@ const relayBody = z.object({
   system: z.string().trim().max(8000).optional(),
 });
 
-const ALLOWED_MODELS = new Set([
+const DEFAULT_ALLOWED_MODELS = new Set([
   // OpenCode Zen free models (no payment method required)
   'muse-spark-1.2-contributor-free',
   'deepseek-v4-flash-free',
@@ -19,6 +19,50 @@ const ALLOWED_MODELS = new Set([
   'laguna-s-2.1-free',
 ]);
 
+const RELAY_MODEL_CACHE_TTL_MS = 60_000;
+
+const parseEnvAllowlist = (raw: string | undefined): string[] | null => {
+  if (!raw) return null;
+  const items = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return items.length > 0 ? items : null;
+};
+
+export interface RelayModelSource {
+  listModels(): Promise<Array<{ modelId: string; enabled: boolean }>>;
+}
+
+/**
+ * Fase 2 item 8: resolves the relay model allowlist by priority —
+ * RELAY_ALLOWED_MODELS env (csv, explicit admin override) wins, then the
+ * enabled agent_llm_models (60s cache), then the built-in default set.
+ * Env entries are authoritative as written; DB entries are filtered to
+ * enabled models only, so a disabled model is never relayable via the DB.
+ */
+export const createRelayModelResolver = (deps: {
+  store?: RelayModelSource;
+  cacheTtlMs?: number;
+  now?: () => number;
+} = {}) => {
+  const ttl = deps.cacheTtlMs ?? RELAY_MODEL_CACHE_TTL_MS;
+  const now = deps.now ?? Date.now;
+  let cache: { at: number; models: Set<string> } | null = null;
+  return async (): Promise<Set<string>> => {
+    const envList = parseEnvAllowlist(process.env.RELAY_ALLOWED_MODELS);
+    if (envList) return new Set(envList);
+    if (deps.store) {
+      if (!cache || now() - cache.at >= ttl) {
+        const models = await deps.store.listModels();
+        cache = { at: now(), models: new Set(models.filter((m) => m.enabled).map((m) => m.modelId)) };
+      }
+      return cache.models;
+    }
+    return DEFAULT_ALLOWED_MODELS;
+  };
+};
+
 const safeCompare = (a: string, b: string): boolean => {
   if (a.length !== b.length) return false;
   let diff = 0;
@@ -28,8 +72,19 @@ const safeCompare = (a: string, b: string): boolean => {
 
 export const registerAgentLlmRelayRoutes = (
   app: FastifyInstance,
-  deps: { adminToken: string; zenApiKey?: string },
+  deps: {
+    adminToken: string;
+    zenApiKey?: string;
+    llmConfigStore?: RelayModelSource;
+    cacheTtlMs?: number;
+    now?: () => number;
+  },
 ): void => {
+  const resolveAllowedModels = createRelayModelResolver({
+    ...(deps.llmConfigStore ? { store: deps.llmConfigStore } : {}),
+    ...(deps.cacheTtlMs !== undefined ? { cacheTtlMs: deps.cacheTtlMs } : {}),
+    ...(deps.now ? { now: deps.now } : {}),
+  });
   app.post('/internal/agent/llm-relay', async (req, reply) => {
     const rawToken = req.headers['x-agent-runtime-admin-token'];
     const token = typeof rawToken === 'string' ? rawToken.trim() : '';
@@ -46,7 +101,8 @@ export const registerAgentLlmRelayRoutes = (
     }
     const { provider, model, prompt, system } = parsed.data;
 
-    if (!ALLOWED_MODELS.has(model)) {
+    const allowedModels = await resolveAllowedModels();
+    if (!allowedModels.has(model)) {
       return reply.code(403).send({ code: 'agent.model_not_allowlisted', message: 'Modelo não permitido no relay.' });
     }
 
