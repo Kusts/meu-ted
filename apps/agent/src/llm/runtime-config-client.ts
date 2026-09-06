@@ -55,15 +55,19 @@ export const fetchRuntimeConfig = async (
   }
 
   // The schema is the contract: no defensive re-reads of legacy names or slots.
-  const runtime = parsed.data.runtime;
+  // Double fail-closed (Fase 1b-FIX item 9): the flags win over the ids even
+  // though the schema already forces coherence — belt and suspenders at the
+  // boundary that decides execution.
+  const snapshot = parsed.data;
+  const runtime = snapshot.runtime;
   return {
     version: runtime.version,
     securityEpoch: runtime.securityEpoch,
-    activeProviderId: runtime.activeProviderId,
-    activeModelId: runtime.activeModelId,
-    activeProtocol: runtime.activeProtocol,
+    activeProviderId: snapshot.activeDisabled ? null : runtime.activeProviderId,
+    activeModelId: snapshot.activeDisabled ? null : runtime.activeModelId,
+    activeProtocol: snapshot.activeDisabled ? null : runtime.activeProtocol,
     activeRolloutPercentage: runtime.activeRolloutPercentage,
-    fallbackProviderId: runtime.fallbackProviderId,
-    fallbackModelId: runtime.fallbackModelId,
+    fallbackProviderId: snapshot.fallbackDisabled ? null : runtime.fallbackProviderId,
+    fallbackModelId: snapshot.fallbackDisabled ? null : runtime.fallbackModelId,
   };
 };

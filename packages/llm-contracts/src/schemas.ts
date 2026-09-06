@@ -156,13 +156,41 @@ export const internalRuntimeDtoSchema = z.object({
   updatedAt: z.string().optional(),
 });
 
-/** Internal snapshot boundary schema: unknown keys are ignored (forward compat), known keys are strict. */
-export const internalSnapshotSchema = z.object({
-  runtime: internalRuntimeDtoSchema,
-  activeProvider: llmProviderSlotSchema.nullable(),
-  activeModel: llmModelSlotSchema.nullable(),
-  fallbackProvider: llmProviderSlotSchema.nullable(),
-  fallbackModel: llmModelSlotSchema.nullable(),
-  activeDisabled: z.boolean(),
-  fallbackDisabled: z.boolean(),
-});
+/**
+ * Internal snapshot boundary schema: unknown keys are ignored (forward compat),
+ * known keys are strict. Fase 1b-FIX item 9: flags and ids must agree — a
+ * disabled pair carries null ids, so a producer cannot smuggle usable ids
+ * past a fail-closed flag.
+ */
+export const internalSnapshotSchema = z
+  .object({
+    runtime: internalRuntimeDtoSchema,
+    activeProvider: llmProviderSlotSchema.nullable(),
+    activeModel: llmModelSlotSchema.nullable(),
+    fallbackProvider: llmProviderSlotSchema.nullable(),
+    fallbackModel: llmModelSlotSchema.nullable(),
+    activeDisabled: z.boolean(),
+    fallbackDisabled: z.boolean(),
+  })
+  .superRefine((v, ctx) => {
+    if (
+      v.activeDisabled &&
+      (v.runtime.activeProviderId !== null || v.runtime.activeModelId !== null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'activeDisabled requires null active ids',
+        path: ['runtime', 'activeProviderId'],
+      });
+    }
+    if (
+      v.fallbackDisabled &&
+      (v.runtime.fallbackProviderId !== null || v.runtime.fallbackModelId !== null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'fallbackDisabled requires null fallback ids',
+        path: ['runtime', 'fallbackProviderId'],
+      });
+    }
+  });

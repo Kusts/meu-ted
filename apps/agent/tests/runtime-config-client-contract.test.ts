@@ -166,4 +166,56 @@ describe('Runtime Config Client — explicit active* contract (Fase 1a RED)', ()
       /Invalid runtime snapshot/,
     );
   });
+
+  it('rejects a structurally valid but semantically incoherent snapshot (Fase 1b-FIX item 9 RED)', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          runtime: {
+            ...contractRuntime,
+            activeProviderId: 'openai-api',
+            activeModelId: 'openai-api:gpt-4o',
+          },
+          activeProvider: null,
+          activeModel: null,
+          fallbackProvider: null,
+          fallbackModel: null,
+          activeDisabled: true,
+          fallbackDisabled: false,
+        }),
+        { status: 200 },
+      ),
+    );
+    globalThis.fetch = fetchMock;
+
+    await expect(fetchRuntimeConfig('https://api.example.test', 'token-123')).rejects.toThrow(
+      /Invalid runtime snapshot/,
+    );
+  });
+
+  it('rejects incoherent fallback flags the same way (Fase 1b-FIX item 9 RED)', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          runtime: {
+            ...contractRuntime,
+            fallbackProviderId: 'opencode-zen',
+            fallbackModelId: 'opencode-zen:zen-1',
+          },
+          activeProvider: null,
+          activeModel: null,
+          fallbackProvider: null,
+          fallbackModel: null,
+          activeDisabled: false,
+          fallbackDisabled: true,
+        }),
+        { status: 200 },
+      ),
+    );
+    globalThis.fetch = fetchMock;
+
+    await expect(fetchRuntimeConfig('https://api.example.test', 'token-123')).rejects.toThrow(
+      /Invalid runtime snapshot/,
+    );
+  });
 });
