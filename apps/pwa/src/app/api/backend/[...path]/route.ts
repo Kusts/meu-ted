@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-const API_ORIGIN = "https://api.synkroo.com.br";
+/** Overridable for local development (e.g. PWA_BACKEND_PROXY_ORIGIN=http://127.0.0.1:3001). */
+const API_ORIGIN = process.env.PWA_BACKEND_PROXY_ORIGIN?.trim() || "https://api.synkroo.com.br";
 /** Upstream budget: slightly above the PWA client's 15s apiFetch timeout. */
 const UPSTREAM_TIMEOUT_MS = 20_000;
 const HOP_BY_HOP_HEADERS = new Set([
