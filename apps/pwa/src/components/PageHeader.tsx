@@ -10,8 +10,12 @@ export interface PageHeaderProps {
 }
 
 export function PageHeader({ title, subtitle, action }: PageHeaderProps) {
+  // A2: viewportFit=cover lets content slide under the notch/Dynamic Island
+  // in standalone PWA mode. Compose the --page-pt token with the top safe
+  // area here — this component is the choke point (~15 pages). env() falls
+  // back to 0 where unsupported, so no fallback branch is needed.
   return (
-    <div className="flex items-center justify-between px-5 pb-2 pt-[--page-pt]">
+    <div className="flex items-center justify-between px-5 pb-2 pt-[calc(var(--page-pt)+env(safe-area-inset-top))]">
       <div className="min-w-0 flex-1">
         <h1 className="text-[22px] font-extrabold leading-tight tracking-tight text-text-primary">
           {title}
