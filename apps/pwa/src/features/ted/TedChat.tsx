@@ -11,6 +11,7 @@ import {
 } from "@/lib/api/agent-client";
 import { TedMessage } from "./TedMessage";
 import { TedApprovalCard } from "./TedApprovalCard";
+import { useBodyScrollLock } from "@/lib/ui/overlay-a11y";
 import { Sparkles, X, Send, Mic, MicOff, Image as ImageIcon, FileText, Paperclip, Trash2 } from "lucide-react";
 
 const HISTORY_LOAD_ERROR = "Não foi possível carregar o histórico. Tente novamente.";
@@ -42,6 +43,9 @@ export function TedChat({ open, onClose }: TedChatProps) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const prevWorkspaceIdRef = useRef<string | null>(null);
+  // Full-screen overlay como as demais superfícies: trava o scroll do body
+  // (ref-counted, libera ao fechar/desmontar) e conta para useIsOverlayOpen.
+  useBodyScrollLock(open);
 
   const loadHistory = useCallback(async (preserveError = false) => {
     if (!activeWorkspace) return;

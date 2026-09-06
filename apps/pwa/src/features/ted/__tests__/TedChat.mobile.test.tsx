@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render } from "@/lib/test-utils";
 import { TedChat } from "../TedChat";
+import { bodyScrollLockCount } from "@/lib/ui/overlay-a11y";
 import * as agentAuth from "@/lib/api/agent-auth";
 
 vi.mock("@/lib/auth/workspace-context", async (importOriginal) => {
@@ -82,5 +83,32 @@ describe("TedChat – PWA mobile resizing (dvh + safe-area + keyboard)", () => {
     expect(modalClass).toMatch(/100dvh/);
     // Ensure safe-area is present
     expect(container.innerHTML).toMatch(/safe-area|env\(safe-area/);
+  });
+});
+
+describe("TedChat — body scroll lock (v2 review)", () => {
+  beforeEach(() => {
+    document.body.style.overflow = "";
+  });
+
+  afterEach(() => {
+    // RTL auto-cleanup unmounts; o lock ref-counted deve voltar a zero.
+    expect(bodyScrollLockCount()).toBe(0);
+  });
+
+  it("trava o scroll do body enquanto aberto e libera ao fechar", () => {
+    const view = render(<TedChat open={true} onClose={vi.fn()} />);
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(bodyScrollLockCount()).toBe(1);
+
+    view.rerender(<TedChat open={false} onClose={vi.fn()} />);
+    expect(document.body.style.overflow).toBe("");
+    expect(bodyScrollLockCount()).toBe(0);
+  });
+
+  it("não trava o scroll quando fechado", () => {
+    render(<TedChat open={false} onClose={vi.fn()} />);
+    expect(document.body.style.overflow).toBe("");
+    expect(bodyScrollLockCount()).toBe(0);
   });
 });
