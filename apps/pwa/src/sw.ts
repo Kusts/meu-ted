@@ -82,7 +82,7 @@ export const SHELL_PRECACHE_ENTRIES: ReadonlyArray<{
 }> = [
   {
     url: OFFLINE_HTML,
-    revision: "sha256-7cf172f09b9cd8d6ad9738ba80182fadbfb3aa57ec91c9a5620d8becd9de8623",
+    revision: "sha256-b0d5ce1d0d7debb625ffd6a73f098f7db600fc755dcfe79d7be91c2e1bd98614",
   },
   {
     url: OFFLINE_JS,

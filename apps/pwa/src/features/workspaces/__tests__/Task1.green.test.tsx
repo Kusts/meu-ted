@@ -50,14 +50,14 @@ vi.mock("@/lib/auth/workspace-context", () => ({
 }));
 
 describe("TASK1 - PWA Mobile enhancements (GREEN)", () => {
-  describe("Anti-Zoom Viewport", () => {
-    it("viewport tem anti-zoom (maximumScale 1 e userScalable false)", async () => {
+  describe("Zoom liberado (A5 / WCAG 1.4.4)", () => {
+    it("viewport permite pinch-zoom (sem maximumScale/userScalable false)", async () => {
       const { viewport } = await import("@/app/layout");
       expect(viewport.width).toBe("device-width");
       expect(viewport.initialScale).toBe(1);
-      expect(viewport.maximumScale).toBe(1);
-      expect(viewport.userScalable).toBe(false);
-      expect(viewport.minimumScale).toBe(1);
+      expect(viewport.maximumScale).toBeUndefined();
+      expect(viewport.userScalable).not.toBe(false);
+      expect(viewport.minimumScale).toBeUndefined();
       expect(viewport.viewportFit).toBe("cover");
     }, 60000);
   });

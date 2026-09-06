@@ -30,7 +30,7 @@ describe("capture manifest", () => {
     const result = manifest() as CaptureManifest;
 
     expect(result.shortcuts).toContainEqual({
-      name: "Novo gasto",
+      name: "Novo gasto no Meu Ted",
       url: "/capture?kind=expense",
     });
   });
