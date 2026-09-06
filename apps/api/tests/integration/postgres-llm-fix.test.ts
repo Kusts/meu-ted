@@ -83,6 +83,52 @@ describe('Postgres LLM Fase 1b-FIX (items 1/2/4/5/6)', () => {
     await pool?.end();
   });
 
+  itIfDatabase('item 4: per-kind alias CHECK rejects a mismatched pair', async () => {
+    if (!pool) throw new Error('database pool not initialized');
+    await resetLlmTables();
+    await expect(
+      pool.query(
+        `INSERT INTO agent_llm_providers (id, kind, transport, auth_mode, secret_alias, enabled, eligibility)
+         VALUES ('bad-alias', 'anthropic', 'direct', 'api-key', 'OPENAI_API_KEY', false, 'approved')`,
+      ),
+    ).rejects.toMatchObject({ code: '23514' });
+  });
+
+  itIfDatabase('item 4: per-kind alias CHECK accepts every contract pair', async () => {
+    if (!pool) throw new Error('database pool not initialized');
+    await resetLlmTables();
+    const pairs: Array<[string, string | null]> = [
+      ['opencode-zen', 'OPENCODE_ZEN_API_KEY'],
+      ['opencode-go', 'OPENCODE_GO_API_KEY'],
+      ['openai-api', 'OPENAI_API_KEY'],
+      ['openai', 'OPENAI_API_KEY'],
+      ['anthropic', 'ANTHROPIC_API_KEY'],
+      ['deepseek', 'DEEPSEEK_API_KEY'],
+      ['qwen', 'QWEN_API_KEY'],
+      ['glm', 'GLM_API_KEY'],
+      ['minimax', 'MINIMAX_API_KEY'],
+      ['google', 'GOOGLE_API_KEY'],
+      ['openrouter', 'OPENROUTER_API_KEY'],
+    ];
+    for (const [kind, alias] of pairs) {
+      const transport = 'direct';
+      const authMode = 'api-key';
+      await pool.query(
+        `INSERT INTO agent_llm_providers (id, kind, transport, auth_mode, secret_alias, enabled, eligibility)
+         VALUES ($1, $2, $3, $4, $5, false, 'approved')`,
+        [`pair-${kind}`, kind, transport, authMode, alias],
+      );
+    }
+    const res = await pool.query(`SELECT count(*)::int AS n FROM agent_llm_providers`);
+    expect((res.rows[0] as { n: number }).n).toBe(pairs.length);
+    const codex = await pool.query(
+      `INSERT INTO agent_llm_providers (id, kind, transport, auth_mode, secret_alias, enabled, eligibility)
+       VALUES ('pair-codex', 'openai-codex-subscription', 'private-broker', 'chatgpt-browser', NULL, false, 'experimental_blocked')
+       RETURNING id`,
+    );
+    expect(codex.rowCount).toBe(1);
+  });
+
   itIfDatabase('D1: raw DELETE of the fallback provider is rejected (NO ACTION, 23503)', async () => {
     if (!pool) throw new Error('database pool not initialized');
     await resetLlmTables();

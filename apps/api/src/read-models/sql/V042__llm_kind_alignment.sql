@@ -2,10 +2,10 @@
 --
 -- WHAT: expands agent_llm_providers kind/eligibility CHECKs to the kinds the
 -- agent can execute end to end (see apps/agent/src/llm/provider-registry.ts
--- FIXED_ENDPOINTS + REGISTRY_UNSUPPORTED_KINDS), widens chk_secret_alias to
--- the contract allowlist, and enforces plain (NO ACTION) FKs on ALL FOUR
--- runtime reference columns (provider_id, model_id, fallback_provider_id,
--- fallback_model_id).
+-- FIXED_ENDPOINTS + REGISTRY_UNSUPPORTED_KINDS), binds chk_secret_alias to
+-- the per-kind KIND_SECRET_ALIASES pairs, and enforces plain (NO ACTION) FKs
+-- on ALL FOUR runtime reference columns (provider_id, model_id,
+-- fallback_provider_id, fallback_model_id).
 --
 -- D1 RATIONALE (Fase 1b-FIX): single NO ACTION policy on all four columns
 -- as a DB backstop; protection always happens in the API via 409
@@ -79,8 +79,26 @@ ALTER TABLE agent_llm_providers ADD CONSTRAINT chk_llm_provider_eligibility CHEC
   eligibility IN ('approved','candidate','experimental_blocked')
 );
 
+-- Fase 1b-FIX item 4: per-kind alias binding enumerated from
+-- KIND_SECRET_ALIASES (unsupported kinds excluded — only codex, NULL alias).
+-- Direct writes, seeds or route bypasses can no longer store e.g.
+-- anthropic + OPENAI_API_KEY, which the registry would resolve differently.
+-- NOTE (fail-fast): pre-existing rows pairing an old kind with a different
+-- allowlisted alias will reject this constraint. Fix the data before
+-- deploying (the V034 seeds are all canonical pairs, so stock installs
+-- migrate cleanly); silently rewriting secrets in a migration was rejected.
 ALTER TABLE agent_llm_providers ADD CONSTRAINT chk_llm_secret_alias CHECK (
-  (kind <> 'openai-codex-subscription' AND secret_alias IN ('OPENCODE_ZEN_API_KEY','OPENCODE_GO_API_KEY','OPENAI_API_KEY','ANTHROPIC_API_KEY','DEEPSEEK_API_KEY','QWEN_API_KEY','GLM_API_KEY','MINIMAX_API_KEY','GOOGLE_API_KEY','OPENROUTER_API_KEY')) OR
+  (kind = 'opencode-zen' AND secret_alias = 'OPENCODE_ZEN_API_KEY') OR
+  (kind = 'opencode-go' AND secret_alias = 'OPENCODE_GO_API_KEY') OR
+  (kind = 'openai-api' AND secret_alias = 'OPENAI_API_KEY') OR
+  (kind = 'openai' AND secret_alias = 'OPENAI_API_KEY') OR
+  (kind = 'anthropic' AND secret_alias = 'ANTHROPIC_API_KEY') OR
+  (kind = 'deepseek' AND secret_alias = 'DEEPSEEK_API_KEY') OR
+  (kind = 'qwen' AND secret_alias = 'QWEN_API_KEY') OR
+  (kind = 'glm' AND secret_alias = 'GLM_API_KEY') OR
+  (kind = 'minimax' AND secret_alias = 'MINIMAX_API_KEY') OR
+  (kind = 'google' AND secret_alias = 'GOOGLE_API_KEY') OR
+  (kind = 'openrouter' AND secret_alias = 'OPENROUTER_API_KEY') OR
   (kind = 'openai-codex-subscription' AND secret_alias IS NULL)
 );
 
