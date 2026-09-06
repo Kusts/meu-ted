@@ -193,4 +193,27 @@ export const internalSnapshotSchema = z
         path: ['runtime', 'fallbackProviderId'],
       });
     }
+    // Fase 2 item 3: when a pair is enabled, its ids must agree — a present
+    // provider id requires a present model id and vice versa, so a
+    // structurally valid but half-filled pair cannot become configuration.
+    if (
+      !v.activeDisabled &&
+      (v.runtime.activeProviderId === null) !== (v.runtime.activeModelId === null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'active pair requires both activeProviderId and activeModelId',
+        path: ['runtime', 'activeProviderId'],
+      });
+    }
+    if (
+      !v.fallbackDisabled &&
+      (v.runtime.fallbackProviderId === null) !== (v.runtime.fallbackModelId === null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'fallback pair requires both fallbackProviderId and fallbackModelId',
+        path: ['runtime', 'fallbackProviderId'],
+      });
+    }
   });

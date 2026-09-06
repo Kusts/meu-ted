@@ -218,4 +218,54 @@ describe('Runtime Config Client — explicit active* contract (Fase 1a RED)', ()
       /Invalid runtime snapshot/,
     );
   });
+
+  it.each([
+    ['active provider without model', { activeProviderId: 'openai-api', activeModelId: null }],
+    ['active model without provider', { activeProviderId: null, activeModelId: 'openai-api:gpt-4o' }],
+  ])('rejects incomplete active pair: %s (Fase 2 item 3)', async (_label, pair) => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          runtime: { ...contractRuntime, ...pair },
+          activeProvider: null,
+          activeModel: null,
+          fallbackProvider: null,
+          fallbackModel: null,
+          activeDisabled: false,
+          fallbackDisabled: false,
+        }),
+        { status: 200 },
+      ),
+    );
+    globalThis.fetch = fetchMock;
+
+    await expect(fetchRuntimeConfig('https://api.example.test', 'token-123')).rejects.toThrow(
+      /Invalid runtime snapshot/,
+    );
+  });
+
+  it.each([
+    ['fallback provider without model', { fallbackProviderId: 'opencode-zen', fallbackModelId: null }],
+    ['fallback model without provider', { fallbackProviderId: null, fallbackModelId: 'opencode-zen:zen-1' }],
+  ])('rejects incomplete fallback pair: %s (Fase 2 item 3)', async (_label, pair) => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          runtime: { ...contractRuntime, ...pair },
+          activeProvider: null,
+          activeModel: null,
+          fallbackProvider: null,
+          fallbackModel: null,
+          activeDisabled: false,
+          fallbackDisabled: false,
+        }),
+        { status: 200 },
+      ),
+    );
+    globalThis.fetch = fetchMock;
+
+    await expect(fetchRuntimeConfig('https://api.example.test', 'token-123')).rejects.toThrow(
+      /Invalid runtime snapshot/,
+    );
+  });
 });
