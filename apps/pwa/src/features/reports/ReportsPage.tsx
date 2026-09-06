@@ -4,16 +4,10 @@ import { useMemo, useState } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import { useAppState } from "@/lib/state/app-state-context";
+import { formatBRL, formatPct } from "@/lib/format/brl";
 import AdoptionMetrics from "./AdoptionMetrics";
 
 type Period = "month" | "last" | "quarter" | "year";
-
-function formatBRL(cents: number): string {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(cents / 100);
-}
 
 function formatBRLShort(cents: number): string {
   const v = cents / 100;
@@ -21,10 +15,6 @@ function formatBRLShort(cents: number): string {
     return `R$ ${(v / 1000).toFixed(1)}k`;
   }
   return formatBRL(cents);
-}
-
-function formatPct(value: number): string {
-  return `${value.toFixed(1)}%`;
 }
 
 interface CategoryRow {
