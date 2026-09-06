@@ -174,6 +174,19 @@ visual mobile (390×844) + desktop (1280) em light/dark.
   press-states e transições de sheet; P6 net-worth chart se couber no ciclo
   (senão v3).
 
+## 6. Backlog v3 (debate pós-deploy com AGY, 2026-09-06)
+
+1. **Unificar modelo de scroll no `window`** (remover `overflow-y-auto` do
+   `<main>` da Home — pré-existente, não-regressão do redesign): recupera
+   ~50px de viewport no iOS (auto-hide da toolbar), elimina
+   `hasScrolledAncestor`, padroniza rubber-band. Alto impacto; exige ciclo
+   de teste visual dedicado. *(Escolhido pelo usuário para v3.)*
+2. ~~Animação de saída da BottomSheet (180ms)~~ → **Onda 4**.
+3. ~~CTA "Conversar com o TED" no Insights vazio~~ → **Onda 4**.
+- Observation do debate: swipe sem drag-follow é trade-off arquitetural
+  consciente (manter). Renomear "regressão" do scroll para dívida
+  pré-existente (correção ao parecer do AGY).
+
 ## 5. Critérios de aceite
 
 1. Swipe funcional entre as 3 telas raiz em mobile, sem quebrar navegação

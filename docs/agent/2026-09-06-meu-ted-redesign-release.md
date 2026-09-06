@@ -1,5 +1,25 @@
 # Release 2026-09-06 — Redesign v2 "Meu Ted" (PWA + Cloudflare)
 
+## Adendo — Ondas 4-5 (debate AGY + feedback do usuário, mesmo dia)
+
+Após o primeiro deploy, debate com o AGY (auditoria do código implementado)
+e feedback direto do usuário geraram mais 6 commits, revisados (1 P2
+corrigido: saída da sheet suprimida pela animação de entrada) e redeploy:
+
+- `953c974` CTA "Conversar com o TED" no Insights vazio (canal público
+  `pwa:open-ted`).
+- `096b374` + `4531e0d` BottomSheet: animação de saída 200ms em todos os
+  caminhos (drag/botão/overlay/Escape), reduced-motion instantâneo, sem
+  supressão pela animação de entrada.
+- `76c4833` BottomNav maior: ícones 24px, labels 11px (feedback "muito
+  pequenos").
+- `4f1ca16` Swipe-back: em subpáginas do "Mais", arrastar para a direita =
+  `router.back()` (feedback "swipe não alcança os itens do Mais").
+- Backlog v3 registrado no plano: unificar scroll no `window` (~50px de
+  viewport no iOS).
+
+Suíte final: **144 arquivos / 1364 testes 100% verdes**.
+
 ## Resultado
 
 Deploy do redesign mobile v2 concluído na Cloudflare.
