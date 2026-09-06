@@ -102,6 +102,31 @@ describe("useAdminLlmConfig", () => {
     expect(result.current.actionSuccess).toMatch(/ativado com sucesso/);
   });
 
+  it("retries setFallback once after a 409 version conflict with the fresh version", async () => {
+    const fallbackSpy = vi.spyOn(adminLlmConfig, "setFallbackModel")
+      .mockRejectedValueOnce(new ApiError(409, "agent.version_conflict", "Conflito de versão"))
+      .mockResolvedValue({ ok: true, runtime: {} } as any);
+    vi.mocked(adminLlmConfig.fetchAdminLlmConfig)
+      .mockResolvedValueOnce(baseConfig() as any)
+      .mockResolvedValue(baseConfig({ runtime: { version: 3 } }) as any);
+
+    const { result } = renderHook(() => useAdminLlmConfig());
+    await act(async () => {
+      await result.current.load();
+    });
+    act(() => {
+      result.current.setFallbackModelChoice("openai:gpt-4o");
+    });
+    await act(async () => {
+      await result.current.setFallback();
+    });
+    expect(fallbackSpy).toHaveBeenCalledTimes(2);
+    expect(fallbackSpy.mock.calls[0]![0]).toMatchObject({ expectedVersion: 2 });
+    expect(fallbackSpy.mock.calls[1]![0]).toMatchObject({ expectedVersion: 3 });
+    expect(result.current.error).toBeNull();
+    expect(result.current.actionSuccess).toMatch(/Fallback definido/);
+  });
+
   it("surfaces partial preset failures without a success message", async () => {
     vi.mocked(adminLlmConfig.fetchAdminLlmConfig).mockResolvedValue({
       providers: [],

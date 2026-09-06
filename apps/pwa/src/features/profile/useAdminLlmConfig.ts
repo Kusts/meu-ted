@@ -234,14 +234,26 @@ export function useAdminLlmConfig(): UseAdminLlmConfig {
     const version = runtimeRef.current?.version;
     if (version === undefined) return false;
     return mutate(async () => {
-      await apiSetFallbackModel({
-        providerId: fallbackModel ? fallbackModel.providerId : null,
-        modelId: fallbackModel ? fallbackModel.modelId : null,
-        expectedVersion: version,
-      });
+      const attempt = (expectedVersion: number) =>
+        apiSetFallbackModel({
+          providerId: fallbackModel ? fallbackModel.providerId : null,
+          modelId: fallbackModel ? fallbackModel.modelId : null,
+          expectedVersion,
+        });
+      try {
+        await attempt(version);
+      } catch (e) {
+        // Fase 3 R6: same single-retry policy as activate — a 409 only means
+        // the version moved under us, so reload once and retry fresh.
+        if (!isVersionConflict(e)) throw e;
+        const reloaded = await load();
+        const freshVersion = reloaded?.runtime?.version;
+        if (freshVersion === undefined) throw e;
+        await attempt(freshVersion);
+      }
       return fallbackModel ? `Fallback definido para ${fallbackModel.modelId}` : "Fallback removido";
     });
-  }, [mutate]);
+  }, [mutate, load]);
 
   const createProvider = useCallback(
     (id: string, secretAlias: string): Promise<boolean> => {

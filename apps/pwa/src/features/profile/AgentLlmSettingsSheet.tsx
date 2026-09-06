@@ -446,8 +446,9 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                       <button
                         type="button"
                         aria-label={`Excluir provedor ${p.id}`}
+                        disabled={isMutating}
                         onClick={() => handleDeleteProvider(p.id)}
-                        className="rounded-full p-1.5 text-text-muted hover:text-danger hover:bg-danger-tint transition-all"
+                        className="rounded-full p-1.5 text-text-muted hover:text-danger hover:bg-danger-tint transition-all disabled:opacity-40 disabled:pointer-events-none"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -515,8 +516,9 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                           <button
                             type="button"
                             aria-label={`Excluir modelo ${m.modelId}`}
+                            disabled={isMutating}
                             onClick={() => handleDeleteModel(m.id)}
-                            className="rounded-full p-1.5 text-text-muted hover:text-danger hover:bg-danger-tint transition-all"
+                            className="rounded-full p-1.5 text-text-muted hover:text-danger hover:bg-danger-tint transition-all disabled:opacity-40 disabled:pointer-events-none"
                           >
                             <Trash2 size={14} />
                           </button>
