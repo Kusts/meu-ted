@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@/lib/test-utils";
+import { render, screen, fireEvent, act, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 
 const mockRouter = { push: vi.fn(), refresh: vi.fn() };
@@ -456,6 +456,52 @@ describe("RecordsPage", () => {
       expect(screen.getByRole("button", { name: /novo lançamento/i })).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: /ver tudo/i }));
       expect(screen.getByText("Supermercado Extra")).toBeInTheDocument();
+    });
+  });
+
+  describe("pull-to-refresh (v2 F4)", () => {
+    function installCoarsePointer() {
+      Object.defineProperty(window, "matchMedia", {
+        writable: true,
+        configurable: true,
+        value: (query: string) => ({
+          matches: query === "(pointer: coarse)",
+          media: query,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          dispatchEvent: () => false,
+        }),
+      });
+    }
+
+    function pullWindow(distance: number) {
+      const point = (y: number) => [{ clientX: 100, clientY: y, identifier: 0 }];
+      const start = new Event("touchstart", { bubbles: true, cancelable: true });
+      (start as unknown as { touches: unknown }).touches = point(120);
+      const move = new Event("touchmove", { bubbles: true, cancelable: true });
+      (move as unknown as { touches: unknown }).touches = point(120 + distance);
+      const end = new Event("touchend", { bubbles: true, cancelable: true });
+      act(() => {
+        window.dispatchEvent(start);
+        window.dispatchEvent(move);
+      });
+      return end;
+    }
+
+    it("pull from the top refreshes transactions and accounts", async () => {
+      installCoarsePointer();
+      const refreshSpy = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({ refreshDomains: refreshSpy }),
+      );
+      render(<RecordsPage />);
+      const end = pullWindow(120);
+      await act(async () => {
+        window.dispatchEvent(end);
+      });
+      await waitFor(() =>
+        expect(refreshSpy).toHaveBeenCalledWith(["transactions", "accounts"]),
+      );
     });
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
@@ -8,6 +8,7 @@ import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
+import { usePullToRefresh, PullToRefreshIndicator } from "@/lib/ui/use-pull-to-refresh";
 import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import type { Payable } from "@/lib/state/types";
 import { Plus } from "lucide-react";
@@ -304,7 +305,7 @@ function DetailSheet({
 }
 
 export default function PayablesPage() {
-  const { payables, categories, accounts, markPayablePaid, cancelPayable, updatePayable, undoPayablePayment, createPayable, loading, error, writeError, clearWriteError } = useAppState();
+  const { payables, categories, accounts, markPayablePaid, cancelPayable, updatePayable, undoPayablePayment, createPayable, loading, error, writeError, clearWriteError, refreshDomains } = useAppState();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState<Payable | null>(null);
@@ -363,6 +364,13 @@ export default function PayablesPage() {
     { key: "all", label: "Todas" }, { key: "overdue", label: "Vencidas" }, { key: "pending", label: "Próximas" }, { key: "paid", label: "Pagas" },
   ];
 
+  // F4 pull-to-refresh: revalida os domínios exibidos nesta tela.
+  const handleRefresh = useCallback(
+    () => refreshDomains(["payables", "accounts"]),
+    [refreshDomains],
+  );
+  const pull = usePullToRefresh({ onRefresh: handleRefresh });
+
   if (loading) {
     return (
       <div className="flex min-h-dvh flex-col bg-bg">
@@ -381,6 +389,7 @@ export default function PayablesPage() {
     <div className="flex min-h-dvh flex-col bg-bg">
       <StatusBar />
       <main className="flex flex-1 flex-col pb-[var(--tab-bar-height)]">
+        <PullToRefreshIndicator state={pull} />
         <PageHeader title="Contas a pagar" action={
           <button type="button" onClick={() => setCreateOpen(true)} className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-[12px] font-bold text-white shadow-sm hover:bg-primary-hover active:scale-95 transition-all">
             <Plus size={15} strokeWidth={2.4} />

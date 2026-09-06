@@ -14,6 +14,7 @@ import { TransactionEditSheet } from "./components/TransactionEditSheet";
 import { CategoryBadge } from "@/components/ui/CategoryBadge";
 import { useAppState } from "@/lib/state/app-state-context";
 import type { Transaction } from "@/lib/state/types";
+import { usePullToRefresh, PullToRefreshIndicator } from "@/lib/ui/use-pull-to-refresh";
 import { Search, SlidersHorizontal, ChevronRight, ChevronLeft, Plus } from "lucide-react";
 
 type TypeFilter = "all" | "expense" | "income" | "transfer";
@@ -48,7 +49,7 @@ interface Group {
 }
 
 export default function RecordsPage() {
-  const { transactions, categories, accounts, loading, error, writeError, clearWriteError, deleteTransaction } = useAppState();
+  const { transactions, categories, accounts, loading, error, writeError, clearWriteError, deleteTransaction, refreshDomains } = useAppState();
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [actionOpen, setActionOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -228,6 +229,13 @@ export default function RecordsPage() {
     }
   }, []);
 
+  // F4 pull-to-refresh: revalida os domínios exibidos nesta tela.
+  const handleRefresh = useCallback(
+    () => refreshDomains(["transactions", "accounts"]),
+    [refreshDomains],
+  );
+  const pull = usePullToRefresh({ onRefresh: handleRefresh });
+
   const periodChips: { key: PeriodFilter; label: string }[] = [
     { key: "today", label: "Hoje" },
     { key: 7, label: "7d" },
@@ -279,6 +287,7 @@ export default function RecordsPage() {
     <div className="flex min-h-dvh flex-col bg-bg">
       <StatusBar />
       <main className="flex flex-1 flex-col pb-[var(--tab-bar-height)]">
+        <PullToRefreshIndicator state={pull} />
         <PageHeader title="Registros" />
 
         {error && (

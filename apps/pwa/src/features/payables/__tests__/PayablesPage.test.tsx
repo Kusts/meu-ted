@@ -1,4 +1,4 @@
-import { render, screen, within } from "@/lib/test-utils";
+import { render, screen, within, act, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import PayablesPage from "../PayablesPage";
 import * as appStateModule from "@/lib/state/app-state-context";
@@ -270,6 +270,47 @@ describe("PayablesPage", () => {
         accountId: "acc2",
         categoryId: "cat1",
       }));
+    });
+  });
+
+  describe("pull-to-refresh (v2 F4)", () => {
+    function installCoarsePointer() {
+      Object.defineProperty(window, "matchMedia", {
+        writable: true,
+        configurable: true,
+        value: (query: string) => ({
+          matches: query === "(pointer: coarse)",
+          media: query,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          dispatchEvent: () => false,
+        }),
+      });
+    }
+
+    it("pull from the top refreshes payables and accounts", async () => {
+      installCoarsePointer();
+      const refreshSpy = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({ refreshDomains: refreshSpy }),
+      );
+      render(<PayablesPage />);
+      const point = (y: number) => [{ clientX: 100, clientY: y, identifier: 0 }];
+      const start = new Event("touchstart", { bubbles: true, cancelable: true });
+      (start as unknown as { touches: unknown }).touches = point(120);
+      const move = new Event("touchmove", { bubbles: true, cancelable: true });
+      (move as unknown as { touches: unknown }).touches = point(240);
+      const end = new Event("touchend", { bubbles: true, cancelable: true });
+      act(() => {
+        window.dispatchEvent(start);
+        window.dispatchEvent(move);
+      });
+      await act(async () => {
+        window.dispatchEvent(end);
+      });
+      await waitFor(() =>
+        expect(refreshSpy).toHaveBeenCalledWith(["payables", "accounts"]),
+      );
     });
   });
 });
