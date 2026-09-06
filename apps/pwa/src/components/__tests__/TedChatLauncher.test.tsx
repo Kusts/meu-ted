@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { render, screen, act } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
-import { TedChatLauncher } from "@/features/ted/TedChatLauncher";
+import { TedChatLauncher, OPEN_TED_CHAT_EVENT } from "@/features/ted/TedChatLauncher";
 import {
   acquireBodyScrollLock,
   releaseBodyScrollLock,
@@ -50,6 +50,20 @@ describe("TedChatLauncher Component (Task 10)", () => {
 
     // Click launcher
     await user.click(launcher);
+    expect(await screen.findByRole("dialog", { name: /chat com ted/i })).toBeInTheDocument();
+  });
+
+  it("opens TedChat when the public open event fires (empty Insights CTA)", async () => {
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("mock-token");
+    vi.spyOn(agentClient, "fetchAgentHistory").mockResolvedValue([]);
+    vi.spyOn(agentClient, "fetchPendingOperations").mockResolvedValue([]);
+
+    render(<TedChatLauncher />);
+    expect(screen.queryByRole("dialog", { name: /chat com ted/i })).not.toBeInTheDocument();
+
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(OPEN_TED_CHAT_EVENT));
+    });
     expect(await screen.findByRole("dialog", { name: /chat com ted/i })).toBeInTheDocument();
   });
 

@@ -1,8 +1,10 @@
 "use client";
 
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Button } from "@/components/ui/Button";
+import { openTedChat } from "@/features/ted/TedChatLauncher";
 import type { InsightItem } from "../hooks/useFallbackInsights";
-import { Sparkles } from "lucide-react";
+import { MessageCircle, Sparkles } from "lucide-react";
 
 export function InsightsCard({ insights }: { insights: InsightItem[] }) {
   return (
@@ -13,6 +15,16 @@ export function InsightsCard({ insights }: { insights: InsightItem[] }) {
           icon={<Sparkles size={24} />}
           title="Sem insights por enquanto"
           description="Assim que houver movimentação, o TED traz observações aqui."
+          action={
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<MessageCircle size={15} aria-hidden="true" />}
+              onClick={openTedChat}
+            >
+              Conversar com o TED
+            </Button>
+          }
         />
       ) : (
         insights.map((insight, i) => (

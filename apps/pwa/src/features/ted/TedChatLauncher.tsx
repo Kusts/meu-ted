@@ -1,9 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { TedChat } from "./TedChat";
 import { Sparkles } from "lucide-react";
 import { useIsOverlayOpen } from "@/lib/ui/overlay-a11y";
+
+/**
+ * Public open channel for the TED chat (mirrors the `pwa:open-tx`
+ * convention in AppShell). Any surface — e.g. the empty Insights card —
+ * opens the existing chat via `openTedChat()`; the launcher owns the
+ * listener, so there is a single source of truth, no parallel event.
+ */
+export const OPEN_TED_CHAT_EVENT = "pwa:open-ted";
+
+export function openTedChat(): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(OPEN_TED_CHAT_EVENT));
+  }
+}
 
 export function TedChatLauncher() {
   const [open, setOpen] = useState(false);
@@ -11,6 +25,14 @@ export function TedChatLauncher() {
   // never renders above — or below but visually clashing with — overlay
   // content. Also hidden while its own chat is open.
   const overlayOpen = useIsOverlayOpen();
+
+  useEffect(() => {
+    function handler() {
+      setOpen(true);
+    }
+    window.addEventListener(OPEN_TED_CHAT_EVENT, handler);
+    return () => window.removeEventListener(OPEN_TED_CHAT_EVENT, handler);
+  }, []);
 
   if (overlayOpen || open) {
     return <TedChat open={open} onClose={() => setOpen(false)} />;
