@@ -59,6 +59,15 @@ export function BottomNav({
             >
               {item.label}
             </span>
+            {/* P5: indicador de aba ativa (pill/glow animado, sem layout shift) */}
+            <span
+              aria-hidden="true"
+              className={`mt-0.5 h-1 rounded-full transition-all duration-200 ${
+                isActive
+                  ? "w-5 bg-primary opacity-100 shadow-[0_0_8px_var(--primary-glow)]"
+                  : "w-0 bg-transparent opacity-0"
+              }`}
+            />
           </button>
         );
       })}
@@ -72,7 +81,7 @@ export function BottomNav({
           onClick={onFabClick}
           className="relative -top-2.5 flex h-[52px] w-[52px] items-center justify-center rounded-full text-white shadow-fab transition-transform active:scale-95 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           style={{
-            background: "linear-gradient(145deg, #0E8C5A, #0A3A28)",
+            background: "linear-gradient(145deg, var(--primary), var(--primary-dark))",
           }}
           aria-label="Nova transação"
         >
@@ -119,6 +128,15 @@ export function BottomNav({
             >
               {item.label}
             </span>
+            {/* P5: indicador de aba ativa (pill/glow animado, sem layout shift) */}
+            <span
+              aria-hidden="true"
+              className={`mt-0.5 h-1 rounded-full transition-all duration-200 ${
+                isActive
+                  ? "w-5 bg-primary opacity-100 shadow-[0_0_8px_var(--primary-glow)]"
+                  : "w-0 bg-transparent opacity-0"
+              }`}
+            />
           </button>
         );
       })}
