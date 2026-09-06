@@ -384,13 +384,17 @@ export const registerAdminAgentLlmConfigRoutes = (
     const { validateProvider } = await import('../agent/llm-config.js');
     const err = validateProvider(merged);
     if (err) return invalidBody(reply, 'agent.invalid_provider', err);
-    if (patch.enabled === false) {
-      const rt = await deps.store.getRuntime();
-      if (rt.providerId === id) {
-        return reply.code(409).send({ code: 'agent.runtime_in_use', reason: 'active_provider' });
-      }
-      if (rt.fallbackProviderId === id) {
-        return reply.code(409).send({ code: 'agent.runtime_in_use', reason: 'fallback_provider' });
+    // Fase 1b-FIX item 1: `enabled` flips go through the guarded toggle
+    // path (upsert preserves `enabled` on conflict by design).
+    if (patch.enabled !== undefined && patch.enabled !== existing.enabled) {
+      try {
+        await deps.store.setProviderEnabled(id, patch.enabled);
+      } catch (toggleErr) {
+        const e = toggleErr as { code?: string; reason?: string; statusCode?: number };
+        if (e?.code === 'agent.runtime_in_use' && e?.statusCode === 409) {
+          return reply.code(409).send({ code: e.code, reason: e.reason ?? 'runtime_in_use' });
+        }
+        throw toggleErr;
       }
     }
     const provider = await deps.store.upsertProvider({

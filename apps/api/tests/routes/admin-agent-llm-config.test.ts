@@ -533,9 +533,10 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
         transport: 'direct',
         authMode: 'api-key',
         secretAlias: 'OPENCODE_ZEN_API_KEY',
-        enabled: true,
         eligibility: 'approved',
       });
+      // upsert preserves `enabled` on conflict; enable via the guarded path.
+      await llmStore.setProviderEnabled('opencode-zen', true);
       const fallbackModel = await llmStore.upsertModel({
         providerId: 'opencode-zen',
         modelId: 'zen-fallback',

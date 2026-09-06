@@ -381,19 +381,21 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
   },
 
   async upsertProvider(input) {
+    // Fase 1b-FIX item 1: ON CONFLICT never touches `enabled` — an upsert
+    // (create route, sync) must not disable an active/fallback provider
+    // outside the guarded toggle path. New rows still default to disabled.
     const res = await pool.query(
       `INSERT INTO agent_llm_providers (id, kind, transport, auth_mode, secret_alias, service_alias, enabled, eligibility, runtime_status)
        VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, false), COALESCE($8, 'approved'), COALESCE($9, 'not_configured'))
        ON CONFLICT (id) DO UPDATE SET
-         kind = EXCLUDED.kind,
-         transport = EXCLUDED.transport,
-         auth_mode = EXCLUDED.auth_mode,
-         secret_alias = EXCLUDED.secret_alias,
-         service_alias = EXCLUDED.service_alias,
-         enabled = COALESCE(EXCLUDED.enabled, agent_llm_providers.enabled),
-         eligibility = COALESCE(EXCLUDED.eligibility, agent_llm_providers.eligibility),
-         runtime_status = COALESCE(EXCLUDED.runtime_status, agent_llm_providers.runtime_status),
-         updated_at = NOW()
+          kind = EXCLUDED.kind,
+          transport = EXCLUDED.transport,
+          auth_mode = EXCLUDED.auth_mode,
+          secret_alias = EXCLUDED.secret_alias,
+          service_alias = EXCLUDED.service_alias,
+          eligibility = COALESCE(EXCLUDED.eligibility, agent_llm_providers.eligibility),
+          runtime_status = COALESCE(EXCLUDED.runtime_status, agent_llm_providers.runtime_status),
+          updated_at = NOW()
        RETURNING id, kind, transport, auth_mode, secret_alias, service_alias, enabled, eligibility, runtime_status, created_at, updated_at, updated_by`,
       [
         input.id,
@@ -519,14 +521,15 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
   async upsertModel(input) {
     const id = input.id ?? `${input.providerId}:${input.modelId}`;
     const enabled = input.enabled ?? false;
+    // Fase 1b-FIX item 1: ON CONFLICT preserves the existing `enabled`
+    // (see upsertProvider); new rows default to disabled.
     const res = await pool.query(
       `INSERT INTO agent_llm_models (id, provider_id, model_id, protocol, privacy_class, retention, enabled)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (provider_id, model_id) DO UPDATE
        SET protocol = EXCLUDED.protocol,
            privacy_class = EXCLUDED.privacy_class,
-           retention = EXCLUDED.retention,
-           enabled = EXCLUDED.enabled
+           retention = EXCLUDED.retention
        RETURNING id, provider_id, model_id, protocol, privacy_class, retention, enabled, created_at`,
       [id, input.providerId, input.modelId, input.protocol, input.privacyClass, input.retention ?? null, enabled],
     );
@@ -730,16 +733,18 @@ export const createInMemoryLlmConfigStore = (seed?: {
     },
     async upsertProvider(input) {
       const existingIdx = providers.findIndex((p) => p.id === input.id);
+      const existing = existingIdx >= 0 ? providers[existingIdx]! : undefined;
       const provider: LlmProvider = {
         id: input.id,
         kind: input.kind,
         transport: input.transport,
         authMode: input.authMode,
         secretAlias: input.secretAlias,
-        enabled: input.enabled ?? false,
+        // Fase 1b-FIX item 1: preserve existing `enabled` on conflict.
+        enabled: existing?.enabled ?? input.enabled ?? false,
         eligibility: input.eligibility ?? 'approved',
         runtimeStatus: input.runtimeStatus ?? 'not_configured',
-        createdAt: existingIdx >= 0 ? providers[existingIdx]!.createdAt : new Date().toISOString(),
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
       if (existingIdx >= 0) providers[existingIdx] = provider;
@@ -852,6 +857,7 @@ export const createInMemoryLlmConfigStore = (seed?: {
       const existingIdx = models.findIndex(
         (m) => m.id === id || (m.providerId === input.providerId && m.modelId === input.modelId),
       );
+      const existingModel = existingIdx >= 0 ? models[existingIdx]! : undefined;
       const model: LlmModel = {
         id,
         providerId: input.providerId,
@@ -859,8 +865,9 @@ export const createInMemoryLlmConfigStore = (seed?: {
         protocol: input.protocol,
         privacyClass: input.privacyClass,
         retention: input.retention ?? null,
-        enabled: input.enabled ?? false,
-        createdAt: existingIdx >= 0 ? models[existingIdx]!.createdAt : new Date().toISOString(),
+        // Fase 1b-FIX item 1: preserve existing `enabled` on conflict.
+        enabled: existingModel?.enabled ?? input.enabled ?? false,
+        createdAt: existingModel?.createdAt ?? new Date().toISOString(),
       };
       if (existingIdx >= 0) {
         models[existingIdx] = model;

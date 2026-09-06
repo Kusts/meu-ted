@@ -17,7 +17,7 @@ describe('Phase0 route invariants — RED→GREEN', () => {
   const CONFIG_TOKEN = 'test-secret-config-token-32-chars-minimum!';
   let adminCookie = '';
 
-  beforeEach(async () => {
+  const buildApp = async (llmSeed?: Parameters<typeof createInMemoryLlmConfigStore>[0]) => {
     const memoryDb: any = { user: [], session: [], account: [], verification: [] };
     auth = createBetterAuth({
       database: memoryAdapter(memoryDb),
@@ -37,7 +37,7 @@ describe('Phase0 route invariants — RED→GREEN', () => {
     adminCookie = signIn.headers.get('set-cookie') ?? '';
     const { state, writes } = createInMemoryStores();
     const store = createInMemoryReadModelStoreFromState(state);
-    llmStore = createInMemoryLlmConfigStore();
+    llmStore = createInMemoryLlmConfigStore(llmSeed);
     app = Fastify({ logger: false });
     registerRoutes(app, {
       store,
@@ -51,6 +51,10 @@ describe('Phase0 route invariants — RED→GREEN', () => {
       trustedOrigins: ['http://localhost:3000'],
     });
     await app.ready();
+  };
+
+  beforeEach(async () => {
+    await buildApp();
   });
 
   afterEach(async () => {
@@ -210,12 +214,29 @@ describe('Phase0 route invariants — RED→GREEN', () => {
   });
 
   it('internal returns null when active provider disabled', async () => {
-    await llmStore.setProviderEnabled('openai-api', true);
-    const model = await llmStore.upsertModel({ providerId: 'openai-api', modelId: 'gpt-4o', protocol: 'chat-completions', privacyClass: 'training_prohibited', enabled: true });
-    let rt = await llmStore.getRuntime();
-    rt = await llmStore.updateRuntime({ providerId: 'openai-api', modelId: model.id, expectedVersion: rt.version, updatedBy: ADMIN_EMAIL });
-    // Directly disable via upsert bypassing invariant (simulate legacy disabled state via upsert)
-    await llmStore.upsertProvider({ id: 'openai-api', kind: 'openai-api', transport: 'direct', authMode: 'api-key', secretAlias: 'OPENAI_API_KEY', enabled: false, eligibility: 'approved' });
+    // Legacy disabled-active state is unreachable via guarded store paths
+    // (toggle/upsert/updateRuntime all refuse it), so seed it directly.
+    await app.close();
+    await auth.close();
+    const seedBase = createInMemoryLlmConfigStore();
+    const providers = (await seedBase.listProviders()).map((p) =>
+      p.id === 'openai-api' ? { ...p, enabled: false } : p,
+    );
+    await buildApp({
+      providers,
+      models: [
+        {
+          id: 'openai-api:gpt-4o',
+          providerId: 'openai-api',
+          modelId: 'gpt-4o',
+          protocol: 'chat-completions',
+          privacyClass: 'training_prohibited',
+          retention: null,
+          enabled: true,
+        },
+      ],
+      runtime: { providerId: 'openai-api', modelId: 'openai-api:gpt-4o' },
+    });
     const res = await app.inject({
       method: 'GET',
       url: '/internal/agent/llm-config',

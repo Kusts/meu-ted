@@ -19,7 +19,7 @@ describe('Fase 1a contract — runtime DTO, kind/alias, zod, fail-closed (RED)',
 
   const adminHeaders = () => ({ cookie: adminCookie, origin: 'http://localhost:3000' });
 
-  beforeEach(async () => {
+  const buildApp = async (llmSeed?: Parameters<typeof createInMemoryLlmConfigStore>[0]) => {
     const memoryDb: any = { user: [], session: [], account: [], verification: [] };
     auth = createBetterAuth({
       database: memoryAdapter(memoryDb),
@@ -39,7 +39,7 @@ describe('Fase 1a contract — runtime DTO, kind/alias, zod, fail-closed (RED)',
     adminCookie = signIn.headers.get('set-cookie') ?? '';
     const { state, writes } = createInMemoryStores();
     const store = createInMemoryReadModelStoreFromState(state);
-    llmStore = createInMemoryLlmConfigStore();
+    llmStore = createInMemoryLlmConfigStore(llmSeed);
     app = Fastify({ logger: false });
     registerRoutes(app, {
       store,
@@ -53,6 +53,10 @@ describe('Fase 1a contract — runtime DTO, kind/alias, zod, fail-closed (RED)',
       trustedOrigins: ['http://localhost:3000'],
     });
     await app.ready();
+  };
+
+  beforeEach(async () => {
+    await buildApp();
   });
 
   afterEach(async () => {
@@ -193,6 +197,37 @@ describe('Fase 1a contract — runtime DTO, kind/alias, zod, fail-closed (RED)',
     expect(res.json()).toMatchObject({ ok: true, synced: 0 });
   });
 
+  it('POST /sync-catalog never disables an existing active model', async () => {
+    await llmStore.setProviderEnabled('openai-api', true);
+    const model = await llmStore.upsertModel({
+      providerId: 'openai-api',
+      modelId: 'gpt-4o',
+      protocol: 'chat-completions',
+      privacyClass: 'training_prohibited',
+      enabled: true,
+    });
+    await llmStore.setModelEnabled(model.id, true);
+    const rt = await llmStore.getRuntime();
+    await llmStore.updateRuntime({
+      providerId: 'openai-api',
+      modelId: model.id,
+      expectedVersion: rt.version,
+      updatedBy: 'fix@test.com',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/agent/llm-config/sync-catalog',
+      headers: adminHeaders(),
+      payload: {
+        items: [{ providerId: 'openai-api', modelId: 'gpt-4o', protocol: 'chat-completions', privacyClass: 'training_prohibited' }],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, synced: 1 });
+    expect((await llmStore.getModel(model.id))?.enabled).toBe(true);
+  });
+
   it('POST /sync-catalog rejects 101 items', async () => {
     const items = Array.from({ length: 101 }, (_, i) => ({
       providerId: 'openai-api',
@@ -211,29 +246,28 @@ describe('Fase 1a contract — runtime DTO, kind/alias, zod, fail-closed (RED)',
   });
 
   it('internal snapshot is fail-closed: disabled active exposes no usable id or secret (consumer view)', async () => {
-    await llmStore.setProviderEnabled('openai-api', true);
-    const model = await llmStore.upsertModel({
-      providerId: 'openai-api',
-      modelId: 'gpt-4o',
-      protocol: 'chat-completions',
-      privacyClass: 'training_prohibited',
-      enabled: true,
-    });
-    let rt = await llmStore.getRuntime();
-    rt = await llmStore.updateRuntime({
-      providerId: 'openai-api',
-      modelId: model.id,
-      expectedVersion: rt.version,
-      updatedBy: ADMIN_EMAIL,
-    });
-    await llmStore.upsertProvider({
-      id: 'openai-api',
-      kind: 'openai-api',
-      transport: 'direct',
-      authMode: 'api-key',
-      secretAlias: 'OPENAI_API_KEY',
-      enabled: false,
-      eligibility: 'approved',
+    // Legacy disabled-active state is unreachable via guarded store paths,
+    // so seed it directly.
+    await app.close();
+    await auth.close();
+    const seedBase = createInMemoryLlmConfigStore();
+    const providers = (await seedBase.listProviders()).map((p) =>
+      p.id === 'openai-api' ? { ...p, enabled: false } : p,
+    );
+    await buildApp({
+      providers,
+      models: [
+        {
+          id: 'openai-api:gpt-4o',
+          providerId: 'openai-api',
+          modelId: 'gpt-4o',
+          protocol: 'chat-completions',
+          privacyClass: 'training_prohibited',
+          retention: null,
+          enabled: true,
+        },
+      ],
+      runtime: { providerId: 'openai-api', modelId: 'openai-api:gpt-4o' },
     });
 
     const res = await app.inject({
