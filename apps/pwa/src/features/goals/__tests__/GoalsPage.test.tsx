@@ -1,4 +1,4 @@
-import { render, screen, within, fireEvent } from "@/lib/test-utils";
+import { render, screen, within, fireEvent, waitForElementToBeRemoved } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import GoalsPage from "../GoalsPage";
 import * as appStateModule from "@/lib/state/app-state-context";
@@ -91,6 +91,8 @@ describe("GoalsPage", () => {
       // Close via the bottom sheet's outside-click overlay.
       await user.keyboard("{Escape}");
       await user.click(document.body);
+      // Exit animation must finish before reopening.
+      await waitForElementToBeRemoved(() => screen.queryByRole("dialog"));
 
       // Reopen — amount must be empty.
       const addBtns2 = screen.getAllByRole("button", { name: /^Adicionar$/ });
@@ -112,6 +114,8 @@ describe("GoalsPage", () => {
 
       // Close via Escape.
       await user.keyboard("{Escape}");
+      // Exit animation must finish before reopening.
+      await waitForElementToBeRemoved(() => screen.queryByRole("dialog"));
 
       // Reopen — both fields must be empty.
       await user.click(screen.getByText("Nova"));

@@ -1,4 +1,4 @@
-import { render, screen, act } from "@/lib/test-utils";
+import { render, screen, act, waitForElementToBeRemoved } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import AppShell from "../AppShell";
@@ -171,7 +171,8 @@ describe("AppShell", () => {
       // Click bottom nav "Registros"
       await user.click(navButton("Registros"));
 
-      // Sheet should close (no dialog present)
+      // Sheet should close (exit animation plays, then no dialog remains)
+      await waitForElementToBeRemoved(() => screen.queryByRole("dialog"));
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
@@ -186,7 +187,8 @@ describe("AppShell", () => {
       // Press Escape
       await user.keyboard("{Escape}");
 
-      // Sheet should close
+      // Sheet should close (exit animation plays, then no dialog remains)
+      await waitForElementToBeRemoved(() => screen.queryByRole("dialog"));
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
@@ -203,7 +205,8 @@ describe("AppShell", () => {
       const overlay = dialog.firstElementChild;
       await user.click(overlay!);
 
-      // After close, no dialog should remain
+      // After close, no dialog should remain (past the exit animation)
+      await waitForElementToBeRemoved(() => screen.queryByRole("dialog"));
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
   });

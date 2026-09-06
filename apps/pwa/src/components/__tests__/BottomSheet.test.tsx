@@ -1,7 +1,7 @@
-import { render, screen, fireEvent } from "@/lib/test-utils";
+import { render, screen, fireEvent, act } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
-import { describe, it, expect, vi } from "vitest";
-import BottomSheet from "../BottomSheet";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import BottomSheet, { SHEET_EXIT_MS } from "../BottomSheet";
 
 function drag(zone: HTMLElement, fromY: number, toY: number) {
   const point = (y: number) => [{ clientX: 200, clientY: y, identifier: 0 }];
@@ -25,6 +25,41 @@ function installMatchMedia(reduceMotion: boolean) {
   });
 }
 
+const originalMatchMedia: typeof window.matchMedia | undefined =
+  typeof window.matchMedia === "function" ? window.matchMedia : undefined;
+
+afterEach(() => {
+  vi.useRealTimers();
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    configurable: true,
+    value: originalMatchMedia,
+  });
+});
+
+function panel(): HTMLElement {
+  return screen.getByTestId("bottom-sheet-panel");
+}
+
+function expectExitAnimation(el: HTMLElement) {
+  expect(el.style.transform).toBe("translateY(100%)");
+  expect(el.style.transition).toContain(`transform ${SHEET_EXIT_MS}ms`);
+  expect(el.style.transition).toContain("var(--easing-standard)");
+}
+
+function runExitTimers() {
+  act(() => {
+    vi.advanceTimersByTime(SHEET_EXIT_MS);
+  });
+}
+
+function overlay(): Element {
+  const dialog = screen.getByRole("dialog");
+  const el = dialog.firstElementChild;
+  if (!el) throw new Error("overlay not found");
+  return el;
+}
+
 describe("BottomSheet", () => {
   it("renders nothing when open=false", () => {
     const { container } = render(
@@ -45,49 +80,105 @@ describe("BottomSheet", () => {
     expect(screen.getByText("Meu conteúdo")).toBeInTheDocument();
   });
 
-  it("calls onClose when backdrop overlay is clicked", async () => {
+  it("animates exit on overlay click and calls onClose after the animation", () => {
+    installMatchMedia(false);
+    vi.useFakeTimers();
     const onClose = vi.fn();
-    const user = userEvent.setup();
     render(
       <BottomSheet open={true} onClose={onClose} title="Sheet">
         <div>content</div>
       </BottomSheet>,
     );
 
-    const dialog = screen.getByRole("dialog");
-    // The overlay is the first child of the dialog
-    const overlay = dialog.firstElementChild;
-    await user.click(overlay!);
+    fireEvent.click(overlay());
 
+    expect(onClose).not.toHaveBeenCalled();
+    expectExitAnimation(panel());
+    runExitTimers();
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onClose when close button is clicked", async () => {
+  it("animates exit on close button click and calls onClose after the animation", () => {
+    installMatchMedia(false);
+    vi.useFakeTimers();
     const onClose = vi.fn();
-    const user = userEvent.setup();
     render(
       <BottomSheet open={true} onClose={onClose} title="Sheet">
         <div>content</div>
       </BottomSheet>,
     );
 
-    await user.click(screen.getByLabelText("Fechar"));
+    fireEvent.click(screen.getByLabelText("Fechar"));
 
+    expect(onClose).not.toHaveBeenCalled();
+    expectExitAnimation(panel());
+    runExitTimers();
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onClose when Escape key is pressed", async () => {
+  it("animates exit on Escape and calls onClose after the animation", () => {
+    installMatchMedia(false);
+    vi.useFakeTimers();
     const onClose = vi.fn();
-    const user = userEvent.setup();
     render(
       <BottomSheet open={true} onClose={onClose} title="Sheet">
         <div>content</div>
       </BottomSheet>,
     );
 
-    await user.keyboard("{Escape}");
+    fireEvent.keyDown(document, { key: "Escape" });
 
+    expect(onClose).not.toHaveBeenCalled();
+    expectExitAnimation(panel());
+    runExitTimers();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores repeated close triggers while the exit animation plays", () => {
+    installMatchMedia(false);
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    render(
+      <BottomSheet open={true} onClose={onClose} title="Sheet">
+        <div>content</div>
+      </BottomSheet>,
+    );
+
+    fireEvent.click(overlay());
+    fireEvent.click(screen.getByLabelText("Fechar"));
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    runExitTimers();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("animates exit when the parent closes it (open=false) before unmounting", () => {
+    installMatchMedia(false);
+    vi.useFakeTimers();
+    document.body.style.overflow = "";
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <BottomSheet open={true} onClose={onClose} title="Sheet">
+        <div>content</div>
+      </BottomSheet>,
+    );
+
+    rerender(
+      <BottomSheet open={false} onClose={onClose} title="Sheet">
+        <div>content</div>
+      </BottomSheet>,
+    );
+
+    // Still mounted, playing the exit curve; scroll stays locked meanwhile.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expectExitAnimation(panel());
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(onClose).not.toHaveBeenCalled();
+
+    runExitTimers();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(document.body.style.overflow).not.toBe("hidden");
+    document.body.style.overflow = "";
   });
 
   it("does not call onClose for non-Escape keys", async () => {
@@ -120,7 +211,9 @@ describe("BottomSheet", () => {
   });
 
   describe("drag-to-dismiss (spec AGY Onda 2/3 §4.2)", () => {
-    it("closes when the header is dragged down more than 90px", () => {
+    it("animates exit on a long drag instead of snapping back", () => {
+      installMatchMedia(false);
+      vi.useFakeTimers();
       const onClose = vi.fn();
       render(
         <BottomSheet open={true} onClose={onClose} title="Sheet">
@@ -129,10 +222,16 @@ describe("BottomSheet", () => {
       );
 
       drag(screen.getByTestId("bottom-sheet-drag"), 100, 220);
+
+      // The finger-offset transform is NOT zeroed: the sheet eases out.
+      expect(onClose).not.toHaveBeenCalled();
+      expectExitAnimation(panel());
+      runExitTimers();
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it("does not close on a short drag and snaps back", () => {
+      installMatchMedia(false);
       const onClose = vi.fn();
       const { container } = render(
         <BottomSheet open={true} onClose={onClose} title="Sheet">
@@ -149,6 +248,7 @@ describe("BottomSheet", () => {
     });
 
     it("does not close on an upward drag", () => {
+      installMatchMedia(false);
       const onClose = vi.fn();
       render(
         <BottomSheet open={true} onClose={onClose} title="Sheet">
@@ -188,6 +288,54 @@ describe("BottomSheet", () => {
       await user.click(screen.getByRole("button", { name: "Ação" }));
       expect(onAction).toHaveBeenCalledTimes(1);
       expect(onClose).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("prefers-reduced-motion (Onda 4: instant close)", () => {
+    it("calls onClose immediately on overlay click", () => {
+      installMatchMedia(true);
+      const onClose = vi.fn();
+      render(
+        <BottomSheet open={true} onClose={onClose} title="Sheet">
+          <div>content</div>
+        </BottomSheet>,
+      );
+
+      fireEvent.click(overlay());
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("calls onClose immediately on close button click", () => {
+      installMatchMedia(true);
+      const onClose = vi.fn();
+      render(
+        <BottomSheet open={true} onClose={onClose} title="Sheet">
+          <div>content</div>
+        </BottomSheet>,
+      );
+
+      fireEvent.click(screen.getByLabelText("Fechar"));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("unmounts immediately when the parent closes it", () => {
+      installMatchMedia(true);
+      const onClose = vi.fn();
+      const { rerender } = render(
+        <BottomSheet open={true} onClose={onClose} title="Sheet">
+          <div>content</div>
+        </BottomSheet>,
+      );
+
+      rerender(
+        <BottomSheet open={false} onClose={onClose} title="Sheet">
+          <div>content</div>
+        </BottomSheet>,
+      );
+
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
   });
 });

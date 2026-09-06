@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import BottomSheet from "../ui/BottomSheet";
 import { Dialog } from "../ui/Dialog";
@@ -21,7 +21,7 @@ function Modal({ open }: { open: boolean }) {
 }
 
 describe("overlay scroll lock ref counting (P1-3)", () => {
-  it("keeps body locked while a second overlay remains open (sheet + dialog)", () => {
+  it("keeps body locked while a second overlay remains open (sheet + dialog)", async () => {
     const { rerender: rerenderSheet } = render(<Sheet open={false} />);
     const { rerender: rerenderModal } = render(<Modal open={false} />);
 
@@ -30,14 +30,15 @@ describe("overlay scroll lock ref counting (P1-3)", () => {
     expect(document.body.style.overflow).toBe("hidden");
 
     // First overlay closes, second stays open: lock must remain.
+    // (The sheet plays its exit animation before releasing.)
     rerenderSheet(<Sheet open={false} />);
     expect(document.body.style.overflow).toBe("hidden");
 
     rerenderModal(<Modal open={false} />);
-    expect(document.body.style.overflow).toBe("");
+    await waitFor(() => expect(document.body.style.overflow).toBe(""));
   });
 
-  it("keeps body locked while a BottomSheet stays open under a ConfirmActionDialog", () => {
+  it("keeps body locked while a BottomSheet stays open under a ConfirmActionDialog", async () => {
     const { rerender: rerenderSheet } = render(<Sheet open={false} />);
     const { rerender: rerenderConfirm } = render(
       <ConfirmActionDialog
@@ -73,6 +74,7 @@ describe("overlay scroll lock ref counting (P1-3)", () => {
     expect(document.body.style.overflow).toBe("hidden");
 
     rerenderSheet(<Sheet open={false} />);
-    expect(document.body.style.overflow).toBe("");
+    // The sheet plays its exit animation before releasing the lock.
+    await waitFor(() => expect(document.body.style.overflow).toBe(""));
   });
 });

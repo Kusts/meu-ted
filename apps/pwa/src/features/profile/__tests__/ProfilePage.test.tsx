@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@/lib/test-utils";
+import { render, screen, waitFor, waitForElementToBeRemoved } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import ProfilePage from "../ProfilePage";
 import * as appStateModule from "@/lib/state/app-state-context";
@@ -193,6 +193,8 @@ describe("ProfilePage", () => {
     await user.type(nameInput, "Marina Atualizada");
     await user.click(screen.getByText("Salvar alterações"));
     await waitFor(() => expect(saveSpy).toHaveBeenCalled());
+    // Parent-driven close plays the exit animation before unmounting.
+    await waitForElementToBeRemoved(() => screen.queryByRole("dialog"));
     // Close + reopen
     await user.click(screen.getByText("Editar perfil"));
     expect(screen.getByDisplayValue("Marina Atualizada")).toBeInTheDocument();

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@/lib/test-utils";
+import { render, screen, within, waitForElementToBeRemoved } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import SubscriptionsPage from "../SubscriptionsPage";
 
@@ -122,6 +122,8 @@ describe("SubscriptionsPage", () => {
       await user.click(within(sheet).getByText("Boleto"));
       await user.click(within(sheet).getByText("Anual"));
       await user.click(within(sheet).getByRole("button", { name: "Salvar assinatura" }));
+      // Create sheet plays its exit animation before unmounting.
+      await waitForElementToBeRemoved(() => screen.queryByRole("dialog"));
       await user.click(screen.getByText("Curso X"));
       const detailB = screen.getByRole("dialog");
       expect(within(detailB).getByText(/Anual/)).toBeInTheDocument();
@@ -146,6 +148,8 @@ describe("SubscriptionsPage", () => {
       await user.type(within(sheet).getByPlaceholderText("Ex: Netflix"), "HBO Max 2");
       await user.type(within(sheet).getByPlaceholderText("0,00"), "3990");
       await user.click(within(sheet).getByRole("button", { name: "Salvar assinatura" }));
+      // Create sheet plays its exit animation before unmounting.
+      await waitForElementToBeRemoved(() => screen.queryByRole("dialog"));
       await user.click(screen.getByText("HBO Max 2"));
       const detail = screen.getByRole("dialog");
       expect(within(detail).getByText("Editar")).toBeInTheDocument();
@@ -160,6 +164,8 @@ describe("SubscriptionsPage", () => {
       await user.type(within(sheet).getByPlaceholderText("0,00"), "4590");
       await user.click(within(sheet).getByText("PIX"));
       await user.click(within(sheet).getByRole("button", { name: "Salvar assinatura" }));
+      // Create sheet plays its exit animation before unmounting.
+      await waitForElementToBeRemoved(() => screen.queryByRole("dialog"));
       await user.click(screen.getByText("Disney Plus 2"));
       const detail = screen.getByRole("dialog");
       expect(within(detail).getByText("Editar")).toBeInTheDocument();

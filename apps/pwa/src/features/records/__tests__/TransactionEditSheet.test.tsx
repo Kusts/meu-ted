@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@/lib/test-utils";
+import { render, screen, fireEvent, waitFor } from "@/lib/test-utils";
 import { TransactionEditSheet } from "../components/TransactionEditSheet";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories } from "@/lib/state/mock-data";
@@ -101,12 +101,13 @@ describe("TransactionEditSheet", () => {
     expect(screen.queryByText("Conta")).not.toBeInTheDocument();
   });
 
-  it("calls onClose when the Fechar button is clicked", () => {
+  it("calls onClose when the Fechar button is clicked", async () => {
     const onClose = vi.fn();
     vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState());
     render(<TransactionEditSheet open onClose={onClose} transaction={expenseTx} />);
     fireEvent.click(screen.getByLabelText("Fechar"));
-    expect(onClose).toHaveBeenCalled();
+    // Exit animation plays first, then onClose fires.
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
   it("renders nothing when transaction is null", () => {

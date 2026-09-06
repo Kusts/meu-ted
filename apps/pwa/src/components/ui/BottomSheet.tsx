@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, type ReactNode, type TouchEvent as ReactTouchEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type TouchEvent as ReactTouchEvent } from "react";
 import { X } from "lucide-react";
 import { OVERLAY_Z_INDEX, useBodyScrollLock } from "@/lib/ui/overlay-a11y";
 
 /** Arrastar o cabeçalho mais que isso para baixo fecha a sheet. */
 export const SHEET_DRAG_DISMISS_PX = 90;
+
+/** Duração da animação de saída (translateY 100%, Onda 4). */
+export const SHEET_EXIT_MS = 200;
 
 function reducedMotion(): boolean {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function")
@@ -28,19 +31,103 @@ export function BottomSheet({
   children,
   className = "",
 }: BottomSheetProps) {
-  /* Lock body scroll while open (ref-counted across stacked overlays) */
-  useBodyScrollLock(open);
+  /* A sheet permanece montada durante a animação de saída: `rendered`
+   * controla a presença no DOM e `leaving` aplica o translateY(100%).
+   * O scroll lock acompanha `rendered` para cobrir a saída. */
+  const [rendered, setRendered] = useState(open);
+  const [leaving, setLeaving] = useState(false);
+  const leavingRef = useRef(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onCloseRef = useRef(onClose);
+  useBodyScrollLock(rendered);
   const sheetRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ y: number; dy: number } | null>(null);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  const clearExitTimer = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearExitTimer(), [clearExitTimer]);
+
+  /* Fecha interno (botão/overlay/Escape/drag): anima a saída
+   * translateY(100%) em SHEET_EXIT_MS com var(--easing-standard) ANTES de
+   * chamar onClose de fato; instantâneo sob prefers-reduced-motion. */
+  const requestClose = useCallback(() => {
+    if (leavingRef.current) return;
+    if (reducedMotion()) {
+      onCloseRef.current();
+      return;
+    }
+    leavingRef.current = true;
+    setLeaving(true);
+    const el = sheetRef.current;
+    if (el) {
+      el.style.transition = `transform ${SHEET_EXIT_MS}ms var(--easing-standard)`;
+      el.style.transform = "translateY(100%)";
+    }
+    clearExitTimer();
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      onCloseRef.current();
+    }, SHEET_EXIT_MS);
+  }, [clearExitTimer]);
+
+  /* Fechamento vindo do pai (open true->false): se a saída já foi animada
+   * via requestClose, desmonta direto; senão anima antes de desmontar.
+   * Reabertura no meio da saída cancela o timer e restaura a posição. */
+  /* eslint-disable react-hooks/set-state-in-effect -- delayed-unmount da
+   * animação de saída: transições de `open` precisam armar/cancelar o estado
+   * de saída de forma síncrona (mesmo padrão do Dialog mounted). */
+  useEffect(() => {
+    if (open) {
+      clearExitTimer();
+      leavingRef.current = false;
+      setLeaving(false);
+      setRendered(true);
+      const el = sheetRef.current;
+      if (el) {
+        el.style.transform = "";
+        el.style.transition = "";
+      }
+      return;
+    }
+    if (!rendered) return;
+    if (leavingRef.current) {
+      leavingRef.current = false;
+      setLeaving(false);
+      setRendered(false);
+      return;
+    }
+    if (reducedMotion()) {
+      setRendered(false);
+      return;
+    }
+    leavingRef.current = true;
+    setLeaving(true);
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      leavingRef.current = false;
+      setLeaving(false);
+      setRendered(false);
+    }, SHEET_EXIT_MS);
+  }, [open, rendered, clearExitTimer]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   /* Close on Escape key */
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        requestClose();
       }
     },
-    [onClose]
+    [requestClose]
   );
 
   useEffect(() => {
@@ -62,6 +149,7 @@ export function BottomSheet({
   }
 
   function onDragStart(e: ReactTouchEvent<HTMLDivElement>) {
+    if (leavingRef.current) return;
     if (e.touches.length > 1) return;
     const t = e.touches[0];
     if (!t) return;
@@ -71,6 +159,7 @@ export function BottomSheet({
   }
 
   function onDragMove(e: ReactTouchEvent<HTMLDivElement>) {
+    if (leavingRef.current) return;
     const drag = dragRef.current;
     if (!drag) return;
     const t = e.touches[0];
@@ -87,6 +176,13 @@ export function BottomSheet({
   function onDragEnd() {
     const drag = dragRef.current;
     dragRef.current = null;
+    if (leavingRef.current) return;
+    /* Dismiss: NÃO zera o transform (causava fechamento abrupto sem curva
+     * de saída); requestClose anima de onde o dedo está até 100%. */
+    if (drag && drag.dy > SHEET_DRAG_DISMISS_PX) {
+      requestClose();
+      return;
+    }
     const el = sheetRef.current;
     if (el) {
       el.style.transition = reducedMotion()
@@ -94,15 +190,15 @@ export function BottomSheet({
         : "transform 200ms var(--easing-standard)";
       el.style.transform = "";
     }
-    if (drag && drag.dy > SHEET_DRAG_DISMISS_PX) onClose();
   }
 
   function onDragCancel() {
     dragRef.current = null;
+    if (leavingRef.current) return;
     resetSheetTransform();
   }
 
-  if (!open) return null;
+  if (!rendered) return null;
 
   return (
     <div
@@ -114,15 +210,22 @@ export function BottomSheet({
       {/* Overlay */}
       <div
         className="fixed inset-0 bg-black/60 backdrop-blur-xs animate-fade-in transition-opacity"
-        onClick={onClose}
+        onClick={requestClose}
       />
 
       {/* Sheet container */}
       <div
         ref={sheetRef}
+        data-testid="bottom-sheet-panel"
         className={`fixed bottom-0 left-0 right-0 z-50 flex max-h-[92vh] flex-col overflow-y-auto rounded-t-[26px] border-t border-border-subtle bg-surface-1 shadow-sheet animate-sheet-up ${className}`}
         style={{
           padding: "20px 20px 32px",
+          ...(leaving
+            ? {
+                transform: "translateY(100%)",
+                transition: `transform ${SHEET_EXIT_MS}ms var(--easing-standard)`,
+              }
+            : undefined),
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -145,7 +248,7 @@ export function BottomSheet({
             </h2>
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-surface-2 text-text-muted transition-colors hover:text-text-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
               aria-label="Fechar"
             >
