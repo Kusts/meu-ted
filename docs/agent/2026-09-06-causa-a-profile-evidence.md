@@ -35,9 +35,30 @@ Nenhuma outra linha tocada (sem UPDATE/DELETE em dados existentes).
 
 ## Rollback (se necessário)
 
+> AVISO: nunca use `DELETE ... WHERE household_id = '...'` isolado — apagaria
+> edições posteriores do usuário nesse household. O rollback abaixo só apaga a row
+> se ela ainda estiver exatamente como criada (guarda em todas as colunas,
+> incluindo `updated_at`, que qualquer PATCH/upsert posterior altera).
+
+Row criada (identidade exata — PK `household_id`, sem coluna `id` separada):
+
+- `household_id` = `d36cb649-4462-486d-940a-47128ad329f2`
+- `name` = `Usuário`, `email` = `walissonead@gmail.com`, `phone` = `` (vazio),
+  `avatar_color` = `#0E8C5A`, `greeting_style` = `auto`,
+  `updated_at` = `2026-09-06 15:14:01.096208+00`
+
 ```sql
-DELETE FROM profiles WHERE household_id = 'd36cb649-4462-486d-940a-47128ad329f2';
+DELETE FROM profiles
+ WHERE household_id = 'd36cb649-4462-486d-940a-47128ad329f2'
+   AND name = 'Usuário'
+   AND email = 'walissonead@gmail.com'
+   AND phone = ''
+   AND avatar_color = '#0E8C5A'
+   AND greeting_style = 'auto'
+   AND updated_at = '2026-09-06 15:14:01.096208+00';
+-- Esperado: DELETE 1 (row intacta) ou DELETE 0 (row foi editada depois —
+-- nesse caso NÃO force: revise manualmente em vez de apagar).
 ```
 
-Apaga só a row criada. Pré-INSERT havia 0 rows para esse household (evidência acima).
+Pré-INSERT havia 0 rows para esse household (evidência acima).
 Backup adicional: `backups/pre-d0f6908-20260906T135211Z.sql` (dump pré-deploy de hoje).

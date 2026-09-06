@@ -272,6 +272,28 @@ describe('GET /profile auto-provisioning', () => {
     const res = await getProfile(app);
     expect(res.json().profile).toMatchObject({ name: 'Marina', isAdmin: true });
   });
+
+  it('degrades gracefully to null when auto-provision upsert rejects', async () => {
+    const app = Fastify();
+    registerProfileRoutes(app, {
+      resolveToken: async () => ({ deviceId: 'dev-1', householdId: 'household-new' }),
+      profileStore: {
+        get: async () => null,
+        upsert: async () => {
+          throw new Error('db unavailable');
+        },
+      },
+      adminEmails: ['walissonead@gmail.com'],
+      resolveSessionEmail: async () => 'walissonead@gmail.com',
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/profile',
+      headers: { 'x-device-token': 'dev-token' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ profile: null });
+  });
 });
 
 describe('Error handling in /profile', () => {
