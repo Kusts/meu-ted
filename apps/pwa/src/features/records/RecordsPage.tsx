@@ -14,7 +14,7 @@ import { TransactionEditSheet } from "./components/TransactionEditSheet";
 import { CategoryBadge } from "@/components/ui/CategoryBadge";
 import { useAppState } from "@/lib/state/app-state-context";
 import type { Transaction } from "@/lib/state/types";
-import { Search, SlidersHorizontal, ChevronRight, ChevronLeft } from "lucide-react";
+import { Search, SlidersHorizontal, ChevronRight, ChevronLeft, Plus } from "lucide-react";
 
 type TypeFilter = "all" | "expense" | "income" | "transfer";
 type PeriodFilter = "all" | "today" | 7 | 30 | "month" | "custom";
@@ -198,6 +198,35 @@ export default function RecordsPage() {
     { key: "income", label: "Receitas" },
     { key: "transfer", label: "Transf." },
   ];
+
+  // A4: copy distinta conforme há filtro/busca ativos ou não.
+  const hasActiveFilter =
+    typeFilter !== "all" ||
+    periodFilter !== "all" ||
+    search.trim() !== "" ||
+    accountFilter !== null ||
+    categoryFilter !== null ||
+    customStartDate !== "" ||
+    customEndDate !== "";
+
+  const clearAllFilters = useCallback(() => {
+    setTypeFilter("all");
+    setPeriodFilter("all");
+    setCategoryFilter(null);
+    setAccountFilter(null);
+    setCustomStartDate("");
+    setCustomEndDate("");
+    setSearch("");
+  }, []);
+
+  // Reusa o fluxo existente de novo lançamento (AppShell escuta "pwa:open-tx").
+  const handleNewTransaction = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("pwa:open-tx", { detail: { kind: "expense" } }),
+      );
+    }
+  }, []);
 
   const periodChips: { key: PeriodFilter; label: string }[] = [
     { key: "today", label: "Hoje" },
@@ -473,8 +502,33 @@ export default function RecordsPage() {
         {filtered.length === 0 ? (
           <div className="px-5 py-[50px] text-center sm:px-8 lg:px-12">
             <EmptyState
-              title="Nada encontrado"
-              description="Ajuste a busca ou os filtros."
+              icon={<Plus size={24} strokeWidth={2.4} aria-hidden="true" />}
+              title={hasActiveFilter ? "Nada encontrado" : "Nenhum lançamento ainda"}
+              description={
+                hasActiveFilter
+                  ? "Ajuste a busca ou os filtros para ver mais resultados."
+                  : "Registre sua primeira despesa ou receita para começar a acompanhar."
+              }
+              action={
+                <div className="flex flex-col items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleNewTransaction}
+                    className="rounded-[14px] bg-primary px-5 py-2.5 text-[13px] font-bold text-white shadow-xs transition-all hover:bg-primary-hover active:scale-[0.98]"
+                  >
+                    Novo lançamento
+                  </button>
+                  {hasActiveFilter && (
+                    <button
+                      type="button"
+                      onClick={clearAllFilters}
+                      className="rounded-[14px] px-4 py-2 text-[13px] font-bold text-primary transition-colors hover:bg-primary-tint"
+                    >
+                      Ver tudo
+                    </button>
+                  )}
+                </div>
+              }
             />
           </div>
         ) : (

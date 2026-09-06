@@ -418,4 +418,44 @@ describe("RecordsPage", () => {
       expect(screen.getByTestId("category-selector-trigger")).toBeInTheDocument();
     });
   });
+
+  describe("empty states (v2 A4)", () => {
+    it("shows onboarding copy and Novo lançamento CTA when there are no transactions", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({ transactions: [] }),
+      );
+      render(<RecordsPage />);
+      expect(screen.getByText(/nenhum lançamento ainda/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /novo lançamento/i })).toBeInTheDocument();
+      expect(screen.queryByText(/nada encontrado/i)).not.toBeInTheDocument();
+    });
+
+    it("dispatches pwa:open-tx (expense) when Novo lançamento is clicked", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({ transactions: [] }),
+      );
+      const handler = vi.fn();
+      window.addEventListener("pwa:open-tx", handler);
+      try {
+        render(<RecordsPage />);
+        fireEvent.click(screen.getByRole("button", { name: /novo lançamento/i }));
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect((handler.mock.calls[0][0] as CustomEvent).detail).toEqual({
+          kind: "expense",
+        });
+      } finally {
+        window.removeEventListener("pwa:open-tx", handler);
+      }
+    });
+
+    it("shows filter copy and Ver tudo when search has no matches; Ver tudo clears", () => {
+      render(<RecordsPage />);
+      const searchInput = screen.getByPlaceholderText(/buscar/i);
+      fireEvent.change(searchInput, { target: { value: "ZZZZNOTFOUND" } });
+      expect(screen.getByText(/nada encontrado/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /novo lançamento/i })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /ver tudo/i }));
+      expect(screen.getByText("Supermercado Extra")).toBeInTheDocument();
+    });
+  });
 });
