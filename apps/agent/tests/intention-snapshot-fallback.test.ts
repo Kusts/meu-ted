@@ -57,8 +57,21 @@ const snapshotResponse = (fallbackProviderId: string | null, fallbackModelId: st
         fallbackModelId,
         updatedBy: 'admin@test.com',
       },
-      activeProvider: { id: 'openai-api' },
-      activeModel: { id: 'openai-api:gpt-4o' },
+      activeProvider: {
+        id: 'openai-api',
+        kind: 'openai-api',
+        transport: 'direct',
+        authMode: 'api-key',
+        secretAlias: 'OPENAI_API_KEY',
+        serviceAlias: null,
+        eligibility: 'approved',
+      },
+      activeModel: {
+        id: 'openai-api:gpt-4o',
+        modelId: 'gpt-4o',
+        protocol: 'chat-completions',
+        privacyClass: 'training_prohibited',
+      },
       fallbackProvider: null,
       fallbackModel: null,
       activeDisabled: false,
@@ -69,6 +82,7 @@ const snapshotResponse = (fallbackProviderId: string | null, fallbackModelId: st
 
 describe('Intention snapshot fallback persistence (Fase 1b F3 RED)', () => {
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -104,9 +118,8 @@ describe('Intention snapshot fallback persistence (Fase 1b F3 RED)', () => {
 
   it('persists fallback ids in the INSERT on first resolution', async () => {
     const { exec, calls } = makeSql({ pragmaColumns: [], selectRows: [] });
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      snapshotResponse('opencode-zen', 'opencode-zen:zen-1'),
-    );
+    // stubGlobal (not spyOn): hermetic even if another file leaked a fetch mock.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(snapshotResponse('opencode-zen', 'opencode-zen:zen-1')));
     const snapshot = await callResolve(makeAgent({ exec }), 'intent-fb-1');
     expect(snapshot?.fallback_provider_id).toBe('opencode-zen');
     expect(snapshot?.fallback_model_id).toBe('opencode-zen:zen-1');
@@ -132,7 +145,8 @@ describe('Intention snapshot fallback persistence (Fase 1b F3 RED)', () => {
       created_at: '2026-09-05T00:00:00.000Z',
     };
     const { exec } = makeSql({ pragmaColumns: [], selectRows: [stored] });
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
     const snapshot = await callResolve(makeAgent({ exec }), 'intent-fb-1');
     expect(snapshot?.fallback_provider_id).toBe('opencode-zen');
     expect(snapshot?.fallback_model_id).toBe('opencode-zen:zen-1');
