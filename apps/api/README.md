@@ -178,6 +178,12 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/pi_finance_api_test \
 Without `DATABASE_URL` set, the Postgres contract suite is skipped and
 the in-memory contract still proves the same behavior.
 
+### LLM Postgres integration (disposable container)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run-llm-postgres-integration.ps1  # ou: bash scripts/run-llm-postgres-integration.sh
+```
+
 ### Seeding the demo household
 
 ```bash
