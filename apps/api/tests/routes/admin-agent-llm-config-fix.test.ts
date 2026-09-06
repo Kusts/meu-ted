@@ -197,6 +197,64 @@ describe('Fase 1b-FIX routes (items 3/8)', () => {
     expect(junk.statusCode).toBe(400);
   });
 
+  it('item 6: PATCH demoting eligibility of the active provider is rejected with 409', async () => {
+    await llmStore.setProviderEnabled('openai-api', true);
+    const model = await llmStore.upsertModel({
+      providerId: 'openai-api',
+      modelId: 'gpt-4o',
+      protocol: 'chat-completions',
+      privacyClass: 'training_prohibited',
+      enabled: true,
+    });
+    await llmStore.setModelEnabled(model.id, true);
+    const rt = await llmStore.getRuntime();
+    await llmStore.updateRuntime({
+      providerId: 'openai-api',
+      modelId: model.id,
+      expectedVersion: rt.version,
+      updatedBy: 'fix@test.com',
+    });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/admin/agent/llm-config/providers/openai-api',
+      headers: adminHeaders(),
+      payload: { eligibility: 'candidate' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'agent.runtime_in_use', reason: 'active_provider' });
+    expect((await llmStore.getProvider('openai-api'))?.eligibility).toBe('approved');
+  });
+
+  it('item 6: sync-catalog skips a conflicting entry instead of mutating the active model', async () => {
+    await llmStore.setProviderEnabled('openai-api', true);
+    const model = await llmStore.upsertModel({
+      providerId: 'openai-api',
+      modelId: 'gpt-4o',
+      protocol: 'chat-completions',
+      privacyClass: 'training_prohibited',
+      enabled: true,
+    });
+    await llmStore.setModelEnabled(model.id, true);
+    const rt = await llmStore.getRuntime();
+    await llmStore.updateRuntime({
+      providerId: 'openai-api',
+      modelId: model.id,
+      expectedVersion: rt.version,
+      updatedBy: 'fix@test.com',
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/agent/llm-config/sync-catalog',
+      headers: adminHeaders(),
+      payload: {
+        items: [{ providerId: 'openai-api', modelId: 'gpt-4o', protocol: 'responses', privacyClass: 'training_prohibited' }],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, synced: 0 });
+    expect((await llmStore.getModel(model.id))?.protocol).toBe('chat-completions');
+  });
+
   it('item 3: internal projection marks an unsupported active pair disabled/fail-closed', async () => {
     await app.close();
     await auth.close();

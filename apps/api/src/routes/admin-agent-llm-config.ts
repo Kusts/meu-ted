@@ -30,13 +30,16 @@ const kindUnsupported = (reply: FastifyReply, kind: string) =>
     reason: `provider kind ${kind} is not executable by the agent runtime`,
   });
 
-/** Maps store write errors (version conflict, revalidation) to HTTP. */
+/** Maps store write errors (version conflict, revalidation, upsert guards) to HTTP. */
 const mapRuntimeWriteError = (reply: FastifyReply, err: unknown) => {
   const e = err as { statusCode?: number; code?: string; reason?: string; message?: string };
   if (
     (e?.code === 'agent.activation_blocked' ||
       e?.code === 'agent.version_conflict' ||
-      e?.code === 'agent.runtime_in_use') &&
+      e?.code === 'agent.runtime_in_use' ||
+      e?.code === 'agent.kind_unsupported' ||
+      e?.code === 'agent.invalid_provider' ||
+      e?.code === 'agent.invalid_model') &&
     typeof e?.statusCode === 'number'
   ) {
     const body: Record<string, unknown> = { code: e.code };
@@ -160,15 +163,32 @@ export const registerAdminAgentLlmConfigRoutes = (
           privacyClass: item.privacyClass ?? 'training_prohibited',
         });
         if (!err) {
-          await deps.store.upsertModel({
-            providerId: item.providerId,
-            modelId: item.modelId,
-            protocol: item.protocol ?? 'chat-completions',
-            privacyClass: item.privacyClass ?? 'training_prohibited',
-            retention: item.retention ?? null,
-            enabled: false,
-          });
-          synced++;
+          try {
+            await deps.store.upsertModel({
+              providerId: item.providerId,
+              modelId: item.modelId,
+              protocol: item.protocol ?? 'chat-completions',
+              privacyClass: item.privacyClass ?? 'training_prohibited',
+              retention: item.retention ?? null,
+              enabled: false,
+            });
+            synced++;
+          } catch (upsertErr) {
+            // Fase 2 item 6: a conflicting catalog entry (e.g. metadata of a
+            // referenced model) is skipped, never applied half-way.
+            const e = upsertErr as { statusCode?: number; code?: string };
+            if (
+              typeof e?.statusCode === 'number' &&
+              (e?.code === 'agent.runtime_in_use' ||
+                e?.code === 'agent.invalid_model' ||
+                e?.code === 'agent.invalid_provider' ||
+                e?.code === 'agent.kind_unsupported' ||
+                e?.code === 'agent.activation_blocked')
+            ) {
+              continue;
+            }
+            throw upsertErr;
+          }
         }
       }
     }
@@ -258,15 +278,19 @@ export const registerAdminAgentLlmConfigRoutes = (
     if (!provider) {
       return reply.code(404).send({ code: 'agent.provider_not_found', message: `Provider ${body.providerId} não encontrado` });
     }
-    const model = await deps.store.upsertModel({
-      providerId: body.providerId,
-      modelId: body.modelId,
-      protocol: body.protocol,
-      privacyClass: body.privacyClass,
-      retention: body.retention ?? null,
-      enabled: body.enabled ?? false,
-    });
-    return reply.code(201).send({ model });
+    try {
+      const model = await deps.store.upsertModel({
+        providerId: body.providerId,
+        modelId: body.modelId,
+        protocol: body.protocol,
+        privacyClass: body.privacyClass,
+        retention: body.retention ?? null,
+        enabled: body.enabled ?? false,
+      });
+      return reply.code(201).send({ model });
+    } catch (err) {
+      return mapRuntimeWriteError(reply, err);
+    }
   });
 
   // POST /admin/agent/llm-config/activate - Activate an approved provider/model pair
@@ -395,16 +419,20 @@ export const registerAdminAgentLlmConfigRoutes = (
       secretAlias: parsed.data.secretAlias,
     });
     if (errs) return invalidBody(reply, 'agent.invalid_provider', errs);
-    const provider = await deps.store.upsertProvider({
-      id: parsed.data.id,
-      kind: parsed.data.kind,
-      transport: parsed.data.transport,
-      authMode: parsed.data.authMode,
-      secretAlias: parsed.data.secretAlias,
-      enabled: parsed.data.enabled ?? false,
-      eligibility: parsed.data.eligibility ?? 'approved',
-    });
-    return reply.code(201).send({ provider });
+    try {
+      const provider = await deps.store.upsertProvider({
+        id: parsed.data.id,
+        kind: parsed.data.kind,
+        transport: parsed.data.transport,
+        authMode: parsed.data.authMode,
+        secretAlias: parsed.data.secretAlias,
+        enabled: parsed.data.enabled ?? false,
+        eligibility: parsed.data.eligibility ?? 'approved',
+      });
+      return reply.code(201).send({ provider });
+    } catch (err) {
+      return mapRuntimeWriteError(reply, err);
+    }
   });
 
   app.patch<{ Params: { id: string } }>('/admin/agent/llm-config/providers/:id', { preHandler: guard }, async (req, reply) => {
@@ -444,16 +472,20 @@ export const registerAdminAgentLlmConfigRoutes = (
         throw toggleErr;
       }
     }
-    const provider = await deps.store.upsertProvider({
-      id: existing.id,
-      kind: existing.kind,
-      transport: existing.transport,
-      authMode: existing.authMode,
-      secretAlias: merged.secretAlias,
-      enabled: merged.enabled,
-      eligibility: merged.eligibility,
-    });
-    return reply.send({ provider });
+    try {
+      const provider = await deps.store.upsertProvider({
+        id: existing.id,
+        kind: existing.kind,
+        transport: existing.transport,
+        authMode: existing.authMode,
+        secretAlias: merged.secretAlias,
+        enabled: merged.enabled,
+        eligibility: merged.eligibility,
+      });
+      return reply.send({ provider });
+    } catch (err) {
+      return mapRuntimeWriteError(reply, err);
+    }
   });
 
   app.delete<{ Params: { id: string } }>('/admin/agent/llm-config/providers/:id', { preHandler: guard }, async (req, reply) => {

@@ -2,6 +2,8 @@ import type { Pool } from 'pg';
 import { activationBlocked, type LlmConfigStore } from './llm-config-store.js';
 import { mapModelRow, mapProviderRow, mapRuntimeRow, emptyRuntime, type DbRow } from './llm-config-row-mapper.js';
 import {
+  isKindExecutable,
+  validateProvider,
   validateRuntimePair,
   type LlmModel,
   type LlmProvider,
@@ -288,31 +290,99 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
     // Fase 1b-FIX item 1: ON CONFLICT never touches `enabled` — an upsert
     // (create route, sync) must not disable an active/fallback provider
     // outside the guarded toggle path. New rows still default to disabled.
-    const res = await pool.query(
-      `INSERT INTO agent_llm_providers (id, kind, transport, auth_mode, secret_alias, service_alias, enabled, eligibility, runtime_status)
-       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, false), COALESCE($8, 'approved'), COALESCE($9, 'not_configured'))
-       ON CONFLICT (id) DO UPDATE SET
-          kind = EXCLUDED.kind,
-          transport = EXCLUDED.transport,
-          auth_mode = EXCLUDED.auth_mode,
-          secret_alias = EXCLUDED.secret_alias,
-          service_alias = EXCLUDED.service_alias,
-          eligibility = COALESCE(EXCLUDED.eligibility, agent_llm_providers.eligibility),
-          runtime_status = COALESCE(EXCLUDED.runtime_status, agent_llm_providers.runtime_status),
-          updated_at = NOW()
-       RETURNING id, kind, transport, auth_mode, secret_alias, service_alias, enabled, eligibility, runtime_status, created_at, updated_at, updated_by`,
-      [
-        input.id,
-        input.kind,
-        input.transport,
-        input.authMode,
-        input.secretAlias,
-        null,
-        input.enabled ?? null,
-        input.eligibility ?? null,
-        input.runtimeStatus ?? null,
-      ],
-    );
+    // Fase 2 item 6: metadata of a referenced item is revalidated under the
+    // runtime lock before writing.
+    const client = await pool.connect();
+    let res: { rowCount: number | null; rows: Record<string, unknown>[] };
+    try {
+      await client.query('BEGIN');
+      const rt = await client.query(
+        `SELECT provider_id, fallback_provider_id FROM agent_llm_runtime_config WHERE singleton = 'active' FOR UPDATE`,
+      );
+      const row = rt.rows[0] as Record<string, unknown> | undefined;
+      const slot =
+        row?.['provider_id'] === input.id
+          ? 'active_provider'
+          : row?.['fallback_provider_id'] === input.id
+            ? 'fallback_provider'
+            : null;
+      if (slot) {
+        const cur = await client.query(
+          `SELECT kind, transport, auth_mode, secret_alias, eligibility FROM agent_llm_providers WHERE id = $1`,
+          [input.id],
+        );
+        const existing = cur.rows[0] as Record<string, unknown> | undefined;
+        if (existing) {
+          if (input.kind !== existing['kind'] && !isKindExecutable(input.kind)) {
+            throw Object.assign(
+              new Error(`provider kind ${input.kind} is not executable by the agent runtime`),
+              {
+                statusCode: 422,
+                code: 'agent.kind_unsupported',
+                reason: `provider kind ${input.kind} is not executable by the agent runtime`,
+              },
+            );
+          }
+          const merged = {
+            kind: input.kind,
+            transport: input.transport,
+            authMode: input.authMode,
+            secretAlias: input.secretAlias,
+            eligibility: input.eligibility ?? (existing['eligibility'] as LlmProvider['eligibility']),
+          };
+          const err = validateProvider(merged);
+          if (err) {
+            throw Object.assign(new Error(err), {
+              statusCode: 422,
+              code: 'agent.invalid_provider',
+              reason: err,
+            });
+          }
+          if (existing['eligibility'] === 'approved' && merged.eligibility !== 'approved') {
+            throw Object.assign(new Error('provider is runtime in use'), {
+              statusCode: 409,
+              code: 'agent.runtime_in_use',
+              reason: slot,
+            });
+          }
+        }
+      }
+      res = await client.query(
+        `INSERT INTO agent_llm_providers (id, kind, transport, auth_mode, secret_alias, service_alias, enabled, eligibility, runtime_status)
+         VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, false), COALESCE($8, 'approved'), COALESCE($9, 'not_configured'))
+         ON CONFLICT (id) DO UPDATE SET
+            kind = EXCLUDED.kind,
+            transport = EXCLUDED.transport,
+            auth_mode = EXCLUDED.auth_mode,
+            secret_alias = EXCLUDED.secret_alias,
+            service_alias = EXCLUDED.service_alias,
+            eligibility = COALESCE(EXCLUDED.eligibility, agent_llm_providers.eligibility),
+            runtime_status = COALESCE(EXCLUDED.runtime_status, agent_llm_providers.runtime_status),
+            updated_at = NOW()
+         RETURNING id, kind, transport, auth_mode, secret_alias, service_alias, enabled, eligibility, runtime_status, created_at, updated_at, updated_by`,
+        [
+          input.id,
+          input.kind,
+          input.transport,
+          input.authMode,
+          input.secretAlias,
+          null,
+          input.enabled ?? null,
+          input.eligibility ?? null,
+          input.runtimeStatus ?? null,
+        ],
+      );
+      await client.query('COMMIT');
+    } catch (e) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // Best effort: the transaction may already be aborted.
+      }
+      throw e;
+    } finally {
+      client.release();
+    }
     return mapProviderRow(res.rows[0] as DbRow);
   },
 
@@ -417,16 +487,61 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
     const enabled = input.enabled ?? false;
     // Fase 1b-FIX item 1: ON CONFLICT preserves the existing `enabled`
     // (see upsertProvider); new rows default to disabled.
-    const res = await pool.query(
-      `INSERT INTO agent_llm_models (id, provider_id, model_id, protocol, privacy_class, retention, enabled)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (provider_id, model_id) DO UPDATE
-       SET protocol = EXCLUDED.protocol,
-           privacy_class = EXCLUDED.privacy_class,
-           retention = EXCLUDED.retention
-       RETURNING id, provider_id, model_id, protocol, privacy_class, retention, enabled, created_at`,
-      [id, input.providerId, input.modelId, input.protocol, input.privacyClass, input.retention ?? null, enabled],
-    );
+    // Fase 2 item 6: protocol/privacyClass of a referenced model are
+    // immutable via upsert — revalidated under the runtime lock.
+    const client = await pool.connect();
+    let res: { rowCount: number | null; rows: Record<string, unknown>[] };
+    try {
+      await client.query('BEGIN');
+      const rt = await client.query(
+        `SELECT model_id, fallback_model_id FROM agent_llm_runtime_config WHERE singleton = 'active' FOR UPDATE`,
+      );
+      const row = rt.rows[0] as Record<string, unknown> | undefined;
+      const slot =
+        row?.['model_id'] === id
+          ? 'active_model'
+          : row?.['fallback_model_id'] === id
+            ? 'fallback_model'
+            : null;
+      if (slot) {
+        const cur = await client.query(
+          `SELECT protocol, privacy_class FROM agent_llm_models WHERE id = $1`,
+          [id],
+        );
+        const existing = cur.rows[0] as Record<string, unknown> | undefined;
+        if (
+          existing &&
+          (existing['protocol'] !== input.protocol || existing['privacy_class'] !== input.privacyClass)
+        ) {
+          const reason = 'protocol/privacyClass of a referenced model is immutable';
+          throw Object.assign(new Error(reason), {
+            statusCode: 422,
+            code: 'agent.invalid_model',
+            reason,
+          });
+        }
+      }
+      res = await client.query(
+        `INSERT INTO agent_llm_models (id, provider_id, model_id, protocol, privacy_class, retention, enabled)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (provider_id, model_id) DO UPDATE
+         SET protocol = EXCLUDED.protocol,
+             privacy_class = EXCLUDED.privacy_class,
+             retention = EXCLUDED.retention
+         RETURNING id, provider_id, model_id, protocol, privacy_class, retention, enabled, created_at`,
+        [id, input.providerId, input.modelId, input.protocol, input.privacyClass, input.retention ?? null, enabled],
+      );
+      await client.query('COMMIT');
+    } catch (e) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // Best effort: the transaction may already be aborted.
+      }
+      throw e;
+    } finally {
+      client.release();
+    }
     return mapModelRow(res.rows[0] as DbRow);
   },
 

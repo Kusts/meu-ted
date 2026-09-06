@@ -1,5 +1,32 @@
 import { activationBlocked, type LlmConfigStore } from './llm-config-store.js';
-import { validateRuntimePair, type LlmModel, type LlmProvider, type RuntimeConfig } from './llm-config.js';
+import {
+  isKindExecutable,
+  validateProvider,
+  validateRuntimePair,
+  type LlmModel,
+  type LlmProvider,
+  type RuntimeConfig,
+} from './llm-config.js';
+
+const kindUnsupported = (kind: string) =>
+  Object.assign(new Error(`provider kind ${kind} is not executable by the agent runtime`), {
+    statusCode: 422,
+    code: 'agent.kind_unsupported',
+    reason: `provider kind ${kind} is not executable by the agent runtime`,
+  });
+
+const invalidProvider = (reason: string) =>
+  Object.assign(new Error(reason), { statusCode: 422, code: 'agent.invalid_provider', reason });
+
+const invalidModel = (reason: string) =>
+  Object.assign(new Error(reason), { statusCode: 422, code: 'agent.invalid_model', reason });
+
+const runtimeInUse = (slot: 'active_provider' | 'fallback_provider', subject: 'provider') =>
+  Object.assign(new Error(`${subject} is runtime in use`), {
+    statusCode: 409,
+    code: 'agent.runtime_in_use',
+    reason: slot,
+  });
 
 export const createInMemoryLlmConfigStore = (seed?: {
   providers?: LlmProvider[];
@@ -132,6 +159,25 @@ export const createInMemoryLlmConfigStore = (seed?: {
     async upsertProvider(input) {
       const existingIdx = providers.findIndex((p) => p.id === input.id);
       const existing = existingIdx >= 0 ? providers[existingIdx]! : undefined;
+      // Fase 2 item 6: metadata of a referenced item is revalidated.
+      if (existing && (runtime.providerId === input.id || runtime.fallbackProviderId === input.id)) {
+        const slot = runtime.providerId === input.id ? 'active_provider' : 'fallback_provider';
+        if (input.kind !== existing.kind && !isKindExecutable(input.kind)) {
+          throw kindUnsupported(input.kind);
+        }
+        const merged = {
+          kind: input.kind,
+          transport: input.transport,
+          authMode: input.authMode,
+          secretAlias: input.secretAlias,
+          eligibility: input.eligibility ?? existing.eligibility,
+        };
+        const err = validateProvider(merged);
+        if (err) throw invalidProvider(err);
+        if (existing.eligibility === 'approved' && merged.eligibility !== 'approved') {
+          throw runtimeInUse(slot as 'active_provider' | 'fallback_provider', 'provider');
+        }
+      }
       const provider: LlmProvider = {
         id: input.id,
         kind: input.kind,
@@ -273,6 +319,14 @@ export const createInMemoryLlmConfigStore = (seed?: {
         (m) => m.id === id || (m.providerId === input.providerId && m.modelId === input.modelId),
       );
       const existingModel = existingIdx >= 0 ? models[existingIdx]! : undefined;
+      // Fase 2 item 6: protocol/privacyClass of a referenced model are immutable.
+      if (
+        existingModel &&
+        (runtime.modelId === existingModel.id || runtime.fallbackModelId === existingModel.id) &&
+        (existingModel.protocol !== input.protocol || existingModel.privacyClass !== input.privacyClass)
+      ) {
+        throw invalidModel('protocol/privacyClass of a referenced model is immutable');
+      }
       const model: LlmModel = {
         id,
         providerId: input.providerId,
