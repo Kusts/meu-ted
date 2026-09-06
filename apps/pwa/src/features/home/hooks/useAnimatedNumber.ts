@@ -17,20 +17,22 @@ export function useAnimatedNumber(
 
   useEffect(() => {
     const from = prevRef.current ?? 0;
-    if (from === target) {
-      displayRef.current = target;
-      setDisplay(target);
-      return;
-    }
     const reduced =
       typeof window !== "undefined" &&
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced || typeof requestAnimationFrame === "undefined") {
+    if (
+      from === target ||
+      reduced ||
+      typeof requestAnimationFrame === "undefined"
+    ) {
+      // Snap direto (sem animar). setState diferido p/ cumprir
+      // react-hooks/set-state-in-effect (sem render síncrono em cascata).
       prevRef.current = target;
+      if (displayRef.current === target) return;
       displayRef.current = target;
-      setDisplay(target);
-      return;
+      const timer = setTimeout(() => setDisplay(target), 0);
+      return () => clearTimeout(timer);
     }
     let raf = 0;
     const start = performance.now();

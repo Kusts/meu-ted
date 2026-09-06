@@ -1,21 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 export const HIDE_BALANCE_KEY = "meu-ted:hide-balance";
 
 /**
  * P3 — saldo ocultável com persistência (default visível).
- * Leitura do storage só no client (sem flash de hidratação).
+ * Leitura do storage no inicializador (lazy) — sem effect + setState,
+ * sem render em cascata e sem flash pós-hidratação.
  */
 export function useHideBalance() {
-  const [hidden, setHidden] = useState(false);
-
-  useEffect(() => {
+  const [hidden, setHidden] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
     try {
-      setHidden(window.localStorage.getItem(HIDE_BALANCE_KEY) === "1");
+      return window.localStorage.getItem(HIDE_BALANCE_KEY) === "1";
     } catch {
-      /* storage indisponível: mantém visível */
+      return false;
     }
-  }, []);
+  });
 
   const toggle = useCallback(() => {
     setHidden((prev) => {

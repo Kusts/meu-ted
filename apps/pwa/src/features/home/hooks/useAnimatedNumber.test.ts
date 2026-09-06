@@ -21,13 +21,17 @@ describe("useAnimatedNumber", () => {
     vi.restoreAllMocks();
   });
 
-  it("sets the value directly under prefers-reduced-motion", () => {
+  it("sets the value directly under prefers-reduced-motion", async () => {
     stubMatchMedia(true);
     const { result, rerender } = renderHook(
       ({ target }) => useAnimatedNumber(target),
       { initialProps: { target: 1000 } },
     );
     rerender({ target: 5000 });
+    // Snap é diferido (setTimeout 0) p/ cumprir set-state-in-effect.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
     expect(result.current).toBe(5000);
   });
 
@@ -60,7 +64,7 @@ describe("useAnimatedNumber", () => {
     expect(result.current).toBe(1000);
   });
 
-  it("falls back to a direct set without requestAnimationFrame", () => {
+  it("falls back to a direct set without requestAnimationFrame", async () => {
     stubMatchMedia(false);
     vi.stubGlobal("requestAnimationFrame", undefined);
     const { result, rerender } = renderHook(
@@ -68,6 +72,9 @@ describe("useAnimatedNumber", () => {
       { initialProps: { target: 100 } },
     );
     rerender({ target: 900 });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
     expect(result.current).toBe(900);
   });
 });
