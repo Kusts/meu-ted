@@ -212,6 +212,68 @@ describe('PATCH /profile isAdmin consistency with GET', () => {
   });
 });
 
+describe('GET /profile auto-provisioning', () => {
+  const buildAutoProvisionApp = (sessionEmail: string | undefined, adminEmails?: string[]) => {
+    const app = Fastify();
+    registerProfileRoutes(app, {
+      resolveToken: async () => ({ deviceId: 'dev-1', householdId: 'household-new' }),
+      profileStore: createInMemoryProfileStore(),
+      ...(adminEmails ? { adminEmails } : {}),
+      ...(sessionEmail === undefined
+        ? {}
+        : { resolveSessionEmail: async () => sessionEmail }),
+    });
+    return app;
+  };
+
+  const getProfile = (app: Fastify.FastifyInstance) =>
+    app.inject({
+      method: 'GET',
+      url: '/profile',
+      headers: { 'x-device-token': 'dev-token' },
+    });
+
+  it('auto-provisions a minimal profile on GET when a session email resolves and none exists', async () => {
+    const app = buildAutoProvisionApp('walissonead@gmail.com', ['walissonead@gmail.com']);
+    const res = await getProfile(app);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().profile).toMatchObject({
+      householdId: 'household-new',
+      email: 'walissonead@gmail.com',
+      isAdmin: true,
+    });
+  });
+
+  it('auto-provisioned profile carries isAdmin false for a non-admin session email', async () => {
+    const app = buildAutoProvisionApp('user@example.com', ['walissonead@gmail.com']);
+    const res = await getProfile(app);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().profile).toMatchObject({
+      email: 'user@example.com',
+      isAdmin: false,
+    });
+  });
+
+  it('keeps null when no session email resolves and no profile exists', async () => {
+    const app = buildAutoProvisionApp(undefined, ['walissonead@gmail.com']);
+    const res = await getProfile(app);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ profile: null });
+  });
+
+  it('does not clobber an existing profile on GET with a session', async () => {
+    const app = buildAutoProvisionApp('walissonead@gmail.com', ['walissonead@gmail.com']);
+    await app.inject({
+      method: 'PATCH',
+      url: '/profile',
+      headers: { 'x-device-token': 'dev-token', 'content-type': 'application/json' },
+      payload: { name: 'Marina' },
+    });
+    const res = await getProfile(app);
+    expect(res.json().profile).toMatchObject({ name: 'Marina', isAdmin: true });
+  });
+});
+
 describe('Error handling in /profile', () => {
   it('returns 500 when resolveToken throws an infrastructure error without statusCode (e.g. pg error 53300) on GET', async () => {
     const app = Fastify();

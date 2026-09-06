@@ -22,15 +22,17 @@ export const registerProfileRoutes = (
   // Server-computed admin flag, shared by GET and PATCH so both projections
   // stay consistent. A session that cannot be resolved yields an explicit
   // isAdmin=false (never undefined) — the PWA gate treats missing as false.
-  const resolveIsAdmin = async (req: { headers: Record<string, unknown> }): Promise<boolean> => {
-    let email: string | undefined;
-    if (opts.resolveSessionEmail) {
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(',') : String(value));
-      }
-      email = await opts.resolveSessionEmail(headers).catch(() => undefined);
+  const resolveSessionEmailAddress = async (req: { headers: Record<string, unknown> }): Promise<string | undefined> => {
+    if (!opts.resolveSessionEmail) return undefined;
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(',') : String(value));
     }
+    return opts.resolveSessionEmail(headers).catch(() => undefined);
+  };
+
+  const resolveIsAdmin = async (req: { headers: Record<string, unknown> }): Promise<boolean> => {
+    const email = await resolveSessionEmailAddress(req);
     return Boolean(opts.adminEmails?.some((admin) => admin.toLowerCase() === (email ?? '').toLowerCase()));
   };
 
@@ -47,7 +49,23 @@ export const registerProfileRoutes = (
         message: err.message ?? (status >= 500 ? 'server error' : 'unauthorized'),
       });
     }
-    const existing = await opts.profileStore.get(ctx.householdId);
+    let existing = await opts.profileStore.get(ctx.householdId);
+    // Auto-provision: a household whose device token is valid but has no profile
+    // row yet (e.g. second device/personal household) would otherwise get
+    // { profile: null } forever — and the client drops server flags like isAdmin
+    // along with the null profile. When a session email resolved, seed a minimal
+    // profile (email only; stores fill safe defaults) so the response carries the
+    // real profile + isAdmin. Without a session we keep null (anonymous reads stay
+    // read-only). Upsert failures fall back to null instead of 500ing the read.
+    // Tradeoff (write-on-GET): one idempotent row write per unknown household;
+    // the alternative — client PATCH on null — was rejected because every client
+    // would need the same fallback and older cached PWAs would never recover.
+    if (!existing) {
+      const email = await resolveSessionEmailAddress(req);
+      if (email) {
+        existing = await opts.profileStore.upsert(ctx.householdId, { email }).catch(() => null);
+      }
+    }
     const isAdmin = await resolveIsAdmin(req);
     return reply.code(200).send({ profile: existing ? { ...existing, isAdmin } : null });
   });
