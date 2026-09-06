@@ -48,6 +48,12 @@ describe("ReportsPage", () => {
     expect(screen.getByText(/junho de 2026/i)).toBeInTheDocument();
   });
 
+  it("A8: capitalizes only the month name (Junho de 2026, not Junho De 2026)", () => {
+    render(<ReportsPage />);
+    expect(screen.getByText("Junho de 2026")).toBeInTheDocument();
+    expect(screen.queryByText("Junho De 2026")).not.toBeInTheDocument();
+  });
+
   it("shows period subtitle for Mês passado", async () => {
     const user = userEvent.setup();
     render(<ReportsPage />);

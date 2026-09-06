@@ -94,18 +94,22 @@ export default function ReportsPage() {
   }, [period]);
 
   // ── Period subtitle (human-readable range) ──
+  // A8: pt-BR retorna mês em minúsculas ("setembro de 2026"); capitaliza
+  // só a primeira letra aqui em vez da classe `capitalize` (que gerava
+  // "Setembro De 2026").
   const periodSubtitle = useMemo(() => {
+    const capFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
     if (period === "month") {
-      return periodMs.from.toLocaleDateString("pt-BR", {
+      return capFirst(periodMs.from.toLocaleDateString("pt-BR", {
         month: "long",
         year: "numeric",
-      });
+      }));
     }
     if (period === "last") {
-      return periodMs.from.toLocaleDateString("pt-BR", {
+      return capFirst(periodMs.from.toLocaleDateString("pt-BR", {
         month: "long",
         year: "numeric",
-      });
+      }));
     }
     if (period === "quarter") {
       const q = Math.floor(new Date().getMonth() / 3);
@@ -350,7 +354,7 @@ export default function ReportsPage() {
 
         {/* Period subtitle */}
         <div className="px-5 pb-2">
-          <span className="text-[13px] font-semibold text-text-secondary capitalize">
+          <span className="text-[13px] font-semibold text-text-secondary">
             {periodSubtitle}
           </span>
         </div>
