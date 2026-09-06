@@ -299,7 +299,8 @@ describe("PayablesPage", () => {
       const start = new Event("touchstart", { bubbles: true, cancelable: true });
       (start as unknown as { touches: unknown }).touches = point(120);
       const move = new Event("touchmove", { bubbles: true, cancelable: true });
-      (move as unknown as { touches: unknown }).touches = point(240);
+      // 170px crus com damping 0.45 = 76.5px exibidos (threshold 64px).
+      (move as unknown as { touches: unknown }).touches = point(290);
       const end = new Event("touchend", { bubbles: true, cancelable: true });
       act(() => {
         window.dispatchEvent(start);

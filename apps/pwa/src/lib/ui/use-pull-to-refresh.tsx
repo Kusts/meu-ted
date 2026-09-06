@@ -6,26 +6,31 @@ import { useIsOverlayOpen } from "./overlay-a11y";
 import { useSheet } from "@/lib/sheet-context";
 
 /**
- * F4 — pull-to-refresh hand-rolled (sem libs).
+ * F4 — pull-to-refresh hand-rolled (sem libs), mecânica da spec AGY Onda 2/3 §3.
  *
  * Decisão do debate: as páginas rolam no window/body (nenhum container de
  * scroll próprio), então observamos touchstart/touchmove/touchend no window
  * e disparamos `onRefresh` quando o gesto nasce no topo (`window.scrollY
- * === 0`), com dominância vertical e distância >= ~70px. Nenhum
- * `preventDefault` antes do threshold (listener `passive:false` só passa a
- * prevenir após armar, preservando o bounce nativo do iOS e a rolagem).
+ * === 0`), com dominância vertical. Distância exibida com damping linear
+ * 0.45 (máx 80px); threshold 64px. Nenhum `preventDefault` antes do
+ * threshold (listener `passive:false` só passa a prevenir após armar,
+ * preservando o bounce nativo do iOS e a rolagem).
  * `overscroll-behavior-y: none` é aplicado ao <html> SOMENTE durante o pull
  * ativo e restaurado em seguida.
  *
  * Guardas: `enabled`, `(pointer: coarse)`, overlay aberto (lockCount),
  * sheet de transação aberta, multi-toque, gesto com dominância horizontal
  * (pertence ao SwipeNav). `prefers-reduced-motion`: o refresh dispara
- * normalmente, mas o indicador é estático (sem spin/transição).
+ * normalmente, mas o indicador é estático e some sem retração animada.
  */
 
-export const PULL_THRESHOLD_PX = 70;
-export const PULL_MAX_PX = 120;
+export const PULL_THRESHOLD_PX = 64;
+export const PULL_DAMPING = 0.45;
+export const PULL_MAX_PX = 80;
+export const PULL_ANCHORED_PX = 52;
+export const PULL_HAPTIC_MS = 12;
 const PULL_DOMINANCE_RATIO = 1.2;
+const PULL_RETRACT_MS = 200;
 
 export interface UsePullToRefreshOptions {
   onRefresh: () => void | Promise<void>;
@@ -87,6 +92,19 @@ export function usePullToRefresh({
     }
   }, []);
 
+  const vibrate = useCallback((pattern: number) => {
+    try {
+      if (
+        typeof navigator !== "undefined" &&
+        typeof navigator.vibrate === "function"
+      ) {
+        navigator.vibrate(pattern);
+      }
+    } catch {
+      // Haptics é best-effort (desktop/sem API).
+    }
+  }, []);
+
   useEffect(() => {
     function eligible(): boolean {
       const { enabled, overlayOpen, sheetKind } = liveRef.current;
@@ -131,9 +149,14 @@ export function usePullToRefresh({
         setPullDistance(0);
         return;
       }
-      setPullDistance(Math.min(dy, PULL_MAX_PX));
-      if (dy >= PULL_THRESHOLD_PX) {
-        armedRef.current = true;
+      const damped = Math.min(dy * PULL_DAMPING, PULL_MAX_PX);
+      setPullDistance(damped);
+      if (damped >= PULL_THRESHOLD_PX) {
+        if (!armedRef.current) {
+          // Threshold cruzado: micro-haptic único + trava o rubber-band.
+          armedRef.current = true;
+          vibrate(PULL_HAPTIC_MS);
+        }
         // Só aqui passamos a prevenir: contém o rubber-band durante o pull.
         if (e.cancelable) e.preventDefault();
         lockOverscroll();
@@ -154,17 +177,7 @@ export function usePullToRefresh({
         setPullDistance(0);
         return;
       }
-      // Disparo: haptics leve + refresh; indicador assume até concluir.
-      try {
-        if (
-          typeof navigator !== "undefined" &&
-          typeof navigator.vibrate === "function"
-        ) {
-          navigator.vibrate(10);
-        }
-      } catch {
-        // Haptics é best-effort.
-      }
+      // Disparo instantâneo; o indicador ancora até o refresh concluir.
       refreshingRef.current = true;
       setIsRefreshing(true);
       try {
@@ -196,50 +209,96 @@ export function usePullToRefresh({
       window.removeEventListener("touchcancel", onTouchCancel);
       restoreOverscroll();
     };
-  }, [restoreOverscroll, lockOverscroll]);
+  }, [restoreOverscroll, lockOverscroll, vibrate]);
 
   return { pullDistance, isRefreshing, refreshing: isRefreshing };
 }
 
+/**
+ * Indicador da spec AGY §3: cápsula flutuante circular 36×36px centralizada
+ * no topo (fundo/borda por tema via --ptr-capsule-*, elevação
+ * var(--shadow-elevated)), arco esmeralda 2.5px. Pulling: rotação 0→180° e
+ * opacidade 0.3→0.9 proporcionais; no threshold, escala 105% e cor
+ * var(--accent-money). Refreshing: ancorado a 52px com rotação contínua
+ * (animate-spin = 1s linear infinite). Saída: retração 200ms
+ * var(--easing-standard). Tudo estático sob prefers-reduced-motion.
+ */
 export function PullToRefreshIndicator({
   state,
 }: {
   state: UsePullToRefreshState;
 }) {
   const [reducedMotion] = useState(() => prefersReducedMotion());
+  const [leaving, setLeaving] = useState(false);
   const { pullDistance, isRefreshing } = state;
-  if (!isRefreshing && pullDistance <= 0) return null;
-  const armed = pullDistance >= PULL_THRESHOLD_PX;
-  const height = isRefreshing ? 56 : Math.min(pullDistance, PULL_MAX_PX);
+  const activeRef = useRef(false);
+
+  useEffect(() => {
+    const active = isRefreshing || pullDistance > 0;
+    let timer: number | undefined;
+    if (active) {
+      activeRef.current = true;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLeaving(false);
+    } else if (activeRef.current) {
+      activeRef.current = false;
+      if (!reducedMotion) {
+        setLeaving(true);
+        timer = window.setTimeout(() => setLeaving(false), PULL_RETRACT_MS);
+      }
+    }
+    return () => window.clearTimeout(timer);
+  }, [isRefreshing, pullDistance, reducedMotion]);
+
+  if (!isRefreshing && pullDistance <= 0 && !leaving) return null;
+
+  const armed = !isRefreshing && pullDistance >= PULL_THRESHOLD_PX;
+  const progress = Math.min(pullDistance, PULL_THRESHOLD_PX) / PULL_THRESHOLD_PX;
+  const travel = isRefreshing ? PULL_ANCHORED_PX : leaving ? 0 : pullDistance;
+  const opacity = leaving ? 0 : isRefreshing ? 1 : 0.3 + 0.6 * progress;
+  const transition = reducedMotion
+    ? "none"
+    : leaving
+      ? "height 200ms var(--easing-standard), opacity 200ms var(--easing-standard)"
+      : isRefreshing
+        ? "height 200ms var(--easing-standard)"
+        : "none";
 
   return (
     <div
       role="status"
-      aria-live="polite"
-      className="flex items-center justify-center gap-2 overflow-hidden text-text-muted"
-      style={{
-        height,
-        opacity: isRefreshing ? 1 : Math.min(1, pullDistance / PULL_THRESHOLD_PX),
-        transition: reducedMotion ? "none" : "height 200ms ease-out",
-      }}
+      aria-label="Atualizando conteúdo"
+      className="pointer-events-none relative z-30 flex justify-center overflow-hidden"
+      style={{ height: travel, opacity, transition }}
     >
-      {isRefreshing ? (
-        <>
-          <Loader2
-            size={18}
-            strokeWidth={2.4}
-            aria-hidden="true"
-            className={reducedMotion ? "text-primary" : "animate-spin text-primary"}
-          />
-          <span className="text-[12px] font-bold text-text-secondary">
-            Atualizando…
-          </span>
-        </>
-      ) : (
-        <span className="text-[12px] font-bold text-text-secondary">
-          {armed ? "Solte para atualizar" : "Puxe para atualizar"}
-        </span>
-      )}
+      <div
+        data-testid="ptr-capsule"
+        className="absolute bottom-0.5 flex h-9 w-9 items-center justify-center rounded-full border shadow-elevated"
+        style={{
+          background: "var(--ptr-capsule-bg)",
+          borderColor: "var(--ptr-capsule-border)",
+          transform: isRefreshing || reducedMotion ? undefined : `scale(${armed ? 1.05 : 1})`,
+        }}
+      >
+        <Loader2
+          size={20}
+          strokeWidth={2.5}
+          aria-hidden="true"
+          data-testid="ptr-arc"
+          className={
+            isRefreshing && !reducedMotion
+              ? "animate-spin text-primary"
+              : armed
+                ? "text-accent-money"
+                : "text-primary"
+          }
+          style={
+            isRefreshing || reducedMotion
+              ? undefined
+              : { transform: `rotate(${progress * 180}deg)` }
+          }
+        />
+      </div>
     </div>
   );
 }

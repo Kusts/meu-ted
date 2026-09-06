@@ -9,12 +9,19 @@ import {
   usePullToRefresh,
   PullToRefreshIndicator,
   PULL_THRESHOLD_PX,
+  PULL_DAMPING,
+  PULL_ANCHORED_PX,
 } from "../use-pull-to-refresh";
 
 // ── doubles ──────────────────────────────────────────────────────
 
 let coarse = true;
 let reduceMotion = false;
+
+/** dy cru com damping 0.45 que arma o threshold de 64px (160*0.45=72). */
+const TRIGGER_DY = 160;
+/** dy cru que fica abaixo do threshold (100*0.45=45). */
+const SHORT_DY = 100;
 
 function installMatchMedia() {
   Object.defineProperty(window, "matchMedia", {
@@ -80,7 +87,7 @@ function overscrollY(): string {
   );
 }
 
-describe("usePullToRefresh (v2 F4)", () => {
+describe("usePullToRefresh (v2 F4, spec AGY §3)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     coarse = true;
@@ -97,15 +104,15 @@ describe("usePullToRefresh (v2 F4)", () => {
     setScrollY(0);
   });
 
-  it("dispara onRefresh uma vez após pull além do threshold", async () => {
+  it("aplica damping 0.45 e dispara onRefresh uma vez além do threshold", async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     const { result } = renderHook(() => usePullToRefresh({ onRefresh }));
 
-    const [move] = pull(PULL_THRESHOLD_PX + 30);
+    const [move] = pull(TRIGGER_DY);
     // preventDefault só após o threshold (listener passive:false).
     expect(move.defaultPrevented).toBe(true);
     expect(overscrollY()).toBe("none");
-    expect(result.current.pullDistance).toBeGreaterThan(0);
+    expect(result.current.pullDistance).toBeCloseTo(TRIGGER_DY * PULL_DAMPING, 5);
 
     await act(async () => {
       touch("touchend");
@@ -121,7 +128,7 @@ describe("usePullToRefresh (v2 F4)", () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     renderHook(() => usePullToRefresh({ onRefresh }));
 
-    const [move] = pull(PULL_THRESHOLD_PX - 20);
+    const [move] = pull(SHORT_DY);
     expect(move.defaultPrevented).toBe(false);
     expect(overscrollY()).toBe("");
 
@@ -136,7 +143,7 @@ describe("usePullToRefresh (v2 F4)", () => {
     renderHook(() => usePullToRefresh({ onRefresh }));
 
     act(() => acquireBodyScrollLock());
-    pull(PULL_THRESHOLD_PX + 30);
+    pull(TRIGGER_DY);
     await act(async () => {
       touch("touchend");
     });
@@ -148,7 +155,7 @@ describe("usePullToRefresh (v2 F4)", () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     renderHook(() => usePullToRefresh({ onRefresh }));
 
-    pull(PULL_THRESHOLD_PX + 30);
+    pull(TRIGGER_DY);
     await act(async () => {
       touch("touchend");
     });
@@ -160,7 +167,7 @@ describe("usePullToRefresh (v2 F4)", () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     renderHook(() => usePullToRefresh({ onRefresh }));
 
-    pull(PULL_THRESHOLD_PX + 30);
+    pull(TRIGGER_DY);
     await act(async () => {
       touch("touchend");
     });
@@ -184,7 +191,7 @@ describe("usePullToRefresh (v2 F4)", () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     renderHook(() => usePullToRefresh({ onRefresh, enabled: false }));
 
-    pull(PULL_THRESHOLD_PX + 30);
+    pull(TRIGGER_DY);
     await act(async () => {
       touch("touchend");
     });
@@ -196,14 +203,14 @@ describe("usePullToRefresh (v2 F4)", () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     renderHook(() => usePullToRefresh({ onRefresh }));
 
-    pull(PULL_THRESHOLD_PX + 30);
+    pull(TRIGGER_DY);
     await act(async () => {
       touch("touchend");
     });
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
-  it("emite haptics no disparo quando disponível", async () => {
+  it("emite o micro-haptic uma vez ao cruzar o threshold", async () => {
     const vibrate = vi.fn().mockReturnValue(true);
     Object.defineProperty(window.navigator, "vibrate", {
       writable: true,
@@ -213,18 +220,22 @@ describe("usePullToRefresh (v2 F4)", () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     renderHook(() => usePullToRefresh({ onRefresh }));
 
-    pull(PULL_THRESHOLD_PX + 30);
+    pull(TRIGGER_DY);
+    // Haptic dispara no cruzamento (move), antes do touchend.
+    expect(vibrate).toHaveBeenCalledTimes(1);
+    expect(vibrate).toHaveBeenCalledWith(12);
     await act(async () => {
       touch("touchend");
     });
-    expect(vibrate).toHaveBeenCalledWith(10);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(vibrate).toHaveBeenCalledTimes(1);
   });
 
   it("recupera-se quando onRefresh rejeita", async () => {
     const onRefresh = vi.fn().mockRejectedValue(new Error("offline"));
     const { result } = renderHook(() => usePullToRefresh({ onRefresh }));
 
-    pull(PULL_THRESHOLD_PX + 30);
+    pull(TRIGGER_DY);
     await act(async () => {
       touch("touchend");
     });
@@ -234,7 +245,7 @@ describe("usePullToRefresh (v2 F4)", () => {
   });
 });
 
-describe("PullToRefreshIndicator (v2 F4)", () => {
+describe("PullToRefreshIndicator (spec AGY §3)", () => {
   beforeEach(() => {
     coarse = true;
     reduceMotion = false;
@@ -250,48 +261,142 @@ describe("PullToRefreshIndicator (v2 F4)", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("mostra spinner esmeralda + Atualizando… durante o refresh", () => {
+  it("cápsula 36px com arco esmeralda 2.5px e tokens de superfície", () => {
     render(
       <PullToRefreshIndicator
-        state={{ pullDistance: 80, isRefreshing: true, refreshing: true }}
-      />,
-    );
-    expect(screen.getByText("Atualizando…")).toBeInTheDocument();
-    const spinner = document.querySelector("svg.animate-spin");
-    expect(spinner).toBeInTheDocument();
-  });
-
-  it("orienta soltar quando armado e puxar quando abaixo do threshold", () => {
-    const { rerender } = render(
-      <PullToRefreshIndicator
         state={{
-          pullDistance: PULL_THRESHOLD_PX + 10,
+          pullDistance: PULL_THRESHOLD_PX / 2,
           isRefreshing: false,
           refreshing: false,
         }}
       />,
     );
-    expect(screen.getByText("Solte para atualizar")).toBeInTheDocument();
-    rerender(
+    const capsule = screen.getByTestId("ptr-capsule");
+    expect(capsule.className).toMatch(/h-9 w-9/);
+    expect(capsule.className).toMatch(/rounded-full/);
+    expect(capsule.className).toMatch(/shadow-elevated/);
+    const style = capsule.getAttribute("style") ?? "";
+    expect(style).toContain("var(--ptr-capsule-bg)");
+    expect(style).toContain("var(--ptr-capsule-border)");
+    const arc = screen.getByTestId("ptr-arc");
+    // className de SVG é SVGAnimatedString: ler via getAttribute.
+    expect(arc.getAttribute("class") ?? "").toContain("text-primary");
+    expect(arc.getAttribute("stroke-width")).toBe("2.5");
+  });
+
+  it("rotação 0→180° e opacidade 0.3→0.9 proporcionais ao arrasto", () => {
+    render(
       <PullToRefreshIndicator
         state={{
-          pullDistance: PULL_THRESHOLD_PX - 10,
+          pullDistance: PULL_THRESHOLD_PX / 2,
           isRefreshing: false,
           refreshing: false,
         }}
       />,
     );
-    expect(screen.getByText("Puxe para atualizar")).toBeInTheDocument();
+    const arc = screen.getByTestId("ptr-arc");
+    expect((arc as unknown as SVGElement).style.transform).toContain(
+      "rotate(90deg)",
+    );
+    expect(screen.getByRole("status").style.opacity).toBe("0.6");
   });
 
-  it("sob reduced-motion o indicador é estático (sem animate-spin)", () => {
+  it("no threshold: escala 105% e arco money", () => {
+    render(
+      <PullToRefreshIndicator
+        state={{
+          pullDistance: PULL_THRESHOLD_PX + 8,
+          isRefreshing: false,
+          refreshing: false,
+        }}
+      />,
+    );
+    const capsule = screen.getByTestId("ptr-capsule");
+    expect(capsule.style.transform).toContain("scale(1.05)");
+    expect(screen.getByTestId("ptr-arc").getAttribute("class") ?? "").toContain(
+      "text-accent-money",
+    );
+  });
+
+  it("refreshing ancora a 52px com rotação contínua", () => {
+    render(
+      <PullToRefreshIndicator
+        state={{ pullDistance: 72, isRefreshing: true, refreshing: true }}
+      />,
+    );
+    expect(screen.getByRole("status").style.height).toBe(
+      `${PULL_ANCHORED_PX}px`,
+    );
+    const arc = screen.getByTestId("ptr-arc");
+    const arcClass = arc.getAttribute("class") ?? "";
+    expect(arcClass).toContain("animate-spin");
+    expect(arcClass).toContain("text-primary");
+  });
+
+  it("sob reduced-motion o indicador é estático (sem spin/escala/rotação)", () => {
     reduceMotion = true;
     render(
       <PullToRefreshIndicator
-        state={{ pullDistance: 80, isRefreshing: true, refreshing: true }}
+        state={{
+          pullDistance: PULL_THRESHOLD_PX + 8,
+          isRefreshing: true,
+          refreshing: true,
+        }}
       />,
     );
-    expect(screen.getByText("Atualizando…")).toBeInTheDocument();
-    expect(document.querySelector("svg.animate-spin")).not.toBeInTheDocument();
+    const arc = screen.getByTestId("ptr-arc");
+    expect(arc.getAttribute("class") ?? "").not.toContain("animate-spin");
+    expect(arc.style.transform).toBe("");
+    expect(screen.getByTestId("ptr-capsule").style.transform).toBe("");
+  });
+
+  describe("retração 200ms (spec AGY §3)", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("recolhe para o topo em 200ms antes de desmontar", () => {
+      const { container, rerender } = render(
+        <PullToRefreshIndicator
+          state={{ pullDistance: 72, isRefreshing: true, refreshing: true }}
+        />,
+      );
+      expect(screen.getByRole("status")).toBeInTheDocument();
+
+      rerender(
+        <PullToRefreshIndicator
+          state={{ pullDistance: 0, isRefreshing: false, refreshing: false }}
+        />,
+      );
+      // Ainda montado, colapsando (altura 0 + transição de 200ms).
+      const status = screen.getByRole("status");
+      expect(status.style.height).toBe("0px");
+      expect(status.style.transition).toContain("200ms");
+      expect(status.style.transition).toContain("var(--easing-standard)");
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+      expect(container).toBeEmptyDOMElement();
+    });
+
+    it("sob reduced-motion some imediatamente, sem retração", () => {
+      reduceMotion = true;
+      const { container, rerender } = render(
+        <PullToRefreshIndicator
+          state={{ pullDistance: 72, isRefreshing: true, refreshing: true }}
+        />,
+      );
+      rerender(
+        <PullToRefreshIndicator
+          state={{ pullDistance: 0, isRefreshing: false, refreshing: false }}
+        />,
+      );
+      expect(container).toBeEmptyDOMElement();
+    });
   });
 });

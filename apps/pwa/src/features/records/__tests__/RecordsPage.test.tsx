@@ -495,7 +495,8 @@ describe("RecordsPage", () => {
         mockState({ refreshDomains: refreshSpy }),
       );
       render(<RecordsPage />);
-      const end = pullWindow(120);
+      // 170px crus com damping 0.45 = 76.5px exibidos (threshold 64px).
+      const end = pullWindow(170);
       await act(async () => {
         window.dispatchEvent(end);
       });
