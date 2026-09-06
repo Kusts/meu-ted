@@ -13,13 +13,20 @@ import {
   securityEpochSchema,
   syncCatalogSchema,
 } from '@pi-finance/llm-contracts';
-import { canActivate, validateModel, type PrivacyClass, type Protocol } from '../agent/llm-config.js';
+import { canActivate, isKindExecutable, validateModel, type PrivacyClass, type Protocol } from '../agent/llm-config.js';
 
 const invalidBody = (
   reply: FastifyReply,
   code: 'agent.invalid_provider' | 'agent.invalid_model' | 'agent.invalid_activate' | 'agent.invalid_rollout' | 'agent.invalid_fallback' | 'agent.invalid_parameters',
   reason: string,
 ) => reply.code(400).send({ code, message: reason, reason });
+
+const kindUnsupported = (reply: FastifyReply, kind: string) =>
+  reply.code(422).send({
+    code: 'agent.kind_unsupported',
+    message: `provider kind ${kind} is not executable by the agent runtime`,
+    reason: `provider kind ${kind} is not executable by the agent runtime`,
+  });
 
 export interface AdminAgentLlmConfigDeps {
   auth: BetterAuth;
@@ -345,6 +352,10 @@ export const registerAdminAgentLlmConfigRoutes = (
       const reason = parsed.error.issues[0]?.message ?? 'invalid provider';
       return invalidBody(reply, 'agent.invalid_provider', reason);
     }
+    // Fase 1b-FIX item 3: unsupported kinds are never releasable via create.
+    if (!isKindExecutable(parsed.data.kind)) {
+      return kindUnsupported(reply, parsed.data.kind);
+    }
     const { validateProvider } = await import('../agent/llm-config.js');
     const errs = validateProvider({
       kind: parsed.data.kind,
@@ -375,6 +386,11 @@ export const registerAdminAgentLlmConfigRoutes = (
     const patch = parsed.data;
     const existing = await deps.store.getProvider(id);
     if (!existing) return reply.code(404).send({ code: 'agent.provider_not_found', message: `Provider ${id} não encontrado` });
+    // Fase 1b-FIX item 3: an unsupported kind can never be promoted to usable.
+    // Demotions (enabled:false, non-approved eligibility) stay allowed.
+    if (!isKindExecutable(existing.kind) && (patch.enabled === true || patch.eligibility === 'approved')) {
+      return kindUnsupported(reply, existing.kind);
+    }
     const merged = {
       ...existing,
       enabled: patch.enabled ?? existing.enabled,
