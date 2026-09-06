@@ -150,6 +150,51 @@ describe("SwipeNav gestures (v2 F1)", () => {
     expect(pushMock).not.toHaveBeenCalled();
   });
 
+  it("ignores gestures starting inside a horizontal scroller", () => {
+    render(
+      <SwipeNav>
+        <div data-testid="chips" style={{ overflowX: "auto" }}>
+          chips
+        </div>
+      </SwipeNav>,
+    );
+    const chips = screen.getByTestId("chips");
+    Object.defineProperty(chips, "scrollWidth", { configurable: true, value: 600 });
+    Object.defineProperty(chips, "clientWidth", { configurable: true, value: 300 });
+    swipe(chips, 300, 100);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores gestures starting in a nested child of a horizontal scroller", () => {
+    render(
+      <SwipeNav>
+        <div data-testid="chips" style={{ overflowX: "auto" }}>
+          <span data-testid="chip">chip</span>
+        </div>
+      </SwipeNav>,
+    );
+    const chips = screen.getByTestId("chips");
+    Object.defineProperty(chips, "scrollWidth", { configurable: true, value: 600 });
+    Object.defineProperty(chips, "clientWidth", { configurable: true, value: 300 });
+    swipe(screen.getByTestId("chip"), 300, 100);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("does not mistake a vertical scroller for a horizontal zone", () => {
+    render(
+      <SwipeNav>
+        <div data-testid="list" style={{ overflowY: "auto" }}>
+          list
+        </div>
+      </SwipeNav>,
+    );
+    const list = screen.getByTestId("list");
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 1200 });
+    Object.defineProperty(list, "clientHeight", { configurable: true, value: 600 });
+    swipe(list, 300, 100);
+    expect(pushMock).toHaveBeenCalledWith("/registros");
+  });
+
   it("does not navigate while an overlay is open", () => {
     renderSwipe();
     act(() => acquireBodyScrollLock());
@@ -200,13 +245,16 @@ describe("SwipeNav gestures (v2 F1)", () => {
     expect(pushMock).not.toHaveBeenCalled();
   });
 
-  it("navigates under reduced motion but skips the entry animation", () => {
+  it("navigates instantly under reduced motion but skips the entry animation", () => {
     reduceMotion = true;
     const animateSpy = vi.fn();
     window.HTMLElement.prototype.animate = animateSpy as unknown as typeof window.HTMLElement.prototype.animate;
     mockPath = "/";
     const view = renderSwipe();
+    // Contrato do plano: navega SIM (instantâneo via router.push) — só a
+    // animação de entrada é suprimida.
     swipe(screen.getByTestId("page"), 300, 100);
+    expect(pushMock).toHaveBeenCalledTimes(1);
     expect(pushMock).toHaveBeenCalledWith("/registros");
 
     mockPath = "/registros";
@@ -215,6 +263,24 @@ describe("SwipeNav gestures (v2 F1)", () => {
         <div data-testid="page">page</div>
       </SwipeNav>,
     );
+    expect(animateSpy).not.toHaveBeenCalled();
+  });
+
+  it("skips the entry animation for non-gesture navigation under reduced motion", () => {
+    reduceMotion = true;
+    const animateSpy = vi.fn();
+    window.HTMLElement.prototype.animate = animateSpy as unknown as typeof window.HTMLElement.prototype.animate;
+    mockPath = "/";
+    const view = renderSwipe();
+
+    // Navegação por toque em link/tab (sem gesto): só troca o pathname.
+    mockPath = "/registros";
+    view.rerender(
+      <SwipeNav>
+        <div data-testid="page">page</div>
+      </SwipeNav>,
+    );
+    expect(pushMock).not.toHaveBeenCalled();
     expect(animateSpy).not.toHaveBeenCalled();
   });
 

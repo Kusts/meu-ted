@@ -16,8 +16,9 @@ import { useSheet } from "@/lib/sheet-context";
  * nunca transform durante o gesto.
  *
  * Guardas: overlay aberto (lockCount), sheet de transação aberta,
- * origem dentro de `[data-no-swipe]`, viewport >= 860px, sem touch
- * (`(pointer: coarse)`), `prefers-reduced-motion` (navega sem animar).
+ * origem em scroller horizontal ou `[data-no-swipe]`, viewport >= 860px,
+ * sem touch (`(pointer: coarse)`). `prefers-reduced-motion`: a navegação
+ * ocorre instantaneamente, sem animação de entrada.
  */
 
 /** Ordem de navegação por swipe: esquerda avança, direita volta. */
@@ -62,10 +63,49 @@ function wideViewport(): boolean {
   return window.innerWidth >= SWIPE_DESKTOP_BREAKPOINT_PX;
 }
 
+/** Easing do token de design, com fallback idêntico para jsdom/SSR. */
+function enterEasing(el: HTMLElement): string {
+  const token =
+    typeof window !== "undefined" && typeof window.getComputedStyle === "function"
+      ? window.getComputedStyle(el).getPropertyValue("--easing-standard").trim()
+      : "";
+  return token || "cubic-bezier(.2,.8,.2,1)";
+}
+
+/**
+ * True quando o gesto nasce numa zona de rolagem horizontal: qualquer
+ * ancestral até `root` com `[data-no-swipe]` (opt-out explícito, funciona
+ * sem cascata CSS) ou com scroll horizontal ativo (overflow-x auto/scroll
+ * com conteúdo transbordando). Evita roubar o gesto de carrosséis e
+ * trilhas de chips.
+ */
+export function startsInHorizontalZone(
+  el: HTMLElement | null,
+  root: HTMLElement | null,
+): boolean {
+  let node: HTMLElement | null = el;
+  while (node && node !== root) {
+    if (node.nodeType === 1) {
+      if (typeof node.hasAttribute === "function" && node.hasAttribute("data-no-swipe"))
+        return true;
+      const overflowX =
+        window.getComputedStyle(node).overflowX || node.style.overflowX;
+      if (
+        (overflowX === "auto" || overflowX === "scroll") &&
+        node.scrollWidth > node.clientWidth + 1
+      )
+        return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
 interface TouchMark {
   x: number;
   y: number;
   t: number;
+  el: HTMLElement | null;
 }
 
 export function SwipeNav({ children }: { children: ReactNode }) {
@@ -77,6 +117,9 @@ export function SwipeNav({ children }: { children: ReactNode }) {
   const touchRef = useRef<TouchMark | null>(null);
   const directionRef = useRef<1 | -1>(1);
   const mountedRef = useRef(false);
+  // Decidido no gesto: só anima a chegada quando o dispositivo permite
+  // movimento. Consumido uma vez pelo efeito de entrada abaixo.
+  const animateArrivalRef = useRef(true);
   // Refs evitam closures obsoletas nos handlers de touch (sincronizado
   // pós-commit; eventos de touch sempre disparam após o commit).
   const stateRef = useRef({ overlayOpen, sheetKind, pathname });
@@ -85,14 +128,19 @@ export function SwipeNav({ children }: { children: ReactNode }) {
   });
 
   // Animação de entrada a cada troca de rota (progressive enhancement).
+  // Sob prefers-reduced-motion a navegação já ocorreu instantaneamente via
+  // router.push — aqui só garantimos que nenhuma animação a acompanhe.
   useEffect(() => {
     if (!mountedRef.current) {
       mountedRef.current = true;
       return;
     }
-    if (prefersReducedMotion()) return;
+    const animateArrival = animateArrivalRef.current;
+    animateArrivalRef.current = true;
+    if (!animateArrival || prefersReducedMotion()) return;
     const el = wrapRef.current;
-    const animate = el?.animate?.bind(el);
+    if (!el) return;
+    const animate = el.animate?.bind(el);
     if (!animate) return;
     const fromX = directionRef.current < 0 ? "16px" : "-16px";
     animate(
@@ -102,7 +150,7 @@ export function SwipeNav({ children }: { children: ReactNode }) {
       ],
       {
         duration: SWIPE_ENTER_ANIMATION_MS,
-        easing: "cubic-bezier(.2,.8,.2,1)",
+        easing: enterEasing(el),
       },
     );
   }, [pathname]);
@@ -110,7 +158,12 @@ export function SwipeNav({ children }: { children: ReactNode }) {
   function onTouchStart(e: TouchEvent<HTMLDivElement>) {
     const t = e.changedTouches[0];
     if (!t) return;
-    touchRef.current = { x: t.clientX, y: t.clientY, t: performance.now() };
+    touchRef.current = {
+      x: t.clientX,
+      y: t.clientY,
+      t: performance.now(),
+      el: e.target as HTMLElement | null,
+    };
   }
 
   function onTouchEnd(e: TouchEvent<HTMLDivElement>) {
@@ -119,9 +172,9 @@ export function SwipeNav({ children }: { children: ReactNode }) {
     if (!start) return;
     const t = e.changedTouches[0];
     if (!t) return;
-    // Zonas opt-out (carrosséis, sliders, drawers internos).
-    const target = e.target as HTMLElement | null;
-    if (target?.closest?.("[data-no-swipe]")) return;
+    // Zonas de rolagem horizontal (carrosséis, trilhas de chips) e opt-out
+    // explícito: o gesto pertence ao scroller, nunca à navegação.
+    if (startsInHorizontalZone(start.el, wrapRef.current)) return;
     const { overlayOpen, sheetKind, pathname } = stateRef.current;
     if (overlayOpen || sheetKind !== null) return;
     if (wideViewport() || !coarsePointer()) return;
@@ -139,6 +192,9 @@ export function SwipeNav({ children }: { children: ReactNode }) {
     const dest = targetRouteForSwipe(pathname, dx);
     if (!dest) return;
     directionRef.current = dx < 0 ? 1 : -1;
+    // Navegação instantânea; a animação de entrada (quando permitida) é
+    // aplicada pelo efeito acima na página destino.
+    animateArrivalRef.current = !prefersReducedMotion();
     router.push(dest);
   }
 
