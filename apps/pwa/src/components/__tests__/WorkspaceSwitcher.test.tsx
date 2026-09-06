@@ -83,7 +83,7 @@ describe("WorkspaceSwitcher Component (Task 9)", () => {
     expect(screen.getByText("Não autorizado")).toBeInTheDocument();
   });
 
-  it("renders Offline alert when workspace loading fails due to network or backend unavailability", () => {
+  it("renders clear local-data copy (no bare Offline) when workspace loading fails due to network or backend unavailability", () => {
     mockContext.value = {
       ...mockContext.value,
       workspaces: [],
@@ -92,7 +92,8 @@ describe("WorkspaceSwitcher Component (Task 9)", () => {
     };
 
     render(<WorkspaceSwitcher />);
-    expect(screen.getByText("Offline")).toBeInTheDocument();
+    expect(screen.getByText("Sem conexão")).toBeInTheDocument();
+    expect(screen.getByTitle("Sem conexão – dados locais")).toBeInTheDocument();
     expect(screen.queryByText("Não autorizado")).not.toBeInTheDocument();
   });
 

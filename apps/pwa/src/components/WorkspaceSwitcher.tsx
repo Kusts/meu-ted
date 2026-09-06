@@ -124,9 +124,12 @@ export function WorkspaceSwitcher({
       );
     }
 
+    // A3: sem "Offline" solto (lê-se como "sem internet"). Copy clara de que
+    // são os dados locais do workspace que estão sendo exibidos.
     return (
       <div
         data-variant={variant}
+        title="Sem conexão – dados locais"
         className={`flex items-center gap-2 rounded-full border px-3 py-1.5 ${
           variant === "hero"
             ? "border-warning/40 bg-warning/20 text-warning"
@@ -135,8 +138,8 @@ export function WorkspaceSwitcher({
           compact ? "text-xs" : "text-sm"
         }`}
       >
-        <span className="h-2 w-2 rounded-full bg-warning" />
-        <span className="truncate">Offline</span>
+        <span className="h-2 w-2 flex-none rounded-full bg-text-muted" aria-hidden="true" />
+        <span className="truncate">Sem conexão</span>
       </div>
     );
   }
