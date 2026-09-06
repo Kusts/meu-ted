@@ -97,6 +97,14 @@ describe("PayablesPage", () => {
       expect(screen.getByText("Pagas")).toBeInTheDocument();
     });
 
+    it("marks the horizontal chip scroller as a swipe opt-out (v2 F1)", () => {
+      const { container } = render(<PayablesPage />);
+      const scroller = screen.getByText("Todas").closest("div.overflow-x-auto");
+      expect(scroller).toBeInTheDocument();
+      expect(scroller).toHaveAttribute("data-no-swipe");
+      expect(container.querySelectorAll("[data-no-swipe]").length).toBeGreaterThanOrEqual(1);
+    });
+
     it("shows grouped sections", () => {
       render(<PayablesPage />);
       expect(screen.getAllByText(/Vencidas/).length).toBeGreaterThanOrEqual(1);

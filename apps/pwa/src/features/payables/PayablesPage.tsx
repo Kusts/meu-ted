@@ -401,7 +401,7 @@ export default function PayablesPage() {
             </div>
           </div>
 
-          <div className="mb-4 flex gap-2 overflow-x-auto scrollbar-hide">
+          <div data-no-swipe className="mb-4 flex gap-2 overflow-x-auto scrollbar-hide">
             {filterChips.map((chip) => (
               <button key={chip.key} onClick={() => setStatusFilter(chip.key === statusFilter ? "all" : chip.key)}
                 className={`flex-none rounded-full px-4 py-2 text-[12px] font-bold transition-all ${statusFilter === chip.key ? "bg-primary text-white shadow-xs" : "bg-surface-1 border border-border-subtle text-text-secondary hover:bg-surface-2"}`}
