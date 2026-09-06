@@ -64,6 +64,22 @@ const start = async (): Promise<void> => {
 
   if (cfg.databaseUrl) {
     const pool = createPool({ connectionString: cfg.databaseUrl });
+    // Migrations must complete BEFORE createBetterAuth: better-auth performs
+    // a schema check at boot and caches the verdict, so migrating afterwards
+    // leaves a pre-migration mismatch cached until a manual restart.
+    const isLegacySchema = process.env.DB_SCHEMA === "legacy";
+    const migrationResult = await runMigrations(pool, isLegacySchema);
+    if (isLegacySchema) {
+      app.log.info(
+        { legacyMigrations: migrationResult.applied },
+        "legacy-safe migrations applied",
+      );
+    } else {
+      app.log.info(
+        { database: "postgres", appliedMigrations: migrationResult.applied },
+        "using postgres stores",
+      );
+    }
     const { createPostgresInviteSignupGuard } = await import("../auth/invite-signup-guard.js");
     const inviteSignupGuard = createPostgresInviteSignupGuard(pool);
     const auth = createBetterAuth({
@@ -113,11 +129,6 @@ const start = async (): Promise<void> => {
 
     if (process.env.DB_SCHEMA === "legacy") {
       app.log.info("using legacy pi_financeiro schema adapters");
-      const result = await runMigrations(pool, true);
-      app.log.info(
-        { legacyMigrations: result.applied },
-        "legacy-safe migrations applied",
-      );
       const store = createLegacyPostgresReadModelStore({ pool });
       const writes = createLegacyPostgresWriteStore({ pool });
       const tokenStore = createPostgresDeviceTokenStore(pool);
@@ -206,11 +217,6 @@ const start = async (): Promise<void> => {
         ...(pushDelivery ? { pushDelivery } : {}),
       });
     } else {
-      const result = await runMigrations(pool);
-      app.log.info(
-        { database: "postgres", appliedMigrations: result.applied },
-        "using postgres stores",
-      );
       const store = createPostgresReadModelStore({ pool });
       const writes = createPostgresWriteStore({ pool });
       const tokenStore = createPostgresDeviceTokenStore(pool);
