@@ -124,7 +124,10 @@ function isRscRequest(url: URL): boolean {
 }
 
 async function offlineShellResponse(): Promise<Response> {
-  const cached = await caches.match(OFFLINE_HTML);
+  // Precache entries carry real sha256 revisions (P1-6), so Serwist stores
+  // them under revisioned keys (`URL?__WB_REVISION__=<rev>`). A bare
+  // caches.match misses them — ignoreSearch resolves the revisioned entry.
+  const cached = await caches.match(OFFLINE_HTML, { ignoreSearch: true });
   if (cached) return cached;
   return new Response("Offline", {
     status: 503,

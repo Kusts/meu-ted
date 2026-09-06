@@ -27,9 +27,13 @@ test.describe("Offline Routes", () => {
     const cacheNames = await page.evaluate(async () => caches.keys());
     expect(cacheNames.some((name) => name.startsWith("serwist-precache"))).toBe(true);
 
-    // 2) offline-shell.html must be cached (in any cache)
+    // 2) offline-shell.html must be cached (in any cache).
+    // Serwist keys precached entries by revision
+    // (`URL?__WB_REVISION__=<rev>`, see SHELL_PRECACHE_ENTRIES in src/sw.ts),
+    // so an exact-URL match misses by design — ignoreSearch asserts the real
+    // contract ("the shell is cached and servable"), not the key format.
     const offlineShellCached = await page.evaluate(
-      async () => Boolean(await caches.match("/offline-shell.html")),
+      async () => Boolean(await caches.match("/offline-shell.html", { ignoreSearch: true })),
     );
     expect(offlineShellCached).toBe(true);
 
