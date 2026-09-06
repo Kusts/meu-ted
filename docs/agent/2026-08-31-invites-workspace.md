@@ -140,8 +140,13 @@ todos os dados do workspace persistam e sejam visíveis para **todas as contas**
 - **Config a aplicar na VPS**: SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, SMTP_USER/SMTP_FROM=walissonead@gmail.com,
   SMTP_PASS=<App Password no .env da VPS, NUNCA commitar>, SMTP_SECURE=false, INVITE_ACCEPT_URL=https://pi-finance-pwa.walissonead.workers.dev/convite.
 - **Mecanismo de release da API (descoberto)**: source standalone em `~/infra/pi-finance-api/app`
-  (`WORKDIR /app`, pnpm-lock na raiz), imagem `pi-finance-api:release-<hash>` → tag `:main` → compose up.
+  (`WORKDIR /app`), imagem `pi-finance-api:release-<hash>` → tag `:main` → compose up.
   Não há script de release; processo manual: sync apps/api → app/, docker build, tag, restart, healthcheck.
+  Arquivos sincronizados (mesmos nomes, sem renomear): `Dockerfile` (cópia de
+  `apps/api/Dockerfile.vps-standalone`), `package.json`, `pnpm-lock.standalone.yaml`,
+  `pnpm-workspace.yaml`, `packages/llm-contracts/`, `src/`, `tests/`, `scripts/`,
+  `tsconfig*.json`, demais arquivos de `apps/api/` exceto `node_modules/`/`dist/` —
+  o Dockerfile mapeia `pnpm-lock.standalone.yaml` para `./pnpm-lock.yaml` dentro da imagem.
 - **PWA**: deploy automático via Cloudflare Pages (auto-deploy main) — rota /convite entra com o push.
 
 ## Release em produção — VALIDADO (2026-09-01, commit f7488d0)

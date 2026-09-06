@@ -16,7 +16,9 @@
 # in package.json) is still required: a fresh standalone lockfile resolves
 # ranges anew, so frozen alone would just freeze whatever is newest.
 # Sync note: `pnpm-lock.standalone.yaml` lives next to this file in git and
-# must be synced to the staging dir renamed as `pnpm-lock.yaml`.
+# is synced to the staging dir UNDER THE SAME NAME (no rename at sync time);
+# the COPY below maps it to `./pnpm-lock.yaml` inside the image, so Dockerfile
+# and staging context coincide by construction.
 #
 # Differs from apps/api/Dockerfile, which builds from the monorepo root.
 # The workspace wrapper exists so the `workspace:*` dependency on
