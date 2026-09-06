@@ -30,13 +30,13 @@ describe('Fase 2 item 8 — dynamic relay allowlist (RED)', () => {
 
   it('passes a DB-enabled model and blocks a disabled one', async () => {
     const store = createInMemoryLlmConfigStore();
-    await store.setProviderEnabled('openai-api', true);
+    await store.setProviderEnabled('opencode-zen', true);
     const on = await store.upsertModel({
-      providerId: 'openai-api', modelId: 'db-on', protocol: 'chat-completions', privacyClass: 'training_prohibited', enabled: true,
+      providerId: 'opencode-zen', modelId: 'db-on', protocol: 'chat-completions', privacyClass: 'training_prohibited', enabled: true,
     });
     await store.setModelEnabled(on.id, true);
     await store.upsertModel({
-      providerId: 'openai-api', modelId: 'db-off', protocol: 'chat-completions', privacyClass: 'training_prohibited', enabled: false,
+      providerId: 'opencode-zen', modelId: 'db-off', protocol: 'chat-completions', privacyClass: 'training_prohibited', enabled: false,
     });
     registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, llmConfigStore: store });
     await app.ready();
@@ -91,9 +91,9 @@ describe('Fase 2 item 8 — dynamic relay allowlist (RED)', () => {
 
   it('caches the DB list and refetches after TTL expiry', async () => {
     const store = createInMemoryLlmConfigStore();
-    await store.setProviderEnabled('openai-api', true);
+    await store.setProviderEnabled('opencode-zen', true);
     const m = await store.upsertModel({
-      providerId: 'openai-api', modelId: 'cached-model', protocol: 'chat-completions', privacyClass: 'training_prohibited', enabled: true,
+      providerId: 'opencode-zen', modelId: 'cached-model', protocol: 'chat-completions', privacyClass: 'training_prohibited', enabled: true,
     });
     await store.setModelEnabled(m.id, true);
     let now = 1_000_000;
@@ -240,4 +240,43 @@ describe('Fase 2 item 8 — dynamic relay allowlist (RED)', () => {
     expect(res.json()).toMatchObject({ code: 'agent.provider_timeout' });
     expect(elapsedMs).toBeLessThan(360);
   }, 15_000);
+
+  it('allowlist preserves the (provider, model) pair: same modelId under a disabled provider is 403 (Fase 3-FIX R7-rev)', async () => {
+    const store = createInMemoryLlmConfigStore();
+    for (const [id, kind, alias] of [
+      ['opencode-zen', 'opencode-zen', 'OPENCODE_ZEN_API_KEY'],
+      ['opencode-go', 'opencode-go', 'OPENCODE_GO_API_KEY'],
+    ] as const) {
+      await store.upsertProvider({
+        id, kind, transport: 'direct', authMode: 'api-key', secretAlias: alias, eligibility: 'approved',
+      });
+      await store.setProviderEnabled(id, true);
+      const m = await store.upsertModel({
+        providerId: id, modelId: 'shared-model', protocol: 'chat-completions',
+        privacyClass: 'training_prohibited', enabled: true,
+      });
+      await store.setModelEnabled(m.id, true);
+    }
+    // The opencode-go provider goes down: its (go, shared-model) pair must
+    // stop being relayable while (zen, shared-model) keeps working.
+    await store.setProviderEnabled('opencode-go', false);
+    registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, llmConfigStore: store });
+    await app.ready();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(upstreamOk()));
+
+    const zen = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-zen', model: 'shared-model', prompt: 'hi' },
+    });
+    expect(zen.statusCode).toBe(200);
+
+    const go = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-go', model: 'shared-model', prompt: 'hi' },
+    });
+    expect(go.statusCode).toBe(403);
+    expect(go.json()).toMatchObject({ code: 'agent.model_not_allowlisted' });
+    // Only the allowlisted pair reached the upstream.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
 });

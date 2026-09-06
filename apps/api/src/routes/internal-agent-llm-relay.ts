@@ -45,6 +45,11 @@ export interface RelayModelSource {
  * model is enabled AND its provider exists, is enabled and has an
  * executable kind — a disabled model or provider is never relayable.
  * A failing store does NOT fall back silently (see route handler: 503).
+ *
+ * Fase 3-FIX R7-rev: DB entries are keyed as `providerId:modelId` pairs so
+ * the request provider is honored — the same model name under another
+ * provider does not inherit allowlisting. Env/default entries are bare
+ * names (no provider to pair with) and keep matching by name.
  */
 export const createRelayModelResolver = (deps: {
   store?: RelayModelSource;
@@ -69,7 +74,9 @@ export const createRelayModelResolver = (deps: {
         cache = {
           at: now(),
           models: new Set(
-            models.filter((m) => m.enabled && usableProviders.has(m.providerId)).map((m) => m.modelId),
+            models
+              .filter((m) => m.enabled && usableProviders.has(m.providerId))
+              .map((m) => `${m.providerId}:${m.modelId}`),
           ),
         };
       }
@@ -123,7 +130,11 @@ export const registerAgentLlmRelayRoutes = (
         message: 'Allowlist do relay indisponível (store de configuração inacessível).',
       });
     }
-    if (!allowedModels.has(model)) {
+    // Fase 3-FIX R7-rev: the request provider scopes the allowlist — a DB
+    // pair matches only as `providerId:modelId`, while env/default bare
+    // names keep matching by name. A provider absent from the allowlist
+    // (or disabled upstream of it) is 403, never borrowed from a sibling.
+    if (!allowedModels.has(`${provider}:${model}`) && !allowedModels.has(model)) {
       return reply.code(403).send({ code: 'agent.model_not_allowlisted', message: 'Modelo não permitido no relay.' });
     }
 
