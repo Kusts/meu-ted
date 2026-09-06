@@ -3,9 +3,18 @@
 import { useState } from "react";
 import { TedChat } from "./TedChat";
 import { Sparkles } from "lucide-react";
+import { useIsOverlayOpen } from "@/lib/ui/overlay-a11y";
 
 export function TedChatLauncher() {
   const [open, setOpen] = useState(false);
+  // A1: hide the FAB while any overlay (sheet/dialog/confirm) is open so it
+  // never renders above — or below but visually clashing with — overlay
+  // content. Also hidden while its own chat is open.
+  const overlayOpen = useIsOverlayOpen();
+
+  if (overlayOpen || open) {
+    return <TedChat open={open} onClose={() => setOpen(false)} />;
+  }
 
   return (
     <>

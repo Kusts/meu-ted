@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@/lib/test-utils";
+import { describe, expect, it, vi, afterEach } from "vitest";
+import { render, screen, act } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import { TedChatLauncher } from "@/features/ted/TedChatLauncher";
+import {
+  acquireBodyScrollLock,
+  releaseBodyScrollLock,
+  bodyScrollLockCount,
+} from "@/lib/ui/overlay-a11y";
 import * as agentAuth from "@/lib/api/agent-auth";
 import * as agentClient from "@/lib/api/agent-client";
 
@@ -46,5 +51,39 @@ describe("TedChatLauncher Component (Task 10)", () => {
     // Click launcher
     await user.click(launcher);
     expect(await screen.findByRole("dialog", { name: /chat com ted/i })).toBeInTheDocument();
+  });
+
+  describe("overlay hiding (v2 A1)", () => {
+    afterEach(() => {
+      while (bodyScrollLockCount() > 0) releaseBodyScrollLock();
+    });
+
+    it("hides the FAB while an overlay holds the lock and restores it after", async () => {
+      render(<TedChatLauncher />);
+      expect(screen.getByRole("button", { name: /abrir assistente ted/i })).toBeInTheDocument();
+
+      await act(async () => {
+        acquireBodyScrollLock();
+      });
+      expect(screen.queryByRole("button", { name: /abrir assistente ted/i })).not.toBeInTheDocument();
+
+      await act(async () => {
+        releaseBodyScrollLock();
+      });
+      expect(screen.getByRole("button", { name: /abrir assistente ted/i })).toBeInTheDocument();
+    });
+
+    it("hides the FAB while its own chat is open", async () => {
+      const user = userEvent.setup();
+
+      vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("mock-token");
+      vi.spyOn(agentClient, "fetchAgentHistory").mockResolvedValue([]);
+      vi.spyOn(agentClient, "fetchPendingOperations").mockResolvedValue([]);
+
+      render(<TedChatLauncher />);
+      await user.click(screen.getByRole("button", { name: /abrir assistente ted/i }));
+      expect(await screen.findByRole("dialog", { name: /chat com ted/i })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /abrir assistente ted/i })).not.toBeInTheDocument();
+    });
   });
 });
