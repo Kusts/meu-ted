@@ -27,9 +27,11 @@
 -- blocked by eligibility=experimental_blocked and the agent documents it as
 -- registry-unsupported (private-broker transport, no direct execution path).
 --
--- PREFLIGHT (idempotent, runs first): orphan runtime/fallback references are
--- nulled so the new FKs validate. The active pair is nulled together to
--- respect the active_pair CHECK from V034.
+-- PREFLIGHT (idempotent, runs first): each pair (active, fallback) is kept
+-- only if BOTH sides exist AND the model belongs to the provider;
+-- otherwise BOTH are nulled (active_pair CHECK needs joint NULLs, and a
+-- half fallback pair is partial state). This cleans orphans AND cross-pairs
+-- so the new FKs validate. Re-running matches zero rows by construction.
 --
 -- OPERATIONAL ROLLBACK (forward-only runner, no down migrations):
 --   1. Restore agent_llm_runtime_config nulled references from the pre-deploy
@@ -45,26 +47,37 @@
 --   4. Roll back application code to the pre-V042 release first; constraints
 --      second. Never roll back schema while new code is serving traffic.
 
--- (1) Preflight: null orphan references (idempotent).
+-- (1) Preflight: pair-wise backfill (idempotent — clean rows match nothing).
+-- A pair is valid only if BOTH sides exist AND the model belongs to the
+-- provider; anything else is nulled TOGETHER (active_pair CHECK needs both
+-- NULL, and a half fallback pair is partial state). This covers orphans
+-- AND cross-pairs (existing-but-mismatched), which per-column nulling
+-- would leave behind.
 UPDATE agent_llm_runtime_config SET provider_id = NULL, model_id = NULL
 WHERE singleton = 'active'
-  AND (
-    (provider_id IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM agent_llm_providers p WHERE p.id = agent_llm_runtime_config.provider_id))
-    OR
-    (model_id IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM agent_llm_models m WHERE m.id = agent_llm_runtime_config.model_id))
+  AND (provider_id IS NOT NULL OR model_id IS NOT NULL)
+  AND NOT (
+    provider_id IS NOT NULL AND model_id IS NOT NULL
+    AND EXISTS (SELECT 1 FROM agent_llm_providers p WHERE p.id = agent_llm_runtime_config.provider_id)
+    AND EXISTS (
+      SELECT 1 FROM agent_llm_models m
+      WHERE m.id = agent_llm_runtime_config.model_id
+        AND m.provider_id = agent_llm_runtime_config.provider_id
+    )
   );
 
-UPDATE agent_llm_runtime_config SET fallback_provider_id = NULL
+UPDATE agent_llm_runtime_config SET fallback_provider_id = NULL, fallback_model_id = NULL
 WHERE singleton = 'active'
-  AND fallback_provider_id IS NOT NULL
-  AND NOT EXISTS (SELECT 1 FROM agent_llm_providers p WHERE p.id = agent_llm_runtime_config.fallback_provider_id);
-
-UPDATE agent_llm_runtime_config SET fallback_model_id = NULL
-WHERE singleton = 'active'
-  AND fallback_model_id IS NOT NULL
-  AND NOT EXISTS (SELECT 1 FROM agent_llm_models m WHERE m.id = agent_llm_runtime_config.fallback_model_id);
+  AND (fallback_provider_id IS NOT NULL OR fallback_model_id IS NOT NULL)
+  AND NOT (
+    fallback_provider_id IS NOT NULL AND fallback_model_id IS NOT NULL
+    AND EXISTS (SELECT 1 FROM agent_llm_providers p WHERE p.id = agent_llm_runtime_config.fallback_provider_id)
+    AND EXISTS (
+      SELECT 1 FROM agent_llm_models m
+      WHERE m.id = agent_llm_runtime_config.fallback_model_id
+        AND m.provider_id = agent_llm_runtime_config.fallback_provider_id
+    )
+  );
 
 -- (2) Replace the anonymous V034 column CHECKs with named, widened ones.
 ALTER TABLE agent_llm_providers DROP CONSTRAINT IF EXISTS agent_llm_providers_kind_check;
