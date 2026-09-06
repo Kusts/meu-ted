@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useIsOverlayOpen } from "./overlay-a11y";
+import { haptic } from "./haptics";
 import { useSheet } from "@/lib/sheet-context";
 
 /**
@@ -116,19 +117,6 @@ export function usePullToRefresh({
     }
   }, []);
 
-  const vibrate = useCallback((pattern: number) => {
-    try {
-      if (
-        typeof navigator !== "undefined" &&
-        typeof navigator.vibrate === "function"
-      ) {
-        navigator.vibrate(pattern);
-      }
-    } catch {
-      // Haptics é best-effort (desktop/sem API).
-    }
-  }, []);
-
   useEffect(() => {
     function eligible(): boolean {
       const { enabled, overlayOpen, sheetKind } = liveRef.current;
@@ -185,9 +173,10 @@ export function usePullToRefresh({
       setPullDistance(damped);
       if (damped >= PULL_THRESHOLD_PX) {
         if (!armedRef.current) {
-          // Threshold cruzado: micro-haptic único + trava o rubber-band.
+          // Threshold cruzado: micro-haptic único (haptic util já respeita
+          // reduced-motion) + trava o rubber-band.
           armedRef.current = true;
-          vibrate(PULL_HAPTIC_MS);
+          haptic(PULL_HAPTIC_MS);
         }
         // Só aqui passamos a prevenir: contém o rubber-band durante o pull.
         if (e.cancelable) e.preventDefault();
@@ -241,7 +230,7 @@ export function usePullToRefresh({
       window.removeEventListener("touchcancel", onTouchCancel);
       restoreOverscroll();
     };
-  }, [restoreOverscroll, lockOverscroll, vibrate]);
+  }, [restoreOverscroll, lockOverscroll]);
 
   return { pullDistance, isRefreshing, refreshing: isRefreshing };
 }

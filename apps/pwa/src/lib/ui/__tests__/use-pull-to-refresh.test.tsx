@@ -234,8 +234,14 @@ describe("usePullToRefresh (v2 F4, spec AGY §3)", () => {
     expect(onRefresh).not.toHaveBeenCalled();
   });
 
-  it("dispara sob reduced-motion (contrato: atualiza, sem animar)", async () => {
+  it("dispara sob reduced-motion (contrato: atualiza, sem animar nem vibrar)", async () => {
     reduceMotion = true;
+    const vibrate = vi.fn().mockReturnValue(true);
+    Object.defineProperty(window.navigator, "vibrate", {
+      writable: true,
+      configurable: true,
+      value: vibrate,
+    });
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     renderHook(() => usePullToRefresh({ onRefresh }));
 
@@ -244,6 +250,7 @@ describe("usePullToRefresh (v2 F4, spec AGY §3)", () => {
       touch("touchend");
     });
     expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(vibrate).not.toHaveBeenCalled();
   });
 
   it("emite o micro-haptic uma vez ao cruzar o threshold", async () => {
