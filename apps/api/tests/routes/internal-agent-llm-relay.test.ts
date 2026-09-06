@@ -114,4 +114,61 @@ describe('Fase 2 item 8 — dynamic relay allowlist (RED)', () => {
     expect((await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload })).statusCode).toBe(200);
     expect(listSpy).toHaveBeenCalledTimes(2);
   });
+
+  it('clears its timer when the upstream request fails (Fase 3 item 1)', async () => {
+    registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY });
+    await app.ready();
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    try {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('fetch failed'));
+      const res = await app.inject({
+        method: 'POST', url: '/internal/agent/llm-relay', headers,
+        payload: { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' },
+      });
+      expect(res.statusCode).toBe(504);
+      expect(clearSpy).toHaveBeenCalled();
+    } finally {
+      clearSpy.mockRestore();
+    }
+  });
+
+  it('aborts hung upstream headers within the request timeout (Fase 3 item 1)', async () => {
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, requestTimeoutMs: 50,
+    });
+    await app.ready();
+    // Hanging fetch that honors abort like the real one.
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+          );
+        }),
+    );
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' },
+    });
+    expect(res.statusCode).toBe(504);
+    expect(res.json()).toMatchObject({ code: 'agent.provider_timeout' });
+  }, 10_000);
+
+  it('aborts a slow upstream body within the request timeout (Fase 3 item 1)', async () => {
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, requestTimeoutMs: 50,
+    });
+    await app.ready();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => new Promise(() => {}),
+    } as unknown as Response);
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' },
+    });
+    expect(res.statusCode).toBe(504);
+    expect(res.json()).toMatchObject({ code: 'agent.provider_timeout' });
+  }, 10_000);
 });
