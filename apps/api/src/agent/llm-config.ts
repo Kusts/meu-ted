@@ -131,3 +131,20 @@ export const canActivate = (
   if (!ALLOWED_PROTOCOLS.includes(model.protocol)) return 'invalid model protocol';
   return null;
 };
+
+/**
+ * Fase 1b-FIX item 6: validates a runtime pair (active or fallback) as a
+ * whole. Both null clears the pair; anything else must resolve to an
+ * existing, enabled, approved, executable, correctly-owned pair.
+ */
+export const validateRuntimePair = (
+  provider: LlmProvider | undefined | null,
+  model: LlmModel | undefined | null,
+): string | null => {
+  if (provider === null && model === null) return null;
+  if (provider === undefined && model === undefined) return null;
+  const err = canActivate(provider ?? undefined, model ?? undefined);
+  if (err) return err;
+  if (model!.providerId !== provider!.id) return 'model does not belong to provider';
+  return null;
+};

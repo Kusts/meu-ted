@@ -376,11 +376,21 @@ describe('In-Memory LLM Config Store', () => {
 
   it('updates runtime with optimistic concurrency (version compare-and-swap)', async () => {
     const store = createInMemoryLlmConfigStore();
+    // updateRuntime revalidates pairs (Fase 1b-FIX item 6): seed an enabled pair first.
+    await store.setProviderEnabled('openai-api', true);
+    const seedModel = await store.upsertModel({
+      providerId: 'openai-api',
+      modelId: 'gpt-4o',
+      protocol: 'chat-completions',
+      privacyClass: 'training_prohibited',
+      enabled: true,
+    });
+    await store.setModelEnabled(seedModel.id, true);
     const r1 = await store.getRuntime();
 
     const updated = await store.updateRuntime({
       providerId: 'openai-api',
-      modelId: 'openai-api:gpt-4o',
+      modelId: seedModel.id,
       rolloutMode: 'canary',
       canaryAllowlist: ['ws-1'],
       expectedVersion: r1.version,

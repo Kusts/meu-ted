@@ -28,6 +28,23 @@ const kindUnsupported = (reply: FastifyReply, kind: string) =>
     reason: `provider kind ${kind} is not executable by the agent runtime`,
   });
 
+/** Maps store write errors (version conflict, revalidation) to HTTP. */
+const mapRuntimeWriteError = (reply: FastifyReply, err: unknown) => {
+  const e = err as { statusCode?: number; code?: string; reason?: string; message?: string };
+  if (
+    (e?.code === 'agent.activation_blocked' ||
+      e?.code === 'agent.version_conflict' ||
+      e?.code === 'agent.runtime_in_use') &&
+    typeof e?.statusCode === 'number'
+  ) {
+    const body: Record<string, unknown> = { code: e.code };
+    if (e.reason !== undefined) body['reason'] = e.reason;
+    if (e.message) body['message'] = e.message;
+    return reply.code(e.statusCode).send(body);
+  }
+  throw err;
+};
+
 export interface AdminAgentLlmConfigDeps {
   auth: BetterAuth;
   store: LlmConfigStore;
@@ -269,14 +286,18 @@ export const registerAdminAgentLlmConfigRoutes = (
     }
 
     const session = (req as unknown as { _session: { email: string } })._session;
-    const runtime = await deps.store.updateRuntime({
-      providerId,
-      modelId: model!.id,
-      rolloutMode: rolloutMode ?? 'disabled',
-      expectedVersion,
-      updatedBy: session.email,
-    });
-    return reply.send({ runtime: toAdminRuntimeDto(runtime, models) });
+    try {
+      const runtime = await deps.store.updateRuntime({
+        providerId,
+        modelId: model!.id,
+        rolloutMode: rolloutMode ?? 'disabled',
+        expectedVersion,
+        updatedBy: session.email,
+      });
+      return reply.send({ runtime: toAdminRuntimeDto(runtime, models) });
+    } catch (err) {
+      return mapRuntimeWriteError(reply, err);
+    }
   });
 
   // POST /admin/agent/llm-config/rollout - Change rollout mode or canary allowlist
@@ -292,16 +313,20 @@ export const registerAdminAgentLlmConfigRoutes = (
       return reply.code(409).send({ code: 'agent.version_conflict', message: 'Conflito de versão de configuração' });
     }
     const session = (req as unknown as { _session: { email: string } })._session;
-    const updated = await deps.store.updateRuntime({
-      providerId: runtime.providerId,
-      modelId: runtime.modelId,
-      ...(rolloutMode ? { rolloutMode } : {}),
-      ...(canaryAllowlist ? { canaryAllowlist } : {}),
-      expectedVersion,
-      updatedBy: session.email,
-    });
-    const models = await deps.store.listModels();
-    return reply.send({ runtime: toAdminRuntimeDto(updated, models) });
+    try {
+      const updated = await deps.store.updateRuntime({
+        providerId: runtime.providerId,
+        modelId: runtime.modelId,
+        ...(rolloutMode ? { rolloutMode } : {}),
+        ...(canaryAllowlist ? { canaryAllowlist } : {}),
+        expectedVersion,
+        updatedBy: session.email,
+      });
+      const models = await deps.store.listModels();
+      return reply.send({ runtime: toAdminRuntimeDto(updated, models) });
+    } catch (err) {
+      return mapRuntimeWriteError(reply, err);
+    }
   });
 
   // POST /admin/agent/llm-config/security-epoch - Increment security epoch for emergency revocation
@@ -492,16 +517,20 @@ export const registerAdminAgentLlmConfigRoutes = (
       const found = models.find((m) => m.id === modelId || (m.providerId === providerId && m.modelId === modelId));
       fallbackModelId = found ? found.id : modelId;
     }
-    const updated = await deps.store.updateRuntime({
-      providerId: runtime.providerId,
-      modelId: runtime.modelId,
-      fallbackProviderId: providerId,
-      fallbackModelId: fallbackModelId,
-      expectedVersion,
-      updatedBy: session.email,
-    });
-    const modelsAfter = await deps.store.listModels();
-    return reply.send({ ok: true, runtime: toAdminRuntimeDto(updated, modelsAfter) });
+    try {
+      const updated = await deps.store.updateRuntime({
+        providerId: runtime.providerId,
+        modelId: runtime.modelId,
+        fallbackProviderId: providerId,
+        fallbackModelId: fallbackModelId,
+        expectedVersion,
+        updatedBy: session.email,
+      });
+      const modelsAfter = await deps.store.listModels();
+      return reply.send({ ok: true, runtime: toAdminRuntimeDto(updated, modelsAfter) });
+    } catch (err) {
+      return mapRuntimeWriteError(reply, err);
+    }
   });
 
   // POST /admin/agent/llm-config/test-connection - Test provider connection (sanitized response)

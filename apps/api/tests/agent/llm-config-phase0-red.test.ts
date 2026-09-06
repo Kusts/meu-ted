@@ -13,9 +13,29 @@ describe('Phase0 RED: updateRuntime SAVEPOINT (B-H8)', () => {
     const mockPool: any = {
       connect: vi.fn().mockResolvedValue(mockClient),
     };
+    const providerRow = {
+      id: 'openai-api',
+      kind: 'openai-api',
+      transport: 'direct',
+      auth_mode: 'api-key',
+      secret_alias: 'OPENAI_API_KEY',
+      enabled: true,
+      eligibility: 'approved',
+      runtime_status: 'ready',
+    };
+    const modelRow = {
+      id: 'openai-api:gpt-4o',
+      provider_id: 'openai-api',
+      model_id: 'gpt-4o',
+      protocol: 'chat-completions',
+      privacy_class: 'training_prohibited',
+      enabled: true,
+    };
     mockClient.query
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ version: 1 }] }) // SELECT version
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ version: 1 }] }) // SELECT runtime
+      .mockResolvedValueOnce({ rowCount: 1, rows: [providerRow] }) // revalidate provider (item 6)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [modelRow] }) // revalidate model (item 6)
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // SAVEPOINT
       .mockRejectedValueOnce(Object.assign(new Error('deadlock'), { code: '40P01' })) // UPDATE fallback throws 40P01
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // ROLLBACK (outer catch)
@@ -46,9 +66,29 @@ describe('Phase0 RED: updateRuntime SAVEPOINT (B-H8)', () => {
     const mockPool: any = {
       connect: vi.fn().mockResolvedValue(mockClient),
     };
+    const providerRow = {
+      id: 'openai-api',
+      kind: 'openai-api',
+      transport: 'direct',
+      auth_mode: 'api-key',
+      secret_alias: 'OPENAI_API_KEY',
+      enabled: true,
+      eligibility: 'approved',
+      runtime_status: 'ready',
+    };
+    const modelRow = {
+      id: 'openai-api:gpt-4o',
+      provider_id: 'openai-api',
+      model_id: 'gpt-4o',
+      protocol: 'chat-completions',
+      privacy_class: 'training_prohibited',
+      enabled: true,
+    };
     mockClient.query
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ version: 1 }] }) // SELECT version
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ version: 1 }] }) // SELECT runtime
+      .mockResolvedValueOnce({ rowCount: 1, rows: [providerRow] }) // revalidate provider (item 6)
+      .mockResolvedValueOnce({ rowCount: 1, rows: [modelRow] }) // revalidate model (item 6)
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // SAVEPOINT
       .mockRejectedValueOnce(Object.assign(new Error('undefined column'), { code: '42703' })) // UPDATE fallback
       .mockResolvedValueOnce({ rowCount: 1, rows: [] }) // ROLLBACK TO SAVEPOINT

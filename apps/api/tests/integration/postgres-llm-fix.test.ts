@@ -287,6 +287,133 @@ describe('Postgres LLM pre-V042 legacy base (item 5)', () => {
   });
 });
 
+  itIfDatabase('item 6: activation target disabled between version read and commit is rejected on Postgres', async () => {
+    if (!pool) throw new Error('database pool not initialized');
+    await resetLlmTables();
+    const store = createPostgresLlmConfigStore(pool);
+    await store.upsertProvider({
+      id: 'openai-api',
+      kind: 'openai-api',
+      transport: 'direct',
+      authMode: 'api-key',
+      secretAlias: 'OPENAI_API_KEY',
+      enabled: true,
+      eligibility: 'approved',
+    });
+    const modelA = await store.upsertModel({
+      providerId: 'openai-api',
+      modelId: 'race-a',
+      protocol: 'chat-completions',
+      privacyClass: 'training_prohibited',
+      enabled: true,
+    });
+    let rt = await store.getRuntime();
+    rt = await store.updateRuntime({
+      providerId: 'openai-api',
+      modelId: modelA.id,
+      expectedVersion: rt.version,
+      updatedBy: 'fix@test.com',
+    });
+    await store.upsertProvider({
+      id: 'opencode-zen',
+      kind: 'opencode-zen',
+      transport: 'direct',
+      authMode: 'api-key',
+      secretAlias: 'OPENCODE_ZEN_API_KEY',
+      enabled: true,
+      eligibility: 'approved',
+    });
+    const target = await store.upsertModel({
+      providerId: 'opencode-zen',
+      modelId: 'race-target',
+      protocol: 'chat-completions',
+      privacyClass: 'training_prohibited',
+      enabled: true,
+    });
+    const readVersion = (await store.getRuntime()).version;
+    // A concurrent toggle wins the race: target disabled, version untouched.
+    await store.setProviderEnabled('opencode-zen', false);
+    await expect(
+      store.updateRuntime({
+        providerId: 'opencode-zen',
+        modelId: target.id,
+        expectedVersion: readVersion,
+        updatedBy: 'fix@test.com',
+      }),
+    ).rejects.toMatchObject({ statusCode: 422, code: 'agent.activation_blocked' });
+    const after = await store.getRuntime();
+    expect(after.providerId).toBe('openai-api');
+    expect(after.modelId).toBe(modelA.id);
+    expect(after.version).toBe(readVersion);
+  });
+
+  itIfDatabase('item 6: concurrent activate and toggle-off-target never reference a disabled pair', async () => {
+    if (!pool) throw new Error('database pool not initialized');
+    await resetLlmTables();
+    const store = createPostgresLlmConfigStore(pool);
+    await store.upsertProvider({
+      id: 'openai-api',
+      kind: 'openai-api',
+      transport: 'direct',
+      authMode: 'api-key',
+      secretAlias: 'OPENAI_API_KEY',
+      enabled: true,
+      eligibility: 'approved',
+    });
+    const modelA = await store.upsertModel({
+      providerId: 'openai-api',
+      modelId: 'crace-a',
+      protocol: 'chat-completions',
+      privacyClass: 'training_prohibited',
+      enabled: true,
+    });
+    let rt = await store.getRuntime();
+    rt = await store.updateRuntime({
+      providerId: 'openai-api',
+      modelId: modelA.id,
+      expectedVersion: rt.version,
+      updatedBy: 'fix@test.com',
+    });
+    await store.upsertProvider({
+      id: 'opencode-zen',
+      kind: 'opencode-zen',
+      transport: 'direct',
+      authMode: 'api-key',
+      secretAlias: 'OPENCODE_ZEN_API_KEY',
+      enabled: true,
+      eligibility: 'approved',
+    });
+    const modelB = await store.upsertModel({
+      providerId: 'opencode-zen',
+      modelId: 'crace-b',
+      protocol: 'chat-completions',
+      privacyClass: 'training_prohibited',
+      enabled: true,
+    });
+    const settled = await Promise.allSettled([
+      store.updateRuntime({
+        providerId: 'opencode-zen',
+        modelId: modelB.id,
+        expectedVersion: rt.version,
+        updatedBy: 'fix@test.com',
+      }),
+      store.setProviderEnabled('opencode-zen', false),
+    ]);
+    for (const s of settled) {
+      if (s.status === 'rejected') {
+        const err = s.reason as { statusCode?: number; code?: string };
+        expect([409, 422]).toContain(err.statusCode);
+        expect(['agent.runtime_in_use', 'agent.version_conflict', 'agent.activation_blocked']).toContain(err.code);
+      }
+    }
+    const [finalRuntime, providers] = await Promise.all([store.getRuntime(), store.listProviders()]);
+    for (const p of providers) {
+      if (p.id === finalRuntime.providerId || p.id === finalRuntime.fallbackProviderId) {
+        expect(p.enabled).toBe(true);
+      }
+    }
+  });
+
   itIfDatabase('D1: raw DELETE of the fallback provider is rejected (NO ACTION, 23503)', async () => {
     if (!pool) throw new Error('database pool not initialized');
     await resetLlmTables();
@@ -300,12 +427,19 @@ describe('Postgres LLM pre-V042 legacy base (item 5)', () => {
       enabled: true,
       eligibility: 'approved',
     });
+    const fbModel = await store.upsertModel({
+      providerId: 'opencode-zen',
+      modelId: 'zen-fb',
+      protocol: 'chat-completions',
+      privacyClass: 'training_prohibited',
+      enabled: true,
+    });
     const rt = await store.getRuntime();
     await store.updateRuntime({
       providerId: null,
       modelId: null,
       fallbackProviderId: 'opencode-zen',
-      fallbackModelId: null,
+      fallbackModelId: fbModel.id,
       expectedVersion: rt.version,
       updatedBy: 'fix@test.com',
     });

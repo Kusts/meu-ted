@@ -45,10 +45,14 @@ const runtimeRow = () => ({
 
 type QueryFn = (text: string, values?: unknown[]) => { rowCount: number | null; rows: Record<string, unknown>[] };
 
-/** Routes SQL text to canned results: conditional UPDATE/DELETE first, then lookups. */
+/** Routes SQL text to canned results; every store call flows through connect(). */
 const mockPool = (mutate: QueryFn) => {
   const query = vi.fn(async (text: string, values?: unknown[]) => {
-    if (/^(UPDATE|DELETE)/.test(text)) return mutate(text, values);
+    const t = text.trim();
+    if (t === 'BEGIN' || t === 'COMMIT' || t === 'ROLLBACK' || t.startsWith('SAVEPOINT') || t.startsWith('RELEASE')) {
+      return { rowCount: null, rows: [] };
+    }
+    if (/^(UPDATE|DELETE)/.test(t)) return mutate(text, values);
     if (text.includes('agent_llm_runtime_config')) {
       return { rowCount: 1, rows: [runtimeRow() as unknown as Record<string, unknown>] };
     }
@@ -60,20 +64,27 @@ const mockPool = (mutate: QueryFn) => {
     }
     return { rowCount: 0, rows: [] };
   });
-  return { query, pool: { query } as never };
+  const client = { query, release: vi.fn() };
+  return { query, pool: { query, connect: async () => client } as never };
 };
 
-describe('Fase 1b F4 — atomic runtime-conditional guards (RED)', () => {
-  it('disabling an unreferenced provider issues a single conditional UPDATE (no separate SELECT)', async () => {
+const statements = (query: ReturnType<typeof vi.fn>) =>
+  query.mock.calls.map((c) => String(c[0]).trim());
+
+describe('Fase 1b-FIX F4/F6 — locked runtime-conditional guards (RED)', () => {
+  it('disabling an unreferenced provider locks runtime first, then writes, then commits', async () => {
     const { query, pool } = mockPool(() => ({ rowCount: 1, rows: [providerRow({ enabled: false })] }));
     const store = createPostgresLlmConfigStore(pool);
-    const provider = await store.setProviderEnabled('openai-api', false);
+    const provider = await store.setProviderEnabled('opencode-go', false);
     expect(provider.enabled).toBe(false);
-    expect(query).toHaveBeenCalledTimes(1);
-    expect(String(query.mock.calls[0]?.[0])).toContain('NOT EXISTS');
+    const seq = statements(query);
+    expect(seq[0]).toBe('BEGIN');
+    expect(seq[1]).toMatch(/FROM agent_llm_runtime_config.*FOR UPDATE/);
+    expect(seq).toContainEqual(expect.stringMatching(/^UPDATE agent_llm_providers/));
+    expect(seq[seq.length - 1]).toBe('COMMIT');
   });
 
-  it('disabling the active provider maps 0 mutated rows to 409 active_provider', async () => {
+  it('disabling the active provider never issues the UPDATE and maps to 409 active_provider', async () => {
     const { query, pool } = mockPool(() => ({ rowCount: 0, rows: [] }));
     const store = createPostgresLlmConfigStore(pool);
     await expect(store.setProviderEnabled('openai-api', false)).rejects.toMatchObject({
@@ -81,12 +92,13 @@ describe('Fase 1b F4 — atomic runtime-conditional guards (RED)', () => {
       code: 'agent.runtime_in_use',
       reason: 'active_provider',
     });
-    const updateCall = query.mock.calls.find((c) => String(c[0]).startsWith('UPDATE'));
-    expect(updateCall).toBeDefined();
-    expect(String(updateCall?.[0])).toContain('NOT EXISTS');
+    const seq = statements(query);
+    expect(seq).toContainEqual(expect.stringMatching(/FOR UPDATE/));
+    expect(seq.some((s) => s.startsWith('UPDATE'))).toBe(false);
+    expect(seq).toContain('ROLLBACK');
   });
 
-  it('disabling the fallback provider maps 0 mutated rows to 409 fallback_provider', async () => {
+  it('disabling the fallback provider maps to 409 fallback_provider', async () => {
     const { pool } = mockPool(() => ({ rowCount: 0, rows: [] }));
     const store = createPostgresLlmConfigStore(pool);
     await expect(store.setProviderEnabled('opencode-zen', false)).rejects.toMatchObject({
@@ -96,16 +108,19 @@ describe('Fase 1b F4 — atomic runtime-conditional guards (RED)', () => {
     });
   });
 
-  it('disabling a missing provider maps 0 mutated rows + no row to 404', async () => {
+  it('disabling a missing provider maps to 404', async () => {
     const query = vi.fn(async (text: string) => {
-      if (/^(UPDATE|DELETE)/.test(text)) return { rowCount: 0, rows: [] };
+      const t = text.trim();
+      if (t === 'BEGIN' || t === 'COMMIT' || t === 'ROLLBACK') return { rowCount: null, rows: [] };
+      if (/^UPDATE/.test(t)) return { rowCount: 0, rows: [] };
       return { rowCount: 0, rows: [] };
     });
-    const store = createPostgresLlmConfigStore({ query } as never);
+    const client = { query, release: vi.fn() };
+    const store = createPostgresLlmConfigStore({ query, connect: async () => client } as never);
     await expect(store.setProviderEnabled('ghost', false)).rejects.toMatchObject({ statusCode: 404 });
   });
 
-  it('deleting the active provider issues a single conditional DELETE mapping 0 rows to 409', async () => {
+  it('deleting the active provider never issues the DELETE and maps to 409', async () => {
     const { query, pool } = mockPool(() => ({ rowCount: 0, rows: [] }));
     const store = createPostgresLlmConfigStore(pool);
     await expect(store.deleteProvider('openai-api')).rejects.toMatchObject({
@@ -113,12 +128,12 @@ describe('Fase 1b F4 — atomic runtime-conditional guards (RED)', () => {
       code: 'agent.runtime_in_use',
       reason: 'active_provider',
     });
-    const deleteCall = query.mock.calls.find((c) => String(c[0]).startsWith('DELETE'));
-    expect(deleteCall).toBeDefined();
-    expect(String(deleteCall?.[0])).toContain('NOT EXISTS');
+    const seq = statements(query);
+    expect(seq.some((s) => s.startsWith('DELETE'))).toBe(false);
+    expect(seq).toContain('ROLLBACK');
   });
 
-  it('disabling the active model maps 0 mutated rows to 409 active_model', async () => {
+  it('disabling the active model maps to 409 active_model without writing', async () => {
     const { query, pool } = mockPool(() => ({ rowCount: 0, rows: [] }));
     const store = createPostgresLlmConfigStore(pool);
     await expect(store.setModelEnabled('openai-api:gpt-4o', false)).rejects.toMatchObject({
@@ -126,12 +141,10 @@ describe('Fase 1b F4 — atomic runtime-conditional guards (RED)', () => {
       code: 'agent.runtime_in_use',
       reason: 'active_model',
     });
-    const updateCall = query.mock.calls.find((c) => String(c[0]).startsWith('UPDATE'));
-    expect(updateCall).toBeDefined();
-    expect(String(updateCall?.[0])).toContain('NOT EXISTS');
+    expect(statements(query).some((s) => s.startsWith('UPDATE'))).toBe(false);
   });
 
-  it('deleting the fallback model maps 0 mutated rows to 409 fallback_model', async () => {
+  it('deleting the fallback model maps to 409 fallback_model without writing', async () => {
     const { query, pool } = mockPool(() => ({ rowCount: 0, rows: [] }));
     const store = createPostgresLlmConfigStore(pool);
     await expect(store.deleteModel('opencode-zen:zen-1')).rejects.toMatchObject({
@@ -139,8 +152,6 @@ describe('Fase 1b F4 — atomic runtime-conditional guards (RED)', () => {
       code: 'agent.runtime_in_use',
       reason: 'fallback_model',
     });
-    const deleteCall = query.mock.calls.find((c) => String(c[0]).startsWith('DELETE'));
-    expect(deleteCall).toBeDefined();
-    expect(String(deleteCall?.[0])).toContain('NOT EXISTS');
+    expect(statements(query).some((s) => s.startsWith('DELETE'))).toBe(false);
   });
 });
