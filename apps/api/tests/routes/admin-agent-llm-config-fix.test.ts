@@ -143,6 +143,59 @@ describe('Fase 1b-FIX routes (items 3/8)', () => {
     expect(String(res.json().reason ?? '')).toMatch(/executable|support/i);
   });
 
+  it('item 8: toggle rejects unknown keys with a strict schema', async () => {
+    for (const url of [
+      '/admin/agent/llm-config/providers/openai-api/toggle',
+      '/admin/agent/llm-config/models/openai-api%3Agpt-4o/toggle',
+    ]) {
+      const res = await app.inject({
+        method: 'POST',
+        url,
+        headers: adminHeaders(),
+        payload: { enabled: true, bogus: 1 },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().reason).toBeDefined();
+    }
+  });
+
+  it('item 8: toggle rejects missing enabled', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/agent/llm-config/providers/openai-api/toggle',
+      headers: adminHeaders(),
+      payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('item 8: test-connection validates its body and stays an explicit stub', async () => {
+    const ok = await app.inject({
+      method: 'POST',
+      url: '/admin/agent/llm-config/test-connection',
+      headers: adminHeaders(),
+      payload: { providerId: 'openai-api' },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ ready: false, code: 'not_configured' });
+
+    const bad = await app.inject({
+      method: 'POST',
+      url: '/admin/agent/llm-config/test-connection',
+      headers: adminHeaders(),
+      payload: { providerId: 'a'.repeat(200) },
+    });
+    expect(bad.statusCode).toBe(400);
+
+    const junk = await app.inject({
+      method: 'POST',
+      url: '/admin/agent/llm-config/test-connection',
+      headers: adminHeaders(),
+      payload: { bogus: [1, 2, 3] },
+    });
+    expect(junk.statusCode).toBe(400);
+  });
+
   it('item 3: internal projection marks an unsupported active pair disabled/fail-closed', async () => {
     await app.close();
     await auth.close();

@@ -12,6 +12,8 @@ import {
   rolloutSchema,
   securityEpochSchema,
   syncCatalogSchema,
+  testConnectionSchema,
+  toggleEnabledSchema,
 } from '@pi-finance/llm-contracts';
 import { canActivate, isKindExecutable, validateModel, type PrivacyClass, type Protocol } from '../agent/llm-config.js';
 
@@ -175,15 +177,17 @@ export const registerAdminAgentLlmConfigRoutes = (
   });
 
   // POST /admin/agent/llm-config/providers/:id/toggle - Toggle provider enabled state
-  app.post<{ Params: { id: string }; Body: { enabled: boolean } }>(
+  app.post<{ Params: { id: string } }>(
     '/admin/agent/llm-config/providers/:id/toggle',
     { preHandler: guard },
     async (req, reply) => {
       const { id } = req.params;
-      const { enabled } = req.body ?? {};
-      if (typeof enabled !== 'boolean') {
-        return reply.code(400).send({ code: 'agent.invalid_enabled', message: 'enabled deve ser boolean' });
+      const parsed = toggleEnabledSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        const reason = parsed.error.issues[0]?.message ?? 'enabled must be boolean';
+        return reply.code(400).send({ code: 'agent.invalid_enabled', message: reason, reason });
       }
+      const { enabled } = parsed.data;
       try {
         const provider = await deps.store.setProviderEnabled(id, enabled);
         const [models, runtime] = await Promise.all([deps.store.listModels(), deps.store.getRuntime()]);
@@ -199,15 +203,17 @@ export const registerAdminAgentLlmConfigRoutes = (
   );
 
   // POST /admin/agent/llm-config/models/:id/toggle - Toggle model enabled state
-  app.post<{ Params: { id: string }; Body: { enabled: boolean } }>(
+  app.post<{ Params: { id: string } }>(
     '/admin/agent/llm-config/models/:id/toggle',
     { preHandler: guard },
     async (req, reply) => {
       const { id } = req.params;
-      const { enabled } = req.body ?? {};
-      if (typeof enabled !== 'boolean') {
-        return reply.code(400).send({ code: 'agent.invalid_enabled', message: 'enabled deve ser boolean' });
+      const parsed = toggleEnabledSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        const reason = parsed.error.issues[0]?.message ?? 'enabled must be boolean';
+        return reply.code(400).send({ code: 'agent.invalid_enabled', message: reason, reason });
       }
+      const { enabled } = parsed.data;
       try {
         const model = await deps.store.setModelEnabled(id, enabled);
         const [models, runtime] = await Promise.all([deps.store.listModels(), deps.store.getRuntime()]);
@@ -534,10 +540,19 @@ export const registerAdminAgentLlmConfigRoutes = (
   });
 
   // POST /admin/agent/llm-config/test-connection - Test provider connection (sanitized response)
-  app.post<{ Body: { providerId?: string } }>(
+  // EXPLICIT STUB (Fase 1b-FIX item 8): this endpoint intentionally does not
+  // probe any provider yet — it validates the body shape and always answers
+  // not_configured without touching secrets or the network. A live probe
+  // would reuse provider-probe semantics through the agent runtime.
+  app.post(
     '/admin/agent/llm-config/test-connection',
     { preHandler: guard },
-    async (_req, reply) => {
+    async (req, reply) => {
+      const parsed = testConnectionSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        const reason = parsed.error.issues[0]?.message ?? 'invalid test-connection payload';
+        return invalidBody(reply, 'agent.invalid_parameters', reason);
+      }
       return reply.send({
         ready: false,
         code: 'not_configured',

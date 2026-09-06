@@ -31,9 +31,8 @@ const CHAT_COMPAT_MODELS: Record<string, string> = {
   qwen: 'qwen-max',
   glm: 'glm-4',
   minimax: 'minimax-text-01',
-  // NOTE: slash model ids (e.g. OpenRouter `author/model`) stay rejected by
-  // validateModelId; the matrix uses slash-free ids on purpose.
-  openrouter: 'gpt-4o-mini',
+  // Real OpenRouter `owner/model` shape (Fase 1b-FIX item 8).
+  openrouter: 'meta-llama/llama-3-8b',
 };
 
 describe('Provider kind matrix — executable end to end (Fase 1b RED)', () => {

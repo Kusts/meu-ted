@@ -55,7 +55,7 @@ describe('Provider Probe (Task 5)', () => {
 
     const result = await probeProvider(
       'openai-api',
-      'gpt-4o/exploit',
+      'gpt-4o?exploit=1',
       { OPENAI_API_KEY: 'valid-key' },
       fetchMock,
     );
@@ -63,5 +63,40 @@ describe('Provider Probe (Task 5)', () => {
     expect(result.ready).toBe(false);
     expect(result.code).toBe('invalid_model_id');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('probes an owner/model id end to end (Fase 1b-FIX item 8)', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('{"data":[]}', { status: 200 }));
+
+    const result = await probeProvider(
+      'openrouter',
+      'meta-llama/llama-3-8b',
+      { OPENROUTER_API_KEY: 'test-key-123' },
+      fetchMock,
+    );
+
+    expect(result.ready).toBe(true);
+    expect(result.code).toBe('ok');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://openrouter.ai/api/v1/models',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('clears its timeout even when the request fails (Fase 1b-FIX item 8)', async () => {
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    try {
+      const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError('fetch failed'));
+      const result = await probeProvider(
+        'openai-api',
+        'gpt-4o-mini',
+        { OPENAI_API_KEY: 'valid-key' },
+        fetchMock,
+      );
+      expect(result).toMatchObject({ ready: false, code: 'network_error' });
+      expect(clearSpy).toHaveBeenCalled();
+    } finally {
+      clearSpy.mockRestore();
+    }
   });
 });

@@ -31,7 +31,18 @@ export const modelIdSchema = z
   .trim()
   .min(1, 'model id is required')
   .max(120, 'model id must be at most 120 characters')
-  .regex(/^[A-Za-z0-9._-]+$/, 'model id contains disallowed characters');
+  .regex(/^[A-Za-z0-9._/-]+$/, 'model id contains disallowed characters')
+  .refine((v) => !v.split('/').some((seg) => seg === '' || seg === '..'), {
+    message: 'model id contains disallowed characters',
+  });
+
+export const toggleEnabledSchema = z
+  .object({ enabled: z.boolean({ invalid_type_error: 'enabled must be boolean' }) })
+  .strict();
+
+export const testConnectionSchema = z
+  .object({ providerId: providerIdSchema.optional() })
+  .strict();
 
 export const retentionSchema = z.string().trim().max(120, 'retention must be at most 120 characters');
 

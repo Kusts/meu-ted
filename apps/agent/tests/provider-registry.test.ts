@@ -39,13 +39,25 @@ describe('Provider Registry & Protocol (Task 5)', () => {
     expect(validateModelId('claude-3-5-sonnet-20241022')).toBe('claude-3-5-sonnet-20241022');
     expect(validateModelId('deepseek-r1')).toBe('deepseek-r1');
 
-    // Slashes, path traversal, queries, encoding
-    expect(() => validateModelId('gpt-4o/v2')).toThrow(/disallowed characters/);
+    // Queries, encoding tricks and special characters stay rejected
     expect(() => validateModelId('gpt-4o%2fv2')).toThrow(/disallowed characters/);
     expect(() => validateModelId('gpt-4o?query=1')).toThrow(/disallowed characters/);
     expect(() => validateModelId('model@latest')).toThrow(/disallowed characters/);
     expect(() => validateModelId('model#anchor')).toThrow(/disallowed characters/);
-    expect(() => validateModelId('../../../etc/passwd')).toThrow(/disallowed characters/);
     expect(() => validateModelId('')).toThrow(/non-empty/);
+  });
+
+  it('accepts owner/model IDs (Fase 1b-FIX item 8) but still rejects spaces, control and dot-dot segments', () => {
+    expect(validateModelId('openai/gpt-4o-mini')).toBe('openai/gpt-4o-mini');
+    expect(validateModelId('meta-llama/llama-3-8b')).toBe('meta-llama/llama-3-8b');
+
+    expect(() => validateModelId('gpt-4o /v2')).toThrow(/disallowed characters/);
+    expect(() => validateModelId('gpt-4o/ v2')).toThrow(/disallowed characters/);
+    expect(() => validateModelId('model\nname')).toThrow(/disallowed characters/);
+    expect(() => validateModelId('model\tname')).toThrow(/disallowed characters/);
+    expect(() => validateModelId('../../../etc/passwd')).toThrow(/disallowed characters/);
+    expect(() => validateModelId('a/../../b')).toThrow(/disallowed characters/);
+    expect(() => validateModelId('/leading-slash')).toThrow(/disallowed characters/);
+    expect(() => validateModelId('trailing-slash/')).toThrow(/disallowed characters/);
   });
 });

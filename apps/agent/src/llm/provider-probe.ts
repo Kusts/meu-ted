@@ -129,16 +129,15 @@ export const probeProvider = async (
   const safeFetch = createSafeFetch(customFetch);
   const target = probeTarget(providerKind, baseUrl, apiKey);
 
+  const controller = new AbortController();
+  // Fase 1b-FIX item 8: cleared in `finally` so network errors cannot leak it.
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-
     const res = await safeFetch(target.url, {
       method: 'GET',
       headers: target.headers,
       signal: controller.signal,
     });
-    clearTimeout(timer);
 
     const latencyMs = Date.now() - start;
 
@@ -175,5 +174,7 @@ export const probeProvider = async (
       latencyMs,
       code: isAbort ? 'timeout' : 'network_error',
     };
+  } finally {
+    clearTimeout(timer);
   }
 };

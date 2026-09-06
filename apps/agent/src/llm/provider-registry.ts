@@ -60,8 +60,13 @@ export const validateModelId = (modelId: string): string => {
   if (trimmed.length === 0 || trimmed.length > 120) {
     throw new Error('model ID length must be between 1 and 120 characters');
   }
-  // Disallow path traversal, URL query, encoding tricks, slashes or special characters
-  if (/[/%?@\\#&:*<>"|]/.test(trimmed)) {
+  // Fase 1b-FIX item 8: owner/model shapes (e.g. OpenRouter) need '/'.
+  // Still rejected: URL queries, encoding tricks, special characters,
+  // whitespace/control (outside the allow-list) and dot-dot/empty segments.
+  if (/[^A-Za-z0-9._/-]/.test(trimmed)) {
+    throw new Error(`model ID contains disallowed characters: ${trimmed}`);
+  }
+  if (trimmed.split('/').some((segment) => segment === '' || segment === '..')) {
     throw new Error(`model ID contains disallowed characters: ${trimmed}`);
   }
   return trimmed;
