@@ -7,6 +7,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import Badge from "@/components/ui/Badge";
 import Skeleton from "@/components/ui/Skeleton";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Button } from "@/components/ui/Button";
 import { useAppState } from "@/lib/state/app-state-context";
 import NotificationsSheet from "@/features/profile/NotificationsSheet";
 import { useEffectiveProfile } from "@/features/profile/hooks";
@@ -22,6 +24,9 @@ import {
   TrendingUp,
   TrendingDown,
   AlertCircle,
+  Wallet,
+  PieChart,
+  Sparkles,
 } from "lucide-react";
 
 function formatBRL(cents: number): string {
@@ -462,7 +467,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
         {/* ── Hero area (green gradient) ── */}
         <div
           data-testid="hero-area"
-          className="px-5 pt-1 sm:px-8 lg:px-12"
+          className="px-5 pt-[calc(8px+env(safe-area-inset-top))] sm:px-8 lg:px-12"
           style={{
             background: "linear-gradient(165deg, #0F6B45, #0A3A28)",
             paddingBottom: 24,
@@ -505,10 +510,14 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                 style={{ background: "rgba(255,255,255,.14)" }}
               >
                 <Bell size={18} strokeWidth={2} />
-                <div
-                  className="absolute right-[9px] top-[8px] h-[7px] w-[7px] rounded-full border-[1.5px]"
-                  style={{ background: "#E0A33E", borderColor: "#0C4430" }}
-                />
+                {/* A9: dot via tokens e só quando há algo pedindo atenção
+                    (operações pendentes de aprovação) */}
+                {pendingCount !== null && pendingCount > 0 && (
+                  <div
+                    aria-hidden="true"
+                    className="absolute right-[9px] top-[8px] h-[7px] w-[7px] rounded-full bg-warning ring-1 ring-white/40"
+                  />
+                )}
               </button>
             </div>
           </div>
@@ -698,7 +707,20 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                 Ver tudo
               </Link>
             </div>
-            {checkingAccounts.map((acc) => (
+            {/* A4: empty state com CTA para o fluxo existente de Contas */}
+            {checkingAccounts.length === 0 ? (
+              <EmptyState
+                icon={<Wallet size={24} />}
+                title="Nenhuma conta ainda"
+                description="Adicione sua primeira conta para ver o saldo total aqui."
+                action={
+                  <Button size="sm" onClick={() => router.push("/contas")}>
+                    Adicionar conta
+                  </Button>
+                }
+              />
+            ) : (
+            checkingAccounts.map((acc) => (
               <button
                 key={acc.id}
                 type="button"
@@ -730,7 +752,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                   {formatBRL(acc.balanceCents)}
                 </div>
               </button>
-            ))}
+            )))}
           </div>
 
           {/* Cartões card */}
@@ -883,9 +905,16 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
               </span>
             </div>
             {donutData.length === 0 ? (
-              <div className="py-6 text-center text-[12px] text-text-muted">
-                Sem despesas no período.
-              </div>
+              <EmptyState
+                icon={<PieChart size={24} />}
+                title="Sem despesas no período"
+                description="Registre sua primeira despesa para ver a distribuição por categoria."
+                action={
+                  <Button size="sm" onClick={() => handleNew("expense")}>
+                    Registrar despesa
+                  </Button>
+                }
+              />
             ) : (
               <div className="flex items-center gap-4">
                 {/* Donut chart */}
@@ -933,7 +962,11 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
           <div className="rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-4 shadow-card">
             <div className="mb-3 text-[13px] font-bold text-text-primary">Insights</div>
             {insights.length === 0 ? (
-              <div className="text-[12px] text-text-muted">Nenhum insight disponível ainda.</div>
+              <EmptyState
+                icon={<Sparkles size={24} />}
+                title="Sem insights por enquanto"
+                description="Assim que houver movimentação, o TED traz observações aqui."
+              />
             ) : (
               insights.map((insight, i) => (
                 <div key={i} className="flex gap-2.5 py-[7px] border-t border-border-subtle/50 first:border-none">

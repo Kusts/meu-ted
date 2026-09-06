@@ -1159,5 +1159,55 @@ describe("HomePage", () => {
       expect(refreshSpy).toHaveBeenCalled();
     });
   });
+
+  describe("A4: home empty states with CTA", () => {
+    it("shows EmptyState with Adicionar conta CTA when there are no checking accounts", async () => {
+      const user = userEvent.setup();
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...defaultState(),
+        accounts: [],
+      } as AppState);
+      render(<HomePage />);
+      expect(screen.getByText("Nenhuma conta ainda")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Adicionar conta" }));
+      expect(mockRouter.push).toHaveBeenCalledWith("/contas");
+    });
+
+    it("shows EmptyState with Registrar despesa CTA when there are no expenses", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...defaultState(),
+        transactions: [],
+      } as AppState);
+      render(<HomePage />);
+      expect(screen.getByText("Sem despesas no período")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Registrar despesa" }),
+      ).toBeInTheDocument();
+    });
+
+    it("shows EmptyState without CTA when there are no insights", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...defaultState(),
+        transactions: [],
+        payables: [],
+        budgets: [],
+        quickInsights: [],
+        // Mock server summary would fabricate a savings-rate insight;
+        // null it so the insights list is genuinely empty.
+        dashboardSummary: null,
+      } as AppState);
+      render(<HomePage />);
+      expect(screen.getByText("Sem insights por enquanto")).toBeInTheDocument();
+    });
+
+    it("A9: bell dot only renders when there are pending operations", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(defaultState());
+      const { unmount } = render(<HomePage />);
+      // isApiConfigured() is false in tests → pendingCount stays null → no dot
+      const bell = screen.getByRole("button", { name: "Notificações" });
+      expect(bell.querySelector(".bg-warning")).not.toBeInTheDocument();
+      unmount();
+    });
+  });
 });
 
