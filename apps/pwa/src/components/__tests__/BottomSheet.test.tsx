@@ -42,6 +42,9 @@ function panel(): HTMLElement {
 }
 
 function expectExitAnimation(el: HTMLElement) {
+  // A animação de entrada é suprimida para o translateY(100%) prevalecer.
+  expect(el.classList.contains("animate-sheet-up")).toBe(false);
+  expect(el.style.animation).toBe("none");
   expect(el.style.transform).toBe("translateY(100%)");
   expect(el.style.transition).toContain(`transform ${SHEET_EXIT_MS}ms`);
   expect(el.style.transition).toContain("var(--easing-standard)");
@@ -179,6 +182,28 @@ describe("BottomSheet", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(document.body.style.overflow).not.toBe("hidden");
     document.body.style.overflow = "";
+  });
+
+  it("animates exit even when closed right after opening (P2: entry suppressed)", () => {
+    installMatchMedia(false);
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    render(
+      <BottomSheet open={true} onClose={onClose} title="Sheet">
+        <div>content</div>
+      </BottomSheet>,
+    );
+
+    // Entrada ainda em curso (sheetUp dura 280ms): a classe está ativa.
+    expect(panel().classList.contains("animate-sheet-up")).toBe(true);
+
+    // Fecha imediatamente: a saída deve prevalecer sobre a entrada.
+    fireEvent.click(overlay());
+
+    expect(onClose).not.toHaveBeenCalled();
+    expectExitAnimation(panel());
+    runExitTimers();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("does not call onClose for non-Escape keys", async () => {

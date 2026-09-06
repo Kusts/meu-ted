@@ -69,6 +69,9 @@ export function BottomSheet({
     setLeaving(true);
     const el = sheetRef.current;
     if (el) {
+      // Mata a animação de entrada (CSS animations vencem inline styles:
+      // fechar nos primeiros 280ms manteria o sheetUp e suprimiria a saída).
+      el.style.animation = "none";
       el.style.transition = `transform ${SHEET_EXIT_MS}ms var(--easing-standard)`;
       el.style.transform = "translateY(100%)";
     }
@@ -95,6 +98,7 @@ export function BottomSheet({
       if (el) {
         el.style.transform = "";
         el.style.transition = "";
+        el.style.animation = "";
       }
       return;
     }
@@ -213,15 +217,18 @@ export function BottomSheet({
         onClick={requestClose}
       />
 
-      {/* Sheet container */}
+      {/* Sheet container: durante leaving a animação de entrada é
+          removida (classe + animation:none inline) para o translateY(100%)
+          da saída sempre prevalecer, mesmo fechando nos primeiros 280ms. */}
       <div
         ref={sheetRef}
         data-testid="bottom-sheet-panel"
-        className={`fixed bottom-0 left-0 right-0 z-50 flex max-h-[92vh] flex-col overflow-y-auto rounded-t-[26px] border-t border-border-subtle bg-surface-1 shadow-sheet animate-sheet-up ${className}`}
+        className={`fixed bottom-0 left-0 right-0 z-50 flex max-h-[92vh] flex-col overflow-y-auto rounded-t-[26px] border-t border-border-subtle bg-surface-1 shadow-sheet ${leaving ? "" : "animate-sheet-up "}${className}`}
         style={{
           padding: "20px 20px 32px",
           ...(leaving
             ? {
+                animation: "none",
                 transform: "translateY(100%)",
                 transition: `transform ${SHEET_EXIT_MS}ms var(--easing-standard)`,
               }
