@@ -298,7 +298,7 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
     try {
       await client.query('BEGIN');
       const rt = await client.query(
-        `SELECT provider_id, fallback_provider_id FROM agent_llm_runtime_config WHERE singleton = 'active' FOR UPDATE`,
+        `SELECT provider_id, fallback_provider_id, model_id, fallback_model_id FROM agent_llm_runtime_config WHERE singleton = 'active' FOR UPDATE`,
       );
       const row = rt.rows[0] as Record<string, unknown> | undefined;
       const slot =
