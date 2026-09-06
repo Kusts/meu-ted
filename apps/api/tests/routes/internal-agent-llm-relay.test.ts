@@ -208,4 +208,36 @@ describe('Fase 2 item 8 — dynamic relay allowlist (RED)', () => {
     expect(res.statusCode).toBe(504);
     expect(res.json()).toMatchObject({ code: 'agent.provider_timeout' });
   }, 10_000);
+
+  it('slow headers + slow body share ONE absolute budget (Fase 3-FIX R4-rev)', async () => {
+    // Budget 240ms; headers take ~180ms and the body needs ~180ms more
+    // (360ms combined). A restarted body budget would allow ~420ms; the
+    // absolute deadline must abort at ~240ms instead.
+    const BUDGET_MS = 240;
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, requestTimeoutMs: BUDGET_MS,
+    });
+    await app.ready();
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({
+              ok: true,
+              status: 200,
+              json: () => new Promise((resolveBody) => setTimeout(() => resolveBody({ output: [] }), 180)),
+            } as unknown as Response);
+          }, 180);
+        }),
+    );
+    const startedAt = Date.now();
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' },
+    });
+    const elapsedMs = Date.now() - startedAt;
+    expect(res.statusCode).toBe(504);
+    expect(res.json()).toMatchObject({ code: 'agent.provider_timeout' });
+    expect(elapsedMs).toBeLessThan(360);
+  }, 15_000);
 });

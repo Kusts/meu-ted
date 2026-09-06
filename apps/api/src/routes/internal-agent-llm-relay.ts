@@ -131,9 +131,14 @@ export const registerAgentLlmRelayRoutes = (
     const requestTimeoutMs = deps.requestTimeoutMs ?? 60_000;
     const timeoutError = () => Object.assign(new Error('Timeout aguardando provider.'), { name: 'AbortError' });
 
+    // Fase 3-FIX R4-rev: ONE absolute deadline shared by headers and body.
+    // The budget never restarts: after headers resolve, the body races only
+    // the REMAINING time. Expiry aborts the upstream request and rejects as
+    // AbortError; a single timer is cleared in `finally` either way.
+    const startedAt = Date.now();
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+      const deadline = setTimeout(() => controller.abort(), requestTimeoutMs);
       try {
         const res = await fetch(`${baseUrl}/responses`, {
           method: 'POST',
@@ -149,9 +154,6 @@ export const registerAgentLlmRelayRoutes = (
           signal: controller.signal,
         });
 
-        // The same budget covers a slow body: race the JSON parse against
-        // a deadline that aborts and rejects as AbortError. The race timer
-        // is cleared below whether the body or the deadline wins.
         let bodyTimer: ReturnType<typeof setTimeout> | undefined;
         let body: {
           error?: { type?: string; message?: string };
@@ -159,13 +161,14 @@ export const registerAgentLlmRelayRoutes = (
           cost?: string | number;
         } | null;
         try {
+          const remainingMs = Math.max(0, requestTimeoutMs - (Date.now() - startedAt));
           body = (await Promise.race([
             res.json().catch(() => null),
             new Promise<null>((_, reject) => {
               bodyTimer = setTimeout(() => {
                 controller.abort();
                 reject(timeoutError());
-              }, requestTimeoutMs);
+              }, remainingMs);
             }),
           ])) as {
             error?: { type?: string; message?: string };
@@ -195,7 +198,7 @@ export const registerAgentLlmRelayRoutes = (
 
         return reply.send({ text, model, cost: body?.cost ?? 0, provider });
       } finally {
-        clearTimeout(timer);
+        clearTimeout(deadline);
       }
     } catch (err) {
       const isAbort = (err as { name?: string })?.name === 'AbortError';
