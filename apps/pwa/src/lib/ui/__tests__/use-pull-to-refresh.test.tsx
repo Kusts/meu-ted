@@ -8,6 +8,7 @@ import {
 import {
   usePullToRefresh,
   PullToRefreshIndicator,
+  hasScrolledAncestor,
   PULL_THRESHOLD_PX,
   PULL_DAMPING,
   PULL_ANCHORED_PX,
@@ -79,6 +80,41 @@ function pull(distance: number): Event[] {
   touch("touchstart", [{ x: 100, y: 120 }]);
   const move = touch("touchmove", [{ x: 100, y: 120 + distance }]);
   return [move];
+}
+
+/** Despacha o toque num alvo específico (borbulha até o listener no window). */
+function touchOn(
+  target: EventTarget,
+  type: "touchstart" | "touchmove" | "touchend",
+  points: { x: number; y: number }[] = [],
+): Event {
+  const ev = new Event(type, { bubbles: true, cancelable: true });
+  const touches = points.map((p, i) => ({
+    clientX: p.x,
+    clientY: p.y,
+    identifier: i,
+  }));
+  (ev as unknown as { touches: unknown }).touches = touches;
+  (ev as unknown as { changedTouches: unknown }).changedTouches = touches;
+  act(() => {
+    target.dispatchEvent(ev);
+  });
+  return ev;
+}
+
+/** Container interno overflow-y-auto com scrollTop controlável. */
+function mountScroller(scrollTop: number): { root: HTMLElement; inner: HTMLElement } {
+  const root = document.createElement("div");
+  root.style.overflowY = "auto";
+  Object.defineProperty(root, "scrollTop", {
+    configurable: true,
+    value: scrollTop,
+  });
+  const inner = document.createElement("div");
+  inner.textContent = "item";
+  root.appendChild(inner);
+  document.body.appendChild(root);
+  return { root, inner };
 }
 
 function overscrollY(): string {
@@ -242,6 +278,68 @@ describe("usePullToRefresh (v2 F4, spec AGY §3)", () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
     expect(result.current.isRefreshing).toBe(false);
     expect(result.current.pullDistance).toBe(0);
+  });
+
+  it("não arma quando o gesto nasce em container interno rolado", async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    renderHook(() => usePullToRefresh({ onRefresh }));
+    const { root, inner } = mountScroller(120);
+    try {
+      touchOn(inner, "touchstart", [{ x: 100, y: 120 }]);
+      touchOn(inner, "touchmove", [{ x: 100, y: 120 + TRIGGER_DY }]);
+      await act(async () => {
+        touchOn(inner, "touchend");
+      });
+      expect(onRefresh).not.toHaveBeenCalled();
+      expect(overscrollY()).toBe("");
+    } finally {
+      root.remove();
+    }
+  });
+
+  it("permite o pull quando o container interno está no topo", async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    renderHook(() => usePullToRefresh({ onRefresh }));
+    const { root, inner } = mountScroller(0);
+    try {
+      touchOn(inner, "touchstart", [{ x: 100, y: 120 }]);
+      touchOn(inner, "touchmove", [{ x: 100, y: 120 + TRIGGER_DY }]);
+      await act(async () => {
+        touchOn(inner, "touchend");
+      });
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+    } finally {
+      root.remove();
+    }
+  });
+});
+
+describe("hasScrolledAncestor", () => {
+  it("detecta ancestral overflow-y rolado", () => {
+    const { root, inner } = mountScroller(48);
+    try {
+      expect(hasScrolledAncestor(inner)).toBe(true);
+    } finally {
+      root.remove();
+    }
+  });
+
+  it("libera ancestral no topo, sem scroll e alvos nulos", () => {
+    const { root, inner } = mountScroller(0);
+    try {
+      expect(hasScrolledAncestor(inner)).toBe(false);
+    } finally {
+      root.remove();
+    }
+    const plain = document.createElement("div");
+    document.body.appendChild(plain);
+    try {
+      expect(hasScrolledAncestor(plain)).toBe(false);
+    } finally {
+      plain.remove();
+    }
+    expect(hasScrolledAncestor(null)).toBe(false);
+    expect(hasScrolledAncestor(window)).toBe(false);
   });
 });
 

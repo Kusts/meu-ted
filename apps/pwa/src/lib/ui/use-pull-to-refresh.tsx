@@ -58,9 +58,33 @@ export function prefersReducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+/**
+ * True quando o gesto nasce dentro de um scroll container interno já rolado
+ * (ex.: Home rola em overflow-y-auto próprio, não no window). Nesse caso o
+ * gesto pertence à lista — o PTR só arma no topo de TODAS as superfícies
+ * de rolagem (window.scrollY<=0 E nenhum ancestral interno rolado).
+ */
+export function hasScrolledAncestor(el: EventTarget | null): boolean {
+  let node = el as HTMLElement | null;
+  while (node && node !== document.documentElement) {
+    if (node.nodeType === 1) {
+      const overflowY =
+        window.getComputedStyle(node).overflowY || node.style.overflowY;
+      if (
+        (overflowY === "auto" || overflowY === "scroll") &&
+        node.scrollTop > 0
+      )
+        return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
 interface PullMark {
   y: number;
   x: number;
+  el: EventTarget | null;
 }
 
 export function usePullToRefresh({
@@ -125,12 +149,20 @@ export function usePullToRefresh({
       if (e.touches.length > 1) return;
       const t = e.touches[0];
       if (!t) return;
-      startRef.current = { y: t.clientY, x: t.clientX };
+      // Container interno rolado: o gesto pertence à lista, não arma.
+      if (hasScrolledAncestor(e.target)) return;
+      startRef.current = { y: t.clientY, x: t.clientX, el: e.target };
     }
 
     function onTouchMove(e: TouchEvent) {
       const start = startRef.current;
       if (!start || !eligible()) return;
+      // A lista pode ter rolado sob o dedo antes do threshold: revalida.
+      if (hasScrolledAncestor(start.el)) {
+        startRef.current = null;
+        setPullDistance(0);
+        return;
+      }
       if (e.touches.length > 1) {
         startRef.current = null;
         return;
