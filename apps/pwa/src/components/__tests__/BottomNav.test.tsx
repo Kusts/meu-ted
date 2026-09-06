@@ -120,6 +120,50 @@ describe("BottomNav", () => {
     });
   });
 
+  describe("onda 5: larger tap targets (user feedback)", () => {
+    function renderNav() {
+      return render(
+        <BottomNav
+          active="home"
+          onFabClick={handlers.onFabClick}
+          onMoreClick={handlers.onMoreClick}
+          onNavClick={handlers.onNavClick}
+        />,
+      );
+    }
+
+    it("renders nav icons at 24px", () => {
+      const { container } = renderNav();
+      const nav = container.querySelector('[data-nav="bottom"]')!;
+      const iconSvgs = Array.from(nav.querySelectorAll("button svg")).filter(
+        (svg) => svg.closest('button')?.getAttribute("aria-label") !== "Nova transação",
+      );
+      expect(iconSvgs).toHaveLength(4);
+      for (const svg of iconSvgs) {
+        expect(svg.getAttribute("width")).toBe("24");
+        expect(svg.getAttribute("height")).toBe("24");
+      }
+    });
+
+    it("renders labels at 11px", () => {
+      renderNav();
+      for (const label of ["Resumo", "Registros", "A pagar", "Mais"]) {
+        expect(screen.getByText(label).className).toMatch(/text-\[11px\]/);
+      }
+    });
+
+    it("keeps bar height on the token and touch targets >= 44px", () => {
+      const { container } = renderNav();
+      const nav = container.querySelector('[data-nav="bottom"]') as HTMLElement;
+      expect(nav.style.height).toBe("var(--tab-bar-height)");
+      const navButtons = Array.from(nav.querySelectorAll(":scope > button")) as HTMLElement[];
+      expect(navButtons).toHaveLength(4);
+      for (const btn of navButtons) {
+        expect(btn.className).toMatch(/min-h-\[44px\]/);
+      }
+    });
+  });
+
   describe("active indicator (spec AGY: pill + dot 4px)", () => {
     it("highlights the active tab with a pill bg + emerald dot and keeps aria-current", () => {
       const { container } = render(

@@ -49,7 +49,7 @@ function NavButton({
         onClick();
       }}
       aria-current={isActive ? "page" : undefined}
-      className={`flex flex-1 flex-col items-center justify-center gap-0.5 rounded-[16px] px-2 pt-1.5 transition-all duration-200 focus-visible:outline-none ${
+      className={`flex min-h-[44px] flex-1 flex-col items-center justify-center gap-0.5 rounded-[16px] px-1 pt-1.5 transition-all duration-200 focus-visible:outline-none ${
         isActive ? "bg-primary-tint" : "bg-transparent"
       }`}
       style={{
@@ -58,7 +58,7 @@ function NavButton({
           : "var(--color-text-muted)",
       }}
     >
-      <ItemIcon size={20} strokeWidth={1.9} />
+      <ItemIcon size={24} strokeWidth={1.9} />
       {/* Spec AGY §4.3: dot esmeralda 4px sob o ícone ativo (transparente p/ não deslocar layout) */}
       <span
         aria-hidden="true"
@@ -67,7 +67,7 @@ function NavButton({
         }`}
       />
       <span
-        className={`text-[10px] ${
+        className={`text-[11px] ${
           isActive ? "font-bold" : "font-medium"
         } text-center`}
       >
@@ -116,8 +116,8 @@ export function BottomNav({
           aria-label="Nova transação"
         >
           <svg
-            width="22"
-            height="22"
+            width="24"
+            height="24"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
