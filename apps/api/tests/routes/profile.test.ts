@@ -156,6 +156,62 @@ describe('PATCH /profile', () => {
   });
 });
 
+describe('PATCH /profile isAdmin consistency with GET', () => {
+  const buildAdminAwareApp = (sessionEmail: string | undefined, adminEmails?: string[]) => {
+    const app = Fastify();
+    registerProfileRoutes(app, {
+      resolveToken: async () => ({ deviceId: 'dev-1', householdId: 'household-admin' }),
+      profileStore: createInMemoryProfileStore(),
+      ...(adminEmails ? { adminEmails } : {}),
+      ...(sessionEmail === undefined
+        ? {}
+        : { resolveSessionEmail: async () => sessionEmail }),
+    });
+    return app;
+  };
+
+  const patchName = (app: Fastify.FastifyInstance) =>
+    app.inject({
+      method: 'PATCH',
+      url: '/profile',
+      headers: { 'x-device-token': 'dev-token', 'content-type': 'application/json' },
+      payload: { name: 'Admin' },
+    });
+
+  it('returns isAdmin true on PATCH for an admin session email', async () => {
+    const app = buildAdminAwareApp('walissonead@gmail.com', ['walissonead@gmail.com']);
+    const res = await patchName(app);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().profile.isAdmin).toBe(true);
+  });
+
+  it('returns isAdmin false on PATCH for a non-admin session email', async () => {
+    const app = buildAdminAwareApp('user@example.com', ['walissonead@gmail.com']);
+    const res = await patchName(app);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().profile.isAdmin).toBe(false);
+  });
+
+  it('returns explicit isAdmin false on PATCH when no session resolver is configured', async () => {
+    const app = buildAdminAwareApp(undefined, ['walissonead@gmail.com']);
+    const res = await patchName(app);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().profile.isAdmin).toBe(false);
+  });
+
+  it('PATCH and GET agree on isAdmin for the same admin session', async () => {
+    const app = buildAdminAwareApp('walissonead@gmail.com', ['walissonead@gmail.com']);
+    const patchRes = await patchName(app);
+    const getRes = await app.inject({
+      method: 'GET',
+      url: '/profile',
+      headers: { 'x-device-token': 'dev-token' },
+    });
+    expect(patchRes.json().profile.isAdmin).toBe(true);
+    expect(getRes.json().profile.isAdmin).toBe(true);
+  });
+});
+
 describe('Error handling in /profile', () => {
   it('returns 500 when resolveToken throws an infrastructure error without statusCode (e.g. pg error 53300) on GET', async () => {
     const app = Fastify();

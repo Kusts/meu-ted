@@ -237,6 +237,23 @@ function apiUsable(): boolean {
   return isApiConfigured() && getAuthToken() !== undefined;
 }
 
+/**
+ * Merges a server profile projection over the previous state without ever
+ * degrading server-computed flags. The PATCH /profile projection may omit
+ * `isAdmin` (and legacy `role`); an omitted flag must preserve the known
+ * state, while an explicit server value (including false) always wins.
+ */
+export function mergeProfileFlags(prev: Profile | null, next: Profile): Profile {
+  if (!prev) return next;
+  const merged: Profile = { ...next };
+  if (merged.isAdmin === undefined) merged.isAdmin = prev.isAdmin;
+  const prevRole = (prev as unknown as { role?: string }).role;
+  if ((merged as unknown as { role?: string }).role === undefined && prevRole !== undefined) {
+    (merged as unknown as { role?: string }).role = prevRole;
+  }
+  return merged;
+}
+
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const configured = isApiConfigured();
   // ── State — empty when API configured, mock only when not ─────────
@@ -469,8 +486,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
         if (cancelled) return;
 
-        // Profile and insights come from the bootstrap's own fetches.
-        if (!cancelled) setProfile(boot.profile);
+        // Profile and insights come from the bootstrap's own fetches. A null
+        // bootstrap profile must not wipe a profile saved earlier in this
+        // session — apply the server profile only when one was returned.
+        const bootProfile = boot.profile;
+        if (!cancelled && bootProfile) setProfile((prev) => mergeProfileFlags(prev, bootProfile));
         if (!cancelled) setQuickInsights(boot.quickInsights);
         try {
           const summary = await endpoints.fetchDashboardSummary();
@@ -1471,7 +1491,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }) => {
       try {
         const result = await profileAdapter.save(input, profile);
-        setProfile(result);
+        if (!result) return; // keep the previous profile on empty server response
+        setProfile((prev) => mergeProfileFlags(prev, result));
       } catch (e) {
         handleWriteErrorRef.current(e);
       }

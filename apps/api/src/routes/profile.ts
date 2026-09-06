@@ -19,6 +19,21 @@ export const registerProfileRoutes = (
   app: FastifyInstance,
   opts: { resolveToken: AuthResolver; profileStore: ProfileStore; idempotency?: IdempotencyStore; adminEmails?: string[]; resolveSessionEmail?: (headers: Headers) => Promise<string | undefined> },
 ): void => {
+  // Server-computed admin flag, shared by GET and PATCH so both projections
+  // stay consistent. A session that cannot be resolved yields an explicit
+  // isAdmin=false (never undefined) — the PWA gate treats missing as false.
+  const resolveIsAdmin = async (req: { headers: Record<string, unknown> }): Promise<boolean> => {
+    let email: string | undefined;
+    if (opts.resolveSessionEmail) {
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(',') : String(value));
+      }
+      email = await opts.resolveSessionEmail(headers).catch(() => undefined);
+    }
+    return Boolean(opts.adminEmails?.some((admin) => admin.toLowerCase() === (email ?? '').toLowerCase()));
+  };
+
   app.get('/profile', async (req, reply) => {
     const token = req.headers[DEVICE_TOKEN_HEADER];
     let ctx;
@@ -33,15 +48,7 @@ export const registerProfileRoutes = (
       });
     }
     const existing = await opts.profileStore.get(ctx.householdId);
-    let email: string | undefined;
-    if (opts.resolveSessionEmail) {
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(',') : String(value));
-      }
-      email = await opts.resolveSessionEmail(headers).catch(() => undefined);
-    }
-    const isAdmin = Boolean(opts.adminEmails?.some((admin) => admin.toLowerCase() === (email ?? '').toLowerCase()));
+    const isAdmin = await resolveIsAdmin(req);
     return reply.code(200).send({ profile: existing ? { ...existing, isAdmin } : null });
   });
 
@@ -81,7 +88,8 @@ export const registerProfileRoutes = (
         avatarColor: data.avatarColor,
         greetingStyle: data.greetingStyle,
       });
-      return { status: 200 as const, body: { profile } };
+      const isAdmin = await resolveIsAdmin(req);
+      return { status: 200 as const, body: { profile: { ...profile, isAdmin } } };
     };
 
     try {
