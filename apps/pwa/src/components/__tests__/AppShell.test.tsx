@@ -1,7 +1,12 @@
-import { render, screen } from "@/lib/test-utils";
+import { render, screen, act } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import AppShell from "../AppShell";
+import {
+  acquireBodyScrollLock,
+  releaseBodyScrollLock,
+  bodyScrollLockCount,
+} from "@/lib/ui/overlay-a11y";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
 import type { AppState } from "@/lib/state/app-state-context";
@@ -62,6 +67,10 @@ describe("AppShell", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     mockPath = "/";
+  });
+
+  afterEach(() => {
+    while (bodyScrollLockCount() > 0) releaseBodyScrollLock();
   });
 
   describe("rendering", () => {
@@ -284,8 +293,39 @@ describe("AppShell", () => {
      expect(screen.getByText("1")).toBeInTheDocument();
    });
 
-   it("does not show pending invites badge when there are no pending invites", async () => {
-     render(<AppShell><div>Content</div></AppShell>);
-     expect(screen.queryByLabelText(/convite\(s\) pendente\(s\)/)).not.toBeInTheDocument();
-   });
- });
+    it("does not show pending invites badge when there are no pending invites", async () => {
+      render(<AppShell><div>Content</div></AppShell>);
+      expect(screen.queryByLabelText(/convite\(s\) pendente\(s\)/)).not.toBeInTheDocument();
+    });
+
+    it("hides the pending invites badge while an overlay is open (v2 A1/A7)", async () => {
+      const { fetchPendingMe } = await import("@/lib/api/auth");
+      (fetchPendingMe as ReturnType<typeof vi.fn>).mockResolvedValue({ items: [{ id: "inv-1", householdId: "ws-1", email: "convidado@example.com", role: "member", expiresAt: "2026-09-07T12:00:00.000Z" }], total: 1 });
+      render(<AppShell><div>Content</div></AppShell>);
+      expect(await screen.findByLabelText(/convite\(s\) pendente\(s\)/)).toBeInTheDocument();
+      await act(async () => {
+        acquireBodyScrollLock();
+      });
+      expect(screen.queryByLabelText(/convite\(s\) pendente\(s\)/)).not.toBeInTheDocument();
+      await act(async () => {
+        releaseBodyScrollLock();
+      });
+      expect(screen.getByLabelText(/convite\(s\) pendente\(s\)/)).toBeInTheDocument();
+      expect(screen.getByTestId("pending-invites-badge").querySelector("svg")).toBeInTheDocument();
+    });
+
+    it("renders the Mais drawer with one distinct icon per item (v2 A6)", async () => {
+      const user = userEvent.setup();
+      const { container } = render(<AppShell><div>Content</div></AppShell>);
+      await user.click(navButton("Mais"));
+      const dialog = screen.getByRole("dialog");
+      const buttons = Array.from(dialog.querySelectorAll("button")).filter((b) =>
+        b.textContent && ["Patrimônio", "Contas", "Cartões", "Assinaturas", "Orçamentos", "Metas", "Categorias", "Workspaces", "Aprovações", "Relatórios"].some((l) => b.textContent!.includes(l)),
+      );
+      expect(buttons.length).toBe(10);
+      const icons = buttons.map((b) => b.querySelector("svg")?.outerHTML);
+      expect(icons.every(Boolean)).toBe(true);
+      expect(new Set(icons).size).toBe(10);
+      expect(container.querySelector('[data-shell="root"]')).toBeInTheDocument();
+    });
+  });

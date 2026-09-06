@@ -8,6 +8,8 @@ import NewTransactionSheet from "@/components/NewTransactionSheet";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import SidebarRail from "@/components/SidebarRail";
 import { Icon, type IconName } from "@/components/ui/Icon";
+import { Bell } from "lucide-react";
+import { useIsOverlayOpen } from "@/lib/ui/overlay-a11y";
 import type { NavItem } from "@/components/BottomNav";
 import type { SaveData } from "@/components/NewTransactionSheet";
 import { useAppState } from "@/lib/state/app-state-context";
@@ -15,6 +17,7 @@ import { useSheet } from "@/lib/sheet-context";
 import { useUnsavedChangesSafe } from "@/lib/unsaved-changes";
 import { recordAdoptionEvent } from "@/lib/api/adoption";
 import { TedChatLauncher } from "@/features/ted/TedChatLauncher";
+import { SwipeNav } from "@/lib/ui/swipe-nav";
 import { fetchPendingMe } from "@/lib/api/auth";
 
 interface AppShellProps {
@@ -66,6 +69,9 @@ export default function AppShell({ children }: AppShellProps) {
   } = useAppState();
   const { sheetKind, closeSheet } = useSheet();
   const { isDirty } = useUnsavedChangesSafe();
+  // A1/A7: floating elements (TED FAB hides itself; invite badge hides here)
+  // must not clash with open overlays.
+  const overlayOpen = useIsOverlayOpen();
   const [discardOpen, setDiscardOpen] = useState(false);
   const [pendingNav, setPendingNav] = useState<NavItem | null>(null);
   const [pendingInviteCount, setPendingInviteCount] = useState(0);
@@ -223,12 +229,12 @@ export default function AppShell({ children }: AppShellProps) {
     { label: "Contas", route: "/contas", icon: "home" },
     { label: "Cartões", route: "/cartoes", icon: "credit-card" },
     { label: "Assinaturas", route: "/assinaturas", icon: "tag" },
-    { label: "Orçamentos", route: "/orcamentos", icon: "chart" },
+    { label: "Orçamentos", route: "/orcamentos", icon: "pie-chart" },
     { label: "Metas & Dívidas", route: "/metas", icon: "target" },
     { label: "Categorias", route: "/categorias", icon: "folder-open" },
-    { label: "Workspaces", route: "/workspaces", icon: "folder-open" },
+    { label: "Workspaces", route: "/workspaces", icon: "layers" },
     { label: "Aprovações", route: "/pending", icon: "alert-triangle" },
-    { label: "Relatórios", route: "/relatorios", icon: "chart" },
+    { label: "Relatórios", route: "/relatorios", icon: "file-text" },
   ];
 
   return (
@@ -242,7 +248,7 @@ export default function AppShell({ children }: AppShellProps) {
         className="relative mx-auto flex min-h-dvh w-full max-w-[var(--shell-max-w)] lg:max-w-none flex-1 flex-col bg-bg transition-all"
       >
         <div className="flex-1 w-full max-w-7xl mx-auto">
-          {children}
+          <SwipeNav>{children}</SwipeNav>
         </div>
 
         {/* Mobile Bottom Navigation */}
@@ -320,9 +326,9 @@ export default function AppShell({ children }: AppShellProps) {
         />
 
         <TedChatLauncher />
-        {pendingInviteCount > 0 && (
-          <div className="fixed bottom-20 right-5 z-50 flex items-center gap-2 rounded-full bg-primary px-3 py-2 text-[12px] font-bold text-primary-foreground shadow-elevated" aria-label={`${pendingInviteCount} convite(s) pendente(s)`}>
-            <span>🔔</span>
+        {pendingInviteCount > 0 && !overlayOpen && (
+          <div data-testid="pending-invites-badge" className="fixed bottom-20 right-5 z-50 flex items-center gap-2 rounded-full bg-primary px-3 py-2 text-[12px] font-bold text-primary-foreground shadow-elevated" aria-label={`${pendingInviteCount} convite(s) pendente(s)`}>
+            <Bell size={14} strokeWidth={2.4} aria-hidden="true" />
             <span>{pendingInviteCount}</span>
           </div>
         )}

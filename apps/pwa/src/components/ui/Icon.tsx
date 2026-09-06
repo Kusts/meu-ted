@@ -13,11 +13,14 @@ import {
   ChevronLeft,
   ChevronRight,
   CreditCard,
+  FileText,
   FolderOpen,
   Home,
   Info,
+  Layers,
   MinusCircle,
   MoreHorizontal,
+  PieChart,
   Plus,
   PlusCircle,
   Receipt,
@@ -45,6 +48,9 @@ export type IconName =
   | "credit-card"
   | "wallet"
   | "chart"
+  | "pie-chart"
+  | "file-text"
+  | "layers"
   | "target"
   | "tag"
   | "folder-open"
@@ -79,6 +85,9 @@ const ICON_MAP: Record<IconName, React.ComponentType<LucideProps>> = {
   "credit-card": CreditCard,
   wallet: Wallet,
   chart: BarChart3,
+  "pie-chart": PieChart,
+  "file-text": FileText,
+  layers: Layers,
   target: Target,
   tag: Tag,
   "folder-open": FolderOpen,
