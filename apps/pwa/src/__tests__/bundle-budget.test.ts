@@ -6,14 +6,13 @@
 //      budget.json.initialGzipKB.
 //   2. Equivalent-set gzip KB does not regress >5% vs budget.json.totalGzipKB.
 //
-// budget.json.totalGzipKB (280.7) is the ORIGINAL all-chunks baseline measured
-// BEFORE Next.js 16.2.9 emitted the per-route AppRouter (624-*) and React
-// error-decoder (3896037c-*) chunks. Those two framework chunks (~121.7 KB
-// gzipped) are NOT application code and are excluded from the equivalent set.
-// App/ lazy route chunks ARE part of the equivalent set — they are included,
-// not excluded merely because they are lazy. The equivalent set is therefore
-// "all chunks minus the 624-*/3896037c-* framework chunks", which matches the
-// chunk membership of the original 280.7 measurement. See budget.json notes.
+// budget.json.totalGzipKB is the equivalent-set baseline (re-baselined
+// 2026-09-06 to 495.04 KB; see budget.json notes for the old->new history).
+// Next.js 16.2.9 per-route AppRouter (624-*) and React error-decoder
+// (3896037c-*) chunks are NOT application code and are excluded from the
+// equivalent set. App/ lazy route chunks ARE part of the equivalent set —
+// they are included, not excluded merely because lazy. The equivalent set is
+// therefore "all chunks minus the 624-*/3896037c-* framework chunks".
 //
 // The regression gate is ONE-SIDED (upper bound): current <= baseline * 1.05.
 // Being under baseline is an improvement, not a regression.

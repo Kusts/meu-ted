@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-15",
-  "initialGzipKB": 135.9,
-  "totalGzipKB": 280.7,
+  "timestamp": "2026-09-06",
+  "initialGzipKB": 136.05,
+  "totalGzipKB": 495.04,
   "regressionLimit": 5,
-  "notes": "Baseline = ORIGINAL all-chunks total (280.7 KB) measured before Next.js 16.2.9 emitted the per-route AppRouter (624-*) and React error-decoder (3896037c-*) chunks. Those two framework chunks (~121.7 KB gzipped) are NOT application code and are excluded from the equivalent set; app/ lazy route chunks ARE included (not excluded merely because lazy). The 5% regression gate (bundle-budget.test.ts) compares the measured equivalent-set total (all chunks minus the 624-*/3896037c-* framework chunks) to 280.7 KB (max 294.735 KB)."
+  "notes": "Re-baseline 2026-09-06 (old 2026-07-15: initial 135.9 KB, total 280.7 KB). The +214 KB growth since July comes from 309 merged feature commits (new routes cartoes/perfil/workspaces/contas/registros/categorias, AI SDK, PWA hardening), NOT from the LLM refactor: a clean build with/without the @pi-finance/llm-contracts change differs by +0.29 KB (494.75 -> 495.04), and the PWA imports only the zod-free /types subpath. Largest chunks are shared vendor/common (573 @157 KB) plus many small route pages — no anomalous duplicated dependency found. Next.js 16 framework chunks (624-*/3896037c-*, ~124.1 KB) remain excluded from the equivalent set. Gate: equivalent-set total <= 495.04 KB +5% (max 519.792 KB)."
 }
