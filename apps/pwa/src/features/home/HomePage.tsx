@@ -456,8 +456,12 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
       />
 
       {error && (
-        <div className="mx-5 mt-2 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger">
-          ⚠ {error}
+        <div
+          role="alert"
+          className="mx-5 mt-2 flex items-center gap-2 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger"
+        >
+          <AlertCircle size={15} className="flex-none text-danger" aria-hidden="true" />
+          <span>{error}</span>
         </div>
       )}
 
@@ -621,7 +625,8 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
         </div>
 
         {/* ── Content area ── */}
-        <div className="px-5 pb-6 pt-4 sm:px-8 lg:px-12">
+        {/* pb-24: respiro p/ CTAs finais não colidirem com o FAB do TED (fixed bottom-88px) */}
+        <div className="px-5 pb-24 pt-4 sm:px-8 lg:px-12">
           {pendingCount !== null && pendingCount > 0 && (
             <button
               type="button"
@@ -920,6 +925,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
                 {/* Donut chart */}
                 <div
                   data-testid="category-donut"
+                  data-no-swipe="true"
                   className="relative h-[104px] w-[104px] flex-none rounded-full shadow-inner"
                   style={{ background: donutBg }}
                 >

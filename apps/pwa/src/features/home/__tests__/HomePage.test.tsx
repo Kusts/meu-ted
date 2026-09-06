@@ -1209,5 +1209,37 @@ describe("HomePage", () => {
       unmount();
     });
   });
+
+  describe("review Onda 1 fixes", () => {
+    it("marks the category donut as a no-swipe zone for the gesture nav", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(defaultState());
+      const { container } = render(<HomePage />);
+      const donut = container.querySelector('[data-testid="category-donut"]');
+      expect(donut).toHaveAttribute("data-no-swipe", "true");
+    });
+
+    it("renders the error banner with a lucide icon instead of a text glyph", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...defaultState(),
+        error: "Falha ao sincronizar",
+      } as AppState);
+      render(<HomePage />);
+      const banner = screen.getByRole("alert");
+      expect(banner).toHaveTextContent("Falha ao sincronizar");
+      expect(banner.textContent).not.toMatch(/⚠/);
+      expect(banner.querySelector("svg")).toBeInTheDocument();
+    });
+
+    it("keeps bottom breathing room so final CTAs clear the TED FAB", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue({
+        ...defaultState(),
+        accounts: [],
+      } as AppState);
+      const { container } = render(<HomePage />);
+      expect(screen.getByRole("button", { name: "Adicionar conta" })).toBeInTheDocument();
+      // Content area keeps >=88px bottom padding (TED launcher floats at bottom-88px)
+      expect(container.querySelector(".pb-24")).toBeInTheDocument();
+    });
+  });
 });
 
