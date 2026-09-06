@@ -165,6 +165,12 @@ export const registerAgentLlmRelayRoutes = (
           signal: controller.signal,
         });
 
+        // FIX R1: o abort acima só vale se o fetch cooperar. Um upstream
+        // (ou mock) que ignore o AbortSignal pode resolver headers após o
+        // budget — verifique o deadline explicitamente antes de aceitar
+        // qualquer byte como resposta válida.
+        if (Date.now() - startedAt >= requestTimeoutMs) throw timeoutError();
+
         let bodyTimer: ReturnType<typeof setTimeout> | undefined;
         let body: {
           error?: { type?: string; message?: string };
@@ -189,6 +195,11 @@ export const registerAgentLlmRelayRoutes = (
         } finally {
           if (bodyTimer) clearTimeout(bodyTimer);
         }
+
+      // FIX R1 (cont.): mesmo após o race, um body imediato pode ter
+      // vencido um timer de saldo ~0 resolvendo após o prazo — revalide o
+      // deadline antes de aceitar/retornar o body.
+      if (Date.now() - startedAt >= requestTimeoutMs) throw timeoutError();
 
       if (!res.ok) {
         const message = body?.error?.message ?? `HTTP ${res.status}`;

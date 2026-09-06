@@ -279,4 +279,35 @@ describe('Fase 2 item 8 — dynamic relay allowlist (RED)', () => {
     // Only the allowlisted pair reached the upstream.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('late headers from an abort-ignoring upstream with immediate body is still a timeout (FIX R1)', async () => {
+    // Reprodução adversarial §3.5: o mock ignora AbortSignal de propósito,
+    // resolve headers APÓS o budget (150ms > 100ms) com body imediato e
+    // VÁLIDO. Sem checagem explícita de deadline, o body imediato vence o
+    // race de saldo ~0 e o handler retorna 200/502 em vez de timeout.
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, requestTimeoutMs: 100,
+    });
+    await app.ready();
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({
+                output: [{ type: 'message', content: [{ type: 'output_text', text: 'late but valid' }] }],
+              }),
+            } as unknown as Response);
+          }, 150);
+        }),
+    );
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' },
+    });
+    expect(res.statusCode).toBe(504);
+    expect(res.json()).toMatchObject({ code: 'agent.provider_timeout' });
+  }, 10_000);
 });
