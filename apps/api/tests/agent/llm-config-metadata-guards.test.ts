@@ -231,6 +231,28 @@ describe('Fase 3 item 2 — compat + identity guards on referenced models (RED)'
     expect((await store.getModel(model.id))?.modelId).toBe('claude-x');
   });
 
+  it('identity violation wins over compat violation (409 precedence, adversarial)', async () => {
+    // Both wrong at once: the upsert targets a different identity AND an
+    // incompatible protocol. Identity (conflict) must fire first — the
+    // request is not an update of the referenced row at all.
+    const store = createInMemoryLlmConfigStore();
+    const { model } = await seedAnthropicActivePair(store);
+    await expect(
+      store.upsertModel({
+        id: model.id,
+        providerId: 'anthropic',
+        modelId: 'claude-y',
+        protocol: 'chat-completions',
+        privacyClass: 'training_prohibited',
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'agent.runtime_in_use',
+      reason: 'active_model',
+    });
+    expect((await store.getModel(model.id))?.modelId).toBe('claude-x');
+  });
+
   it('compatible protocol change on the active model still applies', async () => {
     const store = createInMemoryLlmConfigStore();
     await seedActivePair(store);
