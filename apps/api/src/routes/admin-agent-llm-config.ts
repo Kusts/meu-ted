@@ -57,6 +57,22 @@ export interface AdminAgentLlmConfigDeps {
   agentRuntimeOrigin: string;
   agentRuntimeToken: string;
   trustedOrigins?: string[];
+  /**
+   * Fase 3 item 9: best-effort audit sink for sensitive admin reads. Never
+   * throws into the request path; carries only operational metadata (actor,
+   * versions, counts) — never secrets, aliases, or full configuration.
+   */
+  auditLog?: (event: AdminLlmReadAudit) => void;
+}
+
+/** Operational metadata recorded for each sensitive admin config read. */
+export interface AdminLlmReadAudit {
+  action: 'admin.llm-config.read';
+  actor: string;
+  version: number;
+  securityEpoch: number;
+  providerCount: number;
+  modelCount: number;
 }
 
 const DEFAULT_TRUSTED_ORIGINS = [
@@ -142,12 +158,29 @@ export const registerAdminAgentLlmConfigRoutes = (
   };
 
   // GET /admin/agent/llm-config - List full config (providers, models, runtime DTO)
-  app.get('/admin/agent/llm-config', { preHandler: guard }, async () => {
+  app.get('/admin/agent/llm-config', { preHandler: guard }, async (req) => {
     const [providers, models, runtime] = await Promise.all([
       deps.store.listProviders(),
       deps.store.listModels(),
       deps.store.getRuntime(),
     ]);
+    // Fase 3 item 9: audit the sensitive read best-effort — a failing sink
+    // must never break configuration reads.
+    if (deps.auditLog) {
+      try {
+        const session = (req as unknown as { _session?: { email?: string } })._session;
+        deps.auditLog({
+          action: 'admin.llm-config.read',
+          actor: session?.email ?? 'unknown',
+          version: runtime.version,
+          securityEpoch: runtime.securityEpoch,
+          providerCount: providers.length,
+          modelCount: models.length,
+        });
+      } catch {
+        // Audit sink failure is never a read failure.
+      }
+    }
     return { providers, models, runtime: toAdminRuntimeDto(runtime, models) };
   });
 

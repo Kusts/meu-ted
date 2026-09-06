@@ -78,7 +78,7 @@ import { getBetterAuthSessionContext } from "../auth/better-auth.js";
 import { createInMemoryPriceAlertStore, type PriceAlertStore } from "../price-alerts/store.js";
 import { registerPriceAlertRoutes } from "./price-alerts.js";
 import { registerAgentAuthRoutes } from "./agent-auth.js";
-import { registerAdminAgentLlmConfigRoutes } from "./admin-agent-llm-config.js";
+import { registerAdminAgentLlmConfigRoutes, type AdminLlmReadAudit } from "./admin-agent-llm-config.js";
 import { registerInternalAgentLlmConfigRoutes } from "./internal-agent-llm-config.js";
 import { registerAgentLlmRelayRoutes } from "./internal-agent-llm-relay.js";
 import { createInMemoryLlmConfigStore } from "../agent/llm-config-memory.js";
@@ -131,6 +131,8 @@ export type RouteDeps = {
   agentRuntimeOrigin?: string;
   agentRuntimeAdminToken?: string;
   trustedOrigins?: string[];
+  /** Fase 3 item 9: optional audit sink for sensitive admin LLM reads. */
+  adminLlmAuditLog?: (event: AdminLlmReadAudit) => void;
   inviteSignupGuard?: import('../auth/invite-signup-guard.js').InviteSignupGuard;
   pool?: { query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }> } | null;
 };
@@ -520,6 +522,9 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       agentRuntimeOrigin: deps.agentRuntimeOrigin ?? 'https://pi-finance-agent.walissonead.workers.dev',
       agentRuntimeToken: deps.agentRuntimeAdminToken ?? 'dev-agent-runtime-admin-token-32-chars!',
       ...(deps.trustedOrigins ? { trustedOrigins: deps.trustedOrigins } : {}),
+      // Fase 3 item 9: sensitive admin reads are audit-logged best-effort;
+      // production defaults to the server log, tests may inject a collector.
+      auditLog: deps.adminLlmAuditLog ?? ((event) => app.log.info({ audit: event.action, ...event })),
     });
   }
   if (deps.auth) {

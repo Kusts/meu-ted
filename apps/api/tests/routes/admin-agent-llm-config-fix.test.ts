@@ -20,7 +20,10 @@ describe('Fase 1b-FIX routes (items 3/8)', () => {
 
   const adminHeaders = () => ({ cookie: adminCookie, origin: 'http://localhost:3000' });
 
-  const buildApp = async (llmSeed?: Parameters<typeof createInMemoryLlmConfigStore>[0]) => {
+  const buildApp = async (
+    llmSeed?: Parameters<typeof createInMemoryLlmConfigStore>[0],
+    adminLlmAuditLog?: (event: { action: string; actor: string }) => void,
+  ) => {
     const memoryDb: any = { user: [], session: [], account: [], verification: [] };
     auth = createBetterAuth({
       database: memoryAdapter(memoryDb),
@@ -52,6 +55,7 @@ describe('Fase 1b-FIX routes (items 3/8)', () => {
       llmConfigStore: llmStore,
       agentConfigToken: CONFIG_TOKEN,
       trustedOrigins: ['http://localhost:3000'],
+      ...(adminLlmAuditLog ? { adminLlmAuditLog } : {}),
     });
     await app.ready();
   };
@@ -391,6 +395,45 @@ describe('Fase 1b-FIX routes (items 3/8)', () => {
     expect(data.runtime.activeProviderId).toBeNull();
     expect(data.runtime.activeModelId).toBeNull();
     expect(data.runtime.activeProtocol).toBeNull();
+  });
+
+  it('Fase 3 item 9: sensitive admin GET emits an audit event without secrets', async () => {
+    await app.close();
+    await auth.close();
+    const events: Array<Record<string, unknown>> = [];
+    await buildApp(undefined, (e) => {
+      events.push(e as unknown as Record<string, unknown>);
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/admin/agent/llm-config',
+      headers: adminHeaders(),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      action: 'admin.llm-config.read',
+      actor: ADMIN_EMAIL,
+    });
+    expect(typeof events[0]?.['version']).toBe('number');
+    expect(typeof events[0]?.['securityEpoch']).toBe('number');
+    const keys = Object.keys(events[0] ?? {}).join(' ');
+    expect(keys).not.toMatch(/secret|token|apiKey|alias/i);
+  });
+
+  it('Fase 3 item 9: a failing audit sink never breaks the admin read', async () => {
+    await app.close();
+    await auth.close();
+    await buildApp(undefined, () => {
+      throw new Error('sink down');
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/admin/agent/llm-config',
+      headers: adminHeaders(),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().providers).toBeDefined();
   });
 
   it('Fase 3 item 2 (R3): internal projection fails closed on unapproved active provider', async () => {
