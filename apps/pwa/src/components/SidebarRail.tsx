@@ -2,12 +2,30 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import type { ComponentType } from "react";
 import { usePathname } from "next/navigation";
 import { useTheme } from "@/lib/theme";
 import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
-import { Icon, type IconName } from "@/components/ui/Icon";
 import { Button } from "@/components/ui/Button";
-import { Moon, Sun, Plus } from "lucide-react";
+import {
+  Moon,
+  Sun,
+  Plus,
+  Home,
+  Receipt,
+  CalendarClock,
+  CreditCard,
+  Wallet,
+  BarChart3,
+  Target,
+  Tag,
+  FolderOpen,
+  TriangleAlert,
+  Bell,
+  Shield,
+  User,
+  type LucideProps,
+} from "lucide-react";
 
 export interface SidebarRailProps {
   onNewTransaction: () => void;
@@ -17,27 +35,27 @@ export interface SidebarRailProps {
 interface NavItemDef {
   label: string;
   href: string;
-  icon: IconName;
+  icon: ComponentType<LucideProps>;
 }
 
 const PRIMARY_NAV: NavItemDef[] = [
-  { label: "Resumo", href: "/", icon: "home" },
-  { label: "Registros", href: "/registros", icon: "records" },
-  { label: "A pagar", href: "/a-pagar", icon: "payables" },
-  { label: "Cartões", href: "/cartoes", icon: "credit-card" },
-  { label: "Contas", href: "/contas", icon: "wallet" },
-  { label: "Orçamentos", href: "/orcamentos", icon: "chart" },
-  { label: "Metas", href: "/metas", icon: "target" },
-  { label: "Patrimônio", href: "/patrimonio", icon: "wallet" },
+  { label: "Resumo", href: "/", icon: Home },
+  { label: "Registros", href: "/registros", icon: Receipt },
+  { label: "A pagar", href: "/a-pagar", icon: CalendarClock },
+  { label: "Cartões", href: "/cartoes", icon: CreditCard },
+  { label: "Contas", href: "/contas", icon: Wallet },
+  { label: "Orçamentos", href: "/orcamentos", icon: BarChart3 },
+  { label: "Metas", href: "/metas", icon: Target },
+  { label: "Patrimônio", href: "/patrimonio", icon: Wallet },
 ];
 
 const SECONDARY_NAV: NavItemDef[] = [
-  { label: "Assinaturas", href: "/assinaturas", icon: "tag" },
-  { label: "Categorias", href: "/categorias", icon: "folder-open" },
-  { label: "Workspaces", href: "/workspaces", icon: "folder-open" },
-  { label: "Aprovações", href: "/pending", icon: "alert-triangle" },
-  { label: "Alertas", href: "/alerts/price", icon: "bell" },
-  { label: "Auditoria", href: "/audit", icon: "shield" },
+  { label: "Assinaturas", href: "/assinaturas", icon: Tag },
+  { label: "Categorias", href: "/categorias", icon: FolderOpen },
+  { label: "Workspaces", href: "/workspaces", icon: FolderOpen },
+  { label: "Aprovações", href: "/pending", icon: TriangleAlert },
+  { label: "Alertas", href: "/alerts/price", icon: Bell },
+  { label: "Auditoria", href: "/audit", icon: Shield },
 ];
 
 export function SidebarRail({
@@ -100,6 +118,7 @@ export function SidebarRail({
                 item.href === "/"
                   ? pathname === "/"
                   : pathname.startsWith(item.href);
+              const ItemIcon = item.icon;
 
               return (
                 <Link
@@ -112,9 +131,9 @@ export function SidebarRail({
                       : "text-text-secondary hover:text-text-primary hover:bg-surface-2"
                   }`}
                 >
-                  <Icon
-                    name={item.icon}
+                  <ItemIcon
                     size={18}
+                    strokeWidth={1.9}
                     className={isActive ? "text-primary" : "text-text-muted"}
                   />
                   <span>{item.label}</span>
@@ -131,6 +150,7 @@ export function SidebarRail({
           <nav className="space-y-1">
             {SECONDARY_NAV.map((item) => {
               const isActive = pathname.startsWith(item.href);
+              const ItemIcon = item.icon;
 
               return (
                 <Link
@@ -143,9 +163,9 @@ export function SidebarRail({
                       : "text-text-secondary hover:text-text-primary hover:bg-surface-2"
                   }`}
                 >
-                  <Icon
-                    name={item.icon}
+                  <ItemIcon
                     size={18}
+                    strokeWidth={1.9}
                     className={isActive ? "text-primary" : "text-text-muted"}
                   />
                   <span>{item.label}</span>
@@ -167,7 +187,7 @@ export function SidebarRail({
           }`}
         >
           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-surface-2 text-text-secondary">
-            <Icon name="user" size={15} />
+            <User size={15} strokeWidth={1.9} />
           </div>
           <span>Meu Perfil</span>
         </Link>

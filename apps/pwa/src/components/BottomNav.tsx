@@ -1,6 +1,14 @@
 "use client";
 
-import { Icon, type IconName } from "@/components/ui/Icon";
+import type { ComponentType } from "react";
+import {
+  Home,
+  Receipt,
+  CalendarClock,
+  MoreHorizontal,
+  type LucideProps,
+} from "lucide-react";
+import { haptic } from "@/lib/ui/haptics";
 
 export type NavItem = "home" | "records" | "payables" | "more";
 
@@ -14,15 +22,60 @@ interface BottomNavProps {
 interface ItemDef {
   key: NavItem;
   label: string;
-  icon: IconName;
+  Icon: ComponentType<LucideProps>;
 }
 
 const ITEMS: ItemDef[] = [
-  { key: "home", label: "Resumo", icon: "home" },
-  { key: "records", label: "Registros", icon: "records" },
-  { key: "payables", label: "A pagar", icon: "payables" },
-  { key: "more", label: "Mais", icon: "more" },
+  { key: "home", label: "Resumo", Icon: Home },
+  { key: "records", label: "Registros", Icon: Receipt },
+  { key: "payables", label: "A pagar", Icon: CalendarClock },
+  { key: "more", label: "Mais", Icon: MoreHorizontal },
 ];
+
+function NavButton({
+  item,
+  isActive,
+  onClick,
+}: {
+  item: ItemDef;
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  const ItemIcon = item.Icon;
+  return (
+    <button
+      onClick={() => {
+        haptic(8);
+        onClick();
+      }}
+      aria-current={isActive ? "page" : undefined}
+      className={`flex flex-1 flex-col items-center justify-center gap-0.5 rounded-[16px] px-2 pt-1.5 transition-all duration-200 focus-visible:outline-none ${
+        isActive ? "bg-primary-tint" : "bg-transparent"
+      }`}
+      style={{
+        color: isActive
+          ? "var(--color-primary)"
+          : "var(--color-text-muted)",
+      }}
+    >
+      <ItemIcon size={20} strokeWidth={1.9} />
+      {/* Spec AGY §4.3: dot esmeralda 4px sob o ícone ativo (transparente p/ não deslocar layout) */}
+      <span
+        aria-hidden="true"
+        className={`h-1 w-1 rounded-full transition-all duration-200 ${
+          isActive ? "bg-primary opacity-100" : "bg-transparent opacity-0"
+        }`}
+      />
+      <span
+        className={`text-[10px] ${
+          isActive ? "font-bold" : "font-medium"
+        } text-center`}
+      >
+        {item.label}
+      </span>
+    </button>
+  );
+}
 
 export function BottomNav({
   active,
@@ -37,40 +90,14 @@ export function BottomNav({
       style={{ height: "var(--tab-bar-height)" }}
     >
       {/* Items: left side (Resumo, Registros) */}
-      {ITEMS.slice(0, 2).map((item) => {
-        const isActive = active === item.key;
-        return (
-          <button
-            key={item.key}
-            onClick={() => onNavClick(item.key)}
-            aria-current={isActive ? "page" : undefined}
-            className="flex flex-1 flex-col items-center justify-center gap-0.5 pt-1.5 transition-colors focus-visible:outline-none"
-            style={{
-              color: isActive
-                ? "var(--color-primary)"
-                : "var(--color-text-muted)",
-            }}
-          >
-            <Icon name={item.icon} size={20} />
-            <span
-              className={`text-[10px] ${
-                isActive ? "font-bold" : "font-medium"
-              } text-center`}
-            >
-              {item.label}
-            </span>
-            {/* P5: indicador de aba ativa (pill/glow animado, sem layout shift) */}
-            <span
-              aria-hidden="true"
-              className={`mt-0.5 h-1 rounded-full transition-all duration-200 ${
-                isActive
-                  ? "w-5 bg-primary opacity-100 shadow-[0_0_8px_var(--primary-glow)]"
-                  : "w-0 bg-transparent opacity-0"
-              }`}
-            />
-          </button>
-        );
-      })}
+      {ITEMS.slice(0, 2).map((item) => (
+        <NavButton
+          key={item.key}
+          item={item}
+          isActive={active === item.key}
+          onClick={() => onNavClick(item.key)}
+        />
+      ))}
 
       {/* FAB — central */}
       <div
@@ -78,7 +105,10 @@ export function BottomNav({
         style={{ width: 64 }}
       >
         <button
-          onClick={onFabClick}
+          onClick={() => {
+            haptic(8);
+            onFabClick();
+          }}
           className="relative -top-2.5 flex h-[52px] w-[52px] items-center justify-center rounded-full text-white shadow-fab transition-transform active:scale-95 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           style={{
             background: "linear-gradient(145deg, var(--primary), var(--primary-dark))",
@@ -100,46 +130,20 @@ export function BottomNav({
       </div>
 
       {/* Items: right side (A pagar, Mais) */}
-      {ITEMS.slice(2).map((item) => {
-        const isActive = active === item.key;
-        return (
-          <button
-            key={item.key}
-            onClick={() => {
-              if (item.key === "more") {
-                onMoreClick();
-              } else {
-                onNavClick(item.key);
-              }
-            }}
-            aria-current={isActive ? "page" : undefined}
-            className="flex flex-1 flex-col items-center justify-center gap-0.5 pt-1.5 transition-colors focus-visible:outline-none"
-            style={{
-              color: isActive
-                ? "var(--color-primary)"
-                : "var(--color-text-muted)",
-            }}
-          >
-            <Icon name={item.icon} size={20} />
-            <span
-              className={`text-[10px] ${
-                isActive ? "font-bold" : "font-medium"
-              } text-center`}
-            >
-              {item.label}
-            </span>
-            {/* P5: indicador de aba ativa (pill/glow animado, sem layout shift) */}
-            <span
-              aria-hidden="true"
-              className={`mt-0.5 h-1 rounded-full transition-all duration-200 ${
-                isActive
-                  ? "w-5 bg-primary opacity-100 shadow-[0_0_8px_var(--primary-glow)]"
-                  : "w-0 bg-transparent opacity-0"
-              }`}
-            />
-          </button>
-        );
-      })}
+      {ITEMS.slice(2).map((item) => (
+        <NavButton
+          key={item.key}
+          item={item}
+          isActive={active === item.key}
+          onClick={() => {
+            if (item.key === "more") {
+              onMoreClick();
+            } else {
+              onNavClick(item.key);
+            }
+          }}
+        />
+      ))}
     </nav>
   );
 }

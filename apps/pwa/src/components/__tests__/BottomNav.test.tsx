@@ -120,8 +120,8 @@ describe("BottomNav", () => {
     });
   });
 
-  describe("active indicator (P5)", () => {
-    it("renders an animated pill on the active tab and keeps aria-current", () => {
+  describe("active indicator (spec AGY: pill + dot 4px)", () => {
+    it("highlights the active tab with a pill bg + emerald dot and keeps aria-current", () => {
       const { container } = render(
         <BottomNav
           active="records"
@@ -132,15 +132,17 @@ describe("BottomNav", () => {
       );
       const registrosBtn = screen.getByText("Registros").closest("button")!;
       expect(registrosBtn).toHaveAttribute("aria-current", "page");
-      const pill = registrosBtn.querySelector('span[aria-hidden="true"]')!;
-      expect(pill.className).toMatch(/bg-primary/);
-      expect(pill.className).toMatch(/transition-all/);
+      expect(registrosBtn.className).toMatch(/bg-primary-tint/);
+      const dot = registrosBtn.querySelector('span[aria-hidden="true"]')!;
+      expect(dot.className).toMatch(/bg-primary/);
+      expect(dot.className).toMatch(/h-1 w-1/);
 
-      // Inactive tabs keep the indicator mounted (opacity-0) to avoid layout shift
+      // Inactive tabs keep a transparent dot (no layout shift) and no pill
       const resumoBtn = screen.getByText("Resumo").closest("button")!;
       expect(resumoBtn).not.toHaveAttribute("aria-current");
-      const idlePill = resumoBtn.querySelector('span[aria-hidden="true"]')!;
-      expect(idlePill.className).toMatch(/opacity-0/);
+      expect(resumoBtn.className).not.toMatch(/bg-primary-tint/);
+      const idleDot = resumoBtn.querySelector('span[aria-hidden="true"]')!;
+      expect(idleDot.className).toMatch(/bg-transparent/);
       expect(container.querySelector('[data-nav="bottom"]')).toBeInTheDocument();
     });
 

@@ -7,5 +7,4 @@ export * from "./Tabs";
 export * from "./EmptyState";
 export * from "./Badge";
 export * from "./CategoryBadge";
-export * from "./Icon";
 export * from "./Skeleton";
