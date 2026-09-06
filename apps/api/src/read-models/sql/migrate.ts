@@ -27,6 +27,11 @@ type MigrationManifestEntry = {
 // and subscriptions; V010/V011 = profiles; V012 = accounts_payable paid_transaction_id;
 // V032 = legacy card_purchases household_id/updated_at and accounts updated_at.
 // V033 = card_purchases transaction_id/deleted_at and FK to transactions.
+// V043 = Better Auth admin/impersonation columns on the modern user/session/account
+// tables (additive ADD COLUMN IF NOT EXISTS only; never touches legacy financial
+// tables). Required in legacy mode because the production VPS boots with
+// DB_SCHEMA=legacy and V031 (admin columns) was never legacy-safe, so login
+// 500s with SCHEMA_MISMATCH until V043 applies at boot.
 // The canonical V001/V002/V004-V007 and modern workspace/auth migrations V013-V031
 // are skipped in legacy mode because they assume canonical schema or rely on modern
 // tables (Better Auth, workspaces, ownership transfers).
@@ -44,6 +49,7 @@ const LEGACY_SAFE_PREFIXES = [
   "V040",
   "V041",
   "V042",
+  "V043",
 ];
 
 export const migrationChecksum = (sql: string): string =>
