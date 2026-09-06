@@ -35,7 +35,7 @@ describe("useAnimatedNumber", () => {
     expect(result.current).toBe(5000);
   });
 
-  it("animates with cubic ease-out across driven frames", () => {
+  it("animates mount in 500ms and updates in 320ms (expo-out)", () => {
     stubMatchMedia(false);
     let now = 0;
     performance.now = () => now;
@@ -46,22 +46,39 @@ describe("useAnimatedNumber", () => {
     }) as typeof requestAnimationFrame;
     globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame;
 
-    const { result } = renderHook(() => useAnimatedNumber(1000, 600));
+    const { result, rerender } = renderHook(
+      ({ target }) => useAnimatedNumber(target),
+      { initialProps: { target: 1000 } },
+    );
     expect(callbacks).toHaveLength(1);
 
-    // Mid-frame t=0.5 → eased 1-(0.5)^3 = 0.875 → 875.
+    // Mount (500ms): t=0.5 → expo 1-2^-5 = 0.96875 → 969.
     act(() => {
-      now = 300;
-      callbacks[0]!(300);
+      now = 250;
+      callbacks[0]!(250);
     });
-    expect(result.current).toBe(875);
+    expect(result.current).toBe(969);
 
-    // Final frame clamps to the target.
+    // Mount completa no fim dos 500ms.
     act(() => {
-      now = 900;
-      callbacks[1]!(900);
+      now = 600;
+      callbacks[1]!(600);
     });
     expect(result.current).toBe(1000);
+
+    // Update (320ms): de 1000 → 2000, t=0.5 → 1000 + 969 = 1969.
+    rerender({ target: 2000 });
+    act(() => {
+      now = 600 + 160;
+      callbacks[2]!(760);
+    });
+    expect(result.current).toBe(1969);
+
+    act(() => {
+      now = 600 + 320;
+      callbacks[3]!(920);
+    });
+    expect(result.current).toBe(2000);
   });
 
   it("falls back to a direct set without requestAnimationFrame", async () => {

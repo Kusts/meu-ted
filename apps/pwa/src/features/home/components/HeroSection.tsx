@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import { formatBRL } from "@/lib/format/brl";
+import { haptic } from "@/lib/ui/haptics";
 import { HERO_BACKGROUND } from "../hero";
 import { Bell, Eye, EyeOff } from "lucide-react";
 
@@ -47,6 +49,39 @@ export function HeroSection({
   onOpenProfile,
   onOpenNotifications,
 }: HeroSectionProps) {
+  // Spec AGY §1: alternância em 2 fases (fade out 90ms → troca → fade in).
+  const [leaving, setLeaving] = useState(false);
+  const [reducedMotion] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      : false,
+  );
+  const timeoutRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
+    },
+    [],
+  );
+
+  const handleEye = () => {
+    haptic(12);
+    if (reducedMotion) {
+      onToggleBalance();
+      return;
+    }
+    setLeaving(true);
+    timeoutRef.current = window.setTimeout(() => {
+      onToggleBalance();
+      setLeaving(false);
+    }, 90);
+  };
+
+  // Classe de transição aplicada aos 4 valores ocultáveis (saldo + 3 mini-stats).
+  const swapClass = `transition-[opacity,filter,transform] duration-[90ms] ease-[var(--easing-standard)] ${
+    leaving ? "opacity-0 scale-[0.98] blur-[2px]" : "opacity-100 scale-100 blur-0"
+  }`;
+
   return (
     <div
       data-testid="hero-area"
@@ -107,26 +142,37 @@ export function HeroSection({
       {/* Saldo */}
       <div className="mb-[5px] flex items-center gap-2 text-xs font-medium text-white/80">
         <span>Saldo total · contas</span>
-        {/* P3 — ocultar/mostrar saldo (persistido) */}
+        {/* P3 — ocultar/mostrar saldos (persistido); 44px touch-target */}
         <button
           type="button"
-          onClick={onToggleBalance}
+          onClick={handleEye}
           aria-pressed={balanceHidden}
-          aria-label={balanceHidden ? "Mostrar saldo" : "Ocultar saldo"}
-          className="flex h-[26px] w-[26px] items-center justify-center rounded-full text-white/80 transition-all hover:bg-white/20 hover:text-white active:scale-95"
+          aria-label={balanceHidden ? "Mostrar saldos" : "Ocultar saldos"}
+          className="flex h-11 w-11 items-center justify-center rounded-full text-white/80 transition-all hover:bg-white/20 hover:text-white active:scale-95"
         >
-          {balanceHidden ? <EyeOff size={15} /> : <Eye size={15} />}
+          {balanceHidden ? <EyeOff size={16} /> : <Eye size={16} />}
         </button>
       </div>
       <div
-        className="mb-[18px] font-mono tabular-nums text-[38px] sm:text-[44px] font-bold text-white tracking-tight"
+        className={`mb-[18px] font-mono tabular-nums text-[38px] sm:text-[44px] font-bold text-white tracking-tight ${swapClass}`}
         style={{ letterSpacing: "-0.02em", lineHeight: 1 }}
       >
-        {totalBalance !== null
-          ? balanceHidden
-            ? "R$ ••••••"
-            : formatBRL(animatedBalance)
-          : "—"}
+        {totalBalance !== null ? (
+          balanceHidden ? (
+            <>
+              <span
+                data-testid="balance-hidden"
+                aria-hidden="true"
+                className="inline-block h-8 w-36 rounded-md bg-white/15 align-middle backdrop-blur-sm"
+              />
+              <span className="sr-only">Saldo oculto</span>
+            </>
+          ) : (
+            formatBRL(animatedBalance)
+          )
+        ) : (
+          "—"
+        )}
       </div>
 
       {/* Mini-stats row */}
@@ -136,8 +182,16 @@ export function HeroSection({
           style={{ background: "rgba(255,255,255,.12)" }}
         >
           <div className="mb-[3px] text-[11px] font-medium text-white/70">Receitas</div>
-          <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-semibold text-white">
-            {totalIncome !== null ? formatBRL(totalIncome) : "—"}
+          <div className={`overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-semibold text-white ${swapClass}`}>
+            {totalIncome !== null ? (
+              balanceHidden ? (
+                <span data-testid="ministat-hidden" aria-hidden="true" className="inline-block h-4 w-16 rounded bg-white/15 align-middle backdrop-blur-sm" />
+              ) : (
+                formatBRL(totalIncome)
+              )
+            ) : (
+              "—"
+            )}
           </div>
         </div>
         <div
@@ -145,8 +199,16 @@ export function HeroSection({
           style={{ background: "rgba(255,255,255,.12)" }}
         >
           <div className="mb-[3px] text-[11px] font-medium text-white/70">Despesas</div>
-          <div className="overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-semibold text-white">
-            {totalExpenses !== null ? formatBRL(totalExpenses) : "—"}
+          <div className={`overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-semibold text-white ${swapClass}`}>
+            {totalExpenses !== null ? (
+              balanceHidden ? (
+                <span data-testid="ministat-hidden" aria-hidden="true" className="inline-block h-4 w-16 rounded bg-white/15 align-middle backdrop-blur-sm" />
+              ) : (
+                formatBRL(totalExpenses)
+              )
+            ) : (
+              "—"
+            )}
           </div>
         </div>
         <div
@@ -155,7 +217,7 @@ export function HeroSection({
         >
           <div className="mb-[3px] text-[11px] font-medium text-white/70">Resultado</div>
           <div
-            className="overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-semibold"
+            className={`overflow-hidden text-ellipsis whitespace-nowrap font-mono tabular-nums text-[13px] font-semibold ${swapClass}`}
             style={{
               color:
                 netResult === null
@@ -165,7 +227,15 @@ export function HeroSection({
                     : "#F9A8A2",
             }}
           >
-            {netResult !== null ? formatBRL(netResult) : "—"}
+            {netResult !== null ? (
+              balanceHidden ? (
+                <span data-testid="ministat-hidden" aria-hidden="true" className="inline-block h-4 w-16 rounded bg-white/15 align-middle backdrop-blur-sm" />
+              ) : (
+                formatBRL(netResult)
+              )
+            ) : (
+              "—"
+            )}
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { render, screen } from "@/lib/test-utils";
+import { render, screen, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import HomePage from "../HomePage";
 import * as appStateModule from "@/lib/state/app-state-context";
@@ -19,6 +19,7 @@ function defaultState(): AppState {
     debts: [], subscriptions: [], loading: false, error: null,
     dashboardSummary: mockDashboardSummary,
     saveProfile: vi.fn(), refreshProfile: vi.fn(), refreshDashboardSummary: vi.fn(),
+    refreshDomains: vi.fn().mockResolvedValue(undefined),
     profile: null,
     addTransaction: vi.fn(), updateTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(),
     cancelPayable: vi.fn(), updatePayable: vi.fn(), undoPayablePayment: vi.fn(), createPayable: vi.fn(),
@@ -1249,28 +1250,35 @@ describe("HomePage", () => {
       window.localStorage.removeItem(BALANCE_KEY);
     });
 
-    it("masks the hero balance behind the eye toggle with persistence", async () => {
+    it("masks hero balance + mini-stats behind the eye toggle with persistence", async () => {
       const user = userEvent.setup();
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(defaultState());
       render(<HomePage />);
 
-      // Server summary renders the full balance initially.
+      // Server summary renders the full balance + mini-stats initially.
       expect(screen.getByText("R$ 2.072,10")).toBeInTheDocument();
+      expect(screen.getByText("R$ 6.850,00")).toBeInTheDocument();
 
-      const hideBtn = screen.getByRole("button", { name: "Ocultar saldo" });
+      const hideBtn = screen.getByRole("button", { name: "Ocultar saldos" });
       expect(hideBtn).toHaveAttribute("aria-pressed", "false");
       await user.click(hideBtn);
 
-      expect(screen.getByText("R$ ••••••")).toBeInTheDocument();
+      // Two-phase swap (90ms): wait for the masked state to land.
+      expect(await screen.findByTestId("balance-hidden")).toBeInTheDocument();
+      expect(screen.getAllByTestId("ministat-hidden")).toHaveLength(3);
+      expect(screen.getByText("Saldo oculto")).toBeInTheDocument();
       expect(screen.queryByText("R$ 2.072,10")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Mostrar saldo" })).toHaveAttribute(
+      expect(screen.queryByText("R$ 6.850,00")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Mostrar saldos" })).toHaveAttribute(
         "aria-pressed",
         "true",
       );
       expect(window.localStorage.getItem(BALANCE_KEY)).toBe("1");
 
-      await user.click(screen.getByRole("button", { name: "Mostrar saldo" }));
-      expect(screen.queryByText("R$ ••••••")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Mostrar saldos" }));
+      await waitFor(() => {
+        expect(screen.queryByTestId("balance-hidden")).not.toBeInTheDocument();
+      });
       expect(window.localStorage.getItem(BALANCE_KEY)).toBe("0");
     });
   });

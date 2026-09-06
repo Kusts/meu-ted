@@ -3,9 +3,10 @@
 import StatusBar from "@/components/StatusBar";
 import { StaleBanner } from "@/components/StaleBanner";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { useAppState } from "@/lib/state/app-state-context";
+import { usePullToRefresh, PullToRefreshIndicator } from "@/lib/ui/use-pull-to-refresh";
 import NotificationsSheet from "@/features/profile/NotificationsSheet";
 import { useEffectiveProfile } from "@/features/profile/hooks";
 import { dashboardSummaryGate } from "@/features/dashboard-summary-gate";
@@ -41,6 +42,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
     quickInsights,
     dashboardSummary,
     refreshDashboardSummary,
+    refreshDomains,
     loading,
     error,
   } = useAppState();
@@ -114,6 +116,13 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   const { hidden: balanceHidden, toggle: toggleBalance } = useHideBalance();
   const animatedBalance = useAnimatedNumber(totalBalance ?? 0);
 
+  // PTR (hook do Coder 2): invalida domínios + resumo do servidor.
+  const handleRefresh = useCallback(async () => {
+    await refreshDomains?.(["accounts", "transactions", "payables", "budgets"]);
+    await refreshDashboardSummary?.();
+  }, [refreshDomains, refreshDashboardSummary]);
+  const pull = usePullToRefresh({ onRefresh: handleRefresh });
+
   if (loading) {
     return <LoadingScreen />;
   }
@@ -143,6 +152,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
       <main
         className="flex flex-1 flex-col overflow-y-auto pb-[var(--tab-bar-height)]"
       >
+        <PullToRefreshIndicator state={pull} />
         <HeroSection
           profile={profile}
           pendingCount={pendingCount}
