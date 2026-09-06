@@ -6,12 +6,13 @@ import {
   releaseBodyScrollLock,
   bodyScrollLockCount,
 } from "../overlay-a11y";
-import { SwipeNav, targetRouteForSwipe } from "../swipe-nav";
+import { SwipeNav, targetRouteForSwipe, shouldSwipeBack } from "../swipe-nav";
 
 let mockPath = "/";
 const pushMock = vi.fn();
+const backMock = vi.fn();
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: pushMock }),
+  useRouter: () => ({ push: pushMock, back: backMock }),
   usePathname: () => mockPath,
 }));
 
@@ -83,11 +84,33 @@ describe("targetRouteForSwipe (pure)", () => {
   });
 });
 
+describe("shouldSwipeBack (pure, Onda 5)", () => {
+  it("backs on right swipe in Mais subpages", () => {
+    expect(shouldSwipeBack("/contas", 80)).toBe(true);
+    expect(shouldSwipeBack("/cartoes", 80)).toBe(true);
+    expect(shouldSwipeBack("/patrimonio", 200)).toBe(true);
+    expect(shouldSwipeBack("/relatorios", 200)).toBe(true);
+  });
+
+  it("never backs on root routes (cyclic swipe stays intact)", () => {
+    expect(shouldSwipeBack("/", 80)).toBe(false);
+    expect(shouldSwipeBack("/registros", 80)).toBe(false);
+    expect(shouldSwipeBack("/a-pagar", 200)).toBe(false);
+  });
+
+  it("ignores left swipes and missing pathnames", () => {
+    expect(shouldSwipeBack("/contas", -200)).toBe(false);
+    expect(shouldSwipeBack("/contas", 0)).toBe(false);
+    expect(shouldSwipeBack(null, 200)).toBe(false);
+  });
+});
+
 describe("SwipeNav gestures (v2 F1)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     mockPath = "/";
     pushMock.mockClear();
+    backMock.mockClear();
     coarse = true;
     reduceMotion = false;
     installMatchMedia();
@@ -229,6 +252,7 @@ describe("SwipeNav gestures (v2 F1)", () => {
     renderSwipe();
     swipe(screen.getByTestId("page"), 300, 100);
     expect(pushMock).not.toHaveBeenCalled();
+    expect(backMock).not.toHaveBeenCalled();
   });
 
   it("is inactive on desktop viewports (>=860px)", () => {
@@ -298,5 +322,112 @@ describe("SwipeNav gestures (v2 F1)", () => {
       </SwipeNav>,
     );
     expect(animateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  describe("swipe-back on Mais subpages (Onda 5)", () => {
+    it("swipe right on /contas goes back exactly once (no push)", () => {
+      mockPath = "/contas";
+      renderSwipe();
+      swipe(screen.getByTestId("page"), 100, 260);
+      expect(backMock).toHaveBeenCalledTimes(1);
+      expect(pushMock).not.toHaveBeenCalled();
+    });
+
+    it("swipe right on another subpage (/assinaturas) goes back", () => {
+      mockPath = "/assinaturas";
+      renderSwipe();
+      swipe(screen.getByTestId("page"), 80, 300);
+      expect(backMock).toHaveBeenCalledTimes(1);
+      expect(pushMock).not.toHaveBeenCalled();
+    });
+
+    it("swipe right on / (root edge) does not go back", () => {
+      mockPath = "/";
+      renderSwipe();
+      swipe(screen.getByTestId("page"), 100, 260);
+      expect(backMock).not.toHaveBeenCalled();
+      expect(pushMock).not.toHaveBeenCalled();
+    });
+
+    it("ignores short right swipes on subpages (threshold applies)", () => {
+      mockPath = "/metas";
+      renderSwipe();
+      swipe(screen.getByTestId("page"), 200, 160);
+      expect(backMock).not.toHaveBeenCalled();
+      expect(pushMock).not.toHaveBeenCalled();
+    });
+
+    it("does not go back while an overlay is open", () => {
+      mockPath = "/cartoes";
+      renderSwipe();
+      act(() => acquireBodyScrollLock());
+      swipe(screen.getByTestId("page"), 100, 260);
+      expect(backMock).not.toHaveBeenCalled();
+    });
+
+    it("does not go back from [data-no-swipe] zones", () => {
+      mockPath = "/orcamentos";
+      render(
+        <SwipeNav>
+          <div data-testid="carousel" data-no-swipe>
+            carousel
+          </div>
+        </SwipeNav>,
+      );
+      swipe(screen.getByTestId("carousel"), 100, 300);
+      expect(backMock).not.toHaveBeenCalled();
+    });
+
+    it("does not go back on desktop viewports (>=860px)", () => {
+      mockPath = "/categorias";
+      setViewportWidth(1280);
+      renderSwipe();
+      swipe(screen.getByTestId("page"), 100, 260);
+      expect(backMock).not.toHaveBeenCalled();
+    });
+
+    it("does not go back without touch ((pointer: coarse) unmatched)", () => {
+      mockPath = "/workspaces";
+      coarse = false;
+      renderSwipe();
+      swipe(screen.getByTestId("page"), 100, 260);
+      expect(backMock).not.toHaveBeenCalled();
+    });
+
+    it("plays no entry animation when arriving via swipe-back", () => {
+      const animateSpy = vi.fn();
+      window.HTMLElement.prototype.animate = animateSpy as unknown as typeof window.HTMLElement.prototype.animate;
+      mockPath = "/patrimonio";
+      const view = renderSwipe();
+      swipe(screen.getByTestId("page"), 100, 260);
+      expect(backMock).toHaveBeenCalledTimes(1);
+
+      // Chegada na página anterior: nenhuma animação de entrada.
+      mockPath = "/";
+      view.rerender(
+        <SwipeNav>
+          <div data-testid="page">page</div>
+        </SwipeNav>,
+      );
+      expect(animateSpy).not.toHaveBeenCalled();
+    });
+
+    it("goes back instantly under reduced motion (no animation by construction)", () => {
+      reduceMotion = true;
+      const animateSpy = vi.fn();
+      window.HTMLElement.prototype.animate = animateSpy as unknown as typeof window.HTMLElement.prototype.animate;
+      mockPath = "/relatorios";
+      const view = renderSwipe();
+      swipe(screen.getByTestId("page"), 100, 260);
+      expect(backMock).toHaveBeenCalledTimes(1);
+
+      mockPath = "/";
+      view.rerender(
+        <SwipeNav>
+          <div data-testid="page">page</div>
+        </SwipeNav>,
+      );
+      expect(animateSpy).not.toHaveBeenCalled();
+    });
   });
 });

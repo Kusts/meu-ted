@@ -19,6 +19,10 @@ import { useSheet } from "@/lib/sheet-context";
  * origem em scroller horizontal ou `[data-no-swipe]`, viewport >= 860px,
  * sem touch (`(pointer: coarse)`). `prefers-reduced-motion`: a navegação
  * ocorre instantaneamente, sem animação de entrada.
+ *
+ * Onda 5: nas rotas NÃO-raiz (subpáginas do drawer Mais), swipe dominante
+ * para a DIREITA executa `router.back()` uma vez por gesto, instantâneo e
+ * sem animação de entrada, sob as MESMAS guardas acima.
  */
 
 /** Ordem de navegação por swipe: esquerda avança, direita volta. */
@@ -44,6 +48,22 @@ export function targetRouteForSwipe(
   if (dx < 0 && idx < SWIPE_ROUTES.length - 1) return SWIPE_ROUTES[idx + 1]!;
   if (dx > 0 && idx > 0) return SWIPE_ROUTES[idx - 1]!;
   return null;
+}
+
+/**
+ * Onda 5 — volta por gesto nas subpáginas do drawer Mais (feedback do
+ * usuário: o swipe só funcionava nas 3 telas raiz). Em rota NÃO-raiz, um
+ * gesto horizontal dominante para a DIREITA (dx positivo) volta uma entrada
+ * no histórico. Rotas raiz nunca voltam por aqui (cíclico intacto) e gesto
+ * para a esquerda em subpágina não faz nada.
+ */
+export function shouldSwipeBack(
+  pathname: string | null | undefined,
+  dx: number,
+): boolean {
+  if (!pathname) return false;
+  if (dx <= 0) return false;
+  return !(SWIPE_ROUTES as readonly string[]).includes(pathname);
 }
 
 function coarsePointer(): boolean {
@@ -190,12 +210,21 @@ export function SwipeNav({ children }: { children: ReactNode }) {
       return;
 
     const dest = targetRouteForSwipe(pathname, dx);
-    if (!dest) return;
-    directionRef.current = dx < 0 ? 1 : -1;
-    // Navegação instantânea; a animação de entrada (quando permitida) é
-    // aplicada pelo efeito acima na página destino.
-    animateArrivalRef.current = !prefersReducedMotion();
-    router.push(dest);
+    if (dest) {
+      directionRef.current = dx < 0 ? 1 : -1;
+      // Navegação instantânea; a animação de entrada (quando permitida) é
+      // aplicada pelo efeito acima na página destino.
+      animateArrivalRef.current = !prefersReducedMotion();
+      router.push(dest);
+      return;
+    }
+    // Onda 5: subpágina do Mais + swipe para a direita = router.back(),
+    // instantâneo e SEM animação de entrada (respeita reduced-motion por
+    // construção). Um gesto dispara no máximo uma navegação (return).
+    if (shouldSwipeBack(pathname, dx)) {
+      animateArrivalRef.current = false;
+      router.back();
+    }
   }
 
   return (
