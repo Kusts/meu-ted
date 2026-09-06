@@ -14,7 +14,16 @@ export type ProbeResult = {
   authMode: string;
   latencyMs: number;
   code: string;
+  /** Redacted probe endpoint (query string stripped) — present only on error paths. Never carries secrets. */
+  detail?: string;
 };
+
+/**
+ * Strips the query string (and fragment) from a probe URL before it is
+ * stored in any error detail, log or trace. The Google probe carries the
+ * API key as `?key=…`, so the raw URL must never leave this module.
+ */
+export const redactProbeUrl = (url: string): string => url.split(/[?#]/, 1)[0] as string;
 
 /**
  * Health-check target per kind. Only OpenAI-spec protocols expose
@@ -173,6 +182,7 @@ export const probeProvider = async (
       authMode: 'api-key',
       latencyMs,
       code: isAbort ? 'timeout' : 'network_error',
+      detail: redactProbeUrl(target.url),
     };
   } finally {
     clearTimeout(timer);

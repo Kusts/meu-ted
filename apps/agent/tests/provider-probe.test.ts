@@ -99,4 +99,21 @@ describe('Provider Probe (Task 5)', () => {
       clearSpy.mockRestore();
     }
   });
+
+  it('never leaks the Google key in error details (Fase 2 item 2)', async () => {
+    const secret = 'google-secret-value-xyz';
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError('socket hang up'));
+    const result = await probeProvider(
+      'google',
+      'gemini-2.0-flash',
+      { GOOGLE_API_KEY: secret },
+      fetchMock,
+    );
+    expect(result).toMatchObject({ ready: false, code: 'network_error' });
+    // Error detail must identify the endpoint but never the secret value.
+    expect(result.detail).toBeDefined();
+    expect(result.detail).toContain('/models');
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(JSON.stringify(result)).not.toContain('key=');
+  });
 });
