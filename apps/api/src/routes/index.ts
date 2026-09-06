@@ -81,8 +81,8 @@ import { registerAgentAuthRoutes } from "./agent-auth.js";
 import { registerAdminAgentLlmConfigRoutes } from "./admin-agent-llm-config.js";
 import { registerInternalAgentLlmConfigRoutes } from "./internal-agent-llm-config.js";
 import { registerAgentLlmRelayRoutes } from "./internal-agent-llm-relay.js";
-import { createInMemoryLlmConfigStore } from "../agent/llm-config-postgres.js";
-import type { LlmConfigStore } from "../agent/llm-config-postgres.js";
+import { createInMemoryLlmConfigStore } from "../agent/llm-config-memory.js";
+import type { LlmConfigStore } from "../agent/llm-config-store.js";
 import { createInMemoryAgentReplayStore, type AgentReplayStore } from "../auth/agent-connection-token-replay.js";
 import { registerWorkspaceAliasRoutes } from "../auth/workspace-alias.js";
 

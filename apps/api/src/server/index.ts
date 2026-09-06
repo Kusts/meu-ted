@@ -47,10 +47,8 @@ import {
 } from "../writes/postgres.js";
 import { createBetterAuth } from "../auth/better-auth.js";
 import { createInMemoryPriceAlertStore } from "../price-alerts/store.js";
-import {
-  createInMemoryLlmConfigStore,
-  createPostgresLlmConfigStore,
-} from "../agent/llm-config-postgres.js";
+import { createInMemoryLlmConfigStore } from "../agent/llm-config-memory.js";
+import { createPostgresLlmConfigStore } from "../agent/llm-config-postgres.js";
 import { createPostgresAgentReplayStore } from "../auth/agent-connection-token-replay-postgres.js";
 import { createInMemoryAgentReplayStore } from "../auth/agent-connection-token-replay.js";
 import { registerCors } from "./cors.js";

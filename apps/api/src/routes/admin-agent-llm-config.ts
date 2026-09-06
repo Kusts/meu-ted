@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getBetterAuthSessionContext, type BetterAuth } from '../auth/better-auth.js';
 import { isUserAdmin } from '../auth/admin-invite-service.js';
-import type { LlmConfigStore } from '../agent/llm-config-postgres.js';
+import type { LlmConfigStore } from '../agent/llm-config-store.js';
 import { toAdminRuntimeDto } from '../agent/runtime-mapper.js';
 import {
   activateSchema,

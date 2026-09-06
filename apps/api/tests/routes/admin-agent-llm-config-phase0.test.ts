@@ -7,7 +7,8 @@ import { createInMemoryStores } from '../../src/writes/in-memory.js';
 import { createInMemoryReadModelStoreFromState } from '../../src/read-models/store.js';
 import { createInMemoryDeviceTokenStore } from '../../src/auth/device-token.js';
 import { createInMemoryIdempotencyStore } from '../../src/writes/idempotency.js';
-import { createInMemoryLlmConfigStore, type LlmConfigStore } from '../../src/agent/llm-config-postgres.js';
+import { createInMemoryLlmConfigStore } from '../../src/agent/llm-config-memory.js';
+import type { LlmConfigStore } from '../../src/agent/llm-config-store.js';
 
 describe('Phase0 route invariants — RED→GREEN', () => {
   let app: FastifyInstance;

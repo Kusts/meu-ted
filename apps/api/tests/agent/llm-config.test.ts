@@ -12,7 +12,7 @@ import {
   type LlmModel,
   type LlmProvider,
 } from '../../src/agent/llm-config.js';
-import { createInMemoryLlmConfigStore } from '../../src/agent/llm-config-postgres.js';
+import { createInMemoryLlmConfigStore } from '../../src/agent/llm-config-memory.js';
 
 describe('LLM Config Domain Validation (RED -> GREEN)', () => {
   describe('Constants and Enums', () => {

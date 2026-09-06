@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { LlmConfigStore } from '../agent/llm-config-postgres.js';
+import type { LlmConfigStore } from '../agent/llm-config-store.js';
 import { isKindExecutable } from '../agent/llm-config.js';
 import { toInternalRuntimeDto } from '../agent/runtime-mapper.js';
 import type { InternalLlmSnapshot, LlmModelSlot, LlmProviderSlot } from '@pi-finance/llm-contracts';

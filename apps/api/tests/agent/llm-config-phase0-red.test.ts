@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createPostgresLlmConfigStore } from '../../src/agent/llm-config-postgres.js';
-import { createInMemoryLlmConfigStore } from '../../src/agent/llm-config-postgres.js';
+import { createInMemoryLlmConfigStore } from '../../src/agent/llm-config-memory.js';
 
 // Phase 0 RED tests — should fail before fix
 

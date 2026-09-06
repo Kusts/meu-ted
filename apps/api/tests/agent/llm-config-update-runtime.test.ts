@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInMemoryLlmConfigStore } from '../../src/agent/llm-config-postgres.js';
+import { createInMemoryLlmConfigStore } from '../../src/agent/llm-config-memory.js';
 
 const seedActive = async (store: ReturnType<typeof createInMemoryLlmConfigStore>) => {
   await store.setProviderEnabled('openai-api', true);
