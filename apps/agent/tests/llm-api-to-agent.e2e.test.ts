@@ -1,8 +1,10 @@
 import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FinanceChatAgent } from "../src/finance-chat-agent.js";
+import { fetchRuntimeConfig } from "../src/llm/runtime-config-client.js";
 import { createInMemoryLlmConfigStore } from "../../api/src/agent/llm-config-memory.js";
 import { registerInternalAgentLlmConfigRoutes } from "../../api/src/routes/internal-agent-llm-config.js";
+import { registerAdminAgentLlmConfigRoutes } from "../../api/src/routes/admin-agent-llm-config.js";
 
 // The Fastify constructor is resolved from the API package itself (pinned via
 // createRequire anchored at an API module), never from hoisted roots — the
@@ -48,10 +50,22 @@ const readText = (out: ChatResult): Promise<string> => Promise.resolve(out.text)
 
 describe("E2E API -> Agent (Fase 3 item 5)", () => {
   let app: any;
+  let adminApp: any;
   let llmStore: ReturnType<typeof createInMemoryLlmConfigStore>;
   let upstreamCalls: Array<{ url: string; init?: RequestInit }>;
   let upstreamBehavior: "ok" | "http500";
   let fetchSpy: { mockRestore: () => void };
+
+  // Stub de sessão: o guard admin só precisa de auth.api.getSession; nenhum
+  // better-auth real é necessário neste E2E (o pacote não é dependência do agent).
+  const stubAuth = {
+    api: {
+      getSession: async () => ({
+        user: { id: "e2e-admin", email: "e2e@test.com" },
+        session: { id: "e2e-session" },
+      }),
+    },
+  };
 
   const seedActivePair = async () => {
     await llmStore.upsertProvider({
@@ -80,6 +94,20 @@ describe("E2E API -> Agent (Fase 3 item 5)", () => {
     });
   };
 
+  const buildAdminApp = async () => {
+    adminApp = Fastify({ logger: false });
+    registerAdminAgentLlmConfigRoutes(adminApp, {
+      auth: stubAuth as any,
+      store: llmStore,
+      adminEmails: ["e2e@test.com"],
+      agentRuntimeOrigin: API_ORIGIN,
+      agentRuntimeToken: "e2e-agent-runtime-admin-token-32-chars!",
+      trustedOrigins: ["http://localhost:3000"],
+      auditLog: () => {},
+    });
+    await adminApp.ready();
+  };
+
   beforeEach(async () => {
     llmStore = createInMemoryLlmConfigStore();
     upstreamCalls = [];
@@ -87,6 +115,7 @@ describe("E2E API -> Agent (Fase 3 item 5)", () => {
     app = Fastify({ logger: false });
     registerInternalAgentLlmConfigRoutes(app, { store: llmStore, configToken: CONFIG_TOKEN });
     await app.ready();
+    await buildAdminApp();
 
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((async (
       input: unknown,
@@ -126,6 +155,7 @@ describe("E2E API -> Agent (Fase 3 item 5)", () => {
   afterEach(async () => {
     fetchSpy.mockRestore();
     await app.close();
+    await adminApp.close();
   });
 
   const makeAgent = () => {
@@ -174,10 +204,38 @@ describe("E2E API -> Agent (Fase 3 item 5)", () => {
     expect(upstreamCalls.length).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
-  it("falha 2: snapshot fail-closed (par desativado) nunca alcança o upstream", async () => {
-    // Linha legada/malformada: runtime aponta para um par desativado.
-    // A projeção da API lê como disabled e o agent recusa antes de executar.
+  it("falha 2 (R6-rev): toggle do par ativo via rota é barrado; legado fail-closed nunca alcança o upstream", async () => {
+    await seedActivePair();
+    const adminHeaders = { cookie: "e2e-session", origin: "http://localhost:3000" };
+
+    // 1. Toggle OFF do provider ativo via ROTA admin → 409: os guards valem
+    // na fronteira HTTP, não só no store.
+    const toggleOff = await adminApp.inject({
+      method: "POST",
+      url: "/admin/agent/llm-config/providers/openai-api/toggle",
+      headers: adminHeaders,
+      payload: { enabled: false },
+    });
+    expect(toggleOff.statusCode).toBe(409);
+    expect(toggleOff.json()).toMatchObject({ code: "agent.runtime_in_use", reason: "active_provider" });
+
+    // 2. Re-leitura interna: o par segue utilizável (o guard preservou a
+    // executabilidade em vez de desativar o ativo).
+    const stillActive = await app.inject({
+      method: "GET",
+      url: "/internal/agent/llm-config",
+      headers: { "x-agent-config-token": CONFIG_TOKEN },
+    });
+    expect(stillActive.statusCode).toBe(200);
+    expect(stillActive.json().activeDisabled).toBe(false);
+    expect(stillActive.json().activeProvider).not.toBeNull();
+
+    // 3. Transição legada: nenhum método do store e nenhum endpoint produz
+    // par ativo desativado (o 409 acima prova os guards nas duas camadas),
+    // então a linha antiga só nasce via seed de construção — como no banco
+    // legado anterior aos guards. Os apps são religados ao novo store.
     await app.close();
+    await adminApp.close();
     llmStore = createInMemoryLlmConfigStore({
       providers: [
         {
@@ -207,7 +265,24 @@ describe("E2E API -> Agent (Fase 3 item 5)", () => {
     app = Fastify({ logger: false });
     registerInternalAgentLlmConfigRoutes(app, { store: llmStore, configToken: CONFIG_TOKEN });
     await app.ready();
+    await buildAdminApp();
 
+    // 4. Re-leitura interna ANTES do fail-closed: disabled, sem ids utilizáveis.
+    const snap = await app.inject({
+      method: "GET",
+      url: "/internal/agent/llm-config",
+      headers: { "x-agent-config-token": CONFIG_TOKEN },
+    });
+    expect(snap.statusCode).toBe(200);
+    expect(snap.json().activeDisabled).toBe(true);
+    expect(snap.json().activeProvider).toBeNull();
+    expect(snap.json().activeModel).toBeNull();
+    // O cliente real também projeta ids nulos no fail-closed.
+    const clientView = await fetchRuntimeConfig(API_ORIGIN, CONFIG_TOKEN);
+    expect(clientView.activeProviderId).toBeNull();
+    expect(clientView.activeModelId).toBeNull();
+
+    // 5. O agent recusa antes de executar.
     const agent = makeAgent();
     const out = (await agent.onChatMessage({
       text: "Qual o meu saldo?",
