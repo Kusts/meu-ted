@@ -75,9 +75,9 @@ describe('Postgres LLM atomic runtime-conditional guards (Fase 1b F4 RED)', () =
     expect((await store.getProvider('openai-api'))?.enabled).toBe(true);
   });
 
-  itIfDatabase('concurrent toggle-off and activate never leave runtime pointing at a disabled provider', async () => {
+  itIfDatabase('toggle-off of the activation target vs activate: total order over 10 rounds', async () => {
     if (!pool) throw new Error('database pool not initialized');
-    for (let round = 0; round < 6; round += 1) {
+    for (let round = 0; round < 10; round += 1) {
       await resetLlmTables();
       const store = createPostgresLlmConfigStore(pool);
       const modelA = await seedPair(store, 'openai-api', `race-a-${round}`);
@@ -90,21 +90,23 @@ describe('Postgres LLM atomic runtime-conditional guards (Fase 1b F4 RED)', () =
         updatedBy: 'atomic@test.com',
       });
 
+      // Race the activation of B against a toggle-off of B itself: exactly
+      // one order wins — (activate ok, toggle 409) or (toggle ok, activate 422).
       const settled = await Promise.allSettled([
-        store.setProviderEnabled('openai-api', false),
         store.updateRuntime({
           providerId: 'opencode-zen',
           modelId: modelB.id,
           expectedVersion: rt.version,
           updatedBy: 'atomic@test.com',
         }),
+        store.setProviderEnabled('opencode-zen', false),
       ]);
       for (const s of settled) {
         if (s.status === 'rejected') {
           const err = s.reason as { statusCode?: number; code?: string };
-          // Only optimistic-concurrency or runtime-in-use conflicts are legal losers.
-          expect([409]).toContain(err.statusCode);
-          expect(['agent.runtime_in_use', 'agent.version_conflict']).toContain(err.code);
+          // Legal losers: guard conflict, optimistic concurrency, or revalidation.
+          expect([409, 422]).toContain(err.statusCode);
+          expect(['agent.runtime_in_use', 'agent.version_conflict', 'agent.activation_blocked']).toContain(err.code);
         }
       }
 
@@ -119,43 +121,142 @@ describe('Postgres LLM atomic runtime-conditional guards (Fase 1b F4 RED)', () =
         finalRuntime.modelId === null ? null : await store.getModel(finalRuntime.modelId);
       if (activeModel) expect(activeModel.enabled).toBe(true);
     }
-  });
+  }, 120_000);
 
-  itIfDatabase('concurrent model toggle-off and activate never disable the referenced model', async () => {
+  itIfDatabase('toggle-off of the activation target model vs activate: total order over 10 rounds', async () => {
     if (!pool) throw new Error('database pool not initialized');
-    await resetLlmTables();
-    const store = createPostgresLlmConfigStore(pool);
-    const modelA = await seedPair(store, 'openai-api', 'mrace-a');
-    const modelB = await seedPair(store, 'opencode-zen', 'mrace-b');
-    let rt = await store.getRuntime();
-    rt = await store.updateRuntime({
-      providerId: 'openai-api',
-      modelId: modelA.id,
-      expectedVersion: rt.version,
-      updatedBy: 'atomic@test.com',
-    });
-
-    const settled = await Promise.allSettled([
-      store.setModelEnabled(modelA.id, false),
-      store.updateRuntime({
-        providerId: 'opencode-zen',
-        modelId: modelB.id,
+    for (let round = 0; round < 10; round += 1) {
+      await resetLlmTables();
+      const store = createPostgresLlmConfigStore(pool);
+      const modelA = await seedPair(store, 'openai-api', `mrace-a-${round}`);
+      const modelB = await seedPair(store, 'opencode-zen', `mrace-b-${round}`);
+      let rt = await store.getRuntime();
+      rt = await store.updateRuntime({
+        providerId: 'openai-api',
+        modelId: modelA.id,
         expectedVersion: rt.version,
         updatedBy: 'atomic@test.com',
-      }),
-    ]);
-    for (const s of settled) {
-      if (s.status === 'rejected') {
-        const err = s.reason as { statusCode?: number; code?: string };
-        expect([409]).toContain(err.statusCode);
-        expect(['agent.runtime_in_use', 'agent.version_conflict']).toContain(err.code);
+      });
+
+      const settled = await Promise.allSettled([
+        store.updateRuntime({
+          providerId: 'opencode-zen',
+          modelId: modelB.id,
+          expectedVersion: rt.version,
+          updatedBy: 'atomic@test.com',
+        }),
+        store.setModelEnabled(modelB.id, false),
+      ]);
+      for (const s of settled) {
+        if (s.status === 'rejected') {
+          const err = s.reason as { statusCode?: number; code?: string };
+          expect([409, 422]).toContain(err.statusCode);
+          expect(['agent.runtime_in_use', 'agent.version_conflict', 'agent.activation_blocked']).toContain(err.code);
+        }
+      }
+
+      const finalRuntime = await store.getRuntime();
+      if (finalRuntime.modelId !== null) {
+        const activeModel = await store.getModel(finalRuntime.modelId);
+        expect(activeModel?.enabled).toBe(true);
       }
     }
+  }, 120_000);
 
-    const finalRuntime = await store.getRuntime();
-    if (finalRuntime.modelId !== null) {
-      const activeModel = await store.getModel(finalRuntime.modelId);
-      expect(activeModel?.enabled).toBe(true);
+  itIfDatabase('fallback set vs fallback toggle-off: total order over 10 rounds', async () => {
+    if (!pool) throw new Error('database pool not initialized');
+    for (let round = 0; round < 10; round += 1) {
+      await resetLlmTables();
+      const store = createPostgresLlmConfigStore(pool);
+      const modelA = await seedPair(store, 'openai-api', `frace-a-${round}`);
+      const modelB = await seedPair(store, 'opencode-zen', `frace-b-${round}`);
+      let rt = await store.getRuntime();
+      rt = await store.updateRuntime({
+        providerId: 'openai-api',
+        modelId: modelA.id,
+        expectedVersion: rt.version,
+        updatedBy: 'atomic@test.com',
+      });
+
+      const settled = await Promise.allSettled([
+        store.updateRuntime({
+          providerId: 'openai-api',
+          modelId: modelA.id,
+          fallbackProviderId: 'opencode-zen',
+          fallbackModelId: modelB.id,
+          expectedVersion: rt.version,
+          updatedBy: 'atomic@test.com',
+        }),
+        store.setProviderEnabled('opencode-zen', false),
+      ]);
+      for (const s of settled) {
+        if (s.status === 'rejected') {
+          const err = s.reason as { statusCode?: number; code?: string };
+          expect([409, 422]).toContain(err.statusCode);
+          expect(['agent.runtime_in_use', 'agent.version_conflict', 'agent.activation_blocked']).toContain(err.code);
+        }
+      }
+
+      const [finalRuntime, providers] = await Promise.all([store.getRuntime(), store.listProviders()]);
+      for (const p of providers) {
+        if (p.id === finalRuntime.providerId || p.id === finalRuntime.fallbackProviderId) {
+          expect(p.enabled).toBe(true);
+        }
+      }
+      if (finalRuntime.fallbackModelId !== null) {
+        const fallbackModel = await store.getModel(finalRuntime.fallbackModelId);
+        expect(fallbackModel?.enabled).toBe(true);
+      }
     }
-  });
+  }, 120_000);
+
+  itIfDatabase('activation vs toggle vs delete of the target: total order over 10 rounds', async () => {
+    if (!pool) throw new Error('database pool not initialized');
+    for (let round = 0; round < 10; round += 1) {
+      await resetLlmTables();
+      const store = createPostgresLlmConfigStore(pool);
+      const modelA = await seedPair(store, 'openai-api', `drace-a-${round}`);
+      const modelB = await seedPair(store, 'opencode-zen', `drace-b-${round}`);
+      let rt = await store.getRuntime();
+      rt = await store.updateRuntime({
+        providerId: 'openai-api',
+        modelId: modelA.id,
+        expectedVersion: rt.version,
+        updatedBy: 'atomic@test.com',
+      });
+
+      const settled = await Promise.allSettled([
+        store.updateRuntime({
+          providerId: 'opencode-zen',
+          modelId: modelB.id,
+          expectedVersion: rt.version,
+          updatedBy: 'atomic@test.com',
+        }),
+        store.setProviderEnabled('opencode-zen', false),
+        store.deleteModel(modelB.id),
+      ]);
+      for (const s of settled) {
+        if (s.status === 'rejected') {
+          const err = s.reason as { statusCode?: number; code?: string };
+          expect([409, 422]).toContain(err.statusCode);
+          expect(['agent.runtime_in_use', 'agent.version_conflict', 'agent.activation_blocked']).toContain(err.code);
+        }
+      }
+
+      // Whatever won, the runtime must never reference a disabled item.
+      const [finalRuntime, providers] = await Promise.all([store.getRuntime(), store.listProviders()]);
+      for (const p of providers) {
+        if (p.id === finalRuntime.providerId || p.id === finalRuntime.fallbackProviderId) {
+          expect(p.enabled).toBe(true);
+        }
+      }
+      for (const mid of [finalRuntime.modelId, finalRuntime.fallbackModelId]) {
+        if (mid !== null) {
+          const m = await store.getModel(mid);
+          // The model may be gone only if it was never referenced.
+          if (m) expect(m.enabled).toBe(true);
+        }
+      }
+    }
+  }, 120_000);
 });
