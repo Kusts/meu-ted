@@ -176,6 +176,27 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
       expect(res.json()).toMatchObject({ code: 'auth.csrf_rejected' });
     });
 
+    it('Fase 3 D4: Bearer callers skip the Origin check (no cookie-CSRF surface)', async () => {
+      // An explicit Authorization header cannot be smuggled by a simple
+      // cross-site request, so the cookie-CSRF check must not fire: the call
+      // proceeds to session auth (401 here — no session — instead of 403).
+      const res = await app.inject({
+        method: 'POST',
+        url: '/admin/agent/llm-config/activate',
+        headers: {
+          authorization: 'Bearer service-token-value',
+          origin: 'https://malicious-site.attacker.com',
+        },
+        payload: {
+          providerId: 'opencode-zen',
+          modelId: 'zen-default',
+          expectedVersion: 1,
+        },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(res.json()).toMatchObject({ code: 'auth.session_required' });
+    });
+
     it('rejects attempt to inject custom baseUrl or raw apiKey (SSRF defense)', async () => {
       const res = await app.inject({
         method: 'POST',

@@ -85,10 +85,17 @@ export const registerAdminAgentLlmConfigRoutes = (
       }
     }
 
-    // CSRF check for mutations
+    // CSRF check for mutations (Fase 3 D4): the Origin allowlist protects
+    // cookie-session callers only. A request carrying an explicit
+    // `Authorization: Bearer ...` header cannot be forged by a simple
+    // cross-site request (custom headers trigger a CORS preflight the
+    // attacker cannot satisfy), so Bearer callers skip this check — they
+    // still go through session/service auth below.
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      const authHeader = req.headers['authorization'];
+      const hasBearer = typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ');
       const origin = req.headers['origin'] || headers.get('origin');
-      if (origin && typeof origin === 'string') {
+      if (!hasBearer && origin && typeof origin === 'string') {
         const normalizedOrigin = origin.toLowerCase().trim();
         if (!trustedOrigins.has(normalizedOrigin)) {
           return reply.code(403).send({
