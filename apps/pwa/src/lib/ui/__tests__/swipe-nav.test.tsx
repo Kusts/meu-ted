@@ -1,0 +1,236 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, act } from "@/lib/test-utils";
+import { SheetProvider, useSheet } from "@/lib/sheet-context";
+import {
+  acquireBodyScrollLock,
+  releaseBodyScrollLock,
+  bodyScrollLockCount,
+} from "../overlay-a11y";
+import { SwipeNav, targetRouteForSwipe } from "../swipe-nav";
+
+let mockPath = "/";
+const pushMock = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: pushMock }),
+  usePathname: () => mockPath,
+}));
+
+// ── matchMedia / viewport doubles ────────────────────────────────
+
+let coarse = true;
+let reduceMotion = false;
+
+function installMatchMedia() {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    configurable: true,
+    value: (query: string) => ({
+      matches:
+        query === "(pointer: coarse)"
+          ? coarse
+          : query === "(prefers-reduced-motion: reduce)"
+            ? reduceMotion
+            : false,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
+function setViewportWidth(px: number) {
+  Object.defineProperty(window, "innerWidth", {
+    writable: true,
+    configurable: true,
+    value: px,
+  });
+}
+
+function swipe(el: HTMLElement, fromX: number, toX: number) {
+  fireEvent.touchStart(el, {
+    changedTouches: [{ identifier: 0, clientX: fromX, clientY: 200 }],
+  });
+  fireEvent.touchEnd(el, {
+    changedTouches: [{ identifier: 0, clientX: toX, clientY: 200 }],
+  });
+}
+
+function renderSwipe(children?: React.ReactNode) {
+  return render(
+    <SwipeNav>
+      <div data-testid="page">{children ?? "page"}</div>
+    </SwipeNav>,
+  );
+}
+
+describe("targetRouteForSwipe (pure)", () => {
+  it("moves left=next and right=previous along the root order", () => {
+    expect(targetRouteForSwipe("/", -80)).toBe("/registros");
+    expect(targetRouteForSwipe("/registros", -80)).toBe("/a-pagar");
+    expect(targetRouteForSwipe("/registros", 80)).toBe("/");
+    expect(targetRouteForSwipe("/a-pagar", 80)).toBe("/registros");
+  });
+
+  it("stays put at the ends of the order", () => {
+    expect(targetRouteForSwipe("/", 80)).toBeNull();
+    expect(targetRouteForSwipe("/a-pagar", -80)).toBeNull();
+  });
+
+  it("ignores non-root routes and missing pathnames", () => {
+    expect(targetRouteForSwipe("/contas", -200)).toBeNull();
+    expect(targetRouteForSwipe(null, -200)).toBeNull();
+  });
+});
+
+describe("SwipeNav gestures (v2 F1)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    mockPath = "/";
+    pushMock.mockClear();
+    coarse = true;
+    reduceMotion = false;
+    installMatchMedia();
+    setViewportWidth(390);
+    while (bodyScrollLockCount() > 0) releaseBodyScrollLock();
+  });
+
+  afterEach(() => {
+    while (bodyScrollLockCount() > 0) releaseBodyScrollLock();
+  });
+
+  it("swipe left on / navigates to /registros", () => {
+    renderSwipe();
+    swipe(screen.getByTestId("page"), 300, 150);
+    expect(pushMock).toHaveBeenCalledTimes(1);
+    expect(pushMock).toHaveBeenCalledWith("/registros");
+  });
+
+  it("swipe right on /registros navigates back to /", () => {
+    mockPath = "/registros";
+    renderSwipe();
+    swipe(screen.getByTestId("page"), 100, 260);
+    expect(pushMock).toHaveBeenCalledWith("/");
+  });
+
+  it("swipe left on /registros navigates to /a-pagar", () => {
+    mockPath = "/registros";
+    renderSwipe();
+    swipe(screen.getByTestId("page"), 300, 150);
+    expect(pushMock).toHaveBeenCalledWith("/a-pagar");
+  });
+
+  it("ignores swipes below the distance threshold", () => {
+    renderSwipe();
+    swipe(screen.getByTestId("page"), 200, 160);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores vertically-dominant gestures", () => {
+    renderSwipe();
+    const el = screen.getByTestId("page");
+    fireEvent.touchStart(el, {
+      changedTouches: [{ identifier: 0, clientX: 200, clientY: 100 }],
+    });
+    fireEvent.touchEnd(el, {
+      changedTouches: [{ identifier: 0, clientX: 120, clientY: 400 }],
+    });
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores gestures starting inside [data-no-swipe]", () => {
+    render(
+      <SwipeNav>
+        <div data-testid="carousel" data-no-swipe>
+          carousel
+        </div>
+      </SwipeNav>,
+    );
+    swipe(screen.getByTestId("carousel"), 300, 100);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate while an overlay is open", () => {
+    renderSwipe();
+    act(() => acquireBodyScrollLock());
+    swipe(screen.getByTestId("page"), 300, 100);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate while a transaction sheet is open", () => {
+    function SheetOpener() {
+      const { openSheet } = useSheet();
+      return (
+        <button type="button" onClick={() => openSheet("expense")}>
+          open sheet
+        </button>
+      );
+    }
+    render(
+      <SheetProvider>
+        <SwipeNav>
+          <div data-testid="page">page</div>
+        </SwipeNav>
+        <SheetOpener />
+      </SheetProvider>,
+    );
+    fireEvent.click(screen.getByText("open sheet"));
+    swipe(screen.getByTestId("page"), 300, 100);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate off the three root routes", () => {
+    mockPath = "/contas";
+    renderSwipe();
+    swipe(screen.getByTestId("page"), 300, 100);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("is inactive on desktop viewports (>=860px)", () => {
+    setViewportWidth(1280);
+    renderSwipe();
+    swipe(screen.getByTestId("page"), 300, 100);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("is inactive without touch ((pointer: coarse) unmatched)", () => {
+    coarse = false;
+    renderSwipe();
+    swipe(screen.getByTestId("page"), 300, 100);
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("navigates under reduced motion but skips the entry animation", () => {
+    reduceMotion = true;
+    const animateSpy = vi.fn();
+    window.HTMLElement.prototype.animate = animateSpy as unknown as typeof window.HTMLElement.prototype.animate;
+    mockPath = "/";
+    const view = renderSwipe();
+    swipe(screen.getByTestId("page"), 300, 100);
+    expect(pushMock).toHaveBeenCalledWith("/registros");
+
+    mockPath = "/registros";
+    view.rerender(
+      <SwipeNav>
+        <div data-testid="page">page</div>
+      </SwipeNav>,
+    );
+    expect(animateSpy).not.toHaveBeenCalled();
+  });
+
+  it("plays the entry animation on route change when motion is allowed", () => {
+    const animateSpy = vi.fn();
+    window.HTMLElement.prototype.animate = animateSpy as unknown as typeof window.HTMLElement.prototype.animate;
+    mockPath = "/";
+    const view = renderSwipe();
+    expect(animateSpy).not.toHaveBeenCalled();
+
+    mockPath = "/registros";
+    view.rerender(
+      <SwipeNav>
+        <div data-testid="page">page</div>
+      </SwipeNav>,
+    );
+    expect(animateSpy).toHaveBeenCalledTimes(1);
+  });
+});
