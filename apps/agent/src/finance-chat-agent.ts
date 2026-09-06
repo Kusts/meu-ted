@@ -47,10 +47,31 @@ export type IntentionSnapshotRow = {
   security_epoch: number;
   fallback_provider_id?: string | null;
   fallback_model_id?: string | null;
+  /**
+   * Bare upstream model name (no `provider_id:` prefix) for direct execution.
+   * `model_id` is the store row id (configuration reference); the upstream
+   * provider API expects the bare name from the validated slot. Legacy rows
+   * predate this column and read back as null (derived at use time).
+   */
+  model_name?: string | null;
+  fallback_model_name?: string | null;
   created_at: string;
 };
 
 export const INTENTION_SNAPSHOT_FALLBACK_COLUMNS = ['fallback_provider_id', 'fallback_model_id'] as const;
+
+/** Fase 3 item 5: bare upstream names persisted alongside the row ids. */
+export const INTENTION_SNAPSHOT_MODEL_COLUMNS = ['model_name', 'fallback_model_name'] as const;
+
+/**
+ * Best-effort bare name for legacy rows without `model_name`: strips the
+ * conventional `provider_id:` prefix, otherwise returns the id untouched
+ * (custom row ids stay usable when they already are bare names).
+ */
+export const deriveBareModelName = (providerId: string, modelId: string): string => {
+  const prefix = `${providerId}:`;
+  return modelId.startsWith(prefix) ? modelId.slice(prefix.length) : modelId;
+};
 
 /**
  * Backfills the fallback columns on pre-existing Durable Object tables.
@@ -68,7 +89,7 @@ export const ensureIntentionSnapshotColumns = (sql: {
   } catch {
     return;
   }
-  for (const column of INTENTION_SNAPSHOT_FALLBACK_COLUMNS) {
+  for (const column of [...INTENTION_SNAPSHOT_FALLBACK_COLUMNS, ...INTENTION_SNAPSHOT_MODEL_COLUMNS]) {
     if (!existing.has(column)) {
       try {
         sql.exec(`ALTER TABLE intention_snapshots ADD COLUMN ${column} TEXT`);
@@ -106,6 +127,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             security_epoch INTEGER NOT NULL DEFAULT 1,
             fallback_provider_id TEXT,
             fallback_model_id TEXT,
+            model_name TEXT,
+            fallback_model_name TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
           );
         `);
@@ -124,10 +147,12 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           intentionId,
         )];
         if (rows.length > 0 && rows[0]) {
-          // Legacy rows predate the fallback columns: normalize to nulls.
+          // Legacy rows predate the fallback/model-name columns: normalize to nulls.
           return {
             fallback_provider_id: null,
             fallback_model_id: null,
+            model_name: null,
+            fallback_model_name: null,
             ...rows[0],
           };
         }
@@ -163,14 +188,20 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       security_epoch: config.securityEpoch,
       fallback_provider_id: config.fallbackProviderId ?? null,
       fallback_model_id: config.fallbackModelId ?? null,
+      // Fase 3 item 5: bare upstream name from the validated slot; legacy
+      // derivation only when the slot is absent (never string-split blindly).
+      model_name:
+        config.activeModelName ??
+        deriveBareModelName(config.activeProviderId, config.activeModelId),
+      fallback_model_name: config.fallbackModelName ?? null,
       created_at: new Date().toISOString(),
     };
 
     if (this.state?.storage?.sql) {
       try {
         this.state.storage.sql.exec(
-          `INSERT INTO intention_snapshots (intention_id, version, provider_id, model_id, protocol, rollout_percentage, security_epoch, fallback_provider_id, fallback_model_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO intention_snapshots (intention_id, version, provider_id, model_id, protocol, rollout_percentage, security_epoch, fallback_provider_id, fallback_model_id, model_name, fallback_model_name, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           snapshot.intention_id,
           snapshot.version,
           snapshot.provider_id,
@@ -180,6 +211,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           snapshot.security_epoch,
           snapshot.fallback_provider_id ?? null,
           snapshot.fallback_model_id ?? null,
+          snapshot.model_name ?? null,
+          snapshot.fallback_model_name ?? null,
           snapshot.created_at,
         );
       } catch {
@@ -214,9 +247,15 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     }
 
     try {
+      // Fase 3 item 5: execute with the bare upstream name, never the store
+      // row id (`provider:model` fails provider-side validation). Legacy rows
+      // without model_name derive it from the conventional prefix.
+      const bareModelId =
+        snapshot.model_name ??
+        deriveBareModelName(snapshot.provider_id, snapshot.model_id);
       const modelInstance = createLanguageModel(
         snapshot.provider_id,
-        snapshot.model_id,
+        bareModelId,
         snapshot.protocol as Protocol,
         (this.env ?? {}) as Record<string, string | undefined>,
       );

@@ -41,6 +41,9 @@ describe('Runtime Config Client (Task 5)', () => {
       activeProtocol: 'chat-completions',
       activeRolloutPercentage: 100,
       securityEpoch: 2,
+      // Fase 3 item 5: no model slots in this payload -> bare names are null.
+      activeModelName: null,
+      fallbackModelName: null,
     });
 
     expect(fetchMock).toHaveBeenCalledWith('https://api.example.test/internal/agent/llm-config', expect.objectContaining({

@@ -37,7 +37,7 @@ describe('Runtime Config Client — explicit active* contract (Fase 1a RED)', ()
           },
           activeModel: {
             id: 'openai-api:gpt-4o',
-            modelId: 'openai-api:gpt-4o',
+            modelId: 'gpt-4o',
             protocol: 'chat-completions',
             privacyClass: 'training_prohibited',
           },
@@ -59,6 +59,9 @@ describe('Runtime Config Client — explicit active* contract (Fase 1a RED)', ()
     expect(config.securityEpoch).toBe(2);
     expect(config.fallbackProviderId).toBeNull();
     expect(config.fallbackModelId).toBeNull();
+    // Fase 3 item 5: bare upstream name comes from the validated slot.
+    expect(config.activeModelName).toBe('gpt-4o');
+    expect(config.fallbackModelName).toBeNull();
   });
 
   it('is fail-closed: legacy ids alone never become usable configuration', async () => {
@@ -88,6 +91,7 @@ describe('Runtime Config Client — explicit active* contract (Fase 1a RED)', ()
     const config = await fetchRuntimeConfig('https://api.example.test', 'token-123');
     expect(config.activeProviderId).toBeNull();
     expect(config.activeModelId).toBeNull();
+    expect(config.activeModelName).toBeNull();
   });
 
   it('rejects snapshots without a runtime object', async () => {

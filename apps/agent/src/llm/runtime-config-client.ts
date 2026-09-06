@@ -86,5 +86,9 @@ export const fetchRuntimeConfig = async (
     activeRolloutPercentage: runtime.activeRolloutPercentage,
     fallbackProviderId: snapshot.fallbackDisabled ? null : runtime.fallbackProviderId,
     fallbackModelId: snapshot.fallbackDisabled ? null : runtime.fallbackModelId,
+    // Fase 3 item 5: bare upstream names come from the validated slots, never
+    // by string-splitting the row id (row ids are opaque configuration keys).
+    activeModelName: snapshot.activeDisabled ? null : (snapshot.activeModel?.modelId ?? null),
+    fallbackModelName: snapshot.fallbackDisabled ? null : (snapshot.fallbackModel?.modelId ?? null),
   };
 };

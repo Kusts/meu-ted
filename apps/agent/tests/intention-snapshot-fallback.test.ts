@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   FinanceChatAgent,
+  deriveBareModelName,
   ensureIntentionSnapshotColumns,
   type IntentionSnapshotRow,
 } from '../src/finance-chat-agent.js';
@@ -86,7 +87,7 @@ describe('Intention snapshot fallback persistence (Fase 1b F3 RED)', () => {
     vi.restoreAllMocks();
   });
 
-  it('migrates a legacy table by adding only the missing fallback columns', () => {
+  it('migrates a legacy table by adding only the missing columns (fallback + model names)', () => {
     const { exec, calls } = makeSql({
       pragmaColumns: [
         'intention_id',
@@ -103,13 +104,24 @@ describe('Intention snapshot fallback persistence (Fase 1b F3 RED)', () => {
     });
     ensureIntentionSnapshotColumns({ exec });
     const alters = calls.filter((c) => c.query.startsWith('ALTER TABLE'));
-    expect(alters).toHaveLength(1);
+    expect(alters).toHaveLength(3);
     expect(alters[0]?.query).toContain('fallback_model_id');
+    expect(alters.map((a) => a.query)).toEqual([
+      expect.stringContaining('fallback_model_id'),
+      expect.stringContaining('model_name'),
+      expect.stringContaining('fallback_model_name'),
+    ]);
   });
 
-  it('issues no ALTER when both fallback columns already exist', () => {
+  it('issues no ALTER when fallback and model-name columns already exist', () => {
     const { exec, calls } = makeSql({
-      pragmaColumns: ['intention_id', 'fallback_provider_id', 'fallback_model_id'],
+      pragmaColumns: [
+        'intention_id',
+        'fallback_provider_id',
+        'fallback_model_id',
+        'model_name',
+        'fallback_model_name',
+      ],
       selectRows: [],
     });
     ensureIntentionSnapshotColumns({ exec });
@@ -168,5 +180,49 @@ describe('Intention snapshot fallback persistence (Fase 1b F3 RED)', () => {
     const snapshot = await callResolve(makeAgent({ exec }), 'intent-legacy');
     expect(snapshot?.fallback_provider_id).toBeNull();
     expect(snapshot?.fallback_model_id).toBeNull();
+    expect(snapshot?.model_name).toBeNull();
+    expect(snapshot?.fallback_model_name).toBeNull();
+  });
+
+  it('adds the model_name columns to a legacy table (Fase 3 item 5)', () => {
+    const { exec, calls } = makeSql({
+      pragmaColumns: [
+        'intention_id',
+        'version',
+        'provider_id',
+        'model_id',
+        'protocol',
+        'rollout_percentage',
+        'security_epoch',
+        'fallback_provider_id',
+        'fallback_model_id',
+        'created_at',
+      ],
+      selectRows: [],
+    });
+    ensureIntentionSnapshotColumns({ exec });
+    const alters = calls.filter((c) => c.query.startsWith('ALTER TABLE'));
+    expect(alters.map((a) => a.query)).toEqual([
+      expect.stringContaining('model_name'),
+      expect.stringContaining('fallback_model_name'),
+    ]);
+  });
+
+  it('persists the bare upstream model_name from the validated slot (Fase 3 item 5)', async () => {
+    const { exec, calls } = makeSql({ pragmaColumns: [], selectRows: [] });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(snapshotResponse(null, null)));
+    const snapshot = await callResolve(makeAgent({ exec }), 'intent-name-1');
+    expect(snapshot?.model_id).toBe('openai-api:gpt-4o');
+    expect(snapshot?.model_name).toBe('gpt-4o');
+    const insert = calls.find((c) => c.query.startsWith('INSERT INTO intention_snapshots'));
+    expect(insert?.query).toContain('model_name');
+    expect(insert?.bindings).toContain('gpt-4o');
+  });
+
+  it('deriveBareModelName strips only the conventional provider prefix', () => {
+    expect(deriveBareModelName('openai-api', 'openai-api:gpt-4o')).toBe('gpt-4o');
+    expect(deriveBareModelName('openai-api', 'gpt-4o')).toBe('gpt-4o');
+    expect(deriveBareModelName('openai-api', 'custom-row-id')).toBe('custom-row-id');
+    expect(deriveBareModelName('openai-api', 'other:x')).toBe('other:x');
   });
 });

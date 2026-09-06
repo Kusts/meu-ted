@@ -179,4 +179,13 @@ export interface RuntimeSnapshot {
   activeRolloutPercentage: number;
   fallbackProviderId: string | null;
   fallbackModelId: string | null;
+  /**
+   * Bare upstream model id (no `providerId:` prefix), taken from the validated
+   * model slot. `activeModelId` is the store row id used for configuration
+   * references; the bare name is what the upstream provider API expects.
+   * Fase 3 item 5: executing with the row id fails provider-side validation.
+   */
+  activeModelName: string | null;
+  /** Bare upstream model id for the fallback slot (same semantics). */
+  fallbackModelName: string | null;
 }
