@@ -6,6 +6,7 @@ import PageHeader from "@/components/PageHeader";
 import { useAppState } from "@/lib/state/app-state-context";
 import { formatBRL, formatPct } from "@/lib/format/brl";
 import AdoptionMetrics from "./AdoptionMetrics";
+import { ReportsAnalyticsZone } from "./components/ReportsAnalyticsZone";
 
 type Period = "month" | "last" | "quarter" | "year";
 
@@ -316,6 +317,10 @@ export default function ReportsPage() {
       <main className="flex flex-1 flex-col pb-[var(--tab-bar-height)]">
         <PageHeader title="Relatórios" />
         <AdoptionMetrics />
+
+        <div className="flex flex-col gap-3.5 px-5 pt-3">
+          <ReportsAnalyticsZone accounts={accounts.map((a) => ({ id: a.id, name: a.name }))} />
+        </div>
 
         {error && (
           <div className="mx-5 mb-3 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger">
