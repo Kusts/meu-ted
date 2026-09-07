@@ -53,7 +53,10 @@ function findExportBodies(source) {
 export function discoverPwaEndpointWrites(source, sourcePath) {
   const result = [];
   for (const { operation, body } of findExportBodies(source)) {
-    const method = body.match(/\bmethod\s*:\s*["'](POST|PUT|PATCH|DELETE)["']/i)?.[1]?.toUpperCase();
+    // Inline `{ method: "POST", ... }` or the shared
+    // `mutationOptions("POST", ...)` helper (idempotency boundary).
+    const method = body.match(/\bmethod\s*:\s*["'](POST|PUT|PATCH|DELETE)["']/i)?.[1]?.toUpperCase()
+      ?? body.match(/\bmutationOptions\s*\(\s*["'](POST|PUT|PATCH|DELETE)["']/i)?.[1]?.toUpperCase();
     const routePath = body.match(/(?:apiFetch|endpoint)(?:<[^>\n]*>)?\s*\(\s*(["'`])([\s\S]*?)\1/)?.[2];
     if (!method || !routePath) continue;
     result.push(entry(`pwa.endpoint.${operation}`, 'pwa-endpoint', operation, method, routePath, sourcePath));
@@ -64,13 +67,16 @@ export function discoverPwaEndpointWrites(source, sourcePath) {
 function discoverRouteCalls(source, sourcePath) {
   const result = [];
   const patterns = [
-    /\b(?:app|router)\.(post|put|patch|delete)\s*\(\s*(["'`])([^"'`]+)\2/gi,
-    /\b(postHandler|putHandler|patchHandler|deleteHandler)\s*\(\s*(["'`])([^"'`]+)\2/gi,
+    { re: /\b(?:app|router)\.(post|put|patch|delete)\s*\(\s*(["'`])([^"'`]+)\2/gi, methodAt: 1, pathAt: 3 },
+    { re: /\b(postHandler|putHandler|patchHandler|deleteHandler)\s*\(\s*(["'`])([^"'`]+)\2/gi, methodAt: 1, pathAt: 3 },
+    // Local registration helpers that forward to app.post/... with a
+    // literal path (e.g. originPostHandler in transactions-write.ts).
+    { re: /\borigin(Post|Put|Patch|Delete)Handler\s*\(\s*(["'`])([^"'`]+)\2/gi, methodAt: 1, pathAt: 3 },
   ];
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      const method = match[1].replace('Handler', '').toUpperCase();
-      const routePath = match[3];
+  for (const { re, methodAt, pathAt } of patterns) {
+    for (const match of source.matchAll(re)) {
+      const method = match[methodAt].replace('Handler', '').toUpperCase();
+      const routePath = match[pathAt];
       result.push(entry(`api.route.${method}:${routePath}`, 'api-route', `${method} ${routePath}`, method, routePath, sourcePath));
     }
   }

@@ -33,11 +33,15 @@ test('discovers all supported write surfaces from source', () => {
     export async function removeThing(id: string): Promise<void> {
       await apiFetch<Thing>(\`/things/\${id}\`, { method: "DELETE" });
     }
+    export async function patchThing(id: string, input: SaveInput): Promise<Thing> {
+      return apiFetch<Thing>(\`/things/\${id}\`, mutationOptions("PATCH", input));
+    }
   `, 'apps/pwa/src/lib/api/endpoints.ts');
   const routes = discoverApiRoutes(`
     app.post('/things', async () => ({}));
     app.delete('/things/:id', async () => ({}));
     postHandler('/things/import', schema, 'things.import', handler);
+    originPostHandler('/things/expense', originSchema, strictSchema, producer);
   `, 'apps/api/src/routes/things.ts');
   const tools = discoverPiToolWrites(`
     const result = await requestPiApiJson("POST", "/things", { body: params });
@@ -60,11 +64,13 @@ const specs = [
   assert.deepEqual(endpoints.map((entry) => [entry.operation, entry.method, entry.path]), [
     ['saveThing', 'POST', '/things'],
     ['removeThing', 'DELETE', '/things/:id'],
+    ['patchThing', 'PATCH', '/things/:id'],
   ]);
   assert.deepEqual(routes.map((entry) => [entry.method, entry.path]), [
     ['POST', '/things'],
     ['DELETE', '/things/:id'],
     ['POST', '/things/import'],
+    ['POST', '/things/expense'],
   ]);
   assert.deepEqual(tools.map((entry) => [entry.method, entry.path]), [['POST', '/things']]);
   assert.deepEqual(generatedTools.map((entry) => [entry.method, entry.path]), [['POST', '/things/:id']]);
