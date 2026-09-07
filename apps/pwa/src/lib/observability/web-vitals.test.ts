@@ -26,12 +26,14 @@ describe("sanitizeDimension", () => {
     expect(sanitizeDimension("0.05")).toBe("0.05");
   });
 
-  it("permits normalized routes", () => {
+  it("permits normalized routes (canonical IA, item 13)", () => {
     expect(sanitizeDimension("/")).toBe("/");
     expect(sanitizeDimension("/registros")).toBe("/registros");
-    expect(sanitizeDimension("/contas")).toBe("/contas");
-    expect(sanitizeDimension("/a-pagar")).toBe("/a-pagar");
+    expect(sanitizeDimension("/compromissos")).toBe("/compromissos");
+    expect(sanitizeDimension("/hub/patrimonio")).toBe("/hub/patrimonio");
     expect(sanitizeDimension("/perfil")).toBe("/perfil");
+    expect(sanitizeDimension("/contas")).toBeNull();
+    expect(sanitizeDimension("/a-pagar")).toBeNull();
   });
 
   it("permits short build IDs", () => {

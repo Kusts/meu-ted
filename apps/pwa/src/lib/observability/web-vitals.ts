@@ -40,10 +40,12 @@ export function sanitizeDimension(value: unknown): string | null | undefined {
     return null; // large number → could be financial
   }
 
-  // Normalized routes (known shell routes) are safe
+  // Normalized routes (known shell routes, canonical IA item 13) are safe
   const KNOWN_ROUTES = new Set([
-    "/", "/registros", "/contas", "/categorias", "/a-pagar", "/orcamentos",
-    "/metas", "/cartoes", "/assinaturas", "/patrimonio", "/relatorios", "/perfil",
+    "/", "/registros", "/compromissos", "/hub",
+    "/hub/patrimonio", "/hub/planejamento", "/hub/relatorios", "/hub/alertas",
+    "/hub/categorias", "/hub/configuracoes",
+    "/perfil", "/workspaces", "/convite", "/audit", "/capture",
     "/_not-found", "/manifest.webmanifest",
   ]);
   if (KNOWN_ROUTES.has(str)) return str;
