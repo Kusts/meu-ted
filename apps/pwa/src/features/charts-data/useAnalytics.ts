@@ -14,7 +14,14 @@ export type AnalyticsKpis = {
   savingsRatePct: number | null;
   savingsRateTargetPct: number;
   previousSavingsRatePct: number | null;
-  fixedVsDiscretionary: { fixedCents: number; discretionaryCents: number; fixedPctOfIncome: number | null };
+  fixedVsDiscretionary: {
+    scope: "household" | "account";
+    fixedCents: number;
+    discretionaryCents: number;
+    fixedPctOfIncome: number | null;
+    /** Household-wide subscriptions component (H-10: never account-scoped). */
+    subscriptionsCents: number;
+  };
   incomeCents: number;
   expenseCents: number;
   previousIncomeCents: number;

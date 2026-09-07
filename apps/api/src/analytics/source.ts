@@ -35,18 +35,41 @@ export type DomainLists = {
   recurring: RecurringPurchase[];
 };
 
+/**
+ * H-10: explicit account universe for every analytics computation.
+ *
+ * `household` aggregates the whole household; `account` restricts to one
+ * account. Sources that support an account MUST take this (not an optional
+ * `accountId?` that callers can forget); entity lists stay household-wide
+ * and routes apply the scope when reducing. Subscriptions and budgets are
+ * declared household-only (see SUBSCRIPTIONS_ACCOUNT_SCOPE in compute.ts):
+ * they have no account relation, so an account scope never filters them —
+ * routes must say so explicitly instead of mixing universes.
+ */
+export type AccountScope = { kind: 'household' } | { kind: 'account'; accountId: string };
+
+export const householdScope = (): AccountScope => ({ kind: 'household' });
+
+export const accountScope = (accountId: string): AccountScope => ({ kind: 'account', accountId });
+
+export const scopeAccountId = (scope: AccountScope): string | undefined =>
+  scope.kind === 'account' ? scope.accountId : undefined;
+
+export const scopeFromQuery = (accountId?: string): AccountScope =>
+  accountId ? accountScope(accountId) : householdScope();
+
 export type AnalyticsSource = {
   loadLists(householdId: string): Promise<DomainLists>;
-  sumByKind(householdId: string, from: string, to: string, accountId?: string): Promise<KindSum>;
-  dailySums(householdId: string, from: string, to: string, accountId?: string): Promise<DailySum[]>;
+  sumByKind(householdId: string, from: string, to: string, scope: AccountScope): Promise<KindSum>;
+  dailySums(householdId: string, from: string, to: string, scope: AccountScope): Promise<DailySum[]>;
   categorySums(
     householdId: string,
     from: string,
     to: string,
     kind: 'expense' | 'income',
-    accountId?: string,
+    scope: AccountScope,
   ): Promise<CategorySum[]>;
-  monthlyFlows(householdId: string, sinceMonth: string): Promise<MonthlyFlow[]>;
+  monthlyFlows(householdId: string, sinceMonth: string, scope: AccountScope): Promise<MonthlyFlow[]>;
 };
 
 export type StoreBackedDeps = {
@@ -74,8 +97,9 @@ export const createStoreAnalyticsSource = (deps: StoreBackedDeps): AnalyticsSour
 
   // Range-bounded reads page through the 200-row filter limit instead of
   // fetching everything at once.
-  const rangeTransactions = async (householdId: string, from: string, to: string, accountId?: string) => {
+  const rangeTransactions = async (householdId: string, from: string, to: string, scope: AccountScope) => {
     const items: Awaited<ReturnType<ReadModelStore['listTransactions']>>['items'] = [];
+    const accountId = scopeAccountId(scope);
     for (let offset = 0; ; offset += 200) {
       const page = await deps.store.listTransactions(householdId, {
         startDate: from,
@@ -92,8 +116,8 @@ export const createStoreAnalyticsSource = (deps: StoreBackedDeps): AnalyticsSour
 
   return {
     loadLists,
-    async sumByKind(householdId, from, to, accountId) {
-      const items = await rangeTransactions(householdId, from, to, accountId);
+    async sumByKind(householdId, from, to, scope) {
+      const items = await rangeTransactions(householdId, from, to, scope);
       let incomeCents = 0;
       let expenseCents = 0;
       for (const tx of items) {
@@ -102,8 +126,8 @@ export const createStoreAnalyticsSource = (deps: StoreBackedDeps): AnalyticsSour
       }
       return { incomeCents, expenseCents };
     },
-    async dailySums(householdId, from, to, accountId) {
-      const items = await rangeTransactions(householdId, from, to, accountId);
+    async dailySums(householdId, from, to, scope) {
+      const items = await rangeTransactions(householdId, from, to, scope);
       const byDay = new Map<string, DailySum>();
       for (const tx of items) {
         if (tx.kind !== 'income' && tx.kind !== 'expense') continue;
@@ -114,8 +138,8 @@ export const createStoreAnalyticsSource = (deps: StoreBackedDeps): AnalyticsSour
       }
       return [...byDay.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
     },
-    async categorySums(householdId, from, to, kind, accountId) {
-      const items = await rangeTransactions(householdId, from, to, accountId);
+    async categorySums(householdId, from, to, kind, scope) {
+      const items = await rangeTransactions(householdId, from, to, scope);
       const totals = new Map<string, number>();
       for (const tx of items) {
         if (tx.kind !== kind || !tx.categoryId) continue;
@@ -123,11 +147,13 @@ export const createStoreAnalyticsSource = (deps: StoreBackedDeps): AnalyticsSour
       }
       return [...totals.entries()].map(([categoryId, totalCents]) => ({ categoryId, totalCents }));
     },
-    async monthlyFlows(householdId, sinceMonth) {
+    async monthlyFlows(householdId, sinceMonth, scope) {
       const items: Awaited<ReturnType<ReadModelStore['listTransactions']>>['items'] = [];
+      const accountId = scopeAccountId(scope);
       for (let offset = 0; ; offset += 200) {
         const page = await deps.store.listTransactions(householdId, {
           startDate: `${sinceMonth}-01`,
+          ...(accountId ? { accountId } : {}),
           limit: 200,
           offset,
         });
@@ -168,8 +194,8 @@ export const createSqlAnalyticsSource = (
 
   return {
     loadLists: fallback.loadLists,
-    async sumByKind(householdId, from, to, accountId) {
-      const filter = accountFilter('t', 4, accountId);
+    async sumByKind(householdId, from, to, scope) {
+      const filter = accountFilter('t', 4, scopeAccountId(scope));
       const res = await pool.query(
         `SELECT t.kind AS kind, SUM(t.amount_cents)::text AS total
            FROM transactions t
@@ -186,8 +212,8 @@ export const createSqlAnalyticsSource = (
       }
       return { incomeCents, expenseCents };
     },
-    async dailySums(householdId, from, to, accountId) {
-      const filter = accountFilter('t', 4, accountId);
+    async dailySums(householdId, from, to, scope) {
+      const filter = accountFilter('t', 4, scopeAccountId(scope));
       const res = await pool.query(
         `SELECT t.date::text AS date,
                 SUM(CASE WHEN t.kind = 'income' THEN t.amount_cents ELSE 0 END)::text AS income,
@@ -204,8 +230,8 @@ export const createSqlAnalyticsSource = (
         expenseCents: Number(row['expense'] ?? 0),
       }));
     },
-    async categorySums(householdId, from, to, kind, accountId) {
-      const filter = accountFilter('t', 5, accountId);
+    async categorySums(householdId, from, to, kind, scope) {
+      const filter = accountFilter('t', 5, scopeAccountId(scope));
       const res = await pool.query(
         `SELECT t.category_id AS category_id, SUM(t.amount_cents)::text AS total
            FROM transactions t
@@ -217,15 +243,16 @@ export const createSqlAnalyticsSource = (
       );
       return res.rows.map((row) => ({ categoryId: String(row['category_id']), totalCents: Number(row['total'] ?? 0) }));
     },
-    async monthlyFlows(householdId, sinceMonth) {
+    async monthlyFlows(householdId, sinceMonth, scope) {
+      const filter = accountFilter('t', 3, scopeAccountId(scope));
       const res = await pool.query(
         `SELECT to_char(t.date, 'YYYY-MM') AS month,
                 SUM(CASE WHEN t.kind = 'income' THEN t.amount_cents ELSE 0 END)::text AS income,
                 SUM(CASE WHEN t.kind = 'expense' THEN t.amount_cents ELSE 0 END)::text AS expense
            FROM transactions t
-          WHERE t.household_id = $1 AND t.deleted_at IS NULL AND t.date >= $2
+          WHERE t.household_id = $1 AND t.deleted_at IS NULL AND t.date >= $2 ${filter.clause}
           GROUP BY 1 ORDER BY 1`,
-        [householdId, `${sinceMonth}-01`],
+        [householdId, `${sinceMonth}-01`, ...filter.values],
       );
       return res.rows.map((row) => ({
         month: String(row['month']),

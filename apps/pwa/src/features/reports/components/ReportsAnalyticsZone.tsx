@@ -91,6 +91,14 @@ function ReportsAnalyticsBlocks({ accounts }: { accounts: FilterAccount[] }) {
         kpis.savingsRatePct === null || kpis.previousSavingsRatePct === null
           ? null
           : kpis.savingsRatePct - kpis.previousSavingsRatePct;
+      // H-10: when scoped to one account, subscriptions (household-only)
+      // are excluded from the fixed total — say so instead of implying
+      // the fixed number covers everything.
+      const fixed = kpis.fixedVsDiscretionary;
+      const fixedHint =
+        fixed.scope === "account" && fixed.subscriptionsCents > 0
+          ? `discricionário ${formatBRL(fixed.discretionaryCents)} · +${formatBRL(fixed.subscriptionsCents)} assinaturas (todas as contas)`
+          : `discricionário ${formatBRL(fixed.discretionaryCents)}`;
       return (
         <BlockShell key={id} title={title} testId={`analytics-block-${id}`} {...editProps(id, index)}>
           <div className="grid grid-cols-2 gap-2.5" data-testid="reports-kpi-grid">
@@ -103,9 +111,9 @@ function ReportsAnalyticsBlocks({ accounts }: { accounts: FilterAccount[] }) {
             />
             <KpiCard
               label="Fixo vs discricionário"
-              value={formatBRL(kpis.fixedVsDiscretionary.fixedCents)}
+              value={formatBRL(fixed.fixedCents)}
               deltaText={null}
-              hint={`discricionário ${formatBRL(kpis.fixedVsDiscretionary.discretionaryCents)}`}
+              hint={fixedHint}
             />
             <div className="col-span-2">
               <KpiCard

@@ -6,18 +6,19 @@
  * aggregate SQL).
  */
 
-import type { BudgetStatus, Category, Statement } from '../types/domain.js';
+import type { BudgetStatus, Category, RecurringPurchase, Statement, Subscription } from '../types/domain.js';
 import type {
   AnalyticsRange,
   BudgetConsumptionItem,
   CashflowSeries,
   CategoryBreakdown,
   DailyHeatmap,
+  FixedVsDiscretionary,
   HeatmapDay,
   MoneyPoint,
   NetWorthPoint,
 } from './types.js';
-import type { CategorySum, DailySum, MonthlyFlow } from './source.js';
+import type { AccountScope, CategorySum, DailySum, MonthlyFlow } from './source.js';
 
 export const toISODate = (date: Date): string => date.toISOString().slice(0, 10);
 
@@ -63,6 +64,66 @@ export const MONTHLY_FACTOR: Record<string, number> = { weekly: 30 / 7, monthly:
 
 export const normalizeMonthly = (amountCents: number, cycle: string): number =>
   Math.round(amountCents * (MONTHLY_FACTOR[cycle] ?? 1));
+
+/**
+ * H-10: subscriptions have no account relation anywhere in the domain
+ * (see Subscription in types/domain.ts) — they are formally
+ * household-only. Recurring purchases DO carry accountId and follow the
+ * AccountScope. This constant is the single declaration both routes and
+ * tests reference; `householdSubscriptions` asserts it at runtime so a
+ * future schema addition cannot silently change the universe.
+ */
+export const SUBSCRIPTIONS_ACCOUNT_SCOPE = 'household' as const;
+
+export const assertHouseholdOnlySubscriptions = (subscriptions: Subscription[]): void => {
+  for (const sub of subscriptions) {
+    if ('accountId' in (sub as Record<string, unknown>)) {
+      throw new Error('analytics.scope_violation: subscriptions must stay household-only');
+    }
+  }
+};
+
+export const householdSubscriptionsMonthly = (subscriptions: Subscription[]): number => {
+  assertHouseholdOnlySubscriptions(subscriptions);
+  return subscriptions.reduce((sum, sub) => sum + normalizeMonthly(sub.amountCents, sub.cycle), 0);
+};
+
+export const scopedRecurringMonthly = (recurring: RecurringPurchase[], scope: AccountScope): number =>
+  recurring.reduce(
+    (sum, rec) =>
+      rec.status === 'active' && (scope.kind === 'household' || rec.accountId === scope.accountId)
+        ? sum + normalizeMonthly(rec.amountCents, rec.frequency)
+        : sum,
+    0,
+  );
+
+/**
+ * Fixed-vs-discretionary under one explicit universe. Household scope
+ * keeps the legacy total (subscriptions + active recurrings). Account
+ * scope uses the account's active recurrings only — subscriptions are
+ * household-wide and reported separately in `subscriptionsCents` instead
+ * of being mixed into an account total.
+ */
+export const buildFixedVsDiscretionary = (
+  subscriptions: Subscription[],
+  recurring: RecurringPurchase[],
+  scope: AccountScope,
+  expenseCents: number,
+  incomeCents: number,
+): FixedVsDiscretionary => {
+  const subscriptionsCents = householdSubscriptionsMonthly(subscriptions);
+  const fixedCents =
+    scope.kind === 'household'
+      ? subscriptionsCents + scopedRecurringMonthly(recurring, scope)
+      : scopedRecurringMonthly(recurring, scope);
+  return {
+    scope: scope.kind,
+    fixedCents,
+    discretionaryCents: Math.max(0, expenseCents - fixedCents),
+    fixedPctOfIncome: incomeCents > 0 ? Math.round((fixedCents / incomeCents) * 1000) / 10 : null,
+    subscriptionsCents,
+  };
+};
 
 export const statementRemaining = (statement: Pick<Statement, 'totalCents' | 'paidCents'>): number =>
   Math.max(0, statement.totalCents - statement.paidCents);

@@ -15,8 +15,8 @@ import {
   buildCashflowSeries,
   buildCategoryBreakdown,
   buildDailyHeatmap,
+  buildFixedVsDiscretionary,
   buildNetWorthHistory,
-  normalizeMonthly,
   previousRangeOf,
   resolveRange,
   savingsRatePct,
@@ -25,6 +25,7 @@ import {
   isOpenStatement,
   toISODate,
 } from '../analytics/compute.js';
+import { scopeFromQuery } from '../analytics/source.js';
 import { analyticsQuerySchema, categoryBreakdownQuerySchema } from '../analytics/types.js';
 
 export type AnalyticsRouteDeps = {
@@ -65,10 +66,11 @@ export const registerAnalyticsRoutes = (app: FastifyInstance, opts: AnalyticsRou
       const range = resolveRange(parsed.data.period, today(), parsed.data.from, parsed.data.to);
       const previous = previousRangeOf(range);
       const accountId = parsed.data.accountId;
+      const scope = scopeFromQuery(accountId);
       const [lists, now, before] = await Promise.all([
         opts.source.loadLists(ctx.householdId),
-        opts.source.sumByKind(ctx.householdId, range.from, range.to, accountId),
-        opts.source.sumByKind(ctx.householdId, previous.from, previous.to, accountId),
+        opts.source.sumByKind(ctx.householdId, range.from, range.to, scope),
+        opts.source.sumByKind(ctx.householdId, previous.from, previous.to, scope),
       ]);
       const inScopeAccount = (id: string): boolean => !accountId || id === accountId;
       const accountsTotalCents = lists.bankAccounts
@@ -83,12 +85,13 @@ export const registerAnalyticsRoutes = (app: FastifyInstance, opts: AnalyticsRou
       const limitCents = lists.cards
         .filter((card) => inScopeAccount(card.id))
         .reduce((sum, card) => sum + (card.creditLimitCents ?? 0), 0);
-      const fixedCents =
-        lists.subscriptions.reduce((sum, sub) => sum + normalizeMonthly(sub.amountCents, sub.cycle), 0) +
-        lists.recurring.reduce(
-          (sum, rec) => (rec.status === 'active' ? sum + normalizeMonthly(rec.amountCents, rec.frequency) : sum),
-          0,
-        );
+      const fixed = buildFixedVsDiscretionary(
+        lists.subscriptions,
+        lists.recurring,
+        scope,
+        now.expenseCents,
+        now.incomeCents,
+      );
       return reply.code(200).send({
         period: range,
         previousPeriod: previous,
@@ -104,9 +107,11 @@ export const registerAnalyticsRoutes = (app: FastifyInstance, opts: AnalyticsRou
         savingsRateTargetPct: SAVINGS_TARGET_PCT,
         previousSavingsRatePct: savingsRatePct(before.incomeCents, before.expenseCents),
         fixedVsDiscretionary: {
-          fixedCents,
-          discretionaryCents: Math.max(0, now.expenseCents - fixedCents),
-          fixedPctOfIncome: now.incomeCents > 0 ? Math.round((fixedCents / now.incomeCents) * 1000) / 10 : null,
+          scope: fixed.scope,
+          fixedCents: fixed.fixedCents,
+          discretionaryCents: fixed.discretionaryCents,
+          fixedPctOfIncome: fixed.fixedPctOfIncome,
+          subscriptionsCents: fixed.subscriptionsCents,
         },
         incomeCents: now.incomeCents,
         expenseCents: now.expenseCents,
@@ -131,9 +136,10 @@ export const registerAnalyticsRoutes = (app: FastifyInstance, opts: AnalyticsRou
     try {
       const range = resolveRange(parsed.data.period, today(), parsed.data.from, parsed.data.to);
       const previous = previousRangeOf(range);
+      const scope = scopeFromQuery(parsed.data.accountId);
       const [current, prev] = await Promise.all([
-        opts.source.dailySums(ctx.householdId, range.from, range.to, parsed.data.accountId),
-        opts.source.dailySums(ctx.householdId, previous.from, previous.to, parsed.data.accountId),
+        opts.source.dailySums(ctx.householdId, range.from, range.to, scope),
+        opts.source.dailySums(ctx.householdId, previous.from, previous.to, scope),
       ]);
       return reply.code(200).send(buildCashflowSeries(range, previous, current, prev));
     } catch (e) {
@@ -154,7 +160,7 @@ export const registerAnalyticsRoutes = (app: FastifyInstance, opts: AnalyticsRou
       const range = resolveRange(parsed.data.period, today(), parsed.data.from, parsed.data.to);
       const kind = parsed.data.kind ?? 'expense';
       const [sums, lists] = await Promise.all([
-        opts.source.categorySums(ctx.householdId, range.from, range.to, kind, parsed.data.accountId),
+        opts.source.categorySums(ctx.householdId, range.from, range.to, kind, scopeFromQuery(parsed.data.accountId)),
         opts.source.loadLists(ctx.householdId),
       ]);
       return reply.code(200).send(buildCategoryBreakdown(sums, lists.categories, range, kind));
@@ -170,9 +176,22 @@ export const registerAnalyticsRoutes = (app: FastifyInstance, opts: AnalyticsRou
     } catch (e) {
       return handleError(e, reply);
     }
+    const parsed = analyticsQuerySchema.safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    // H-10: budgets aggregate categories household-wide (spent has no
+    // account dimension), so this endpoint is formally household-only. An
+    // explicit account filter is rejected instead of silently ignored.
+    if (parsed.data.accountId) {
+      return reply.code(400).send({
+        code: 'analytics.account_scope_unsupported',
+        message: 'budget-consumption is household-only; accountId is not supported.',
+      });
+    }
     try {
       const lists = await opts.source.loadLists(ctx.householdId);
-      return reply.code(200).send({ items: buildBudgetConsumption(lists.budgets), total: lists.budgets.length });
+      return reply
+        .code(200)
+        .send({ items: buildBudgetConsumption(lists.budgets), total: lists.budgets.length, scope: 'household' });
     } catch (e) {
       return handleError(e, reply);
     }
@@ -189,7 +208,8 @@ export const registerAnalyticsRoutes = (app: FastifyInstance, opts: AnalyticsRou
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     try {
       const end = parsed.data.to ?? today();
-      const sums = await opts.source.dailySums(ctx.householdId, addDays(end, -34), end, parsed.data.accountId);
+      const scope = scopeFromQuery(parsed.data.accountId);
+      const sums = await opts.source.dailySums(ctx.householdId, addDays(end, -34), end, scope);
       return reply.code(200).send(buildDailyHeatmap(sums, end));
     } catch (e) {
       return handleError(e, reply);
@@ -208,9 +228,10 @@ export const registerAnalyticsRoutes = (app: FastifyInstance, opts: AnalyticsRou
     try {
       const now = today();
       const since = addMonths(now.slice(0, 7), -(NET_WORTH_MONTHS - 1));
+      const scope = scopeFromQuery(parsed.data.accountId);
       const [lists, flows] = await Promise.all([
         opts.source.loadLists(ctx.householdId),
-        opts.source.monthlyFlows(ctx.householdId, since),
+        opts.source.monthlyFlows(ctx.householdId, since, scope),
       ]);
       const inScope = (id: string): boolean => !parsed.data.accountId || id === parsed.data.accountId;
       const accountsTotal = lists.bankAccounts.filter((a) => inScope(a.id)).reduce((s, a) => s + a.balanceCents, 0);

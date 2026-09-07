@@ -65,12 +65,26 @@ export type AnalyticsKpis = {
   savingsRatePct: number | null;
   savingsRateTargetPct: number;
   previousSavingsRatePct: number | null;
-  fixedVsDiscretionary: { fixedCents: number; discretionaryCents: number; fixedPctOfIncome: number | null };
+  fixedVsDiscretionary: FixedVsDiscretionary;
   incomeCents: number;
   expenseCents: number;
   previousIncomeCents: number;
   previousExpenseCents: number;
   netWorthCents: number;
+};
+
+/**
+ * H-10: fixed-vs-discretionary always declares its universe. `scope`
+ * tells whether `fixedCents` covers the household or one account;
+ * `subscriptionsCents` is the household-wide subscriptions component —
+ * included in `fixedCents` only when scope is 'household'.
+ */
+export type FixedVsDiscretionary = {
+  scope: 'household' | 'account';
+  fixedCents: number;
+  discretionaryCents: number;
+  fixedPctOfIncome: number | null;
+  subscriptionsCents: number;
 };
 
 export type CashflowSeries = {
