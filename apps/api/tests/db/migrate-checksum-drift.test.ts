@@ -6,43 +6,44 @@ import {
 } from '../../src/read-models/sql/migrate.js';
 
 const manifest = [
-  { version: 1, name: 'V001__init.sql', checksum: 'aaa' },
-  { version: 2, name: 'V002__add.sql', checksum: 'bbb' },
-  { version: 3, name: 'V003__more.sql', checksum: 'ccc' },
+  { version: 44, name: 'V044__a.sql', checksum: 'aaa' },
+  { version: 45, name: 'V045__b.sql', checksum: 'bbb' },
+  { version: 46, name: 'V046__c.sql', checksum: 'ccc' },
 ];
 
 describe('M-06: migration drift detection', () => {
   it('sem drift quando aplicado == manifesto', () => {
     const plan = planMigrations(manifest, manifest.map((m) => ({ ...m })));
     expect(plan.drift).toEqual([]);
+    expect(plan.baselineDrift).toEqual([]);
     expect(plan.backfill).toEqual([]);
     expect(plan.pending).toEqual([]);
   });
 
   it('detecta checksum alterado após aplicação', () => {
     const plan = planMigrations(manifest, [
-      { version: 1, name: 'V001__init.sql', checksum: 'aaa' },
-      { version: 2, name: 'V002__add.sql', checksum: 'TAMPERED' },
-      { version: 3, name: 'V003__more.sql', checksum: 'ccc' },
+      { version: 44, name: 'V044__a.sql', checksum: 'aaa' },
+      { version: 45, name: 'V045__b.sql', checksum: 'TAMPERED' },
+      { version: 46, name: 'V046__c.sql', checksum: 'ccc' },
     ]);
     expect(plan.drift).toHaveLength(1);
-    expect(plan.drift[0]).toMatchObject({ version: 2, kind: 'checksum' });
+    expect(plan.drift[0]).toMatchObject({ version: 45, kind: 'checksum' });
   });
 
   it('detecta arquivo renomeado para a mesma versão', () => {
     const plan = planMigrations(manifest, [
-      { version: 1, name: 'V001__init.sql', checksum: 'aaa' },
-      { version: 2, name: 'V002__renamed.sql', checksum: 'bbb' },
-      { version: 3, name: 'V003__more.sql', checksum: 'ccc' },
+      { version: 44, name: 'V044__a.sql', checksum: 'aaa' },
+      { version: 45, name: 'V045__renamed.sql', checksum: 'bbb' },
+      { version: 46, name: 'V046__c.sql', checksum: 'ccc' },
     ]);
     expect(plan.drift).toHaveLength(1);
-    expect(plan.drift[0]).toMatchObject({ version: 2, kind: 'name' });
+    expect(plan.drift[0]).toMatchObject({ version: 45, kind: 'name' });
   });
 
   it('versão aplicada fora do manifesto não é drift (tolerância a downgrade)', () => {
     const plan = planMigrations(manifest.slice(0, 2), [
-      { version: 1, name: 'V001__init.sql', checksum: 'aaa' },
-      { version: 2, name: 'V002__add.sql', checksum: 'bbb' },
+      { version: 44, name: 'V044__a.sql', checksum: 'aaa' },
+      { version: 45, name: 'V045__b.sql', checksum: 'bbb' },
       { version: 99, name: 'V099__future.sql', checksum: 'zzz' },
     ]);
     expect(plan.drift).toEqual([]);
@@ -50,17 +51,17 @@ describe('M-06: migration drift detection', () => {
 
   it("checksum vazio (linha pré-checksum) vai para backfill, não drift", () => {
     const plan = planMigrations(manifest, [
-      { version: 1, name: 'V001__init.sql', checksum: '' },
-      { version: 2, name: 'V002__add.sql', checksum: 'bbb' },
-      { version: 3, name: 'V003__more.sql', checksum: 'ccc' },
+      { version: 44, name: 'V044__a.sql', checksum: '' },
+      { version: 45, name: 'V045__b.sql', checksum: 'bbb' },
+      { version: 46, name: 'V046__c.sql', checksum: 'ccc' },
     ]);
     expect(plan.drift).toEqual([]);
-    expect(plan.backfill).toEqual([{ version: 1, checksum: 'aaa' }]);
+    expect(plan.backfill).toEqual([{ version: 44, checksum: 'aaa' }]);
   });
 
   it('pendentes são as versões do manifesto ainda não aplicadas', () => {
-    const plan = planMigrations(manifest, [{ version: 1, name: 'V001__init.sql', checksum: 'aaa' }]);
-    expect(plan.pending.map((p) => p.version)).toEqual([2, 3]);
+    const plan = planMigrations(manifest, [{ version: 44, name: 'V044__a.sql', checksum: 'aaa' }]);
+    expect(plan.pending.map((p) => p.version)).toEqual([45, 46]);
   });
 });
 
@@ -94,12 +95,15 @@ describe('M-06: runMigrations aborta em drift (pool falso)', () => {
     await expect(runMigrations(pool as never, false)).resolves.toEqual({ applied: [] });
   });
 
-  it('checksum adulterado: rejeita com diagnóstico explícito antes de aplicar', async () => {
+  it('checksum adulterado na era guardada: rejeita com diagnóstico explícito antes de aplicar', async () => {
     const real = expectedMigrationManifest(false);
     const rows = real.map((m) => ({ ...m }));
-    rows[0]!.checksum = 'tampered-checksum';
+    const v045 = rows.find((r) => r.name.startsWith('V045'));
+    expect(v045).toBeDefined();
+    v045!.checksum = 'tampered-checksum';
     const { pool, queries } = fakePool(rows);
     await expect(runMigrations(pool as never, false)).rejects.toThrow(/migration drift detected/);
+    await expect(runMigrations(pool as never, false)).rejects.toThrow(/V045/);
     expect(queries.some((q) => /INSERT INTO _migrations/.test(q))).toBe(false);
   });
 

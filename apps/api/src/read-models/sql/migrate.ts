@@ -125,7 +125,7 @@ const appliedVersions = async (pool: DbPool): Promise<AppliedMigrationRow[]> => 
   return res.rows.map((row) => ({
     version: row.version,
     name: row.name,
-    checksum: row.checksum ?? '',
+    checksum: storedChecksumText(row.checksum),
   }));
 };
 
@@ -144,8 +144,52 @@ export type MigrationDrift = {
 
 export type MigrationPlan = {
   drift: MigrationDrift[];
+  /** Pre-guard real drift: structured WARN, boot continues (see below). */
+  baselineDrift: MigrationDrift[];
   backfill: Array<{ version: number; checksum: string }>;
   pending: MigrationManifestEntry[];
+};
+
+/**
+ * Deploy baseline for the M-06 drift guard. Migration versions below this
+ * number were applied to production BEFORE the guard existed, and several
+ * of those files were legitimately edited in past releases after being
+ * applied (pre-guard history — see
+ * docs/ops/migration-drift-baseline.md). Real checksum drift in those
+ * versions becomes a structured WARN and does NOT refuse boot. Drift in
+ * V044+ (guarded era) stays fail-closed and aborts startup.
+ */
+export const MIGRATION_DRIFT_BASELINE_VERSION = 44;
+
+/**
+ * Production `_migrations.checksum` predates the TEXT column in some
+ * databases (legacy BYTEA storage): node-postgres then returns values as
+ * `\x...` hex strings while the manifest holds plain hex. Strip a valid
+ * `\x` bytea prefix so equal content compares equal; anything else is
+ * returned untouched (a real mismatch must stay visible).
+ */
+export const normalizeStoredChecksum = (value: unknown): string => {
+  if (typeof value !== 'string') return '';
+  if (value.length > 2 && value.startsWith('\\x')) {
+    const hex = value.slice(2);
+    if (hex.length > 0 && hex.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(hex)) {
+      return hex.toLowerCase();
+    }
+  }
+  return value;
+};
+
+/**
+ * Render a raw stored checksum as comparable text. Buffers (node-postgres
+ * bytea output) become the `\x...` hex form seen in production logs, so
+ * the incident artifact keeps its display shape through diagnosis while
+ * `normalizeStoredChecksum` handles the comparison.
+ */
+export const storedChecksumText = (value: unknown): string => {
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value)) {
+    return `\\x${(value as Buffer).toString('hex')}`;
+  }
+  return (value ?? '') as string;
 };
 
 /**
@@ -163,6 +207,7 @@ export const planMigrations = (
   const expected = new Map(manifest.map((m) => [m.version, m]));
   const appliedVersions = new Set(applied.map((r) => r.version));
   const drift: MigrationDrift[] = [];
+  const baselineDrift: MigrationDrift[] = [];
   const backfill: Array<{ version: number; checksum: string }> = [];
   for (const row of applied) {
     const entry = expected.get(row.version);
@@ -173,12 +218,20 @@ export const planMigrations = (
     }
     if (row.name !== entry.name) {
       drift.push({ version: row.version, kind: 'name', expected: entry.name, applied: row.name });
-    } else if (row.checksum !== entry.checksum) {
-      drift.push({ version: row.version, kind: 'checksum', expected: entry.checksum, applied: row.checksum });
+    } else if (normalizeStoredChecksum(row.checksum) !== entry.checksum) {
+      const record: MigrationDrift = {
+        version: row.version,
+        kind: 'checksum',
+        expected: entry.checksum,
+        applied: row.checksum,
+      };
+      // Pre-guard production history warns; guarded era refuses to boot.
+      if (row.version < MIGRATION_DRIFT_BASELINE_VERSION) baselineDrift.push(record);
+      else drift.push(record);
     }
   }
   const pending = manifest.filter((m) => !appliedVersions.has(m.version));
-  return { drift, backfill, pending };
+  return { drift, baselineDrift, backfill, pending };
 };
 
 export const runMigrations = async (
@@ -195,6 +248,22 @@ export const runMigrations = async (
       .join('; ');
     throw new Error(
       `migration drift detected: applied migration files differ from the manifest — refusing to boot. ${details}`,
+    );
+  }
+  // Pre-guard baseline drift: loud structured WARN, boot continues. Never
+  // silently ignored, never a refusal — see
+  // docs/ops/migration-drift-baseline.md for the reconciliation path.
+  for (const d of plan.baselineDrift) {
+    console.warn(
+      JSON.stringify({
+        event: 'migration.baseline_drift',
+        version: d.version,
+        kind: d.kind,
+        applied: d.applied,
+        expected: d.expected,
+        guidance:
+          'pre-guard production history; boot continues. Reconcile via checksum re-backfill after semantic audit (docs/ops/migration-drift-baseline.md).',
+      }),
     );
   }
   for (const entry of plan.backfill) {
