@@ -6,7 +6,7 @@ import type {
   SecretAlias,
   Transport,
 } from "@pi-finance/llm-contracts/types";
-import { PROVIDER_KINDS } from "@pi-finance/llm-contracts/types";
+import { PROVIDER_KINDS, normalizeProviderId } from "@pi-finance/llm-contracts/types";
 
 export type LlmPresetModel = {
   modelId: string;
@@ -28,9 +28,9 @@ export type LlmProviderPreset = {
 
 export const LLM_PROVIDER_PRESETS: LlmProviderPreset[] = [
   {
-    id: "openai",
+    id: "openai-api",
     name: "OpenAI",
-    kind: "openai",
+    kind: "openai-api",
     secretAlias: "OPENAI_API_KEY",
     transport: "direct",
     authMode: "api-key",
@@ -175,7 +175,10 @@ export const LLM_PROVIDER_PRESETS: LlmProviderPreset[] = [
 export const ALLOWED_PROVIDER_KINDS = PROVIDER_KINDS;
 
 export function getLlmPreset(id: string): LlmProviderPreset | undefined {
-  return LLM_PROVIDER_PRESETS.find((p) => p.id === id || p.kind === id);
+  // H-08: saved configs referencing the legacy `openai` id keep resolving
+  // to the canonical preset.
+  const canonical = normalizeProviderId(id);
+  return LLM_PROVIDER_PRESETS.find((p) => p.id === canonical || p.kind === canonical);
 }
 
 export function getLlmPresetBySecretAlias(alias: string): LlmProviderPreset | undefined {

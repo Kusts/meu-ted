@@ -223,62 +223,40 @@ export const registerAdminAgentLlmConfigRoutes = (
       return invalidBody(reply, 'agent.invalid_model', reason);
     }
     const { items } = parsed.data;
-    let synced = 0;
 
-    if (items.length > 0) {
-      for (const item of items) {
-        // Fase 3-FIX R1: resolve the kind before validating. An unknown
-        // provider fails the whole batch fast with a clear error (a bulk
-        // import must never silently create orphan models); semantic
-        // conflicts of known providers keep the Fase 2 item 6 skip policy.
-        const provider = await deps.store.getProvider(item.providerId);
-        if (!provider) {
-          return reply.code(404).send({
-            code: 'agent.provider_not_found',
-            message: `Provider ${item.providerId} não encontrado`,
-          });
-        }
-        const err = validateModel(
-          {
-            providerId: item.providerId,
-            modelId: item.modelId,
-            protocol: item.protocol ?? 'chat-completions',
-            privacyClass: item.privacyClass ?? 'training_prohibited',
-          },
-          provider.kind,
-        );
-        if (!err) {
-          try {
-            await deps.store.upsertModel({
-              providerId: item.providerId,
-              modelId: item.modelId,
-              protocol: item.protocol ?? 'chat-completions',
-              privacyClass: item.privacyClass ?? 'training_prohibited',
-              retention: item.retention ?? null,
-              enabled: false,
-            });
-            synced++;
-          } catch (upsertErr) {
-            // Fase 2 item 6: a conflicting catalog entry (e.g. metadata of a
-            // referenced model) is skipped, never applied half-way.
-            const e = upsertErr as { statusCode?: number; code?: string };
-            if (
-              typeof e?.statusCode === 'number' &&
-              (e?.code === 'agent.runtime_in_use' ||
-                e?.code === 'agent.invalid_model' ||
-                e?.code === 'agent.invalid_provider' ||
-                e?.code === 'agent.kind_unsupported' ||
-                e?.code === 'agent.activation_blocked')
-            ) {
-              continue;
-            }
-            throw upsertErr;
-          }
-        }
+    // M-08: validate the WHOLE batch before any write. An unknown provider
+    // fails the batch with zero writes (previously the loop persisted
+    // earlier items before hitting the 404). Semantic conflicts of known
+    // providers keep the Fase 2 item 6 skip policy inside syncModels, which
+    // applies the batch atomically (one transaction on Postgres) and reports
+    // deterministically — no intermediate state ever surfaces.
+    for (const item of items) {
+      // Fase 3-FIX R1: resolve the kind before validating (a bulk import
+      // must never silently create orphan models).
+      const provider = await deps.store.getProvider(item.providerId);
+      if (!provider) {
+        return reply.code(404).send({
+          code: 'agent.provider_not_found',
+          message: `Provider ${item.providerId} não encontrado`,
+        });
       }
     }
 
-    return reply.send({ ok: true, synced });
+    if (items.length > 0) {
+      const { synced, skipped } = await deps.store.syncModels(
+        items.map((item) => ({
+          providerId: item.providerId,
+          modelId: item.modelId,
+          protocol: item.protocol ?? 'chat-completions',
+          privacyClass: item.privacyClass ?? 'training_prohibited',
+          retention: item.retention ?? null,
+          enabled: false,
+        })),
+      );
+      return reply.send({ ok: true, synced, skipped });
+    }
+
+    return reply.send({ ok: true, synced: 0, skipped: [] });
   });
 
   // POST /admin/agent/llm-config/providers/:id/toggle - Toggle provider enabled state

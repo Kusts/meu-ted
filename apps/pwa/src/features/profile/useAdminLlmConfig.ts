@@ -22,7 +22,7 @@ import {
   type LlmConnectionTest,
   type LlmRemoteModel,
 } from "@/lib/api/admin-agent-llm-config";
-import { LLM_PROVIDER_PRESETS } from "@/lib/llm-presets";
+import { LLM_PROVIDER_PRESETS, getLlmPreset } from "@/lib/llm-presets";
 import { isProviderKind } from "@pi-finance/llm-contracts/types";
 import { ApiError } from "@/lib/api/client";
 import { formatApiError } from "@/lib/api/format-api-error";
@@ -307,7 +307,9 @@ export function useAdminLlmConfig(): UseAdminLlmConfig {
   const createPreset = useCallback(
     (presetId: string): Promise<boolean> =>
       mutate(async () => {
-        const preset = LLM_PROVIDER_PRESETS.find((p) => p.id === presetId);
+        // H-08: alias-aware lookup — saved `openai` references resolve to
+        // the canonical `openai-api` preset.
+        const preset = getLlmPreset(presetId);
         if (!preset) throw new Error(`Preset ${presetId} não encontrado`);
         if (providersRef.current.some((p) => p.id === preset.id)) {
           setSelectedProviderId(preset.id);

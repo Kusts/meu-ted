@@ -48,14 +48,19 @@ export type MigrationResult = {
   migrationHash?: string;
 };
 
-export const computeHistoryHash = (messages: LegacyMessage[]): string => {
-  const structured = messages.map((m) => ({
-    id: m.id,
-    actor_id: m.actor_id,
-    role: m.role,
-    created_at: m.created_at,
-    content_json: m.content_json,
-  }));
+export const computeHistoryHash = (messages: LegacyMessage[], workspaceId = ''): string => {
+  // M-07: the workspace/canonical household is part of the hashed material —
+  // identical transcripts in distinct workspaces must never share a hash.
+  const structured = [
+    { workspace_id: workspaceId },
+    ...messages.map((m) => ({
+      id: m.id,
+      actor_id: m.actor_id,
+      role: m.role,
+      created_at: m.created_at,
+      content_json: m.content_json,
+    })),
+  ];
   return createHash('sha256').update(JSON.stringify(structured)).digest('hex');
 };
 
@@ -114,7 +119,10 @@ export const migrateLegacyHistory = async (
 
   initializeMigrationSchema(sql);
 
-  const migrationHash = computeHistoryHash(exportData.messages);
+  const migrationHash = computeHistoryHash(exportData.messages, exportData.workspaceId);
+  // M-07 bridge: markers written before the workspace entered the hash
+  // still match (no re-import), and are upgraded to the new scheme below.
+  const legacyHash = computeHistoryHash(exportData.messages);
 
   // Check if already migrated with exact hash
   const existing = [...sql.exec<{ migration_hash: string; imported_count: number }>(
@@ -122,7 +130,17 @@ export const migrateLegacyHistory = async (
     exportData.workspaceId,
   )];
 
-  if (existing.length > 0 && existing[0]?.migration_hash === migrationHash) {
+  if (existing.length > 0 && (existing[0]?.migration_hash === migrationHash || existing[0]?.migration_hash === legacyHash)) {
+    if (existing[0]?.migration_hash === legacyHash && migrationHash !== legacyHash) {
+      sql.exec(
+        `INSERT INTO _history_migration_marker (workspace_id, migration_hash, imported_count, migrated_at)
+         VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT (workspace_id) DO UPDATE SET migration_hash = excluded.migration_hash, imported_count = excluded.imported_count, migrated_at = CURRENT_TIMESTAMP`,
+        exportData.workspaceId,
+        migrationHash,
+        existing[0].imported_count,
+      );
+    }
     return {
       success: true,
       importedCount: existing[0].imported_count,

@@ -8,6 +8,7 @@ import {
   ROLLOUT_MODES,
   SECRET_ALIASES,
   isProtocolCompatibleWithKind,
+  normalizeProviderId,
   type AuthMode,
   type PrivacyClass,
   type Protocol,
@@ -32,7 +33,8 @@ export const ALLOWED_ROLLOUT_MODES: readonly RolloutMode[] = ROLLOUT_MODES;
 
 export const ALLOWED_PRIVACY_CLASSES: readonly PrivacyClass[] = PRIVACY_CLASSES;
 
-export { AUTH_MODES, KIND_SECRET_ALIASES, REGISTRY_UNSUPPORTED_KINDS, isProtocolCompatibleWithKind };
+export { AUTH_MODES, KIND_SECRET_ALIASES, REGISTRY_UNSUPPORTED_KINDS,
+isProtocolCompatibleWithKind, normalizeProviderId };
 
 export const isKindExecutable = (kind: string): boolean =>
   (PROVIDER_KINDS as readonly string[]).includes(kind) &&
@@ -160,5 +162,28 @@ export const validateRuntimePair = (
   const err = canActivate(provider ?? undefined, model ?? undefined);
   if (err) return err;
   if (model!.providerId !== provider!.id) return 'model does not belong to provider';
+  return null;
+};
+
+/**
+ * M-01: the active and fallback pairs must be DISTINCT attempts — a
+ * fallback identical to the primary double-spends without new signal.
+ * Compared normalized (legacy aliases count as equal). Null pairs (cleared
+ * fallback) are always allowed.
+ */
+export const validateDistinctPairs = (
+  providerId: string | null,
+  modelId: string | null,
+  fallbackProviderId: string | null,
+  fallbackModelId: string | null,
+): string | null => {
+  if (providerId === null || modelId === null) return null;
+  if (fallbackProviderId === null || fallbackModelId === null) return null;
+  if (
+    normalizeProviderId(providerId) === normalizeProviderId(fallbackProviderId) &&
+    modelId === fallbackModelId
+  ) {
+    return 'fallback pair must differ from the active pair';
+  }
   return null;
 };

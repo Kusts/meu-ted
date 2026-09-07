@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { KIND_PROTOCOL_COMPAT, KIND_SECRET_ALIASES } from '@pi-finance/llm-contracts';
+import { KIND_PROTOCOL_COMPAT, KIND_SECRET_ALIASES, normalizeProviderId } from
+'@pi-finance/llm-contracts';
 import { createInMemoryLlmConfigStore } from '../../src/agent/llm-config-memory.js';
 
 const seedActivePair = async (store: ReturnType<typeof createInMemoryLlmConfigStore>) => {
@@ -299,7 +300,8 @@ describe('Fase 3-FIX R1 — provider kind switch revalidates the referenced pair
       authMode: 'api-key',
       secretAlias: 'OPENAI_API_KEY',
     });
-    expect(out.kind).toBe('openai');
+    // H-08: the legacy alias kind normalizes to canonical on write.
+    expect(out.kind).toBe('openai-api');
   });
 
   it('a kind switch breaking the FALLBACK pair is rejected with 409', async () => {
@@ -342,7 +344,15 @@ describe('Fase 3-FIX R1 — provider kind switch revalidates the referenced pair
 describe('Fase 3-FIX R1 — per-kind matrix on referenced-model upserts', () => {
   const ALL_PROTOCOLS = ['chat-completions', 'responses', 'messages', 'google-generative-ai'] as const;
 
-  it.each(Object.entries(KIND_PROTOCOL_COMPAT))(
+  // H-08: matrix runs over CANONICAL kinds — legacy aliases converge to
+  // the canonical id on write, so alias rows carry no separate compat.
+  const CANONICAL_MATRIX = Object.entries(KIND_PROTOCOL_COMPAT).map(([kind, protocols]) => [
+    normalizeProviderId(kind),
+    protocols,
+  ] as const);
+  const DEDUPED_MATRIX = [...new Map(CANONICAL_MATRIX.map(([kind, protocols]) => [kind, protocols])).entries()];
+
+  it.each(DEDUPED_MATRIX)(
     'incompatible-protocol upsert on the referenced model is rejected for kind %s',
     async (kind, protocols) => {
       const bad = ALL_PROTOCOLS.find((p) => !(protocols as readonly string[]).includes(p))!;

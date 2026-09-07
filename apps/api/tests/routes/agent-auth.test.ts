@@ -234,15 +234,39 @@ describe('Agent Auth Routes (Task 3)', () => {
       });
       expect(res1.statusCode).toBe(200);
 
-      // Attempt reuse in Workspace B
+      // Attempt reuse in Workspace B (not a member): M-09 revocation wins
+      // with 403 — the token is dead either way, but revoked/non-member
+      // callers get the authorization code, not a replay code.
       const res2 = await app.inject({
         method: 'POST',
         url: '/internal/agent/consume-token',
         headers: { 'x-agent-service-token': SERVICE_TOKEN },
         payload: { jti, workspaceId: HOUSEHOLD_B, actorId: userId },
       });
-      expect(res2.statusCode).toBe(409);
-      expect(res2.json().code).toBe('agent.token_replayed');
+      expect(res2.statusCode).toBe(403);
+      expect(res2.json().code).toBe('auth.workspace_forbidden');
+    });
+
+    it('M-09: revoked membership is rejected at consumption WITHOUT burning the token', async () => {
+      const jti = 'jti-revoked-member';
+      // Non-member (revoked) attempt: 403, store untouched.
+      const denied = await app.inject({
+        method: 'POST',
+        url: '/internal/agent/consume-token',
+        headers: { 'x-agent-service-token': SERVICE_TOKEN },
+        payload: { jti, workspaceId: HOUSEHOLD_B, actorId: userId },
+      });
+      expect(denied.statusCode).toBe(403);
+      expect(denied.json()).toMatchObject({ code: 'auth.workspace_forbidden' });
+
+      // Unknown actor entirely: also 403.
+      const stranger = await app.inject({
+        method: 'POST',
+        url: '/internal/agent/consume-token',
+        headers: { 'x-agent-service-token': SERVICE_TOKEN },
+        payload: { jti: 'jti-stranger', workspaceId: HOUSEHOLD_A, actorId: 'ghost-user' },
+      });
+      expect(stranger.statusCode).toBe(403);
     });
   });
 });

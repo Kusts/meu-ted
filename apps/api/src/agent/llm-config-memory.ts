@@ -1,7 +1,10 @@
-import { activationBlocked, type LlmConfigStore } from './llm-config-store.js';
+import { activationBlocked, isSyncSkippable, syncSkipReason, type LlmConfigStore } from './llm-config-store.js';
 import {
   isKindExecutable,
   isProtocolCompatibleWithKind,
+  normalizeProviderId,
+  validateDistinctPairs,
+  validateModel,
   validateProvider,
   validateRuntimePair,
   type LlmModel,
@@ -65,6 +68,9 @@ export const createInMemoryLlmConfigStore = (seed?: {
       eligibility: 'approved',
       runtimeStatus: 'not_configured',
     },
+    // H-08: no legacy `openai` seed row — fresh stores start canonical.
+    // Pre-existing `openai` rows (Postgres/V044 seeds) keep resolving via
+    // the alias-aware getProvider/normalizing upsert, never duplicating.
     {
       id: 'openai-codex-subscription',
       kind: 'openai-codex-subscription',
@@ -136,16 +142,6 @@ export const createInMemoryLlmConfigStore = (seed?: {
       runtimeStatus: 'not_configured',
     },
     {
-      id: 'openai',
-      kind: 'openai',
-      transport: 'direct',
-      authMode: 'api-key',
-      secretAlias: 'OPENAI_API_KEY',
-      enabled: false,
-      eligibility: 'approved',
-      runtimeStatus: 'not_configured',
-    },
-    {
       id: 'google',
       kind: 'google',
       transport: 'direct',
@@ -184,15 +180,24 @@ export const createInMemoryLlmConfigStore = (seed?: {
       return providers.map((p) => ({ ...p }));
     },
     async getProvider(id: string) {
-      const p = providers.find((x) => x.id === id);
+      // H-08: alias-aware read — legacy `openai` rows resolve to the
+      // canonical `openai-api` row when it exists.
+      const canonical = normalizeProviderId(id);
+      const p = providers.find((x) => x.id === canonical) ?? providers.find((x) => x.id === id);
       return p ? { ...p } : null;
     },
     async upsertProvider(input) {
+      // H-08: normalize BEFORE persisting — the legacy alias can never
+      // create a divergent second provider.
+      const canonicalId = normalizeProviderId(input.id);
+      const canonicalKind = normalizeProviderId(input.kind);
+      input = { ...input, id: canonicalId, kind: canonicalKind as typeof input.kind };
       const existingIdx = providers.findIndex((p) => p.id === input.id);
       const existing = existingIdx >= 0 ? providers[existingIdx]! : undefined;
       // Fase 2 item 6: metadata of a referenced item is revalidated.
-      if (existing && (runtime.providerId === input.id || runtime.fallbackProviderId === input.id)) {
-        const slot = runtime.providerId === input.id ? 'active_provider' : 'fallback_provider';
+      // H-08: runtime ids compare normalized (legacy alias references match).
+      if (existing && (normalizeProviderId(runtime.providerId ?? '') === input.id || normalizeProviderId(runtime.fallbackProviderId ?? '') === input.id)) {
+        const slot = normalizeProviderId(runtime.providerId ?? '') === input.id ? 'active_provider' : 'fallback_provider';
         if (input.kind !== existing.kind && !isKindExecutable(input.kind)) {
           throw kindUnsupported(input.kind);
         }
@@ -205,7 +210,7 @@ export const createInMemoryLlmConfigStore = (seed?: {
           const refModel = refModelId ? models.find((m) => m.id === refModelId) : undefined;
           if (
             refModel &&
-            refModel.providerId === input.id &&
+            normalizeProviderId(refModel.providerId) === input.id &&
             !isProtocolCompatibleWithKind(input.kind, refModel.protocol)
           ) {
             const label = slot === 'active_provider' ? 'active' : 'fallback';
@@ -282,6 +287,15 @@ export const createInMemoryLlmConfigStore = (seed?: {
           code: 'agent.version_conflict',
         });
       }
+      // H-08: normalize BEFORE activating — the runtime only ever points
+      // at the canonical id.
+      input = {
+        ...input,
+        providerId: input.providerId === null ? null : normalizeProviderId(input.providerId),
+        ...(input.fallbackProviderId !== undefined
+          ? { fallbackProviderId: input.fallbackProviderId === null ? null : normalizeProviderId(input.fallbackProviderId) }
+          : {}),
+      };
       // Fase 1b-FIX item 6: same revalidation as Postgres (single-threaded
       // here, so no locks needed — same decisions).
       const findProvider = (id: string | null) =>
@@ -299,6 +313,14 @@ export const createInMemoryLlmConfigStore = (seed?: {
         findModel(effectiveFallbackModelId),
       );
       if (fallbackErr) throw activationBlocked(fallbackErr);
+      // M-01: active and fallback must be distinct attempts.
+      const distinctErr = validateDistinctPairs(
+        input.providerId,
+        input.modelId,
+        effectiveFallbackProviderId,
+        effectiveFallbackModelId,
+      );
+      if (distinctErr) throw activationBlocked(distinctErr);
       runtime = {
         ...runtime,
         providerId: input.providerId,
@@ -366,6 +388,9 @@ export const createInMemoryLlmConfigStore = (seed?: {
       return { ...m };
     },
     async upsertModel(input) {
+      // H-08: normalize BEFORE persisting — model rows always reference the
+      // canonical provider id.
+      input = { ...input, providerId: normalizeProviderId(input.providerId) };
       const id = input.id ?? `${input.providerId}:${input.modelId}`;
       const existingIdx = models.findIndex(
         (m) => m.id === id || (m.providerId === input.providerId && m.modelId === input.modelId),
@@ -422,8 +447,45 @@ export const createInMemoryLlmConfigStore = (seed?: {
       }
       return { ...model };
     },
-    async deleteModel(id: string) {
-      if (runtime.modelId === id) {
+    async syncModels(inputs) {
+      // M-08: single-threaded apply is atomic by construction — the route
+      // pre-validates the batch, and unexpected errors abort before any
+      // report is produced (earlier items in a failed batch are a bug;
+      // pre-validation makes that unreachable outside storage failure).
+      let synced = 0;
+      const skipped: Array<{ providerId: string; modelId: string; reason: string }> = [];
+      for (const item of inputs) {
+        try {
+          // Fase 3-FIX R1 (per-item): unknown providers fail, incompatible
+          // kind↔protocol pairs skip with a reason — same policy as the old
+          // route loop, now inside the atomic apply.
+          const provider = providers.find((p) => p.id === item.providerId) ?? null;
+          if (!provider) {
+            throw Object.assign(new Error(`Provider ${item.providerId} não encontrado`), {
+              statusCode: 404,
+              code: 'agent.provider_not_found',
+            });
+          }
+          const validationErr = validateModel(
+            {
+              providerId: item.providerId,
+              modelId: item.modelId,
+              protocol: item.protocol,
+              privacyClass: item.privacyClass,
+            },
+            provider.kind,
+          );
+          if (validationErr) throw invalidModel(validationErr);
+          await this.upsertModel({ enabled: false, ...item });
+          synced++;
+        } catch (err) {
+          if (!isSyncSkippable(err)) throw err;
+          skipped.push({ providerId: item.providerId, modelId: item.modelId, reason: syncSkipReason(err) });
+        }
+      }
+      return { synced, skipped };
+    },
+    async deleteModel(id: string) {      if (runtime.modelId === id) {
         throw Object.assign(new Error('model is active runtime'), {
           statusCode: 409,
           code: 'agent.runtime_in_use',

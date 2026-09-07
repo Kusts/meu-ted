@@ -131,6 +131,26 @@ const catalogBaseUrl = (providerId: string): { baseUrl: string; modelsPath: stri
 };
 
 /**
+ * H-06: same redirect/SSRF guard as the agent (`createSafeFetch` in
+ * apps/agent/src/llm/model-factory.ts). `redirect: 'error'` stops real
+ * fetch implementations from following; the explicit 3xx rejection covers
+ * injected mocks that ignore redirect semantics. URLs stay exclusively
+ * from the allowlisted catalog (`catalogBaseUrl`), so a misconfigured
+ * upstream can never forward the `Authorization` bearer elsewhere.
+ */
+export const createApiSafeFetch = (fetchImpl: typeof fetch = fetch): typeof fetch => {
+  return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const res = await fetchImpl(input, { ...init, redirect: 'error' });
+    if (res.status >= 300 && res.status < 400) {
+      throw Object.assign(new Error('redirected request rejected by safe fetch'), {
+        code: 'redirect_rejected',
+      });
+    }
+    return res;
+  }) as typeof fetch;
+};
+
+/**
  * Connection test (item 2, dry-run safe). `dryRun: true` validates shape +
  * masking WITHOUT persisting or touching the network — used by automated
  * tests so no real key is ever required in CI. Without dryRun, performs a
@@ -151,7 +171,7 @@ export const testCredential = async (
   if (!key) return { ready: false, code: 'not_configured', latencyMs: 0, providerId };
   const target = catalogBaseUrl(providerId);
   if (!target) return { ready: false, code: 'browser_auth_required', latencyMs: 0, providerId };
-  const fetchImpl = opts?.fetchImpl ?? fetch;
+  const fetchImpl = createApiSafeFetch(opts?.fetchImpl ?? fetch);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {
@@ -167,6 +187,9 @@ export const testCredential = async (
     return { ready: false, code: `http_${res.status}`, latencyMs, providerId };
   } catch (err) {
     const latencyMs = (opts?.now ?? Date.now)() - startedAt;
+    if ((err as { code?: string })?.code === 'redirect_rejected') {
+      return { ready: false, code: 'redirect_rejected', latencyMs, providerId };
+    }
     const isAbort = (err as { name?: string })?.name === 'AbortError';
     return { ready: false, code: isAbort ? 'timeout' : 'network_error', latencyMs, providerId };
   } finally {
@@ -201,7 +224,7 @@ export const listRemoteModels = async (
       reason: 'missing_credential',
     });
   }
-  const fetchImpl = opts?.fetchImpl ?? fetch;
+  const fetchImpl = createApiSafeFetch(opts?.fetchImpl ?? fetch);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
   try {

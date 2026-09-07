@@ -1,9 +1,12 @@
 import type { Pool } from 'pg';
-import { activationBlocked, type LlmConfigStore } from './llm-config-store.js';
+import { activationBlocked, isSyncSkippable, syncSkipReason, type LlmConfigStore } from './llm-config-store.js';
 import { mapModelRow, mapProviderRow, mapRuntimeRow, emptyRuntime, type DbRow } from './llm-config-row-mapper.js';
 import {
   isKindExecutable,
   isProtocolCompatibleWithKind,
+  normalizeProviderId,
+  validateDistinctPairs,
+  validateModel,
   validateProvider,
   validateRuntimePair,
   type LlmModel,
@@ -67,6 +70,108 @@ const revalidatePair = async (
   );
 };
 
+/**
+ * M-08: tx-scoped model upsert core shared by upsertModel (own tx) and
+ * syncModels (one tx for the batch). Never touches transaction state —
+ * the caller owns BEGIN/COMMIT/ROLLBACK.
+ */
+const upsertModelTx = async (
+  client: QueryClient,
+  input: {
+    id?: string;
+    providerId: string;
+    modelId: string;
+    protocol: LlmModel['protocol'];
+    privacyClass: LlmModel['privacyClass'];
+    retention?: string | null;
+    enabled?: boolean;
+  },
+): Promise<LlmModel> => {
+  // H-08: normalize BEFORE persisting — model rows always reference the
+  // canonical provider id.
+  input = { ...input, providerId: normalizeProviderId(input.providerId) };
+  const id = input.id ?? `${input.providerId}:${input.modelId}`;
+  const enabled = input.enabled ?? false;
+  // Fase 1b-FIX item 1: ON CONFLICT preserves the existing `enabled`
+  // (see upsertProvider); new rows default to disabled.
+  // Fase 2 item 6: protocol/privacyClass of a referenced model are
+  // immutable via upsert — revalidated under the runtime lock.
+  const rt = await client.query(
+    `SELECT model_id, fallback_model_id FROM agent_llm_runtime_config WHERE singleton = 'active' FOR UPDATE`,
+  );
+  const row = rt.rows[0] as Record<string, unknown> | undefined;
+  // Fase 3 item 2: resolve the referenced row by id OR pair (an upsert
+  // may target the referenced row through either key), then enforce
+  // identity immutability + kind↔protocol compatibility under the lock.
+  const cur = await client.query(
+    `SELECT m.id AS id, m.protocol AS protocol, m.privacy_class AS privacy_class,
+            m.provider_id AS provider_id, m.model_id AS model_id, p.kind AS provider_kind
+     FROM agent_llm_models m LEFT JOIN agent_llm_providers p ON p.id = m.provider_id
+     WHERE m.id = $1 OR (m.provider_id = $2 AND m.model_id = $3)
+     LIMIT 1`,
+    [id, input.providerId, input.modelId],
+  );
+  const existing = cur.rows[0] as Record<string, unknown> | undefined;
+  const slot =
+    existing && row?.['model_id'] === existing['id']
+      ? 'active_model'
+      : existing && row?.['fallback_model_id'] === existing['id']
+        ? 'fallback_model'
+        : null;
+  if (slot && existing) {
+    // H-08: stored provider ids compare normalized (legacy alias rows match).
+    if (
+      (typeof existing['provider_id'] === 'string'
+        ? normalizeProviderId(existing['provider_id'] as string)
+        : existing['provider_id']) !== input.providerId ||
+      existing['model_id'] !== input.modelId ||
+      existing['id'] !== id
+    ) {
+      const label = slot === 'active_model' ? 'active' : 'fallback';
+      const reason = `model identity of the ${label} model is immutable while referenced`;
+      throw Object.assign(new Error(reason), {
+        statusCode: 409,
+        code: 'agent.runtime_in_use',
+        reason: slot,
+      });
+    }
+    const kind = existing['provider_kind'];
+    if (
+      typeof kind === 'string' &&
+      !isProtocolCompatibleWithKind(kind, input.protocol)
+    ) {
+      const reason = `model protocol ${input.protocol} is not compatible with provider kind ${kind}`;
+      throw Object.assign(new Error(reason), {
+        statusCode: 422,
+        code: 'agent.invalid_model',
+        reason,
+      });
+    }
+    if (
+      existing['protocol'] !== input.protocol ||
+      existing['privacy_class'] !== input.privacyClass
+    ) {
+      const reason = 'protocol/privacyClass of a referenced model is immutable';
+      throw Object.assign(new Error(reason), {
+        statusCode: 422,
+        code: 'agent.invalid_model',
+        reason,
+      });
+    }
+  }
+  const res = await client.query(
+    `INSERT INTO agent_llm_models (id, provider_id, model_id, protocol, privacy_class, retention, enabled)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (provider_id, model_id) DO UPDATE
+     SET protocol = EXCLUDED.protocol,
+         privacy_class = EXCLUDED.privacy_class,
+         retention = EXCLUDED.retention
+     RETURNING id, provider_id, model_id, protocol, privacy_class, retention, enabled, created_at`,
+    [id, input.providerId, input.modelId, input.protocol, input.privacyClass, input.retention ?? null, enabled],
+  );
+  return mapModelRow(res.rows[0] as DbRow);
+};
+
 export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
   async listProviders() {
     const res = await pool.query(
@@ -77,11 +182,22 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
   },
 
   async getProvider(id: string) {
+    // H-08: alias-aware read — canonical first, legacy row as fallback.
+    const canonical = normalizeProviderId(id);
     const res = await pool.query(
       `SELECT id, kind, transport, auth_mode, secret_alias, service_alias, enabled, eligibility, runtime_status, created_at, updated_at, updated_by
        FROM agent_llm_providers WHERE id = $1`,
-      [id],
+      [canonical],
     );
+    if (res.rowCount === 0 && canonical !== id) {
+      const legacy = await pool.query(
+        `SELECT id, kind, transport, auth_mode, secret_alias, service_alias, enabled, eligibility, runtime_status, created_at, updated_at, updated_by
+         FROM agent_llm_providers WHERE id = $1`,
+        [id],
+      );
+      if (legacy.rowCount === 0) return null;
+      return mapProviderRow(legacy.rows[0] as DbRow);
+    }
     if (res.rowCount === 0) return null;
     return mapProviderRow(res.rows[0] as DbRow);
   },
@@ -125,6 +241,15 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
   },
 
   async updateRuntime(input) {
+    // H-08: normalize BEFORE activating — the runtime only ever points at
+    // the canonical id.
+    input = {
+      ...input,
+      providerId: input.providerId === null ? null : normalizeProviderId(input.providerId),
+      ...(input.fallbackProviderId !== undefined
+        ? { fallbackProviderId: input.fallbackProviderId === null ? null : normalizeProviderId(input.fallbackProviderId) }
+        : {}),
+    };
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -156,6 +281,15 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
         input.fallbackModelId !== undefined ? input.fallbackModelId : ((stored['fallback_model_id'] as string) ?? null);
       const fallbackErr = await revalidatePair(client, effectiveFallbackProviderId, effectiveFallbackModelId);
       if (fallbackErr) throw activationBlocked(fallbackErr);
+      // M-01: active and fallback must be distinct attempts (same decisions
+      // as the memory store, under the runtime lock).
+      const distinctErr = validateDistinctPairs(
+        input.providerId,
+        input.modelId,
+        effectiveFallbackProviderId,
+        effectiveFallbackModelId,
+      );
+      if (distinctErr) throw activationBlocked(distinctErr);
       let r: Record<string, unknown>;
       await client.query('SAVEPOINT pre_fallback_check');
       try {
@@ -288,6 +422,9 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
   },
 
   async upsertProvider(input) {
+    // H-08: normalize BEFORE persisting — the legacy alias can never create
+    // a divergent second provider.
+    input = { ...input, id: normalizeProviderId(input.id), kind: normalizeProviderId(input.kind) as typeof input.kind };
     // Fase 1b-FIX item 1: ON CONFLICT never touches `enabled` — an upsert
     // (create route, sync) must not disable an active/fallback provider
     // outside the guarded toggle path. New rows still default to disabled.
@@ -301,10 +438,11 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
         `SELECT provider_id, fallback_provider_id, model_id, fallback_model_id FROM agent_llm_runtime_config WHERE singleton = 'active' FOR UPDATE`,
       );
       const row = rt.rows[0] as Record<string, unknown> | undefined;
+      // H-08: runtime ids compare normalized (legacy alias references match).
       const slot =
-        row?.['provider_id'] === input.id
+        (typeof row?.['provider_id'] === 'string' && normalizeProviderId(row['provider_id'] as string) === input.id)
           ? 'active_provider'
-          : row?.['fallback_provider_id'] === input.id
+          : (typeof row?.['fallback_provider_id'] === 'string' && normalizeProviderId(row['fallback_provider_id'] as string) === input.id)
             ? 'fallback_provider'
             : null;
       if (slot) {
@@ -337,7 +475,8 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
               const refModel = mcur.rows[0] as Record<string, unknown> | undefined;
               if (
                 refModel &&
-                refModel['provider_id'] === input.id &&
+                typeof refModel['provider_id'] === 'string' &&
+                normalizeProviderId(refModel['provider_id'] as string) === input.id &&
                 typeof refModel['protocol'] === 'string' &&
                 !isProtocolCompatibleWithKind(input.kind, refModel['protocol'] as string)
               ) {
@@ -511,86 +650,71 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
   },
 
   async upsertModel(input) {
-    const id = input.id ?? `${input.providerId}:${input.modelId}`;
-    const enabled = input.enabled ?? false;
-    // Fase 1b-FIX item 1: ON CONFLICT preserves the existing `enabled`
-    // (see upsertProvider); new rows default to disabled.
-    // Fase 2 item 6: protocol/privacyClass of a referenced model are
-    // immutable via upsert — revalidated under the runtime lock.
     const client = await pool.connect();
-    let res: { rowCount: number | null; rows: Record<string, unknown>[] };
     try {
       await client.query('BEGIN');
-      const rt = await client.query(
-        `SELECT model_id, fallback_model_id FROM agent_llm_runtime_config WHERE singleton = 'active' FOR UPDATE`,
-      );
-      const row = rt.rows[0] as Record<string, unknown> | undefined;
-      // Fase 3 item 2: resolve the referenced row by id OR pair (an upsert
-      // may target the referenced row through either key), then enforce
-      // identity immutability + kind↔protocol compatibility under the lock.
-      const cur = await client.query(
-        `SELECT m.id AS id, m.protocol AS protocol, m.privacy_class AS privacy_class,
-                m.provider_id AS provider_id, m.model_id AS model_id, p.kind AS provider_kind
-         FROM agent_llm_models m LEFT JOIN agent_llm_providers p ON p.id = m.provider_id
-         WHERE m.id = $1 OR (m.provider_id = $2 AND m.model_id = $3)
-         LIMIT 1`,
-        [id, input.providerId, input.modelId],
-      );
-      const existing = cur.rows[0] as Record<string, unknown> | undefined;
-      const slot =
-        existing && row?.['model_id'] === existing['id']
-          ? 'active_model'
-          : existing && row?.['fallback_model_id'] === existing['id']
-            ? 'fallback_model'
-            : null;
-      if (slot && existing) {
-        if (
-          existing['provider_id'] !== input.providerId ||
-          existing['model_id'] !== input.modelId ||
-          existing['id'] !== id
-        ) {
-          const label = slot === 'active_model' ? 'active' : 'fallback';
-          const reason = `model identity of the ${label} model is immutable while referenced`;
-          throw Object.assign(new Error(reason), {
-            statusCode: 409,
-            code: 'agent.runtime_in_use',
-            reason: slot,
-          });
-        }
-        const kind = existing['provider_kind'];
-        if (
-          typeof kind === 'string' &&
-          !isProtocolCompatibleWithKind(kind, input.protocol)
-        ) {
-          const reason = `model protocol ${input.protocol} is not compatible with provider kind ${kind}`;
-          throw Object.assign(new Error(reason), {
-            statusCode: 422,
-            code: 'agent.invalid_model',
-            reason,
-          });
-        }
-        if (
-          existing['protocol'] !== input.protocol ||
-          existing['privacy_class'] !== input.privacyClass
-        ) {
-          const reason = 'protocol/privacyClass of a referenced model is immutable';
-          throw Object.assign(new Error(reason), {
-            statusCode: 422,
-            code: 'agent.invalid_model',
-            reason,
-          });
+      const model = await upsertModelTx(client, input);
+      await client.query('COMMIT');
+      return model;
+    } catch (e) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // Best effort: the transaction may already be aborted.
+      }
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
+
+  async syncModels(inputs) {
+    // M-08: ONE transaction for the whole batch — an unexpected error rolls
+    // back every item (zero intermediate state); business conflicts skip
+    // with a deterministic reason and still commit the rest.
+    const client = await pool.connect();
+    let synced = 0;
+    const skipped: Array<{ providerId: string; modelId: string; reason: string }> = [];
+    try {
+      await client.query('BEGIN');
+      for (const item of inputs) {
+        try {
+          // Fase 3-FIX R1 (per-item, inside the tx): unknown providers fail,
+          // incompatible kind↔protocol pairs skip — same policy as the old
+          // route loop, now inside the atomic apply.
+          const pcur = await client.query(`SELECT kind FROM agent_llm_providers WHERE id = $1`, [
+            item.providerId,
+          ]);
+          const prow = pcur.rows[0] as Record<string, unknown> | undefined;
+          if (!prow) {
+            throw Object.assign(new Error(`Provider ${item.providerId} não encontrado`), {
+              statusCode: 404,
+              code: 'agent.provider_not_found',
+            });
+          }
+          const validationErr = validateModel(
+            {
+              providerId: item.providerId,
+              modelId: item.modelId,
+              protocol: item.protocol,
+              privacyClass: item.privacyClass,
+            },
+            String(prow['kind']),
+          );
+          if (validationErr) {
+            throw Object.assign(new Error(validationErr), {
+              statusCode: 422,
+              code: 'agent.invalid_model',
+              reason: validationErr,
+            });
+          }
+          await upsertModelTx(client, { enabled: false, ...item });
+          synced++;
+        } catch (err) {
+          if (!isSyncSkippable(err)) throw err;
+          skipped.push({ providerId: item.providerId, modelId: item.modelId, reason: syncSkipReason(err) });
         }
       }
-      res = await client.query(
-        `INSERT INTO agent_llm_models (id, provider_id, model_id, protocol, privacy_class, retention, enabled)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (provider_id, model_id) DO UPDATE
-         SET protocol = EXCLUDED.protocol,
-             privacy_class = EXCLUDED.privacy_class,
-             retention = EXCLUDED.retention
-         RETURNING id, provider_id, model_id, protocol, privacy_class, retention, enabled, created_at`,
-        [id, input.providerId, input.modelId, input.protocol, input.privacyClass, input.retention ?? null, enabled],
-      );
       await client.query('COMMIT');
     } catch (e) {
       try {
@@ -602,7 +726,7 @@ export const createPostgresLlmConfigStore = (pool: Pool): LlmConfigStore => ({
     } finally {
       client.release();
     }
-    return mapModelRow(res.rows[0] as DbRow);
+    return { synced, skipped };
   },
 
   async deleteModel(id: string) {

@@ -113,6 +113,21 @@ export const registerAgentAuthRoutes = (app: FastifyInstance, deps: AgentAuthDep
       });
     }
 
+    // M-09: server-side membership revalidation at consumption time (every
+    // handshake AND every turn consumes). A membership revoked after the
+    // token was minted is denied here — before burning the token — so
+    // revocation takes effect immediately, not at token expiry.
+    const canonicalWs = deps.pool ? await resolveCanonicalHouseholdId(deps.pool, workspaceId) : workspaceId;
+    if (deps.workspaceAccess) {
+      const access = await deps.workspaceAccess.resolve(actorId, canonicalWs);
+      if (!access) {
+        return reply.code(403).send({
+          code: 'auth.workspace_forbidden',
+          message: 'Access to workspace forbidden',
+        });
+      }
+    }
+
     const expiresAt = body.expiresAt
       ? new Date(typeof body.expiresAt === 'number' ? body.expiresAt : String(body.expiresAt))
       : new Date(Date.now() + 120_000);

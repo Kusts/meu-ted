@@ -88,7 +88,29 @@ export const canaryAllowlistSchema = z
   .max(32, 'at most 32 canary entries');
 
 /** Composite `provider:model` ids travel through activate/fallback lookups. */
-export const modelRefSchema = z.string().trim().min(1, 'model id is required').max(185, 'model id too long');
+export const modelRefSchema = z
+  .string()
+  .trim()
+  .min(1, 'model id is required')
+  .max(185, 'model id too long')
+  .superRefine((v, ctx) => {
+    // M-01: single resolver discipline — a ref is either a bare upstream
+    // name (modelIdSchema) or a `providerId:modelId` composite with valid
+    // parts. Free-form/opaque strings fail here, not at execution time.
+    if (modelIdSchema.safeParse(v).success) return;
+    const sep = v.indexOf(':');
+    if (sep > 0 && sep < v.length - 1) {
+      const providerPart = v.slice(0, sep);
+      const modelPart = v.slice(sep + 1);
+      if (providerIdSchema.safeParse(providerPart).success && modelIdSchema.safeParse(modelPart).success) {
+        return;
+      }
+    }
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'model ref must be a bare upstream name or a provider:model composite',
+    });
+  });
 
 export const activateSchema = z.object({
   providerId: providerIdSchema,
