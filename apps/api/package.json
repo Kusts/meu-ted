@@ -1,5 +1,5 @@
 {
-  "name": "pi-finance-api",
+  "name": "meu-ted-api",
   "version": "0.1.0",
   "private": true,
   "description": "Private finance API for the iPhone finance app. Separate from the WhatsApp bridge (apps/whatsapp-bridge). Demo-backed in-memory read models; persistence later.",

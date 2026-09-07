@@ -48,7 +48,7 @@ try {
   $env:DB_TEST_MARKER = 'llm-integration'
 
   Write-Host '=== [3/4] Run the 4 LLM integration suites ==='
-  pnpm --filter pi-finance-api exec vitest run --hookTimeout=180000 `
+  pnpm --filter meu-ted-api exec vitest run --hookTimeout=180000 `
     tests/integration/postgres-llm-fix.test.ts `
     tests/integration/postgres-llm-atomic-guards.test.ts `
     tests/integration/postgres-llm-v042-alignment.test.ts `

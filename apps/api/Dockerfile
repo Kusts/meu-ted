@@ -1,4 +1,4 @@
-# Monorepo Dockerfile for pi-finance-api
+# Monorepo Dockerfile for meu-ted-api
 # Baseline: Node 22 Alpine, pnpm 10 (matching VPS production)
 # Build from repo root: docker build -f apps/api/Dockerfile .
 

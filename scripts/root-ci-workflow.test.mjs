@@ -16,10 +16,10 @@ test('root CI runs the write policy checker', () => {
 });
 
 test('root CI runs workspace builds and tests', () => {
-  assert.match(workflow, /pnpm --filter pi-finance-api build/);
+  assert.match(workflow, /pnpm --filter meu-ted-api build/);
   assert.match(workflow, /pnpm --filter @pi-financeiro\/whatsapp-bridge build/);
   assert.match(workflow, /pnpm --filter pwa build/);
-  assert.match(workflow, /pnpm --filter pi-finance-api test/);
+  assert.match(workflow, /pnpm --filter meu-ted-api test/);
   assert.match(workflow, /pnpm --filter pwa test/);
 });
 

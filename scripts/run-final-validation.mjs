@@ -12,7 +12,7 @@ export const VAL_GATES = [
 
 
   { id: "VAL.3", name: "TypeScript Compilation", command: "pnpm typecheck" },
-  { id: "VAL.4", name: "Unit & Contract Tests", command: "pnpm --filter pi-finance-api test && pnpm --filter @pi-financeiro/whatsapp-bridge test && pnpm --filter pi-finance-agent test" },
+  { id: "VAL.4", name: "Unit & Contract Tests", command: "pnpm --filter meu-ted-api test && pnpm --filter @pi-financeiro/whatsapp-bridge test && pnpm --filter pi-finance-agent test" },
   { id: "VAL.5", name: "Coverage & Safety Boundaries", command: "node scripts/check-write-policy.mjs" },
 
   { id: "VAL.6", name: "PostgreSQL & Monotonic Migrations", command: "npx tsx scripts/cutover-check.ts" },

@@ -1,11 +1,12 @@
 import { spawnSync } from 'node:child_process';
 
 const gate = process.argv[2];
-const allPackages = ['pi-finance-api', 'pwa', 'pi-finance-agent', 'pi-finance-codex-broker'];
+const allPackages = ['meu-ted-api', 'pwa', 'pi-finance-agent', 'pi-finance-codex-broker'];
 const requestedFilter = process.argv[3] === '--filter' ? process.argv[4] : undefined;
 const aliases = {
-  api: 'pi-finance-api',
-  'pi-finance-api': 'pi-finance-api',
+  api: 'meu-ted-api',
+  'meu-ted-api': 'meu-ted-api',
+  'pi-finance-api': 'meu-ted-api',
   pwa: 'pwa',
   agent: 'pi-finance-agent',
   'pi-finance-agent': 'pi-finance-agent',

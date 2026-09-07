@@ -26,10 +26,10 @@ jobs:
           node-version: '20'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter pi-finance-api lint
-      - run: pnpm --filter pi-finance-api typecheck
-      - run: pnpm --filter pi-finance-api test
-      - run: pnpm --filter pi-finance-api build
+      - run: pnpm --filter meu-ted-api lint
+      - run: pnpm --filter meu-ted-api typecheck
+      - run: pnpm --filter meu-ted-api test
+      - run: pnpm --filter meu-ted-api build
 
   # ─── Bridge ───────────────────────────────────────────────────────────
   bridge:
@@ -104,7 +104,7 @@ jobs:
         run: |
           PGPASSWORD=test psql -h localhost -U test -d pi_financeiro_test \
             -c "CREATE TABLE IF NOT EXISTS _test_marker (marker_value TEXT NOT NULL); TRUNCATE _test_marker; INSERT INTO _test_marker(marker_value) VALUES ('ci-test-marker-00000000-0000-0000-0000-000000000001');"
-      - run: pnpm --filter pi-finance-api test:integration
+      - run: pnpm --filter meu-ted-api test:integration
         env:
           DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
           DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001

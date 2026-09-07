@@ -17,11 +17,11 @@ for (const [name, manifest] of Object.entries({ api, bridge, pwa })) {
 }
 
 test('root gates all three apps', () => {
-  for (const packageName of ['pi-finance-api', '@pi-financeiro/whatsapp-bridge', 'pwa']) {
+  for (const packageName of ['meu-ted-api', '@pi-financeiro/whatsapp-bridge', 'pwa']) {
     assert.match(workspaceGate, new RegExp(packageName.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')));
   }
   for (const script of ['lint', 'test', 'build']) {
-    assert.match(root.scripts[script], /pi-finance-api/);
+    assert.match(root.scripts[script], /meu-ted-api/);
     assert.match(root.scripts[script], /whatsapp-bridge/);
     assert.match(root.scripts[script], /pwa/);
   }

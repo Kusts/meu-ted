@@ -1,11 +1,11 @@
-// PM2 process config for pi-finance-api.
+// PM2 process config for meu-ted-api.
 // Mirrors `pnpm start` (node --import tsx src/server/index.ts).
 // Env is loaded by the app itself from .env (see src/env.ts loadDotEnv).
 // Usage: pm2 start ecosystem.config.cjs  |  pm2 save
 module.exports = {
   apps: [
     {
-      name: 'pi-finance-api',
+      name: 'meu-ted-api',
       script: 'src/server/index.ts',
       interpreter: 'node',
       interpreter_args: '--import tsx',
@@ -25,6 +25,8 @@ module.exports = {
       // um processo solto. Roda o exe direto (interpreter 'none').
       name: 'cloudflared-tunnel',
       script: 'C:\\Users\\walis\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Cloudflare.cloudflared_Microsoft.Winget.Source_8wekyb3d8bbwe\\cloudflared.exe',
+      // NOTE: o nome do túnel Cloudflare ('pi-finance-api') é identidade de
+      // produção e permanece inalterado (troca exige painel Cloudflare + VPS).
       args: 'tunnel run pi-finance-api',
       interpreter: 'none',
       autorestart: true,
