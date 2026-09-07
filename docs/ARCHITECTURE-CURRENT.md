@@ -1,11 +1,11 @@
-# PI Financeiro — Arquitetura Atual
+# Meu Ted — Arquitetura Atual
 
 **Last verified:** 2026-08-31
 **Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)  
 
 ## 1. Visão Geral da Topologia
 
-A arquitetura do PI Financeiro opera em modelo híbrido entre Borda (Cloudflare) e Servidor Autoritativo (Hostinger VPS). O frontend PWA e o assistente AI rodam na Cloudflare, enquanto a API autoritativa e o banco de dados relacional PostgreSQL 16 residem na VPS.
+A arquitetura do Meu Ted opera em modelo híbrido entre Borda (Cloudflare) e Servidor Autoritativo (Hostinger VPS). O frontend PWA e o assistente AI rodam na Cloudflare, enquanto a API autoritativa e o banco de dados relacional PostgreSQL 16 residem na VPS.
 
 ```mermaid
 graph TD

@@ -1,4 +1,4 @@
-# PI Financeiro — Arquitetura Alvo
+# Meu Ted — Arquitetura Alvo
 
 **Last verified:** 2026-08-23  
 **Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)  

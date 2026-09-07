@@ -1,4 +1,4 @@
-# Acesso VPS — Pi Financeiro
+# Acesso VPS — Meu Ted
 
 ## Fonte de configuração
 

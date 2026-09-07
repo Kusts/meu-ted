@@ -1,4 +1,4 @@
-# Erros e Soluções — Pi Financeiro
+# Erros e Soluções — Meu Ted
 
 > Índice canônico de incidentes diagnosticados, causas raiz e correções validadas. Cada entrada segue o padrão `YYYY-MM-DD-slug.md` com frontmatter.
 

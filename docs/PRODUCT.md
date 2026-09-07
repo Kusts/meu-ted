@@ -1,11 +1,11 @@
-# PI Financeiro — Visão de Produto
+# Meu Ted — Visão de Produto
 
 **Last verified:** 2026-08-26  
 **Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)  
 
 ## 1. Propósito e Visão
 
-O **PI Financeiro** é uma plataforma de gestão financeira pessoal e familiar projetada para fornecer controle financeiro completo e confiável, unificando uma experiência PWA moderna, responsiva e instalável com um assistente conversacional inteligente (TED).
+O **Meu Ted** é uma plataforma de gestão financeira pessoal e familiar projetada para fornecer controle financeiro completo e confiável, unificando uma experiência PWA moderna, responsiva e instalável com um assistente conversacional inteligente (TED).
 
 ## 2. Personas e Acesso
 

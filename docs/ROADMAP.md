@@ -1,4 +1,4 @@
-# PI Financeiro — Roadmap
+# Meu Ted — Roadmap
  
 **Last verified:** 2026-08-31T15:48-03:00
 **Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)  

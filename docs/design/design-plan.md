@@ -1,4 +1,4 @@
-# Plano de Redesign Premium — PI Financeiro
+# Plano de Redesign Premium — Meu Ted
 ## Direção: *Emerald Titanium (Adaptive Fintech Premium)*
 
 **Data de Consolidação:** 2026-08-28

@@ -1,4 +1,4 @@
-# PI Financeiro
+# Meu Ted
 
 Sistema completo de gestão financeira pessoal e familiar com assistente inteligente (TED), PWA moderno e backend server-side com isolamento por workspace/household.
 
