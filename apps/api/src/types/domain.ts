@@ -36,7 +36,20 @@ export type Category = {
   kind: CategoryKind;
   status: CategoryStatus;
   parentId?: UUID;
+  /** Lucide icon name (e.g. "Home"). Null/undefined falls back to a deterministic icon. */
+  icon?: string | null;
+  /** Theme color hex (e.g. "#0E8C5A"). */
+  color?: string | null;
+  /** Display order among siblings (lower first). */
+  sortOrder?: number;
+  /** True when the row came from (or was marked as) the default template. */
+  isDefault?: boolean;
+  /** Reserved for future immutable system rows; V045 seeds are editable (false). */
+  isSystem?: boolean;
 };
+
+/** Tree position in the canonical GET /categories/tree contract. */
+export type CategoryTreeKind = 'macro' | 'sub';
 
 export type TransactionKind = "expense" | "income" | "transfer";
 
@@ -49,7 +62,11 @@ export type Transaction = {
   date: ISODate;
   accountId: UUID;
   categoryId?: UUID;
+  /** Optional subcategory (must be a child of an active same-household category). */
+  subcategoryId?: UUID;
   transferToAccountId?: UUID;
+  /** Free-form observation saved via "Mais detalhes" (item 10/B4). */
+  notes?: string;
 };
 
 export type TransactionFilters = {

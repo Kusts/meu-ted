@@ -34,6 +34,11 @@ const mapCategory = (r: Row): Category => {
     status: r['status'] as Category['status'],
   };
   if (parentId) base.parentId = parentId;
+  if (r['icon'] !== null && r['icon'] !== undefined) base.icon = r['icon'] as string;
+  if (r['color'] !== null && r['color'] !== undefined) base.color = r['color'] as string;
+  if (r['sort_order'] !== null && r['sort_order'] !== undefined) base.sortOrder = Number(r['sort_order']);
+  if (r['is_default'] !== null && r['is_default'] !== undefined) base.isDefault = Boolean(r['is_default']);
+  if (r['is_system'] !== null && r['is_system'] !== undefined) base.isSystem = Boolean(r['is_system']);
   return base;
 };
 
@@ -48,12 +53,20 @@ const mapTransaction = (r: Row): Transaction => {
     accountId: r['account_id'] as string,
   };
   const cat = r['category_id'];
+  const sub = r['subcategory_id'];
   const to = r['transfer_to_account_id'];
   if (cat !== null && cat !== undefined) {
-    return { ...base, categoryId: cat as string };
+    base.categoryId = cat as string;
+  }
+  if (sub !== null && sub !== undefined) {
+    base.subcategoryId = sub as string;
   }
   if (to !== null && to !== undefined) {
-    return { ...base, transferToAccountId: to as string };
+    base.transferToAccountId = to as string;
+  }
+  const notes = r['notes'];
+  if (notes !== null && notes !== undefined) {
+    base.notes = notes as string;
   }
   return base;
 };
@@ -82,7 +95,8 @@ export const createPostgresReadModelStore = (opts: { pool: Pool }): ReadModelSto
 
     async listCategories(householdId) {
       const rows = await query<Row>(
-        `SELECT id, household_id, name, kind, status, parent_id
+        `SELECT id, household_id, name, kind, status, parent_id,
+                icon, color, sort_order, is_default, is_system
            FROM categories
           WHERE household_id = $1
             AND status = 'active'
@@ -159,7 +173,7 @@ export const createPostgresReadModelStore = (opts: { pool: Pool }): ReadModelSto
 
       const rows = await query<Row>(
         `SELECT id, household_id, kind, description, amount_cents, date,
-                account_id, category_id, transfer_to_account_id
+                account_id, category_id, subcategory_id, transfer_to_account_id, notes
            FROM transactions
           WHERE ${whereSql}
           ORDER BY date DESC, id DESC
@@ -176,7 +190,7 @@ export const createPostgresReadModelStore = (opts: { pool: Pool }): ReadModelSto
     async listAllTransactions(householdId) {
       const rows = await query<Row>(
         `SELECT id, household_id, kind, description, amount_cents, date,
-                account_id, category_id, transfer_to_account_id
+                account_id, category_id, subcategory_id, transfer_to_account_id, notes
            FROM transactions
           WHERE household_id = $1
             AND deleted_at IS NULL`,

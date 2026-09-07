@@ -12,14 +12,16 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Account, Category, Transaction } from '../types/domain.js';
+import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';
 import { domainErrors } from './errors.js';
-import type { WriteStore } from './store.js';
+import type { ApplyDefaultsResult, DeleteCategoryResult, WriteStore } from './store.js';
 import type {
   CreateAccountInput,
   CreateCategoryInput,
   CreateExpenseInput,
   CreateIncomeInput,
   CreateTransferInput,
+  DeleteCategoryInput,
   UpdateAccountInput,
   UpdateCategoryInput,
   UpdateTransactionInput,
@@ -31,6 +33,91 @@ export type InMemoryState = {
   transactions: Transaction[];
   /** Soft-deleted transaction ids, per household. Read store filters these out. */
   deletedTransactions: Set<string>;
+};
+
+/**
+ * Idempotent application of the pt-BR default catalog to a household.
+ * Existing same-kind macros (case-insensitive name match) are reused;
+ * subs are matched under their resolved macro. Shared by
+ * applyCategoryDefaults and the createAccount bootstrap.
+ */
+export const applyDefaultsToState = (state: InMemoryState, householdId: string): ApplyDefaultsResult => {
+  let created = 0;
+  let skipped = 0;
+  const activeOf = (): Category[] =>
+    state.categories.filter((c) => c.householdId === householdId && c.status === 'active');
+  DEFAULT_CATEGORY_CATALOG.forEach((macro, macroIdx) => {
+    let macroRow = activeOf().find(
+      (c) => !c.parentId && c.kind === macro.kind && c.name.toLowerCase() === macro.name.toLowerCase(),
+    );
+    if (!macroRow) {
+      macroRow = {
+        id: randomUUID(),
+        householdId,
+        name: macro.name,
+        kind: macro.kind,
+        status: 'active',
+        icon: macro.icon,
+        color: macro.color,
+        sortOrder: macroIdx,
+        isDefault: true,
+        isSystem: false,
+      };
+      state.categories.push(macroRow);
+      created += 1;
+    } else {
+      skipped += 1;
+    }
+    for (const sub of macro.subs) {
+      const exists = activeOf().find(
+        (c) => c.parentId === macroRow!.id && c.name.toLowerCase() === sub.name.toLowerCase(),
+      );
+      if (exists) {
+        skipped += 1;
+        continue;
+      }
+      state.categories.push({
+        id: randomUUID(),
+        householdId,
+        name: sub.name,
+        kind: macro.kind,
+        status: 'active',
+        parentId: macroRow!.id,
+        icon: sub.icon,
+        isDefault: true,
+        isSystem: false,
+      });
+      created += 1;
+    }
+  });
+  return { created, skipped };
+};
+
+/** Validates an optional subcategoryId for an expense/income write. */
+const resolveSubcategory = (
+  state: InMemoryState,
+  householdId: string,
+  subcategoryId: string,
+  txKind: 'expense' | 'income',
+): Category => {
+  const sub = state.categories.find((c) => c.id === subcategoryId && c.householdId === householdId);
+  if (!sub || sub.status !== 'active') throw domainErrors.notFound('Subcategoria');
+  if (!sub.parentId) throw domainErrors.invalid('subcategoryId', 'deve ser uma subcategoria');
+  if (sub.kind !== txKind) {
+    throw domainErrors.invalid('subcategoryId', 'subcategoria deve ter o mesmo kind do lançamento');
+  }
+  return sub;
+};
+
+const softDeleteTxInState = (state: InMemoryState, tx: Transaction): void => {
+  if (tx.kind === 'expense') {
+    const acc = state.accounts.find((a) => a.id === tx.accountId && a.householdId === tx.householdId);
+    if (acc) acc.balanceCents = Math.min(acc.balanceCents + tx.amountCents, Number.MAX_SAFE_INTEGER);
+  } else if (tx.kind === 'income') {
+    const acc = state.accounts.find((a) => a.id === tx.accountId && a.householdId === tx.householdId);
+    if (acc) acc.balanceCents = Math.max(0, acc.balanceCents - tx.amountCents);
+  }
+  state.deletedTransactions.add(tx.id);
 };
 
 export const createInMemoryWriteStore = (state: InMemoryState): WriteStore => {
@@ -76,6 +163,12 @@ async createAccount(householdId, input) {
         status: 'active',
       };
       state.accounts.push(acc);
+      // Item 11: new accounts bootstrap the default set, but only for
+      // households that have no categories yet (explicit apply-defaults
+      // covers backfill; seeded households are untouched).
+      if (!state.categories.some((c) => c.householdId === householdId && c.status === 'active')) {
+        applyDefaultsToState(state, householdId);
+      }
       return acc;
     },
 
@@ -123,6 +216,10 @@ async createAccount(householdId, input) {
         kind: input.kind,
         status: 'active',
         ...(input.parentId ? { parentId: input.parentId } : {}),
+        ...(input.icon !== undefined ? { icon: input.icon } : {}),
+        ...(input.color !== undefined ? { color: input.color } : {}),
+        ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+        ...(input.isDefault !== undefined ? { isDefault: input.isDefault } : {}),
       };
       state.categories.push(cat);
       return cat;
@@ -132,6 +229,10 @@ async createAccount(householdId, input) {
       const cat = findCategory(id, householdId);
       if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
       if (patch.name !== undefined) cat.name = patch.name;
+      if (patch.icon !== undefined) cat.icon = patch.icon;
+      if (patch.color !== undefined) cat.color = patch.color;
+      if (patch.sortOrder !== undefined) cat.sortOrder = patch.sortOrder;
+      if (patch.isDefault !== undefined) cat.isDefault = patch.isDefault;
       return cat;
     },
 
@@ -139,11 +240,67 @@ async createAccount(householdId, input) {
       const cat = findCategory(id, householdId);
       if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
       const referenced = state.transactions.some(
-        (t) => t.householdId === householdId && t.categoryId === id,
+        (t) =>
+          t.householdId === householdId &&
+          !state.deletedTransactions.has(t.id) &&
+          (t.categoryId === id || t.subcategoryId === id),
       );
       if (referenced) throw domainErrors.inUse('Categoria', 'lançamentos');
       cat.status = 'inactive';
       return cat;
+    },
+
+    async deleteCategory(householdId, id, input: DeleteCategoryInput): Promise<DeleteCategoryResult> {
+      const cat = findCategory(id, householdId);
+      if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
+      const scopeIds = new Set<string>([id]);
+      for (const c of state.categories) {
+        if (c.householdId === householdId && c.status === 'active' && c.parentId === id) {
+          scopeIds.add(c.id);
+        }
+      }
+      const referencing = state.transactions.filter(
+        (t) =>
+          t.householdId === householdId &&
+          !state.deletedTransactions.has(t.id) &&
+          ((t.categoryId !== undefined && scopeIds.has(t.categoryId)) ||
+            (t.subcategoryId !== undefined && scopeIds.has(t.subcategoryId))),
+      );
+      let movedTransactions = 0;
+      let softDeletedTransactions = 0;
+      if (input.mode === 'move') {
+        const dest = state.categories.find(
+          (c) => c.id === input.destinationCategoryId && c.householdId === householdId,
+        );
+        if (!dest || dest.status !== 'active') throw domainErrors.notFound('Categoria de destino');
+        if (dest.kind !== cat.kind) {
+          throw domainErrors.invalid('destinationCategoryId', 'destino deve ter o mesmo kind');
+        }
+        if (scopeIds.has(dest.id)) {
+          throw domainErrors.invalid('destinationCategoryId', 'destino não pode ser a categoria excluída');
+        }
+        for (const t of referencing) {
+          if (t.categoryId !== undefined && scopeIds.has(t.categoryId)) t.categoryId = dest.id;
+          if (t.subcategoryId !== undefined && scopeIds.has(t.subcategoryId)) delete t.subcategoryId;
+          movedTransactions += 1;
+        }
+      } else {
+        if (input.confirm !== true) {
+          throw domainErrors.invalid('confirm', 'exclusão em cascata exige confirm:true');
+        }
+        for (const t of referencing) {
+          softDeleteTxInState(state, t);
+          softDeletedTransactions += 1;
+        }
+      }
+      for (const c of state.categories) {
+        if (c.householdId === householdId && scopeIds.has(c.id)) c.status = 'inactive';
+      }
+      return { deletedCategoryIds: [...scopeIds], movedTransactions, softDeletedTransactions };
+    },
+
+    async applyCategoryDefaults(householdId) {
+      return applyDefaultsToState(state, householdId);
     },
 
     async createExpense(householdId, input) {
@@ -151,6 +308,9 @@ async createAccount(householdId, input) {
       assertNotDeleted(acc);
       const cat = findCategory(input.categoryId, householdId);
       assertNotDeleted(cat);
+      if (input.subcategoryId !== undefined) {
+        resolveSubcategory(state, householdId, input.subcategoryId, 'expense');
+      }
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
       const tx: Transaction = {
         id: randomUUID(),
@@ -161,6 +321,8 @@ async createAccount(householdId, input) {
         date: input.date,
         accountId: input.accountId,
         categoryId: input.categoryId,
+        ...(input.subcategoryId !== undefined ? { subcategoryId: input.subcategoryId } : {}),
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
       };
       state.transactions.push(tx);
       acc.balanceCents = Math.max(0, acc.balanceCents - input.amountCents);
@@ -172,6 +334,9 @@ async createAccount(householdId, input) {
       assertNotDeleted(acc);
       const cat = findCategory(input.categoryId, householdId);
       assertNotDeleted(cat);
+      if (input.subcategoryId !== undefined) {
+        resolveSubcategory(state, householdId, input.subcategoryId, 'income');
+      }
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
       const tx: Transaction = {
         id: randomUUID(),
@@ -182,6 +347,8 @@ async createAccount(householdId, input) {
         date: input.date,
         accountId: input.accountId,
         categoryId: input.categoryId,
+        ...(input.subcategoryId !== undefined ? { subcategoryId: input.subcategoryId } : {}),
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
       };
       state.transactions.push(tx);
       acc.balanceCents += input.amountCents;
@@ -222,7 +389,8 @@ async createAccount(householdId, input) {
         if (
           patch.amountCents !== undefined ||
           patch.accountId !== undefined ||
-          patch.categoryId !== undefined
+          patch.categoryId !== undefined ||
+          patch.subcategoryId !== undefined
         ) {
           throw domainErrors.unsupported(
             'transferências só podem ter descrição e data alteradas',
@@ -267,6 +435,11 @@ async createAccount(householdId, input) {
         assertNotDeleted(cat);
         tx.categoryId = patch.categoryId;
       }
+      if (patch.subcategoryId !== undefined) {
+        resolveSubcategory(state, householdId, patch.subcategoryId, tx.kind);
+        tx.subcategoryId = patch.subcategoryId;
+      }
+      if (patch.notes !== undefined) tx.notes = patch.notes;
       return tx;
     },
 

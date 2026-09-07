@@ -424,6 +424,48 @@ const specs = [
           "type": "string",
           "format": "uuid"
         }
+      },
+      {
+        "name": "icon",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9]+$"
+        }
+      },
+      {
+        "name": "color",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        }
+      },
+      {
+        "name": "sortOrder",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9999
+        }
+      },
+      {
+        "name": "isDefault",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "boolean"
+        }
       }
     ]
   },
@@ -686,6 +728,26 @@ const specs = [
         "schema": {
           "type": "string",
           "format": "uuid"
+        }
+      },
+      {
+        "name": "subcategoryId",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      {
+        "name": "notes",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "maxLength": 2000
         }
       }
     ]
@@ -1100,6 +1162,26 @@ const specs = [
         "schema": {
           "type": "string",
           "format": "uuid"
+        }
+      },
+      {
+        "name": "subcategoryId",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      {
+        "name": "notes",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "maxLength": 2000
         }
       }
     ]
@@ -1547,6 +1629,26 @@ const specs = [
         "schema": {
           "type": "string",
           "format": "uuid"
+        }
+      },
+      {
+        "name": "subcategoryId",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      {
+        "name": "notes",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "maxLength": 2000
         }
       }
     ]
@@ -2544,6 +2646,48 @@ const specs = [
           "minLength": 1,
           "maxLength": 120
         }
+      },
+      {
+        "name": "icon",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9]+$"
+        }
+      },
+      {
+        "name": "color",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        }
+      },
+      {
+        "name": "sortOrder",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9999
+        }
+      },
+      {
+        "name": "isDefault",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "boolean"
+        }
       }
     ]
   },
@@ -3295,6 +3439,10 @@ function createTool(spec: ToolSpec) {
     "name": Type.String({"minLength":1,"maxLength":120}),
     "kind": Type.Union([Type.Literal("expense"), Type.Literal("income")]),
     "parentId": Type.Optional(Type.String({"format":"uuid"})),
+    "icon": Type.Optional(Type.String({"minLength":1,"maxLength":64,"pattern":"^[A-Za-z0-9]+$"})),
+    "color": Type.Optional(Type.String({"pattern":"^#[0-9A-Fa-f]{6}$"})),
+    "sortOrder": Type.Optional(Type.Integer({"minimum":0,"maximum":9999})),
+    "isDefault": Type.Optional(Type.Boolean({})),
   }),
   "get_month_summary": Type.Object({
     "householdId": Type.String({"format":"uuid"}),
@@ -3321,6 +3469,8 @@ function createTool(spec: ToolSpec) {
     "date": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "accountId": Type.String({"format":"uuid"}),
     "categoryId": Type.String({"format":"uuid"}),
+    "subcategoryId": Type.Optional(Type.String({"format":"uuid"})),
+    "notes": Type.Optional(Type.String({"maxLength":2000})),
   }),
   "create_account_payable": Type.Object({
     "householdId": Type.Optional(Type.String({})),
@@ -3366,6 +3516,8 @@ function createTool(spec: ToolSpec) {
     "date": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "accountId": Type.String({"format":"uuid"}),
     "categoryId": Type.String({"format":"uuid"}),
+    "subcategoryId": Type.Optional(Type.String({"format":"uuid"})),
+    "notes": Type.Optional(Type.String({"maxLength":2000})),
   }),
   "list_recurring_purchases": Type.Object({
     "householdId": Type.String({"format":"uuid"}),
@@ -3416,6 +3568,8 @@ function createTool(spec: ToolSpec) {
     "amountCents": Type.Optional(Type.Integer({"minimum":1})),
     "accountId": Type.Optional(Type.String({"format":"uuid"})),
     "categoryId": Type.Optional(Type.String({"format":"uuid"})),
+    "subcategoryId": Type.Optional(Type.String({"format":"uuid"})),
+    "notes": Type.Optional(Type.String({"maxLength":2000})),
   }),
   "create_goal": Type.Object({
     "householdId": Type.Optional(Type.String({})),
@@ -3529,6 +3683,10 @@ function createTool(spec: ToolSpec) {
     "idempotencyKey": Type.Optional(Type.String({})),
     "categoryId": Type.String({"format":"uuid"}),
     "name": Type.Optional(Type.String({"minLength":1,"maxLength":120})),
+    "icon": Type.Optional(Type.String({"minLength":1,"maxLength":64,"pattern":"^[A-Za-z0-9]+$"})),
+    "color": Type.Optional(Type.String({"pattern":"^#[0-9A-Fa-f]{6}$"})),
+    "sortOrder": Type.Optional(Type.Integer({"minimum":0,"maximum":9999})),
+    "isDefault": Type.Optional(Type.Boolean({})),
   }),
   "create_credit_card_account": Type.Object({
     "householdId": Type.Optional(Type.String({})),

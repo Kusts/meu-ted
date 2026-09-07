@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
 import type { ReadModelStore } from '../read-models/store.js';
 import type { WriteStore } from '../writes/store.js';
-import { createCategoryInputSchema, updateCategoryInputSchema } from '../writes/types.js';
+import { createCategoryInputSchema, deleteCategoryInputSchema, updateCategoryInputSchema } from '../writes/types.js';
+import { buildCategoryTree } from '../categories/tree.js';
 import { DomainError } from '../writes/errors.js';
 import { requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
 import type { AuthResolver } from './auth.js';
@@ -60,6 +61,30 @@ export const registerCategoryRoutes = (
     } catch (e) { return handleError(e, reply); }
   });
 
+  // GET /categories/tree — canonical macro/sub tree contract (item 11).
+  // Nodes: { id, name, icon, kind: 'macro'|'sub', type: 'expense'|'income',
+  //          parentId?, isDefault?, subcategories?: [{id,name,icon,kind:'sub',parentId}] }.
+  app.get('/categories/tree', async (req, reply) => {
+    let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const parsed = querySchema.safeParse(req.query ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    try {
+      let items = await opts.store.listCategories(ctx.householdId);
+      if (parsed.data.kind) items = items.filter((c) => c.kind === parsed.data.kind);
+      const tree = buildCategoryTree(items);
+      return reply.code(200).send({ items: tree, total: tree.length });
+    } catch (e) { return handleError(e, reply); }
+  });
+
+  // POST /categories/apply-defaults — idempotent pt-BR template application.
+  app.post('/categories/apply-defaults', async (req, reply) => {
+    let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    try {
+      const result = await opts.writes.applyCategoryDefaults(ctx.householdId);
+      return reply.code(200).send({ ok: true, ...result });
+    } catch (e) { return handleError(e, reply); }
+  });
+
   app.post('/categories', async (req, reply) => {
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const parsed = createCategoryInputSchema.safeParse(req.body ?? {});
@@ -78,8 +103,7 @@ export const registerCategoryRoutes = (
     catch (e) { return handleError(e, reply); }
   });
 
-  app.post('/categories/:id/deactivate', async (req, reply) => {
-    let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+  app.post('/categories/:id/deactivate', async (req, reply) => {    let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
     const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
@@ -97,5 +121,21 @@ export const registerCategoryRoutes = (
     }
     try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id }, () => opts.writes.deactivateCategory(ctx.householdId, params.data.id))); }
     catch (e) { return handleError(e, reply); }
+  });
+
+  // POST /categories/:id/delete — macro removal with record destination.
+  // { mode: 'move', destinationCategoryId } reassigns every referencing
+  // transaction (category + cleared sub refs); { mode: 'cascade', confirm: true }
+  // soft-deletes them instead. Subs of a macro are always removed together.
+  app.post('/categories/:id/delete', async (req, reply) => {
+    let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+    const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
+    const parsed = deleteCategoryInputSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    try {
+      const result = await opts.writes.deleteCategory(ctx.householdId, params.data.id, parsed.data);
+      return reply.code(200).send({ ok: true, ...result });
+    } catch (e) { return handleError(e, reply); }
   });
 };

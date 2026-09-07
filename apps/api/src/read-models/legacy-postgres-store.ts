@@ -39,6 +39,11 @@ const mapCategory = (r: Row): Category => {
     status: r['active'] ? 'active' : 'inactive',
   };
   if (parentId) base.parentId = parentId;
+  if (r['icon'] !== null && r['icon'] !== undefined) base.icon = r['icon'] as string;
+  if (r['color'] !== null && r['color'] !== undefined) base.color = r['color'] as string;
+  if (r['sort_order'] !== null && r['sort_order'] !== undefined) base.sortOrder = Number(r['sort_order']);
+  if (r['is_default'] !== null && r['is_default'] !== undefined) base.isDefault = Boolean(r['is_default']);
+  if (r['is_system'] !== null && r['is_system'] !== undefined) base.isSystem = Boolean(r['is_system']);
   return base;
 };
 
@@ -65,6 +70,10 @@ const mapTransaction = (r: Row): Transaction => {
   }
   const catId = r['category_id'];
   if (catId !== null && catId !== undefined) base.categoryId = catId as string;
+  const subId = r['subcategory_id'];
+  if (subId !== null && subId !== undefined) base.subcategoryId = subId as string;
+  const notes = r['notes'];
+  if (notes !== null && notes !== undefined) base.notes = notes as string;
   return base;
 };
 
@@ -106,7 +115,8 @@ export const createLegacyPostgresReadModelStore = (opts: { pool: Pool }): ReadMo
 
     async listCategories(householdId: string) {
       const rows = await query<Row>(
-        `SELECT id, household_id, name, kind, active, parent_id
+        `SELECT id, household_id, name, kind, active, parent_id,
+                icon, color, sort_order, is_default, is_system
            FROM categories
           WHERE household_id = $1 AND active = true AND deleted_at IS NULL`,
         [householdId],
@@ -154,7 +164,7 @@ export const createLegacyPostgresReadModelStore = (opts: { pool: Pool }): ReadMo
 
       const rows = await query<Row>(
         `SELECT t.id, t.household_id, t.kind, t.description, t.amount_cents, t.date,
-                t.from_account_id, t.to_account_id, t.category_id
+                t.from_account_id, t.to_account_id, t.category_id, t.subcategory_id, t.notes
            FROM transactions t
           WHERE ${whereSql}
           ORDER BY t.date DESC, t.id DESC
@@ -166,7 +176,7 @@ export const createLegacyPostgresReadModelStore = (opts: { pool: Pool }): ReadMo
     async listAllTransactions(householdId: string) {
       const rows = await query<Row>(
         `SELECT id, household_id, kind, description, amount_cents, date,
-                from_account_id, to_account_id, category_id
+                from_account_id, to_account_id, category_id, subcategory_id, notes
            FROM transactions
           WHERE household_id = $1 AND deleted_at IS NULL`, [householdId]);
       return rows.map(mapTransaction);

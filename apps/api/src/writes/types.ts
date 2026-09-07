@@ -23,21 +23,70 @@ export const updateAccountInputSchema = z
   .refine((v) => v.name !== undefined, { message: 'patch vazio' });
 export type UpdateAccountInput = z.infer<typeof updateAccountInputSchema>;
 
+const hexColor = z
+  .string()
+  .trim()
+  .regex(/^#[0-9A-Fa-f]{6}$/, 'cor deve ser hex #RRGGBB');
+
+const lucideIconName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9]+$/, 'ícone deve ser um nome lucide válido');
+
 export const createCategoryInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
   kind: z.enum(['expense', 'income']),
   parentId: z.string().uuid().optional(),
+  icon: lucideIconName.nullable().optional(),
+  color: hexColor.nullable().optional(),
+  sortOrder: z.number().int().min(0).max(9999).optional(),
+  isDefault: z.boolean().optional(),
 });
 export type CreateCategoryInput = z.infer<typeof createCategoryInputSchema>;
 
 export const updateCategoryInputSchema = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
+    icon: lucideIconName.nullable().optional(),
+    color: hexColor.nullable().optional(),
+    sortOrder: z.number().int().min(0).max(9999).optional(),
+    isDefault: z.boolean().optional(),
   })
-  .refine((v) => v.name !== undefined, { message: 'patch vazio' });
+  .refine(
+    (v) =>
+      v.name !== undefined ||
+      v.icon !== undefined ||
+      v.color !== undefined ||
+      v.sortOrder !== undefined ||
+      v.isDefault !== undefined,
+    { message: 'patch vazio' },
+  );
 export type UpdateCategoryInput = z.infer<typeof updateCategoryInputSchema>;
 
+/** Delete policy for a macro (and its subs): move records or cascade. */
+export const deleteCategoryInputSchema = z
+  .object({
+    mode: z.enum(['move', 'cascade']),
+    destinationCategoryId: z.string().uuid().optional(),
+    confirm: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.mode === 'move' && !v.destinationCategoryId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'destinationCategoryId é obrigatório no modo move', path: ['destinationCategoryId'] });
+    }
+    if (v.mode === 'cascade' && v.confirm !== true) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'cascade exige confirm:true explícito', path: ['confirm'] });
+    }
+  });
+export type DeleteCategoryInput = z.infer<typeof deleteCategoryInputSchema>;
+
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
+
+/** Free-form observation from "Mais detalhes" (item 10/B4). */
+const notesField = z.string().trim().max(2000).optional();
 
 export const createExpenseInputSchema = z.object({
   description: z.string().trim().min(1).max(240),
@@ -45,6 +94,8 @@ export const createExpenseInputSchema = z.object({
   date: isoDate,
   accountId: z.string().uuid(),
   categoryId: z.string().uuid(),
+  subcategoryId: z.string().uuid().optional(),
+  notes: notesField,
 });
 export type CreateExpenseInput = z.infer<typeof createExpenseInputSchema>;
 
@@ -54,6 +105,8 @@ export const createIncomeInputSchema = z.object({
   date: isoDate,
   accountId: z.string().uuid(),
   categoryId: z.string().uuid(),
+  subcategoryId: z.string().uuid().optional(),
+  notes: notesField,
 });
 export type CreateIncomeInput = z.infer<typeof createIncomeInputSchema>;
 
@@ -80,6 +133,8 @@ export const updateTransactionInputSchema = z
     amountCents: z.number().int().positive().optional(),
     accountId: z.string().uuid().optional(),
     categoryId: z.string().uuid().optional(),
+    subcategoryId: z.string().uuid().optional(),
+    notes: notesField,
   })
   .refine((v) => Object.values(v).some((x) => x !== undefined), { message: 'patch vazio' });
 export type UpdateTransactionInput = z.infer<typeof updateTransactionInputSchema>;

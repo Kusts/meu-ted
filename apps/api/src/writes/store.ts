@@ -15,12 +15,21 @@ import type {
   CreateExpenseInput,
   CreateIncomeInput,
   CreateTransferInput,
+  DeleteCategoryInput,
   UpdateAccountInput,
   UpdateCategoryInput,
   UpdateTransactionInput,
 } from './types.js';
 
 export type { Transaction };
+
+export type ApplyDefaultsResult = { created: number; skipped: number };
+
+export type DeleteCategoryResult = {
+  deletedCategoryIds: string[];
+  movedTransactions: number;
+  softDeletedTransactions: number;
+};
 
 export type WriteStore = {
   // accounts
@@ -32,6 +41,19 @@ export type WriteStore = {
   createCategory(householdId: string, input: CreateCategoryInput): Promise<Category>;
   updateCategory(householdId: string, id: string, patch: UpdateCategoryInput): Promise<Category>;
   deactivateCategory(householdId: string, id: string): Promise<Category>;
+  /**
+   * Hard-removes a macro (and its subs) from the active set. mode 'move'
+   * reassigns every referencing transaction to destinationCategoryId;
+   * mode 'cascade' (confirm:true required) soft-deletes them instead.
+   * Never leaves a transaction pointing at a deactivated category.
+   */
+  deleteCategory(householdId: string, id: string, input: DeleteCategoryInput): Promise<DeleteCategoryResult>;
+  /**
+   * Applies the pt-BR default catalog to the household. Idempotent:
+   * existing same-kind macros (case-insensitive name match) are reused
+   * and counted as skipped with their subs.
+   */
+  applyCategoryDefaults(householdId: string): Promise<ApplyDefaultsResult>;
 
   // transactions
   createExpense(householdId: string, input: CreateExpenseInput): Promise<Transaction>;

@@ -408,6 +408,24 @@
                   "parentId": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "icon": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[A-Za-z0-9]+$"
+                  },
+                  "color": {
+                    "type": "string",
+                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                  },
+                  "sortOrder": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9999
+                  },
+                  "isDefault": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -663,6 +681,14 @@
                   "categoryId": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "subcategoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000
                   }
                 }
               }
@@ -1038,6 +1064,14 @@
                   "categoryId": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "subcategoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000
                   }
                 },
                 "required": [
@@ -1469,6 +1503,14 @@
                   "categoryId": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "subcategoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000
                   }
                 },
                 "required": []
@@ -2466,6 +2508,24 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 120
+                  },
+                  "icon": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[A-Za-z0-9]+$"
+                  },
+                  "color": {
+                    "type": "string",
+                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                  },
+                  "sortOrder": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9999
+                  },
+                  "isDefault": {
+                    "type": "boolean"
                   }
                 },
                 "required": []
