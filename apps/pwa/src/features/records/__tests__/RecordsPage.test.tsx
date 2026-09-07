@@ -88,6 +88,28 @@ describe("RecordsPage", () => {
       expect(screen.getByText("PIX para Nubank")).toBeInTheDocument();
     });
 
+    it("displays transaction notes under the description (item 10/B4)", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({
+          transactions: [
+            {
+              id: "tx-notes",
+              kind: "expense",
+              description: "Mercado",
+              amountCents: 5000,
+              date: "2026-06-20",
+              categoryId: "cat1",
+              accountId: "acc1",
+              notes: "Compra do mês",
+            } as never,
+          ],
+        }),
+      );
+      render(<RecordsPage />);
+      expect(screen.getByText("Mercado")).toBeInTheDocument();
+      expect(screen.getByText("Compra do mês")).toBeInTheDocument();
+    });
+
     it("filters by type: only expenses (via filter sheet)", () => {
       render(<RecordsPage />);
       fireEvent.click(screen.getByTestId("filter-trigger"));

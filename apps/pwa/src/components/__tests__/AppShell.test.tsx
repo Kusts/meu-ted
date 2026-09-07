@@ -1,4 +1,4 @@
-import { render, screen, act, waitForElementToBeRemoved } from "@/lib/test-utils";
+import { render, screen, act, waitForElementToBeRemoved, within, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import AppShell from "../AppShell";
@@ -225,8 +225,16 @@ describe("AppShell", () => {
       await user.type(amountInput, "5000");
       const descInput = screen.getByPlaceholderText(/Aluguel, mercado/);
       await user.type(descInput, "Mercado semanal");
-      await user.click(screen.getByText("Alimentação"));
-      await user.click(screen.getAllByText("Nubank")[0]);
+      // Category via picker sheet (nested dialog: the picker is the last one).
+      await user.click(screen.getByRole("button", { name: "Selecionar categoria" }));
+      const catDialog = (await screen.findAllByRole("dialog")).at(-1)!;
+      await user.click(within(catDialog).getByRole("button", { name: "Alimentação" }));
+      await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1));
+      // Origin via picker sheet.
+      await user.click(screen.getByRole("button", { name: "Selecionar conta ou cartão" }));
+      const originDialog = (await screen.findAllByRole("dialog")).at(-1)!;
+      await user.click(within(originDialog).getByRole("button", { name: /Nubank/ }));
+      await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1));
       await user.click(screen.getByText("Salvar"));
 
       expect(addSpy).toHaveBeenCalledTimes(1);
@@ -276,9 +284,13 @@ describe("AppShell", () => {
       await user.type(valorInput, "600000");
       const descInput = screen.getByPlaceholderText(/Aluguel, mercado/);
       await user.type(descInput, "Notebook");
-      await user.click(screen.getByLabelText("Alternar parcelamento"));
+      // Card origin (B2+B3): segmented toggle + origin sheet.
+      await user.click(screen.getByRole("button", { name: "Cartão" }));
+      await user.click(screen.getByRole("button", { name: "Selecionar conta ou cartão" }));
+      const originDialog = (await screen.findAllByRole("dialog")).at(-1)!;
+      await user.click(within(originDialog).getByRole("button", { name: /Nubank Crédito/ }));
+      await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1));
       await user.click(screen.getByText("12x"));
-      await user.click(screen.getByText("Nubank Crédito"));
       await user.click(screen.getByText("Salvar em 12x"));
 
        expect(installmentsSpy).toHaveBeenCalledTimes(1);

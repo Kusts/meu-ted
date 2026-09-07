@@ -33,6 +33,7 @@ vi.mock("@/lib/state/app-state-context", () => ({
         icon: "UtensilsCrossed",
       },
     ],
+    transactions: [],
     addTransaction: vi.fn(),
     createTransfer: vi.fn(),
     addAccount: vi.fn(),

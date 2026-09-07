@@ -41,6 +41,7 @@ export function TransactionEditSheet({
   const [amountStr, setAmountStr] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [accountId, setAccountId] = useState("");
+  const [notes, setNotes] = useState("");
 
   useEffect(() => {
     if (transaction && open) {
@@ -50,6 +51,7 @@ export function TransactionEditSheet({
       setAmountStr(formatInputBRL(String(transaction.amountCents)));
       setCategoryId(transaction.categoryId ?? "");
       setAccountId(transaction.accountId);
+      setNotes(transaction.notes ?? "");
       markClean();
     }
   }, [transaction, open, markClean]);
@@ -74,6 +76,7 @@ export function TransactionEditSheet({
       amountCents?: number;
       accountId?: string;
       categoryId?: string;
+      notes?: string;
     } = {
       description: description.trim(),
       date,
@@ -84,6 +87,8 @@ export function TransactionEditSheet({
       if (parsed > 0) input.amountCents = parsed;
       if (accountId) input.accountId = accountId;
       if (categoryId) input.categoryId = categoryId;
+      const trimmedNotes = notes.trim();
+      if (trimmedNotes) input.notes = trimmedNotes.slice(0, 2000);
     }
 
     try {
@@ -184,6 +189,24 @@ export function TransactionEditSheet({
                 </option>
               ))}
             </select>
+          </div>
+        )}
+
+        {/* Notes (not for transfers) */}
+        {!isTransfer && (
+          <div>
+            <label htmlFor="te-observacoes" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+              Observações
+            </label>
+            <textarea
+              id="te-observacoes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              maxLength={2000}
+              rows={2}
+              placeholder="Ex: reembolsável, contexto da compra..."
+              className="w-full resize-none rounded-[12px] border border-border bg-surface px-3.5 py-2.5 text-[13px] text-text-primary outline-none"
+            />
           </div>
         )}
 

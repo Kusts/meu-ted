@@ -1,4 +1,4 @@
-﻿import { render, screen, fireEvent } from "@/lib/test-utils";
+﻿import { render, screen, fireEvent, within, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import NewTransactionSheet from "../NewTransactionSheet";
 import type { Account, Category } from "@/lib/state/types";
@@ -27,6 +27,20 @@ const accountsWithCard: Account[] = [
   { id: "card1", name: "Nubank Card", balanceCents: 0, kind: "credit_card", color: "#820AD1", creditLimitCents: 500000, closingDay: 15, dueDay: 25 },
 ];
 
+async function selectOrigin(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(screen.getByRole("button", { name: "Selecionar conta ou cartão" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name: new RegExp(name) }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+}
+
+async function selectCategory(user: ReturnType<typeof userEvent.setup>, name: string | RegExp) {
+  await user.click(screen.getByRole("button", { name: "Selecionar categoria" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+}
+
 describe("NewTransactionSheet", () => {
   it("renders all 3 tab buttons", () => {
     render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
@@ -35,17 +49,24 @@ describe("NewTransactionSheet", () => {
     expect(screen.getByText("Transferência")).toBeInTheDocument();
   });
 
-  it("renders parcelamento toggle for expense tab", () => {
-    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
-    expect(screen.getByText("Parcelar")).toBeInTheDocument();
+  it("renders the origin segmented toggle with Cartão and Conta (B2)", () => {
+    render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={vi.fn()} />);
+    const group = screen.getByRole("group", { name: "Origem" });
+    expect(within(group).getByRole("button", { name: "Cartão" })).toBeInTheDocument();
+    expect(within(group).getByRole("button", { name: "Conta" })).toBeInTheDocument();
   });
 
-  it("shows installments count when parcelamento is enabled", async () => {
+  it("does not show installments until a card origin is picked (B3)", async () => {
     const user = userEvent.setup();
-    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
-    const toggle = screen.getByLabelText("Alternar parcelamento");
-    await user.click(toggle);
-    expect(screen.getByText(/Número de parcelas/)).toBeInTheDocument();
+    render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={vi.fn()} />);
+    expect(screen.queryByText("Parcelas")).not.toBeInTheDocument();
+    // Pick a bank account origin: still no installments.
+    await selectOrigin(user, "Itaú");
+    expect(screen.queryByText("Parcelas")).not.toBeInTheDocument();
+    // Switch to card origin and pick the card: installments appear.
+    await user.click(screen.getByRole("button", { name: "Cartão" }));
+    await selectOrigin(user, "Nubank Card");
+    expect(screen.getByText("Parcelas")).toBeInTheDocument();
   });
 
   it("shows expense fields by default", () => {
@@ -70,12 +91,40 @@ describe("NewTransactionSheet", () => {
     await user.type(valorInput, "10000");
     const descInput = screen.getByPlaceholderText(/aluguel|descrição/i);
     await user.type(descInput, "Supermercado");
+    await selectOrigin(user, "Nubank");
     await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
     expect(onSave).toHaveBeenCalledTimes(1);
     const saved = onSave.mock.calls[0][0];
     expect(saved.kind).toBe("expense");
     expect(saved.amountCents).toBeGreaterThan(0);
     expect(saved.description).toContain("Supermercado");
+    expect(saved.accountId).toBe("acc1");
+  });
+
+  it("blocks save until an origin is picked (B2, neither)", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
+    await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+    expect(screen.getByText("Escolha a origem para salvar.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("keeps a single origin: picking a card clears the account pick (B2, exclusivity)", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={onSave} />);
+    await selectOrigin(user, "Itaú");
+    expect(screen.getByRole("button", { name: "Selecionar conta ou cartão" })).toHaveTextContent("Itaú");
+    // Switch origin kind: previous pick is cleared (mutually exclusive).
+    await user.click(screen.getByRole("button", { name: "Cartão" }));
+    expect(screen.getByRole("button", { name: "Selecionar conta ou cartão" })).toHaveTextContent("Selecionar");
+    await selectOrigin(user, "Nubank Card");
+    await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+    await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0].accountId).toBe("card1");
   });
 
   it("calls onSave with transfer data when saving a transfer", async () => {
@@ -96,49 +145,76 @@ describe("NewTransactionSheet", () => {
     expect(saved.amountCents).toBe(5000);
   });
 
-  // ── Category icon consistency ──
+  // ── Category picker sheet (B1) ──
 
-  it("renders deterministic initial-letter badge instead of CategoryIcon emoji/SVG", () => {
-    const { container } = render(
-      <NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />,
-    );
-    // Category grid buttons show badge spans with initial letters
-    const allSpans = container.querySelectorAll("span");
-    const badges = Array.from(allSpans).filter(
-      (s) => s.getAttribute("aria-hidden") === "true",
-    );
-    // At least one category badge (for "Alimentação" → "A", "Transporte" → "T", "Salário" → "S")
-    expect(badges.length).toBeGreaterThanOrEqual(2);
-    badges.forEach((s) => {
-      expect(s.textContent).toMatch(/^[A-ZÀ-Ú]$/);
-    });
-  });
-
-  it("uses category name initials, not icon-name-based emoji or tint", () => {
-    render(
-      <NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />,
-    );
-    // Category names are rendered
-    expect(screen.getByText("Alimentação")).toBeInTheDocument();
-    expect(screen.getByText("Transporte")).toBeInTheDocument();
-  });
-
-  // ── Inline creation flow tests ──
-
-  it("shows inline form when Nova categoria is clicked and calls onAddCategory", async () => {
+  it("opens the category sheet with search, top-used and create actions", async () => {
     const user = userEvent.setup();
-    const onAddCat = vi.fn();
-    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} onAddCategory={onAddCat} />);
-    // First "Nova" button is for category section
-    const novaBtns = screen.getAllByText("Nova");
-    await user.click(novaBtns[0]);
-    const input = screen.getByPlaceholderText("Nome da categoria");
-    await user.type(input, "Mercado");
-    await user.click(screen.getByRole("button", { name: "Salvar categoria" }));
-    expect(onAddCat).toHaveBeenCalledWith({ name: "Mercado", kind: "expense" });
+    render(
+      <NewTransactionSheet
+        accounts={accounts}
+        categories={categories}
+        onSave={vi.fn()}
+        onAddCategory={vi.fn()}
+        recentCategoryIds={["cat2"]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Selecionar categoria" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByPlaceholderText("Buscar categoria")).toBeInTheDocument();
+    expect(within(dialog).getByText("Mais usadas")).toBeInTheDocument();
+    expect(within(dialog).getByText("Todas")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Cadastrar nova" })).toBeInTheDocument();
   });
 
-  it("shows inline form for subcategory when Nova subcat. clicked", async () => {
+  it("filters categories instantly while searching", async () => {
+    const user = userEvent.setup();
+    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Selecionar categoria" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByPlaceholderText("Buscar categoria"), "transp");
+    expect(within(dialog).getByText("Transporte")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Alimentação")).not.toBeInTheDocument();
+  });
+
+  it("selects a category from the sheet and shows it in the pill", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
+    await selectCategory(user, "Alimentação");
+    expect(screen.getByRole("button", { name: "Selecionar categoria" })).toHaveTextContent("Alimentação");
+    await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+    await selectOrigin(user, "Itaú");
+    await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+    expect(onSave.mock.calls[0][0].categoryId).toBe("cat1");
+  });
+
+  it("selects a subcategory from the expanded parent (pill shows parent › sub)", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(
+      <NewTransactionSheet
+        accounts={accounts}
+        categories={categoriesWithSubs}
+        onSave={onSave}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Selecionar categoria" }));
+    const dialog = await screen.findByRole("dialog");
+    // Expand the parent, then pick the sub.
+    await user.click(within(dialog).getByRole("button", { name: "Alimentação" }));
+    await user.click(within(dialog).getByRole("button", { name: "Mercado" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Selecionar categoria" })).toHaveTextContent("Alimentação › Mercado");
+    await user.type(screen.getByPlaceholderText(/0,00/), "7500");
+    await user.type(screen.getByPlaceholderText(/aluguel|descrição/i), "Compras da semana");
+    await selectOrigin(user, "Itaú");
+    await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+    const saved = onSave.mock.calls[0][0];
+    expect(saved.categoryId).toBe("sub1");
+    expect(saved.subcategoryId).toBe("sub1");
+  });
+
+  it("creates a subcategory under the selected parent via Cadastrar nova", async () => {
     const user = userEvent.setup();
     const onAddCat = vi.fn();
     render(
@@ -149,30 +225,62 @@ describe("NewTransactionSheet", () => {
         onAddCategory={onAddCat}
       />,
     );
-    // Select "Alimentação" category
-    await user.click(screen.getByText("Alimentação"));
-    // Click "Nova subcat."
-    await user.click(screen.getByText("Nova subcat."));
-    const input = screen.getByPlaceholderText("Nome da subcategoria");
-    await user.type(input, "Hortifrúti");
-    await user.click(screen.getByRole("button", { name: "Salvar subcategoria" }));
+    await user.click(screen.getByRole("button", { name: "Selecionar categoria" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Alimentação" }));
+    await user.click(within(dialog).getByRole("button", { name: /Nova subcategoria em Alimentação/ }));
+    await user.type(within(dialog).getByPlaceholderText("Nome da subcategoria"), "Hortifrúti");
+    await user.click(within(dialog).getByRole("button", { name: "Salvar subcategoria" }));
     expect(onAddCat).toHaveBeenCalledWith({ name: "Hortifrúti", kind: "expense", parentId: "cat1" });
   });
 
-  it("shows inline form for account and calls onAddAccount", async () => {
+  it("creates a top-level category via Cadastrar nova", async () => {
+    const user = userEvent.setup();
+    const onAddCat = vi.fn();
+    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} onAddCategory={onAddCat} />);
+    await user.click(screen.getByRole("button", { name: "Selecionar categoria" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Cadastrar nova" }));
+    await user.type(within(dialog).getByPlaceholderText("Nome da categoria"), "Mercado");
+    await user.click(within(dialog).getByRole("button", { name: "Salvar categoria" }));
+    expect(onAddCat).toHaveBeenCalledWith({ name: "Mercado", kind: "expense" });
+  });
+
+  // ── Origin sheet (B2) ──
+
+  it("shows balance/limit details in the origin sheet", async () => {
+    const user = userEvent.setup();
+    render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Cartão" }));
+    await user.click(screen.getByRole("button", { name: "Selecionar conta ou cartão" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Fecha dia 15")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: /Nubank Card/ }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Selecionar conta ou cartão" })).toHaveTextContent("Fecha dia 15");
+  });
+
+  it("shows account balance in the origin sheet", async () => {
+    const user = userEvent.setup();
+    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Selecionar conta ou cartão" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getAllByText(/Saldo R\$/).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("creates an account inline from the origin sheet", async () => {
     const user = userEvent.setup();
     const onAddAcc = vi.fn();
     render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} onAddAccount={onAddAcc} />);
-    // Second "Nova" button is for account section (first is category)
-    const novaBtns = screen.getAllByText("Nova");
-    await user.click(novaBtns[1]);
-    const nameInput = screen.getByPlaceholderText("Nome da conta");
-    await user.type(nameInput, "Caixa");
-    await user.click(screen.getByRole("button", { name: "Salvar conta" }));
+    await user.click(screen.getByRole("button", { name: "Selecionar conta ou cartão" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Nova conta" }));
+    await user.type(within(dialog).getByPlaceholderText("Nome da conta"), "Caixa");
+    await user.click(within(dialog).getByRole("button", { name: "Salvar conta" }));
     expect(onAddAcc).toHaveBeenCalledWith({ name: "Caixa", kind: "bank", initialBalanceCents: 0 });
   });
 
-  it("shows inline form for card and calls onAddCard", async () => {
+  it("creates a card inline from the origin sheet", async () => {
     const user = userEvent.setup();
     const onAddCrd = vi.fn();
     render(
@@ -183,49 +291,89 @@ describe("NewTransactionSheet", () => {
         onAddCard={onAddCrd}
       />,
     );
-    await user.click(screen.getByText("Novo"));
-    const nameInput = screen.getByPlaceholderText("Nome do cartão");
-    await user.type(nameInput, "Inter Card");
-    await user.click(screen.getByRole("button", { name: "Salvar cartão" }));
+    await user.click(screen.getByRole("button", { name: "Cartão" }));
+    await user.click(screen.getByRole("button", { name: "Selecionar conta ou cartão" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Novo cartão" }));
+    await user.type(within(dialog).getByPlaceholderText("Nome do cartão"), "Inter Card");
+    await user.click(within(dialog).getByRole("button", { name: "Salvar cartão" }));
     expect(onAddCrd).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Inter Card", creditLimitCents: 0 }),
     );
   });
 
-  // ── Installments ──
+  // ── Installments (B3) ──
 
-  it("includes installmentsTotal when parcelamento is enabled and saved", async () => {
+  it("includes installmentsTotal when a card parcel count is picked", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
     render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={onSave} />);
-    const valorInput = screen.getByPlaceholderText(/0,00/);
-    await user.type(valorInput, "600000");
-    // Enable parcelamento
-    await user.click(screen.getByLabelText("Alternar parcelamento"));
-    // Select 12x
-    await user.click(screen.getByText("12x"));
-    // Select credit card
-    await user.click(screen.getByText("Nubank Card"));
-    // Save
+    await user.type(screen.getByPlaceholderText(/0,00/), "600000");
+    await user.click(screen.getByRole("button", { name: "Cartão" }));
+    await selectOrigin(user, "Nubank Card");
+    await user.click(screen.getByRole("button", { name: "12x" }));
     await user.click(screen.getByText("Salvar em 12x"));
     expect(onSave).toHaveBeenCalledTimes(1);
-    const saved = onSave.mock.calls[0][0];
-    expect(saved.installmentsTotal).toBe(12);
+    expect(onSave.mock.calls[0][0].installmentsTotal).toBe(12);
   });
 
-  it("shows subcategories when category with parentId children is selected", async () => {
+  it("shows the per-installment invoice microcopy (B3)", async () => {
     const user = userEvent.setup();
-    render(
-      <NewTransactionSheet
-        accounts={accounts}
-        categories={categoriesWithSubs}
-        onSave={vi.fn()}
-      />,
-    );
-    // Select "Alimentação" — subcategories should appear
-    await user.click(screen.getByText("Alimentação"));
-    expect(screen.getByText("Mercado")).toBeInTheDocument();
-    expect(screen.getByText("Restaurante")).toBeInTheDocument();
+    render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={vi.fn()} />);
+    await user.type(screen.getByPlaceholderText(/0,00/), "600000");
+    await user.click(screen.getByRole("button", { name: "Cartão" }));
+    await selectOrigin(user, "Nubank Card");
+    await user.click(screen.getByRole("button", { name: "6x" }));
+    expect(screen.getByText(/6x de R\$.*na fatura de/)).toBeInTheDocument();
+  });
+
+  it("treats 1x as à vista (no installmentsTotal)", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={onSave} />);
+    await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+    await user.click(screen.getByRole("button", { name: "Cartão" }));
+    await selectOrigin(user, "Nubank Card");
+    await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0].installmentsTotal).toBeUndefined();
+  });
+
+  it("accepts a custom installment count via Outro input", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={onSave} />);
+    await user.type(screen.getByPlaceholderText(/0,00/), "600000");
+    await user.click(screen.getByRole("button", { name: "Cartão" }));
+    await selectOrigin(user, "Nubank Card");
+    await user.type(screen.getByLabelText("Outro número de parcelas"), "5");
+    await user.click(screen.getByText(/Salvar em 5x/));
+    expect(onSave.mock.calls[0][0].installmentsTotal).toBe(5);
+  });
+
+  // ── Mais detalhes (B4) ──
+
+  it("saves notes from Mais detalhes", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
+    await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+    await selectOrigin(user, "Itaú");
+    await user.click(screen.getByRole("button", { name: "Mais detalhes" }));
+    await user.type(screen.getByLabelText("Observações"), "Reembolsável");
+    await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0].notes).toBe("Reembolsável");
+  });
+
+  it("omits notes when Mais detalhes is left empty", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
+    await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+    await selectOrigin(user, "Itaú");
+    await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+    expect(onSave.mock.calls[0][0].notes).toBeUndefined();
   });
 
   // ── Draft leakage across tab switches ──
@@ -305,16 +453,18 @@ describe("NewTransactionSheet", () => {
       render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} initialTab="income" />);
       await user.type(screen.getByPlaceholderText(/0,00/), "50000");
       await user.type(screen.getByPlaceholderText(/aluguel|descrição/i), "Salário");
+      await selectOrigin(user, "Nubank");
       await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
-      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ kind: "income", amountCents: 50000 }));
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ kind: "income", amountCents: 50000, accountId: "acc1" }));
     });
 
-    it("saves expense with credit card selected (cardId branch)", async () => {
+    it("saves expense with credit card selected", async () => {
       const user = userEvent.setup();
       const onSave = vi.fn();
       render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={onSave} />);
       await user.type(screen.getByPlaceholderText(/0,00/), "10000");
-      await user.click(screen.getByText("Nubank Card"));
+      await user.click(screen.getByRole("button", { name: "Cartão" }));
+      await selectOrigin(user, "Nubank Card");
       await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
       expect(onSave.mock.calls[0]![0].accountId).toBe("card1");
     });
@@ -323,8 +473,9 @@ describe("NewTransactionSheet", () => {
       const user = userEvent.setup();
       const onSave = vi.fn();
       render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
-      await user.click(screen.getByText("Alimentação"));
+      await selectCategory(user, "Alimentação");
       await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+      await selectOrigin(user, "Itaú");
       await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
       const saved = onSave.mock.calls[0]![0];
       expect(saved.categoryId).toBe("cat1");
@@ -337,18 +488,6 @@ describe("NewTransactionSheet", () => {
       await user.click(screen.getByText("Transferência"));
       await user.click(screen.getByText("Nova"));
       expect(screen.getByPlaceholderText("Nome da conta")).toBeInTheDocument();
-    });
-
-    it("accepts a custom installment count via Outro input", async () => {
-      const user = userEvent.setup();
-      const onSave = vi.fn();
-      render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={onSave} />);
-      await user.type(screen.getByPlaceholderText(/0,00/), "600000");
-      await user.click(screen.getByLabelText("Alternar parcelamento"));
-      await user.type(screen.getByPlaceholderText("18"), "5");
-      await user.click(screen.getByText("Nubank Card"));
-      await user.click(screen.getByText(/Salvar em/));
-      expect(onSave.mock.calls[0]![0].installmentsTotal).toBe(5);
     });
 
     it("ignores amount digits beyond 12", async () => {
@@ -365,86 +504,25 @@ describe("NewTransactionSheet", () => {
       render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
       await user.type(screen.getByPlaceholderText(/0,00/), "10000");
       await user.type(screen.getByPlaceholderText(/aluguel|descrição/i), "X");
+      await selectOrigin(user, "Itaú");
       await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
       expect(onSave).toHaveBeenCalled();
-    });
-
-    it("expense: selecting an account sets accountId on save", async () => {
-      const user = userEvent.setup();
-      const onSave = vi.fn();
-      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
-      await user.click(screen.getByText("Itaú"));
-      await user.type(screen.getByPlaceholderText(/0,00/), "10000");
-      await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
-      expect(onSave.mock.calls[0]![0].accountId).toBe("acc2");
-    });
-
-    it("transfer: selecting destination account sets toAccountId", async () => {
-      const user = userEvent.setup();
-      const onSave = vi.fn();
-      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
-      await user.click(screen.getByText("Transferência"));
-      const [originNubank] = screen.getAllByText("Nubank");
-      await user.click(originNubank!);
-      const itauBtns = screen.getAllByText("Itaú");
-      await user.click(itauBtns[1]!);
-      await user.type(screen.getByPlaceholderText(/0,00/), "5000");
-      await user.click(screen.getByText("Transferir"));
-      const saved = onSave.mock.calls[0]![0];
-      expect(saved.fromAccountId).toBe("acc1");
-      expect(saved.toAccountId).toBe("acc2");
     });
 
     it("card inline form: typing limit/closing/due and saving", async () => {
       const user = userEvent.setup();
       const onAddCrd = vi.fn();
       render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={vi.fn()} onAddCard={onAddCrd} />);
-      await user.click(screen.getByText("Novo"));
-      await user.type(screen.getByPlaceholderText("Nome do cartão"), "Inter Card");
-      fireEvent.change(screen.getByPlaceholderText("Limite (R$)"), { target: { value: "100000" } });
-      fireEvent.change(screen.getByPlaceholderText("Fechamento"), { target: { value: "10" } });
-      fireEvent.change(screen.getByPlaceholderText("Vencimento"), { target: { value: "20" } });
-      await user.click(screen.getByRole("button", { name: "Salvar cartão" }));
+      await user.click(screen.getByRole("button", { name: "Cartão" }));
+      await user.click(screen.getByRole("button", { name: "Selecionar conta ou cartão" }));
+      const dialog = await screen.findByRole("dialog");
+      await user.click(within(dialog).getByRole("button", { name: "Novo cartão" }));
+      await user.type(within(dialog).getByPlaceholderText("Nome do cartão"), "Inter Card");
+      fireEvent.change(within(dialog).getByPlaceholderText("Limite (R$)"), { target: { value: "100000" } });
+      fireEvent.change(within(dialog).getByPlaceholderText("Fechamento"), { target: { value: "10" } });
+      fireEvent.change(within(dialog).getByPlaceholderText("Vencimento"), { target: { value: "20" } });
+      await user.click(within(dialog).getByRole("button", { name: "Salvar cartão" }));
       expect(onAddCrd).toHaveBeenCalledWith(expect.objectContaining({ name: "Inter Card", creditLimitCents: 100000, closingDay: 10, dueDay: 20 }));
-    });
-
-    it("category inline form: Cancelar closes the form", async () => {
-      const user = userEvent.setup();
-      render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
-      await user.click(screen.getAllByText("Nova")[0]!);
-      expect(screen.getByPlaceholderText("Nome da categoria")).toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: "Cancelar" }));
-      expect(screen.queryByPlaceholderText("Nome da categoria")).not.toBeInTheDocument();
-    });
-
-    it("subcategory selection: clicking a subcategory sets subcategoryId in onSave", async () => {
-      const user = userEvent.setup();
-      const onSave = vi.fn();
-      render(
-        <NewTransactionSheet
-          accounts={accounts}
-          categories={categoriesWithSubs}
-          onSave={onSave}
-        />,
-      );
-
-      // Select parent category (Alimentação)
-      await user.click(screen.getByText("Alimentação"));
-      // Subcategories should be visible
-      expect(screen.getByText("Mercado")).toBeInTheDocument();
-      // Click subcategory
-      await user.click(screen.getByText("Mercado"));
-
-      const valorInput = screen.getByPlaceholderText(/0,00/);
-      await user.type(valorInput, "7500");
-      const descInput = screen.getByPlaceholderText(/aluguel|descrição/i);
-      await user.type(descInput, "Compras da semana");
-      await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
-
-      expect(onSave).toHaveBeenCalledTimes(1);
-      const saved = onSave.mock.calls[0]![0];
-      expect(saved.categoryId).toBe("sub1");
-      expect(saved.subcategoryId).toBe("sub1");
     });
 
     it("subcategory draft prefill: initializes with selected subcategory", async () => {
@@ -460,8 +538,10 @@ describe("NewTransactionSheet", () => {
         />,
       );
 
+      expect(screen.getByRole("button", { name: "Selecionar categoria" })).toHaveTextContent("Alimentação › Restaurante");
       const valorInput = screen.getByPlaceholderText(/0,00/);
       await user.type(valorInput, "12000");
+      await selectOrigin(user, "Itaú");
       await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
 
       expect(onSave).toHaveBeenCalledTimes(1);
@@ -489,10 +569,23 @@ describe("NewTransactionSheet — P2-7 (labels acessíveis)", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("labels the custom installments input", async () => {
+  it("labels the custom installments input (card origin)", async () => {
+    const user = userEvent.setup();
+    render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Cartão" }));
+    await selectOrigin(user, "Nubank Card");
+    expect(screen.getByLabelText("Outro número de parcelas")).toBeInTheDocument();
+  });
+
+  it("exposes pickers and details with accessible names", async () => {
     const user = userEvent.setup();
     render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} />);
-    await user.click(screen.getByLabelText("Alternar parcelamento"));
-    expect(screen.getByLabelText("Outro número de parcelas")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Selecionar categoria" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Selecionar conta ou cartão" })).toBeInTheDocument();
+    const details = screen.getByRole("button", { name: "Mais detalhes" });
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    await user.click(details);
+    expect(details).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Observações")).toBeInTheDocument();
   });
 });

@@ -581,6 +581,11 @@ export default function RecordsPage() {
                           <div className="truncate text-[13px] font-bold text-text-primary">
                             {tx.description}
                           </div>
+                          {tx.notes ? (
+                            <div className="truncate text-[11px] text-text-muted">
+                              {tx.notes}
+                            </div>
+                          ) : null}
                           <div className="text-[11px] font-medium text-text-muted">
                             {getCategoryName(tx.categoryId)}
                             {tx.categoryId && " · "}

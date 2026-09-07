@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useState, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import BottomNav from "@/components/BottomNav";
 import BottomSheet from "@/components/BottomSheet";
@@ -73,6 +73,7 @@ export default function AppShell({ children }: AppShellProps) {
   const {
     accounts,
     categories,
+    transactions,
     addTransaction,
     createTransfer,
     addAccount,
@@ -137,6 +138,19 @@ export default function AppShell({ children }: AppShellProps) {
         : pathname === "/a-pagar"
           ? "payables"
           : "more";
+
+  // B1: top-5 most-used categories feed the picker's "Mais usadas" section.
+  const recentCategoryIds = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const tx of transactions ?? []) {
+      if (!tx.categoryId) continue;
+      counts.set(tx.categoryId, (counts.get(tx.categoryId) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([id]) => id);
+  }, [transactions]);
 
   function openSheetLocal(mode: "new" | "more") {
     setSheetMode(mode);
@@ -226,6 +240,7 @@ export default function AppShell({ children }: AppShellProps) {
           kind: data.kind,
           categoryId: data.categoryId ?? "",
           accountId: data.accountId ?? "",
+          ...(data.notes ? { notes: data.notes } : {}),
         });
       }
       if (captureFlowId)
@@ -301,6 +316,7 @@ export default function AppShell({ children }: AppShellProps) {
               onAddCard={addCard}
               initialTab={effectivePreselectedKind}
               initialDescription={initialDescription}
+              recentCategoryIds={recentCategoryIds}
             />
           ) : (
             <div className="grid grid-cols-3 gap-[11px]">

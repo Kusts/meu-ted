@@ -705,6 +705,35 @@ describe("AppStateProvider — API write path", () => {
     );
   });
 
+  it("forwards notes to createExpenseTransaction when present (item 10/B4)", async () => {
+    const spy = vi
+      .spyOn(endpoints, "createExpenseTransaction")
+      .mockResolvedValue({} as Transaction);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(() =>
+      result.current.addTransaction({
+        id: "tx-api-notes",
+        description: "API expense",
+        amountCents: 1000,
+        date: "2026-06-23",
+        kind: "expense",
+        categoryId: "cat1",
+        accountId: "acc1",
+        notes: "Reembolsável",
+      }),
+    );
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ notes: "Reembolsável" }),
+    );
+  });
+
   it("rolls back transaction when API write fails and sets writeError", async () => {
     vi.spyOn(endpoints, "createExpenseTransaction").mockRejectedValue(
       new Error("Offline"),

@@ -130,6 +130,26 @@ describe("TransactionEditSheet", () => {
       expect.objectContaining({ amountCents: 9900, categoryId: "cat2", accountId: "acc2" }),
     );
   });
+
+  it("prefills and saves notes (item 10/B4)", () => {
+    const updateSpy = vi.fn();
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateTransaction: updateSpy }));
+    const withNotes: Transaction = { ...expenseTx, notes: "Antiga" };
+    render(<TransactionEditSheet open onClose={vi.fn()} transaction={withNotes} />);
+    expect(screen.getByLabelText("Observações")).toHaveValue("Antiga");
+    fireEvent.change(screen.getByLabelText("Observações"), { target: { value: "Nova observação" } });
+    fireEvent.click(screen.getByText("Salvar"));
+    expect(updateSpy).toHaveBeenCalledWith(
+      "tx1",
+      expect.objectContaining({ notes: "Nova observação" }),
+    );
+  });
+
+  it("does not render notes for transfer transactions", () => {
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState());
+    render(<TransactionEditSheet open onClose={vi.fn()} transaction={transferTx} />);
+    expect(screen.queryByLabelText("Observações")).not.toBeInTheDocument();
+  });
 });
 
 describe("TransactionEditSheet — P2-7 (labels acessíveis)", () => {

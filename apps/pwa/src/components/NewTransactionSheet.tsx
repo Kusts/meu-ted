@@ -1,8 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import {
+  Calendar,
+  Check,
+  ChevronDown,
+  CreditCard,
+  Plus,
+  Search,
+  Wallet,
+} from "lucide-react";
 import { CategoryBadge } from "@/components/ui/CategoryBadge";
+import BottomSheet from "./BottomSheet";
 import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import type { Account, Category } from "@/lib/state/types";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
@@ -22,7 +32,10 @@ export interface SaveData {
   fromAccountId?: string;
   toAccountId?: string;
   installmentsTotal?: number;
+  notes?: string;
 }
+
+type OriginKind = "account" | "card";
 
 interface NewTransactionSheetProps {
   accounts: Account[];
@@ -48,6 +61,8 @@ interface NewTransactionSheetProps {
   initialDescription?: string;
   initialCategoryId?: string;
   initialSubcategoryId?: string;
+  /** Most-used category ids (top 5) for the "Mais usadas" section. */
+  recentCategoryIds?: string[];
 }
 
 function formatInputBRL(value: string): string {
@@ -69,6 +84,15 @@ function formatBRL(cents: number): string {
 function parseBRLToCents(value: string): number {
   const cleaned = value.replace(/[.\s]/g, "").replace(",", ".");
   return Math.round(parseFloat(cleaned) * 100) || 0;
+}
+
+/** Invoice month for a card purchase: closing day decides the statement. */
+export function invoiceMonthLabel(purchaseISO: string, closingDay: number): string {
+  const purchase = new Date(`${purchaseISO}T12:00:00`);
+  const rollsOver = purchase.getDate() > closingDay;
+  const month = rollsOver ? (purchase.getMonth() + 1) % 12 : purchase.getMonth();
+  const year = rollsOver && purchase.getMonth() === 11 ? purchase.getFullYear() + 1 : purchase.getFullYear();
+  return new Date(year, month, 1).toLocaleDateString("pt-BR", { month: "long" });
 }
 
 // ── Inline creation form (reusable) ───
@@ -108,6 +132,8 @@ function InlineForm({
   );
 }
 
+const INSTALLMENT_OPTIONS = [1, 2, 3, 6, 10, 12];
+
 export default function NewTransactionSheet({
   accounts,
   categories,
@@ -119,6 +145,7 @@ export default function NewTransactionSheet({
   initialDescription = "",
   initialCategoryId = "",
   initialSubcategoryId = "",
+  recentCategoryIds = [],
 }: NewTransactionSheetProps) {
   const { markDirty, markClean } = useFormDirtySafe();
   const [tab, setTab] = useState<SheetTab>(initialTab);
@@ -137,14 +164,15 @@ export default function NewTransactionSheet({
     }
     return "";
   });
-  const [accountId, setAccountId] = useState("");
-  const [cardId, setCardId] = useState("");
+
+  // B2: mutually exclusive origin — exactly one of account/card.
+  const [originKind, setOriginKind] = useState<OriginKind>("account");
+  const [originId, setOriginId] = useState("");
   const [fromAccountId, setFromAccountId] = useState("");
   const [toAccountId, setToAccountId] = useState("");
 
   // Inline creation state
   const [addingCategory, setAddingCategory] = useState(false);
-  const [addingSubcategory, setAddingSubcategory] = useState(false);
   const [addingAccount, setAddingAccount] = useState(false);
   const [addingCard, setAddingCard] = useState(false);
   const [newName, setNewName] = useState("");
@@ -153,9 +181,17 @@ export default function NewTransactionSheet({
   const [newClosingDay, setNewClosingDay] = useState("15");
   const [newDueDay, setNewDueDay] = useState("25");
 
-  // Parcelamento
-  const [installmentsEnabled, setInstallmentsEnabled] = useState(false);
-  const [installmentsCount, setInstallmentsCount] = useState(2);
+  // B1: picker sheets
+  const [categorySheetOpen, setCategorySheetOpen] = useState(false);
+  const [originSheetOpen, setOriginSheetOpen] = useState(false);
+  const [categorySearch, setCategorySearch] = useState("");
+
+  // B3: installments (card origin only). 1 = à vista.
+  const [installmentsCount, setInstallmentsCount] = useState(1);
+
+  // B4: secondary details
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [notes, setNotes] = useState("");
 
   // Calendar
   const [calOpen, setCalOpen] = useState(false);
@@ -167,6 +203,7 @@ export default function NewTransactionSheet({
   const isExpense = tab === "expense";
   const filteredAccounts = accounts.filter((a) => a.kind !== "credit_card");
   const creditCards = accounts.filter((a) => a.kind === "credit_card");
+  const originOptions = originKind === "card" ? creditCards : filteredAccounts;
 
   // Categories: top-level only for picker; subcategories shown separately
   const filteredCategories = categories.filter(
@@ -177,6 +214,41 @@ export default function NewTransactionSheet({
   const subcategories = categoryId
     ? categories.filter((c) => c.parentId === categoryId)
     : [];
+
+  const selectedCategory = categories.find((c) => c.id === categoryId);
+  const selectedSubcategory = categories.find((c) => c.id === subcategoryId);
+  const categoryPillLabel = selectedSubcategory
+    ? `${selectedCategory?.name ?? ""} › ${selectedSubcategory.name}`
+    : (selectedCategory?.name ?? "Selecionar");
+
+  const selectedOrigin = accounts.find((a) => a.id === originId);
+  const originDetail = selectedOrigin
+    ? selectedOrigin.kind === "credit_card"
+      ? selectedOrigin.closingDay !== undefined
+        ? `Fecha dia ${selectedOrigin.closingDay}`
+        : "Cartão de crédito"
+      : `Saldo ${formatBRL(selectedOrigin.balanceCents)}`
+    : "Selecionar";
+
+  // B1: top-5 most used first, then the rest (both honoring search).
+  const searchedCategories = useMemo(() => {
+    const q = categorySearch.trim().toLowerCase();
+    if (!q) return filteredCategories;
+    return filteredCategories.filter((c) =>
+      c.name.toLowerCase().includes(q) ||
+      categories.some((s) => s.parentId === c.id && s.name.toLowerCase().includes(q)),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categorySearch, categories, tab]);
+  const topCategories = useMemo(() => {
+    const byId = new Map(searchedCategories.map((c) => [c.id, c]));
+    const top = recentCategoryIds
+      .map((id) => byId.get(id))
+      .filter((c): c is Category => c !== undefined)
+      .slice(0, 5);
+    const topIds = new Set(top.map((c) => c.id));
+    return { top, rest: searchedCategories.filter((c) => !topIds.has(c.id)) };
+  }, [searchedCategories, recentCategoryIds]);
 
   const dateLabel = new Date(date + "T12:00:00").toLocaleDateString("pt-BR", {
     day: "numeric",
@@ -226,10 +298,9 @@ export default function NewTransactionSheet({
   }
 
   const amountCents = parseBRLToCents(amountDisplay);
+  const parcelado = !isTransfer && originKind === "card" && installmentsCount > 1;
   const installmentCents =
-    installmentsEnabled && installmentsCount > 0
-      ? Math.round(amountCents / installmentsCount)
-      : amountCents;
+    installmentsCount > 0 ? Math.round(amountCents / installmentsCount) : amountCents;
 
   function handleAmountInput(e: React.ChangeEvent<HTMLInputElement>) {
     const raw = e.target.value.replace(/\D/g, "");
@@ -240,22 +311,17 @@ export default function NewTransactionSheet({
   const categoryKind: "expense" | "income" =
     tab === "income" ? "income" : "expense";
 
+  /** "Cadastrar nova": creates a subcategory under the selected parent,
+   * otherwise a top-level category. */
   function handleSaveCategory() {
     if (!newName.trim() || !onAddCategory) return;
-    onAddCategory({ name: newName.trim(), kind: categoryKind });
+    onAddCategory(
+      categoryId
+        ? { name: newName.trim(), kind: categoryKind, parentId: categoryId }
+        : { name: newName.trim(), kind: categoryKind },
+    );
     setNewName("");
     setAddingCategory(false);
-  }
-
-  function handleSaveSubcategory() {
-    if (!newName.trim() || !onAddCategory || !categoryId) return;
-    onAddCategory({
-      name: newName.trim(),
-      kind: categoryKind,
-      parentId: categoryId,
-    });
-    setNewName("");
-    setAddingSubcategory(false);
   }
 
   function handleSaveAccount() {
@@ -285,6 +351,36 @@ export default function NewTransactionSheet({
     setAddingCard(false);
   }
 
+  function switchOriginKind(next: OriginKind) {
+    if (next === originKind) return;
+    setOriginKind(next);
+    // B2: mutual exclusivity — switching origin clears the previous pick…
+    setOriginId("");
+    // …and installments only exist on card origin.
+    setInstallmentsCount(1);
+    setOriginSheetOpen(false);
+  }
+
+  function resetDraft() {
+    setCategoryId("");
+    setSubcategoryId("");
+    setOriginKind("account");
+    setOriginId("");
+    setFromAccountId("");
+    setToAccountId("");
+    setInstallmentsCount(1);
+    setNotes("");
+    setDetailsOpen(false);
+    setCategorySheetOpen(false);
+    setOriginSheetOpen(false);
+    setCategorySearch("");
+    setAddingCategory(false);
+    setAddingAccount(false);
+    setAddingCard(false);
+    setAmountDisplay("");
+    setDescription("");
+  }
+
   // Duplicate-detector state
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
   const [pendingData, setPendingData] = useState<SaveData | null>(null);
@@ -298,6 +394,8 @@ export default function NewTransactionSheet({
       // Save failed: keep dirty.
     }
   }
+
+  const missingOrigin = !isTransfer && !originId;
 
   async function handleSave(force = false) {
     if (amountCents <= 0) return;
@@ -314,6 +412,8 @@ export default function NewTransactionSheet({
         toAccountId,
       };
     } else {
+      // B2: origin is mandatory and exclusive by construction (single id).
+      if (!originId) return;
       data = {
         kind: tab,
         amountCents,
@@ -321,11 +421,13 @@ export default function NewTransactionSheet({
         date,
         categoryId: subcategoryId || categoryId,
         subcategoryId: subcategoryId || undefined,
-        accountId: cardId || accountId,
+        accountId: originId,
       };
-      if (installmentsEnabled && installmentsCount > 1) {
+      if (parcelado) {
         data.installmentsTotal = installmentsCount;
       }
+      const trimmedNotes = notes.trim();
+      if (trimmedNotes) data.notes = trimmedNotes.slice(0, 2000);
     }
 
     // Duplicate check before save (unless force:true bypass)
@@ -383,6 +485,10 @@ export default function NewTransactionSheet({
     { key: "transfer", label: "Transferência" },
   ];
 
+  const saveDisabled =
+    amountCents <= 0 || checkingDuplicate || missingOrigin ||
+    (isTransfer && (!fromAccountId || !toAccountId || fromAccountId === toAccountId));
+
   return (
     <div className="flex flex-col gap-5" onChangeCapture={markDirty}>
       {/* Tabs */}
@@ -396,15 +502,7 @@ export default function NewTransactionSheet({
               // draft, switching to Transferência by mistake, and the wrong
               // amount/description silently carrying over).
               setTab(t.key);
-              setCategoryId("");
-              setSubcategoryId("");
-              setAccountId("");
-              setCardId("");
-              setFromAccountId("");
-              setToAccountId("");
-              setInstallmentsEnabled(false);
-              setAmountDisplay("");
-              setDescription("");
+              resetDraft();
             }}
             className={`flex-1 rounded-[10px] py-2.5 text-center text-[13px] font-bold transition-colors ${
               tab === t.key
@@ -454,19 +552,10 @@ export default function NewTransactionSheet({
           }}
         >
           <span className="text-[16px] text-text-primary">{dateLabel}</span>
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="#98A29A"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <rect x="3" y="4" width="18" height="18" rx="2" />
-            <path d="M16 2v4M8 2v4M3 10h18" />
-          </svg>
+          <span className="flex items-center gap-1 text-text-muted">
+            <Calendar size={16} />
+            <ChevronDown size={14} className={`transition-transform ${calOpen ? "rotate-180" : ""}`} />
+          </span>
         </button>
         {calOpen && (
           <div className="mt-1.5 rounded-[13px] border border-border bg-surface p-3">
@@ -543,478 +632,183 @@ export default function NewTransactionSheet({
         />
       </fieldset>
 
-      {/* Categoria (only for expense/income) */}
+      {/* B1: Categoria (collapsible pill → BottomSheet) */}
       {!isTransfer && (
         <div>
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-              Categoria
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setAddingCategory(true);
-                setAddingSubcategory(false);
-              }}
-              className="flex items-center gap-1 text-[11px] font-bold text-primary"
-            >
-              <svg
-                width="11"
-                height="11"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.8"
-                strokeLinecap="round"
-              >
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              Nova
-            </button>
+          <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Categoria
           </div>
-
-          {/* Inline new category form */}
-          {addingCategory && (
-            <div className="mb-2">
-              <InlineForm
-                onSave={handleSaveCategory}
-                onCancel={() => {
-                  setAddingCategory(false);
-                  setNewName("");
-                }}
-                saveLabel="Salvar categoria"
-                fields={
-                  <input
-                    type="text"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    placeholder="Nome da categoria"
-                    className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
-                    autoFocus
-                  />
-                }
-              />
-            </div>
-          )}
-
-          <div className="grid grid-cols-4 gap-2">
-            {filteredCategories.map((cat) => {
-              const selected = categoryId === cat.id;
-              return (
-                <button
-                  key={cat.id}
-                  type="button"
-                  onClick={() => {
-                    if (cat.id === categoryId) {
-                      setCategoryId("");
-                      setSubcategoryId("");
-                    } else {
-                      setCategoryId(cat.id);
-                      setSubcategoryId("");
-                    }
-                  }}
-                  className={`flex flex-col items-center gap-1 rounded-[12px] p-2 transition-colors ${
-                    selected
-                      ? "bg-primary/10 ring-1 ring-primary"
-                      : "hover:bg-fill-light"
-                  }`}
-                >
-                  <span className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] bg-fill-light">
-                    <CategoryBadge name={cat.name} size={16} />
-                  </span>
-                  <span
-                    className={`text-center text-[9.5px] font-semibold leading-tight ${selected ? "text-primary" : "text-text-secondary"}`}
-                  >
-                    {cat.name}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Subcategorias (using parentId) */}
-      {!isTransfer &&
-        (subcategories.length > 0 || (categoryId && onAddCategory)) && (
-          <div>
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-                {subcategories.length > 0
-                  ? "Subcategoria"
-                  : "Adicionar subcategoria"}
+          <button
+            type="button"
+            aria-label="Selecionar categoria"
+            aria-expanded={categorySheetOpen}
+            onClick={() => {
+              setAddingCategory(false);
+              setCategorySheetOpen(true);
+            }}
+            className="flex w-full items-center justify-between rounded-[13px] border border-border bg-surface px-3.5 py-3 text-left transition-colors focus:border-primary"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              {selectedCategory || selectedSubcategory ? (
+                <CategoryBadge name={selectedSubcategory?.name ?? selectedCategory?.name ?? ""} size={16} />
+              ) : null}
+              <span className={`truncate text-[15px] ${categoryId ? "font-semibold text-text-primary" : "text-text-muted"}`}>
+                {categoryPillLabel}
               </span>
-              {onAddCategory && categoryId && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddingSubcategory(true);
-                    setAddingCategory(false);
-                  }}
-                  className="flex items-center gap-1 text-[11px] font-bold text-primary"
-                >
-                  <svg
-                    width="11"
-                    height="11"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.8"
-                    strokeLinecap="round"
-                  >
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                  Nova subcat.
-                </button>
-              )}
-            </div>
+            </span>
+            <ChevronDown size={16} className={`flex-none text-text-muted transition-transform ${categorySheetOpen ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+      )}
 
-            {/* Inline new subcategory form */}
-            {addingSubcategory && (
-              <div className="mb-2">
-                <InlineForm
-                  onSave={handleSaveSubcategory}
-                  onCancel={() => {
-                    setAddingSubcategory(false);
-                    setNewName("");
-                  }}
-                  saveLabel="Salvar subcategoria"
-                  fields={
-                    <input
-                      type="text"
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      placeholder="Nome da subcategoria"
-                      className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[16px] text-text-primary outline-none focus:border-primary"
-                      autoFocus
-                    />
-                  }
-                />
-              </div>
-            )}
-
-            {subcategories.length > 0 && (
-              <div className="flex gap-1.5 overflow-x-auto" data-no-swipe="true">
-                {subcategories.map((sub) => {
-                  const isSelected = subcategoryId === sub.id;
-                  return (
-                    <button
-                      key={sub.id}
-                      type="button"
-                      onClick={() =>
-                        setSubcategoryId(sub.id === subcategoryId ? "" : sub.id)
-                      }
-                      className={`flex items-center gap-1 flex-none rounded-[100px] border px-3 py-1.5 text-[11px] font-semibold transition-colors ${
-                        isSelected
-                          ? "border-primary bg-primary/10 text-primary font-bold"
-                          : "border-border-strong bg-fill-light text-text-secondary"
-                      }`}
-                    >
-                      <CategoryBadge name={sub.name} size={12} />
-                      {sub.name}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-      {/* Account picker for expense/income */}
+      {/* B2: Origem — segmented toggle + collapsible selector */}
       {!isTransfer && (
         <div>
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-              Conta
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setAddingAccount(true);
-                setAddingCard(false);
-              }}
-              className="flex items-center gap-1 text-[11px] font-bold text-primary"
-            >
-              <svg
-                width="11"
-                height="11"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.8"
-                strokeLinecap="round"
+          <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Origem
+          </div>
+          <div role="group" aria-label="Origem" className="flex h-9 gap-1 rounded-xl bg-fill-light p-1">
+            {(
+              [
+                { key: "card", label: "Cartão", Icon: CreditCard },
+                { key: "account", label: "Conta", Icon: Wallet },
+              ] as const
+            ).map(({ key, label, Icon }) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={originKind === key}
+                onClick={() => switchOriginKind(key)}
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded-[10px] text-[13px] font-bold transition-colors ${
+                  originKind === key
+                    ? "bg-surface text-text-primary shadow-sm"
+                    : "text-text-muted"
+                }`}
               >
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              Nova
-            </button>
+                <Icon size={15} />
+                {label}
+              </button>
+            ))}
           </div>
-
-          {/* Inline new account form */}
-          {addingAccount && (
-            <div className="mb-2">
-              <InlineForm
-                onSave={handleSaveAccount}
-                onCancel={() => {
-                  setAddingAccount(false);
-                  setNewName("");
-                  setNewInitialBalance("");
-                }}
-                saveLabel="Salvar conta"
-                fields={
-                  <>
-                    <input
-                      type="text"
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      placeholder="Nome da conta"
-                      className="mb-2 w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
-                      autoFocus
-                    />
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={newInitialBalance}
-                      onChange={(e) => setNewInitialBalance(e.target.value)}
-                      placeholder="Saldo inicial (R$)"
-                      className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
-                    />
-                  </>
-                }
-              />
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-[7px]">
-            {filteredAccounts.map((acc) => {
-              const selected = accountId === acc.id;
-              const color = acc.color ?? "#4A5568";
-              const short = acc.name.slice(0, 2).toUpperCase();
-              return (
-                <button
-                  key={acc.id}
-                  type="button"
-                  onClick={() =>
-                    setAccountId(acc.id === accountId ? "" : acc.id)
-                  }
-                  className={`flex items-center gap-2 rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${
-                    selected
-                      ? "bg-primary text-white"
-                      : "bg-fill-light text-text-secondary"
-                  }`}
-                >
-                  <span
-                    className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] font-mono text-[8px] font-bold"
-                    style={{ background: color, color: "#fff" }}
-                  >
-                    {short}
-                  </span>
-                  {acc.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Cartão (expense only) */}
-      {isExpense && creditCards.length > 0 && (
-        <div>
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
-              Cartão
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setAddingCard(true);
-                setAddingAccount(false);
-              }}
-              className="flex items-center gap-1 text-[11px] font-bold text-primary"
-            >
-              <svg
-                width="11"
-                height="11"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.8"
-                strokeLinecap="round"
-              >
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              Novo
-            </button>
-          </div>
-
-          {/* Inline new card form */}
-          {addingCard && (
-            <div className="mb-2">
-              <InlineForm
-                onSave={handleSaveCard}
-                onCancel={() => {
-                  setAddingCard(false);
-                  setNewName("");
-                  setNewCreditLimit("");
-                }}
-                saveLabel="Salvar cartão"
-                fields={
-                  <>
-                    <input
-                      type="text"
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      placeholder="Nome do cartão"
-                      className="mb-2 w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
-                      autoFocus
-                    />
-                    <div className="mb-2 grid grid-cols-2 gap-2">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={newCreditLimit}
-                        onChange={(e) => setNewCreditLimit(e.target.value)}
-                        placeholder="Limite (R$)"
-                        className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
-                      />
-                      <input
-                        type="number"
-                        min={1}
-                        max={31}
-                        value={newClosingDay}
-                        onChange={(e) => setNewClosingDay(e.target.value)}
-                        placeholder="Fechamento"
-                        className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
-                      />
-                    </div>
-                    <input
-                      type="number"
-                      min={1}
-                      max={31}
-                      value={newDueDay}
-                      onChange={(e) => setNewDueDay(e.target.value)}
-                      placeholder="Vencimento"
-                      className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
-                    />
-                  </>
-                }
-              />
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-[7px]">
-            {creditCards.map((card) => {
-              const selected = cardId === card.id;
-              const color = card.color ?? "#820AD1";
-              const short = card.name.slice(0, 2).toUpperCase();
-              return (
-                <button
-                  key={card.id}
-                  type="button"
-                  onClick={() => setCardId(card.id === cardId ? "" : card.id)}
-                  className={`flex items-center gap-2 rounded-[100px] px-3.5 py-2 text-[12px] font-bold transition-colors ${
-                    selected
-                      ? "bg-primary text-white"
-                      : "bg-fill-light text-text-secondary"
-                  }`}
-                >
-                  <span
-                    className="flex h-[18px] w-[18px] items-center justify-center rounded-[5px] font-mono text-[8px] font-bold"
-                    style={{ background: color, color: "#fff" }}
-                  >
-                    {short}
-                  </span>
-                  {card.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Parcelamento (expense only) */}
-      {isExpense && (
-        <fieldset>
-          <div className="mb-1.5 flex items-center justify-between">
-            <label className="text-[11px] font-bold uppercase tracking-wide text-text-muted">
-              Parcelar
-            </label>
-            <button
-              type="button"
-              onClick={() => setInstallmentsEnabled(!installmentsEnabled)}
-              className={`flex h-[24px] w-[40px] flex-none items-center rounded-full p-[2px] transition-colors ${installmentsEnabled ? "bg-primary" : "bg-fill-strong"}`}
-              aria-label="Alternar parcelamento"
-            >
-              <span
-                className={`block h-5 w-5 transform rounded-full bg-surface transition-transform ${installmentsEnabled ? "translate-x-[16px]" : "translate-x-0"}`}
-              />
-            </button>
-          </div>
-          {installmentsEnabled && (
-            <div className="rounded-[13px] border border-border bg-fill-light px-3.5 py-3">
-              <div className="mb-2 flex items-center justify-between text-[12px] text-text-secondary">
-                <span>Número de parcelas</span>
-                <span className="font-mono font-bold text-text-primary">
-                  {installmentsCount}x
+          <button
+            type="button"
+            aria-label="Selecionar conta ou cartão"
+            aria-expanded={originSheetOpen}
+            onClick={() => {
+              setAddingAccount(false);
+              setAddingCard(false);
+              setOriginSheetOpen(true);
+            }}
+            className="mt-2 flex w-full items-center justify-between rounded-[13px] border border-border bg-surface px-3.5 py-3 text-left transition-colors focus:border-primary"
+          >
+            <span className="flex min-w-0 items-center gap-2.5">
+              <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[9px] bg-fill-light text-text-secondary">
+                {originKind === "card" ? <CreditCard size={16} /> : <Wallet size={16} />}
+              </span>
+              <span className="min-w-0">
+                <span className={`block truncate text-[15px] ${selectedOrigin ? "font-semibold text-text-primary" : "text-text-muted"}`}>
+                  {selectedOrigin?.name ?? "Selecionar"}
                 </span>
-              </div>
-              <div className="mb-2.5 flex flex-wrap gap-1.5">
-                {[2, 3, 6, 10, 12].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => setInstallmentsCount(n)}
-                    className={`rounded-[100px] px-3 py-1.5 text-[11px] font-bold transition-colors ${
-                      installmentsCount === n
-                        ? "bg-primary text-white"
-                        : "bg-surface text-text-secondary"
-                    }`}
-                  >
-                    {n}x
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[12px] text-text-secondary">Outro:</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={2}
-                  max={48}
-                  aria-label="Outro número de parcelas"
-                  value={
-                    [2, 3, 6, 10, 12].includes(installmentsCount)
-                      ? ""
-                      : installmentsCount
-                  }
-                  onChange={(e) => {
-                    const n = parseInt(e.target.value, 10);
-                    if (n >= 2 && n <= 48) setInstallmentsCount(n);
-                  }}
-                  placeholder="18"
-                  className="w-[72px] rounded-[10px] border border-border bg-surface px-3 py-2 text-center font-mono text-[14px] font-semibold text-text-primary outline-none focus:border-primary"
-                />
-                <span className="text-[12px] text-text-secondary">× vezes</span>
-              </div>
-              {amountCents > 0 && (
-                <div className="mt-2.5 border-t border-border pt-2.5 text-[12px]">
-                  <div className="flex items-center justify-between">
-                    <span className="text-text-muted">Cada parcela</span>
-                    <span className="font-mono font-bold text-text-primary">
-                      {installmentsCount}x {formatBRL(installmentCents)}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between text-[10px]">
-                    <span className="text-text-muted">Total parcelado</span>
-                    <span className="font-mono text-text-secondary">
-                      {formatBRL(amountCents)}
-                    </span>
-                  </div>
-                </div>
-              )}
+                <span className="block truncate text-[11px] font-medium text-text-muted">
+                  {originDetail}
+                </span>
+              </span>
+            </span>
+            <ChevronDown size={16} className={`flex-none text-text-muted transition-transform ${originSheetOpen ? "rotate-180" : ""}`} />
+          </button>
+          {missingOrigin && (
+            <p className="mt-1.5 text-[12px] font-semibold text-text-muted">
+              Escolha a origem para salvar.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* B3: Parcelas — only for card origin */}
+      {!isTransfer && originKind === "card" && (
+        <fieldset>
+          <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-text-muted">
+            Parcelas
+          </div>
+          <div className="rounded-[13px] border border-border bg-fill-light px-3.5 py-3">
+            <div className="flex flex-wrap gap-1.5">
+              {INSTALLMENT_OPTIONS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  aria-pressed={installmentsCount === n}
+                  onClick={() => setInstallmentsCount(n)}
+                  className={`rounded-[100px] px-3 py-1.5 text-[11px] font-bold transition-colors ${
+                    installmentsCount === n
+                      ? "bg-primary text-white"
+                      : "bg-surface text-text-secondary"
+                  }`}
+                >
+                  {n}x
+                </button>
+              ))}
+            </div>
+            <div className="mt-2.5 flex items-center gap-2">
+              <span className="text-[12px] text-text-secondary">Personalizado:</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={2}
+                max={48}
+                aria-label="Outro número de parcelas"
+                value={
+                  INSTALLMENT_OPTIONS.includes(installmentsCount)
+                    ? ""
+                    : installmentsCount
+                }
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10);
+                  if (n >= 2 && n <= 48) setInstallmentsCount(n);
+                }}
+                placeholder="18"
+                className="w-[72px] rounded-[10px] border border-border bg-surface px-3 py-2 text-center font-mono text-[14px] font-semibold text-text-primary outline-none focus:border-primary"
+              />
+              <span className="text-[12px] text-text-secondary">× vezes</span>
+            </div>
+            {amountCents > 0 && installmentsCount > 1 && selectedOrigin && (
+              <p className="mt-2.5 border-t border-border pt-2.5 text-[12px] text-text-secondary">
+                {installmentsCount}x de {formatBRL(installmentCents)} na fatura de{" "}
+                {invoiceMonthLabel(date, selectedOrigin.closingDay ?? 15)}
+              </p>
+            )}
+          </div>
+        </fieldset>
+      )}
+
+      {/* B4: secondary actions */}
+      {!isTransfer && (
+        <div className="rounded-[13px] border border-border bg-surface">
+          <button
+            type="button"
+            aria-expanded={detailsOpen}
+            onClick={() => setDetailsOpen(!detailsOpen)}
+            className="flex w-full items-center justify-between px-3.5 py-3 text-left"
+          >
+            <span className="text-[13px] font-bold text-text-secondary">Mais detalhes</span>
+            <ChevronDown size={16} className={`text-text-muted transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
+          </button>
+          {detailsOpen && (
+            <div className="px-3.5 pb-3.5">
+              <label htmlFor="nt-observacoes" className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-text-muted">
+                Observações
+              </label>
+              <textarea
+                id="nt-observacoes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                maxLength={2000}
+                rows={3}
+                placeholder="Ex: reembolsável, contexto da compra..."
+                className="w-full resize-none rounded-[10px] border border-border bg-transparent px-3 py-2.5 text-[14px] text-text-primary outline-none focus:border-primary"
+              />
             </div>
           )}
-        </fieldset>
+        </div>
       )}
 
       {/* Transfer accounts */}
@@ -1032,17 +826,7 @@ export default function NewTransactionSheet({
                 }}
                 className="flex items-center gap-1 text-[11px] font-bold text-primary"
               >
-                <svg
-                  width="11"
-                  height="11"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.8"
-                  strokeLinecap="round"
-                >
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
+                <Plus size={11} strokeWidth={2.8} />
                 Nova
               </button>
             </div>
@@ -1081,7 +865,7 @@ export default function NewTransactionSheet({
               </div>
             )}
 
-            <div className="flex flex-wrap gap-[7px] mb-3">
+            <div className="mb-3 flex flex-wrap gap-[7px]">
               {filteredAccounts.map((acc) => {
                 const selected = fromAccountId === acc.id;
                 const color = acc.color ?? "#4A5568";
@@ -1143,20 +927,335 @@ export default function NewTransactionSheet({
         </>
       )}
 
-      {/* Save button */}
-      <button
-        onClick={() => handleSave(false)}
-        disabled={amountCents <= 0 || checkingDuplicate}
-        className="w-full rounded-[14px] bg-primary py-4 text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+      {/* Save button — sticky so it stays visible */}
+      <div className="sticky bottom-0 -mx-1 bg-surface/95 px-1 pb-1 pt-2 backdrop-blur">
+        <button
+          onClick={() => handleSave(false)}
+          disabled={saveDisabled}
+          className="w-full rounded-[14px] bg-primary py-4 text-center text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+        >
+          {checkingDuplicate
+            ? "Verificando..."
+            : isTransfer
+              ? "Transferir"
+              : parcelado
+                ? `Salvar em ${installmentsCount}x`
+                : "Salvar"}
+        </button>
+      </div>
+
+      {/* B1: category picker sheet */}
+      <BottomSheet
+        open={categorySheetOpen}
+        onClose={() => {
+          setCategorySheetOpen(false);
+          setAddingCategory(false);
+          setNewName("");
+        }}
+        title="Categoria"
       >
-        {checkingDuplicate
-          ? "Verificando..."
-          : isTransfer
-            ? "Transferir"
-            : installmentsEnabled
-              ? `Salvar em ${installmentsCount}x`
-              : "Salvar"}
-      </button>
+        <div className="flex flex-col gap-3 pb-2">
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">
+              <Search size={15} />
+            </span>
+            <input
+              type="text"
+              aria-label="Buscar categoria"
+              value={categorySearch}
+              onChange={(e) => setCategorySearch(e.target.value)}
+              placeholder="Buscar categoria"
+              className="w-full rounded-[12px] border border-border bg-surface-2 py-2.5 pl-9 pr-3 text-[14px] text-text-primary outline-none focus:border-primary"
+            />
+          </div>
+
+          {addingCategory ? (
+            <InlineForm
+              onSave={handleSaveCategory}
+              onCancel={() => {
+                setAddingCategory(false);
+                setNewName("");
+              }}
+              saveLabel={categoryId ? "Salvar subcategoria" : "Salvar categoria"}
+              fields={
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder={categoryId ? "Nome da subcategoria" : "Nome da categoria"}
+                  className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
+                  autoFocus
+                />
+              }
+            />
+          ) : (
+            onAddCategory && (
+              <button
+                type="button"
+                onClick={() => setAddingCategory(true)}
+                className="flex items-center justify-center gap-1.5 rounded-[12px] border border-dashed border-primary/50 py-2.5 text-[13px] font-bold text-primary"
+              >
+                <Plus size={14} strokeWidth={2.6} />
+                {categoryId
+                  ? `Nova subcategoria em ${selectedCategory?.name ?? ""}`
+                  : "Cadastrar nova"}
+              </button>
+            )
+          )}
+
+          {topCategories.top.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                Mais usadas
+              </p>
+              <div className="flex flex-col gap-1">
+                {topCategories.top.map((cat) => (
+                  <CategoryRow
+                    key={cat.id}
+                    cat={cat}
+                    selected={categoryId === cat.id && !subcategoryId}
+                    onSelect={() => {
+                      setCategoryId(cat.id);
+                      setSubcategoryId("");
+                      setCategorySheetOpen(false);
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+              Todas
+            </p>
+            <div className="flex flex-col gap-1">
+              {topCategories.rest.map((cat) => {
+                const subs = categories.filter((s) => s.parentId === cat.id);
+                const expanded = categoryId === cat.id;
+                return (
+                  <div key={cat.id}>
+                    <CategoryRow
+                      cat={cat}
+                      selected={expanded && !subcategoryId}
+                      onSelect={() => {
+                        if (expanded) {
+                          setCategoryId("");
+                          setSubcategoryId("");
+                        } else {
+                          setCategoryId(cat.id);
+                          setSubcategoryId("");
+                          if (subs.length === 0) setCategorySheetOpen(false);
+                        }
+                      }}
+                    />
+                    {expanded && subs.length > 0 && (
+                      <div className="ml-6 mt-1 flex flex-wrap gap-1.5 pb-1">
+                        {subs.map((sub) => {
+                          const isSelected = subcategoryId === sub.id;
+                          return (
+                            <button
+                              key={sub.id}
+                              type="button"
+                              onClick={() => {
+                                setSubcategoryId(sub.id === subcategoryId ? "" : sub.id);
+                                setCategorySheetOpen(false);
+                              }}
+                              className={`flex items-center gap-1 rounded-[100px] border px-3 py-1.5 text-[11px] font-semibold transition-colors ${
+                                isSelected
+                                  ? "border-primary bg-primary/10 font-bold text-primary"
+                                  : "border-border-strong bg-fill-light text-text-secondary"
+                              }`}
+                            >
+                              <CategoryBadge name={sub.name} size={12} />
+                              {sub.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {topCategories.rest.length === 0 && topCategories.top.length === 0 && (
+                <p className="py-3 text-center text-[12px] text-text-muted">
+                  Nenhuma categoria encontrada.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </BottomSheet>
+
+      {/* B2: origin picker sheet */}
+      <BottomSheet
+        open={originSheetOpen}
+        onClose={() => {
+          setOriginSheetOpen(false);
+          setAddingAccount(false);
+          setAddingCard(false);
+          setNewName("");
+        }}
+        title={originKind === "card" ? "Cartão" : "Conta"}
+      >
+        <div className="flex flex-col gap-3 pb-2">
+          {originKind === "card" && onAddCard && (
+            <button
+              type="button"
+              onClick={() => {
+                setAddingCard(true);
+                setAddingAccount(false);
+              }}
+              className="flex items-center justify-center gap-1.5 rounded-[12px] border border-dashed border-primary/50 py-2.5 text-[13px] font-bold text-primary"
+            >
+              <Plus size={14} strokeWidth={2.6} />
+              Novo cartão
+            </button>
+          )}
+          {originKind === "account" && onAddAccount && (
+            <button
+              type="button"
+              onClick={() => {
+                setAddingAccount(true);
+                setAddingCard(false);
+              }}
+              className="flex items-center justify-center gap-1.5 rounded-[12px] border border-dashed border-primary/50 py-2.5 text-[13px] font-bold text-primary"
+            >
+              <Plus size={14} strokeWidth={2.6} />
+              Nova conta
+            </button>
+          )}
+
+          {addingAccount && originKind === "account" && (
+            <InlineForm
+              onSave={handleSaveAccount}
+              onCancel={() => {
+                setAddingAccount(false);
+                setNewName("");
+                setNewInitialBalance("");
+              }}
+              saveLabel="Salvar conta"
+              fields={
+                <>
+                  <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="Nome da conta"
+                    className="mb-2 w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
+                    autoFocus
+                  />
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={newInitialBalance}
+                    onChange={(e) => setNewInitialBalance(e.target.value)}
+                    placeholder="Saldo inicial (R$)"
+                    className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
+                  />
+                </>
+              }
+            />
+          )}
+
+          {addingCard && originKind === "card" && (
+            <InlineForm
+              onSave={handleSaveCard}
+              onCancel={() => {
+                setAddingCard(false);
+                setNewName("");
+                setNewCreditLimit("");
+              }}
+              saveLabel="Salvar cartão"
+              fields={
+                <>
+                  <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="Nome do cartão"
+                    className="mb-2 w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
+                    autoFocus
+                  />
+                  <div className="mb-2 grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={newCreditLimit}
+                      onChange={(e) => setNewCreditLimit(e.target.value)}
+                      placeholder="Limite (R$)"
+                      className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      max={31}
+                      value={newClosingDay}
+                      onChange={(e) => setNewClosingDay(e.target.value)}
+                      placeholder="Fechamento"
+                      className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
+                    />
+                  </div>
+                  <input
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={newDueDay}
+                    onChange={(e) => setNewDueDay(e.target.value)}
+                    placeholder="Vencimento"
+                    className="w-full rounded-[10px] border border-border bg-surface px-3 py-2.5 text-[13px] text-text-primary outline-none focus:border-primary"
+                  />
+                </>
+              }
+            />
+          )}
+
+          <div className="flex flex-col gap-1">
+            {originOptions.map((acc) => {
+              const selected = originId === acc.id;
+              const detail =
+                acc.kind === "credit_card"
+                  ? acc.closingDay !== undefined
+                    ? `Fecha dia ${acc.closingDay}`
+                    : "Cartão de crédito"
+                  : `Saldo ${formatBRL(acc.balanceCents)}`;
+              return (
+                <button
+                  key={acc.id}
+                  type="button"
+                  onClick={() => {
+                    setOriginId(acc.id);
+                    setOriginSheetOpen(false);
+                  }}
+                  className={`flex items-center gap-2.5 rounded-[12px] border px-3 py-2.5 text-left transition-colors ${
+                    selected ? "border-primary bg-primary/5" : "border-border-subtle"
+                  }`}
+                >
+                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-fill-light text-text-secondary">
+                    {acc.kind === "credit_card" ? <CreditCard size={17} /> : <Wallet size={17} />}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14px] font-bold text-text-primary">
+                      {acc.name}
+                    </span>
+                    <span className="block truncate text-[11px] font-medium text-text-muted">
+                      {detail}
+                    </span>
+                  </span>
+                  {selected && <Check size={17} className="flex-none text-primary" />}
+                </button>
+              );
+            })}
+            {originOptions.length === 0 && (
+              <p className="py-3 text-center text-[12px] text-text-muted">
+                {originKind === "card"
+                  ? "Nenhum cartão cadastrado. Crie o primeiro acima."
+                  : "Nenhuma conta cadastrada. Crie a primeira acima."}
+              </p>
+            )}
+          </div>
+        </div>
+      </BottomSheet>
 
       <ConfirmActionDialog
         open={duplicateWarning !== null}
@@ -1168,5 +1267,31 @@ export default function NewTransactionSheet({
         onCancel={handleDuplicateCancel}
       />
     </div>
+  );
+}
+
+function CategoryRow({
+  cat,
+  selected,
+  onSelect,
+}: {
+  cat: Category;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`flex w-full items-center gap-2.5 rounded-[12px] border px-3 py-2.5 text-left transition-colors ${
+        selected ? "border-primary bg-primary/5" : "border-border-subtle"
+      }`}
+    >
+      <CategoryBadge name={cat.name} size={18} />
+      <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-text-primary">
+        {cat.name}
+      </span>
+      {selected && <Check size={16} className="flex-none text-primary" />}
+    </button>
   );
 }

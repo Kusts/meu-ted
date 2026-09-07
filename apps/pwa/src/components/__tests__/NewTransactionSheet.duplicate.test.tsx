@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { render, screen, waitFor } from "@/lib/test-utils";
+import { render, screen, waitFor, within } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import NewTransactionSheet from "../NewTransactionSheet";
 import type { Account, Category } from "@/lib/state/types";
@@ -11,6 +11,13 @@ const accounts: Account[] = [
 const categories: Category[] = [
   { id: "cat1", name: "Alimentação", kind: "expense", icon: "UtensilsCrossed" },
 ];
+
+async function selectOrigin(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(screen.getByRole("button", { name: "Selecionar conta ou cartão" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name: new RegExp(name) }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+}
 
 describe("NewTransactionSheet duplicate-detector", () => {
   beforeEach(() => {
@@ -62,8 +69,14 @@ describe("NewTransactionSheet duplicate-detector", () => {
     const descInput = screen.getByPlaceholderText(/aluguel|descrição/i);
     await user.type(descInput, "Supermercado Sao Paulo");
 
-    // Select category to allow save? Not required but fill
-    await user.click(screen.getByText("Alimentação"));
+    // Select category via the picker sheet to allow save
+    await user.click(screen.getByRole("button", { name: "Selecionar categoria" }));
+    const catDialog = await screen.findByRole("dialog");
+    await user.click(within(catDialog).getByRole("button", { name: "Alimentação" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // Origin is mandatory (B2)
+    await selectOrigin(user, "Nubank");
 
     // Click Salvar -> should call detect-duplicate, not yet onSave
     await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
@@ -116,6 +129,7 @@ describe("NewTransactionSheet duplicate-detector", () => {
     render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
     await user.type(screen.getByPlaceholderText(/0,00/), "10000");
     await user.type(screen.getByPlaceholderText(/aluguel|descrição/i), "Unico");
+    await selectOrigin(user, "Nubank");
     await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
@@ -140,6 +154,7 @@ describe("NewTransactionSheet duplicate-detector", () => {
     render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={onSave} />);
     await user.type(screen.getByPlaceholderText(/0,00/), "10000");
     await user.type(screen.getByPlaceholderText(/aluguel|descrição/i), "Teste fail-open");
+    await selectOrigin(user, "Nubank");
     await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
