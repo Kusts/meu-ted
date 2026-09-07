@@ -48,12 +48,37 @@ describe('Generated HTTP Tools (Task 6)', () => {
       active: true,
     });
 
-    const result = await createAccountTool!.execute({
+    // C-03 fail-closed: a direct write without the per-turn attestation is
+    // denied before any network call.
+    const denied = (await createAccountTool!.execute({
       name: 'Investimentos',
       type: 'investment',
       initialBalance: 0,
       idempotencyKey: 'custom-idem-key-123',
+    })) as { blocked?: boolean };
+    expect(denied.blocked).toBe(true);
+    expect(requestSpy).not.toHaveBeenCalled();
+
+    // With the wrapper-issued attestation the write executes with idempotency.
+    requestSpy.mockResolvedValueOnce({
+      id: 'new-acc-1',
+      name: 'Investimentos',
+      type: 'investment',
+      balance: 0,
+      active: true,
     });
+    const result = await createAccountTool!.execute(
+      {
+        name: 'Investimentos',
+        type: 'investment',
+        initialBalance: 0,
+        idempotencyKey: 'custom-idem-key-123',
+      },
+      undefined,
+      undefined,
+      undefined,
+      { mutationApproved: true, approvedTool: 'create_account' },
+    );
 
     expect(result).toMatchObject({
       success: true,

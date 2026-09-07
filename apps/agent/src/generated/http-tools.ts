@@ -3771,7 +3771,7 @@ function createTool(spec: ToolSpec) {
       const toolCallId = typeof toolCallIdOrParams === "string" ? toolCallIdOrParams : "generated-call";
       const params = (typeof toolCallIdOrParams === "string" ? paramsOrSignal : toolCallIdOrParams) as ToolParams;
       const kind = spec.method === "GET" ? "read" : "write";
-      const policyViolation = checkToolExecutionPolicy(spec.name, kind);
+      const policyViolation = checkToolExecutionPolicy(spec.name, kind, ctx);
       if (policyViolation) return policyViolation;
       const resolvedPath = spec.path.replace(/\{([^}]+)\}/g, (_match, name) => encodeURIComponent(String(params[name])));
       const query = Object.fromEntries(spec.parameters

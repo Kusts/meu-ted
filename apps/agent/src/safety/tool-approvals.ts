@@ -8,10 +8,15 @@ export type ToolApprovalRequirement = {
 export const APPROVAL_REQUIRED_TOOLS = new Map<string, ToolApprovalRequirement>([
   ['pay_statement', { toolName: 'pay_statement', action: 'pay_statement', category: 'payment', requiresFreshApproval: true }],
   ['pay_payable', { toolName: 'pay_payable', action: 'pay_payable', category: 'payment', requiresFreshApproval: true }],
+  ['mark_account_paid', { toolName: 'mark_account_paid', action: 'mark_account_paid', category: 'payment', requiresFreshApproval: true }],
   ['unpay_payable', { toolName: 'unpay_payable', action: 'unpay_payable', category: 'cancellation', requiresFreshApproval: true }],
   ['cancel_payable', { toolName: 'cancel_payable', action: 'cancel_payable', category: 'cancellation', requiresFreshApproval: true }],
+  ['cancel_account_payable', { toolName: 'cancel_account_payable', action: 'cancel_account_payable', category: 'cancellation', requiresFreshApproval: true }],
+  ['cancel_goal', { toolName: 'cancel_goal', action: 'cancel_goal', category: 'cancellation', requiresFreshApproval: true }],
   ['deactivate_account', { toolName: 'deactivate_account', action: 'deactivate_account', category: 'deactivation', requiresFreshApproval: true }],
+  ['deactivate_category', { toolName: 'deactivate_category', action: 'deactivate_category', category: 'deactivation', requiresFreshApproval: true }],
   ['cancel_card_purchase', { toolName: 'cancel_card_purchase', action: 'cancel_card_purchase', category: 'cancellation', requiresFreshApproval: true }],
+  ['delete_transaction', { toolName: 'delete_transaction', action: 'delete_transaction', category: 'write', requiresFreshApproval: true }],
 ]);
 
 export const requiresApproval = (toolName: string): boolean => {

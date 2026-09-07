@@ -257,7 +257,13 @@ export const buildExposedTools = (
         if (isMutating && !hasMutationIntent(ctx.lastUserMessage)) {
           return { blocked: true, reason: 'Chamada bloqueada: sem intenção de mutação na mensagem atual.' };
         }
-        return generatedTool.execute(params);
+        // C-03: the wrapper is the sole issuer of the per-turn mutation
+        // attestation, bound to this exact tool. The generated executor
+        // denies writes without it (fail-closed for any other call path).
+        return generatedTool.execute(params, undefined, undefined, undefined, {
+          mutationApproved: true,
+          approvedTool: name,
+        });
       },
     });
   }
