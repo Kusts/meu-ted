@@ -8,6 +8,7 @@ import { contasCartoesSkill } from './contas-cartoes.js';
 import { compromissosSkill } from './compromissos.js';
 import { workspaceSkill } from './workspace.js';
 import { webSearchSkill } from './web-search.js';
+import { memoriaSkill } from './memoria.js';
 
 export type { Skill };
 export { renderSkillBody } from './types.js';
@@ -22,6 +23,7 @@ export {
   compromissosSkill,
   workspaceSkill,
   webSearchSkill,
+  memoriaSkill,
 };
 
 export const ALL_SKILLS: readonly Skill[] = [
@@ -34,6 +36,7 @@ export const ALL_SKILLS: readonly Skill[] = [
   compromissosSkill,
   workspaceSkill,
   webSearchSkill,
+  memoriaSkill,
 ];
 
 export const skillByName = (name: string): Skill | undefined =>

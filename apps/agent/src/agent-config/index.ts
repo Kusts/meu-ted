@@ -10,6 +10,16 @@ export { INSTRUCTIONS_VERSION, TED_IDENTITY, TED_GOLDEN_RULE, TED_MUTATION_POLIC
 export type { SystemPromptInput } from './instructions.js';
 export { ALL_SKILLS, skillByName, skillCatalogLines } from './skills/index.js';
 export type { Skill } from './skills/index.js';
+export { memoriaSkill } from './skills/memoria.js';
+export { initializeMemorySchema, isMemoryEnabled, setMemoryEnabled, rememberFact, recallMemories, renderMemoryBlock, containsCardNumber, textSimilarity, bumpTurnCount, MEMORY_BUDGET_CHARS, MEMORY_RECALL_LIMIT } from './memory/store.js';
+export type { MemoryItem, MemoryKind, MemorySql, RememberResult } from './memory/store.js';
+export { initializeSessionSchema, currentSession, endSession, listPastSessions, getSessionSummary } from './memory/sessions.js';
+export type { ChatSession } from './memory/sessions.js';
+export { COMPACT_THRESHOLD_MESSAGES, COMPACT_KEEP_RECENT, compactContext, extractiveSummary, toContextTurns } from './memory/compact.js';
+export type { ContextTurn, CompactionResult, SummarizeFn } from './memory/compact.js';
+export { LEARN_EVERY_TURNS, extractLearningsHeuristic, isDuplicateLearning, learnFromTurn } from './memory/learn.js';
+export type { LearningCandidate, LearnTurnInput } from './memory/learn.js';
+export { buildMemoryTools, MEMORY_TOOL_NAMES } from './memory/tools.js';
 export { fitSkills, renderInjectedSkills, SKILL_BUDGET_CHARS } from './select-skill.js';
 export type { SkillFit } from './select-skill.js';
 export { PLAYBOOK_BODY, PLAYBOOK_SUMMARY_TOOLS } from './playbook.js';

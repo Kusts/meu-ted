@@ -78,7 +78,7 @@ export const buildSystemPrompt = (input: SystemPromptInput): string => {
   );
   sections.push(`WEB: ${input.webStatusLine}`);
   if (input.memoryContext) {
-    sections.push(`MEMÓRIA DO WORKSPACE (contexto persistente da Parte B):\n${input.memoryContext}`);
+    sections.push(`MEMÓRIA DO USUÁRIO (lembretes persistentes — use quando relevante):\n${input.memoryContext}`);
   }
   return sections.join('\n\n');
 };

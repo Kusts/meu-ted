@@ -201,7 +201,7 @@ export default {
       if (auth instanceof Response) return auth;
 
       const subPath = url.pathname.slice(financeMatch[0].length);
-      const isRestRpc = subPath === "/rpc/chat" || subPath === "/rpc/history";
+      const isRestRpc = subPath === "/rpc/chat" || subPath === "/rpc/history" || subPath === "/rpc/session/new" || subPath === "/rpc/memory/prefs";
 
       if (isRestRpc) {
         const financeAgent = env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(workspaceId));

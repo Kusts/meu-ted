@@ -12,6 +12,22 @@ import {
   buildExposedTools,
   INSTRUCTIONS_VERSION as TED_INSTRUCTIONS_VERSION,
   TED_SYSTEM_PROMPT_LEGACY,
+  initializeMemorySchema,
+  initializeSessionSchema,
+  isMemoryEnabled,
+  recallMemories,
+  renderMemoryBlock,
+  compactContext,
+  extractiveSummary,
+  toContextTurns,
+  learnFromTurn,
+  buildMemoryTools,
+  bumpTurnCount,
+  rememberFact,
+  setMemoryEnabled,
+  currentSession,
+  endSession,
+  type MemorySql,
 } from "./agent-config/index.js";
 import {
   checkUsageLimit,
@@ -256,7 +272,45 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       } catch {
         // Ignored if table already exists or mock storage
       }
+      // Part B: memory, sessions, prefs and turn counters (idempotent).
+      try {
+        initializeMemorySchema(state.storage.sql as unknown as MemorySql);
+        initializeSessionSchema(state.storage.sql as unknown as MemorySql);
+      } catch {
+        // Memory is best-effort: turns work without it.
+      }
     }
+  }
+
+  /** DO SQLite handle or null (tests, degraded storage). */
+  private memorySql(): MemorySql | null {
+    const sql = this.state?.storage?.sql as unknown as MemorySql | undefined;
+    return sql && typeof sql.exec === 'function' ? sql : null;
+  }
+
+  /** Loads the injected MEMÓRIA DO USUÁRIO block (null when disabled/empty). */
+  private loadMemoryContext(workspaceId: string, actorId: string, query: string): string | null {
+    const sql = this.memorySql();
+    if (!sql || !isMemoryEnabled(sql, workspaceId)) return null;
+    try {
+      const items = recallMemories(sql, { workspaceId, actor: actorId, query });
+      return renderMemoryBlock(items);
+    } catch {
+      return null;
+    }
+  }
+
+  /** SDK history as plain turns for compaction/context building. */
+  private sdkTurns(): Array<{ role: 'user' | 'assistant'; content: string }> {
+    return toContextTurns(
+      (Array.isArray(this.messages) ? this.messages : []).map((message) => {
+        const parts = Array.isArray(message.parts) ? message.parts : [];
+        return {
+          role: message.role === 'assistant' ? 'assistant' : 'user',
+          content: parts.map((part) => (typeof part.text === 'string' ? part.text : '')).join(''),
+        };
+      }),
+    );
   }
 
   private async resolveIntentionSnapshot(intentionId: string): Promise<IntentionSnapshotRow | null> {
@@ -403,9 +457,16 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             ) ?? snapshot.fallback_model_id)
           : null;
       const runDirect = async (providerId: string, modelId: string) => {
-        // Cognitive layer (Part A, item 15): versioned persona + skills +
-        // playbook assembled per turn, with the model's tools actually wired.
-        const cognition = assembleCognition(text, { webEnv: (this.env ?? {}) as Record<string, string | undefined> });
+        // Cognitive layer (Parts A+B, item 15): versioned persona + skills +
+        // playbook + workspace memory assembled per turn, with the model's
+        // tools actually wired.
+        const sql = this.memorySql();
+        const memoryWorkspace = 'direct';
+        const memoryContext = sql ? this.loadMemoryContext(memoryWorkspace, actorId, text) : null;
+        const cognition = assembleCognition(text, {
+          webEnv: (this.env ?? {}) as Record<string, string | undefined>,
+          ...(memoryContext ? { hooks: { memoryContext } } : {}),
+        });
         if (isCodexProviderId(providerId)) {
           const brokerText = await runCodexBrokerText((this.env ?? {}) as CodexBrokerEnv, {
             model: modelId,
@@ -424,18 +485,51 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           snapshot.protocol as Protocol,
           (this.env ?? {}) as Record<string, string | undefined>,
         );
-        const exposedTools = buildExposedTools(cognition.toolNames, {
-          apiOrigin: this.env?.API_ORIGIN,
-          workspaceId: 'direct',
-          actorId,
-          intentionId,
-          lastUserMessage: text,
-          webEnv: (this.env ?? {}) as Record<string, string | undefined>,
+        const memoryTools = sql ? buildMemoryTools({ sql, workspaceId: memoryWorkspace, actorId }) : {};
+        const exposedTools = buildExposedTools(
+          cognition.toolNames,
+          {
+            apiOrigin: this.env?.API_ORIGIN,
+            workspaceId: 'direct',
+            actorId,
+            intentionId,
+            lastUserMessage: text,
+            webEnv: (this.env ?? {}) as Record<string, string | undefined>,
+          },
+          memoryTools,
+        );
+        // Compacted context: summaries replace old turns sent to the model
+        // (stored history is preserved untouched).
+        const historyTurns = this.sdkTurns();
+        const compaction = await compactContext(historyTurns, {
+          summarize: async (turns) => {
+            const transcript = turns.map((turn) => `${turn.role === 'user' ? 'Usuário' : 'TED'}: ${turn.content}`).join('\n');
+            const summary = await generateText({
+              model: modelInstance.model,
+              system: 'Resuma a conversa abaixo em até 500 caracteres, em pt-BR, preservando fatos, valores e decisões.',
+              prompt: transcript,
+              maxOutputTokens: 400,
+            });
+            return summary.text;
+          },
         });
+        if (compaction.compacted && sql && compaction.summary) {
+          try {
+            rememberFact(sql, {
+              workspaceId: memoryWorkspace,
+              actor: '',
+              kind: 'summary',
+              content: compaction.summary,
+              salience: 0.7,
+            });
+          } catch {
+            // Summary persistence is best-effort.
+          }
+        }
         return streamText({
           model: modelInstance.model,
           system: cognition.system,
-          prompt: text,
+          messages: [...compaction.context, { role: 'user' as const, content: text }],
           tools: exposedTools,
           stopWhen: stepCountIs(5),
         });
@@ -461,6 +555,44 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
 
       if (this.state?.storage?.sql) {
         recordUsage(this.state.storage.sql, actorId, intentionId, estimatedTokens, estimatedTokens);
+      }
+
+      // Part B: post-turn learning (heuristic every turn, cheap LLM
+      // extraction every 5th). Never breaks the turn; assistant text is
+      // unavailable before streaming, so the heuristic reads the user turn.
+      const learnSql = this.memorySql();
+      if (learnSql) {
+        try {
+          const turnCount = bumpTurnCount(learnSql, 'direct');
+          await learnFromTurn(learnSql, {
+            workspaceId: 'direct',
+            actorId,
+            userText: text,
+            assistantText: '',
+            turnCount,
+            llmExtract: async (transcript) => {
+              try {
+                const learnModel = createLanguageModel(
+                  snapshot.provider_id,
+                  bareModelId,
+                  snapshot.protocol as Protocol,
+                  (this.env ?? {}) as Record<string, string | undefined>,
+                );
+                const extracted = await generateText({
+                  model: learnModel.model,
+                  system: 'Extraia até 2 aprendizados duráveis sobre a pessoa (preferências, contas, categorias, metas). Responda só com os itens, um por linha, em pt-BR. Se não houver nada durável, responda vazio.',
+                  prompt: transcript,
+                  maxOutputTokens: 300,
+                });
+                return extracted.text.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 2);
+              } catch {
+                return [];
+              }
+            },
+          });
+        } catch {
+          // Learning is best-effort.
+        }
       }
 
       return result;
@@ -610,9 +742,15 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           let failoverReason: string | null = null;
 
           // Cognitive layer for the relay leg too: persona + skills +
-          // playbook travel as the system prompt (the relay has no tool
-          // loop, so the enriched prompt keeps carrying workspace data).
-          const cognition = assembleCognition(text, { webEnv: (this.env ?? {}) as Record<string, string | undefined> });
+          // playbook + workspace memory travel as the system prompt (the
+          // relay has no tool loop, so the enriched prompt keeps carrying
+          // workspace data).
+          const relaySql = this.memorySql();
+          const relayMemoryContext = relaySql ? this.loadMemoryContext(workspaceId, actorId, text) : null;
+          const cognition = assembleCognition(text, {
+            webEnv: (this.env ?? {}) as Record<string, string | undefined>,
+            ...(relayMemoryContext ? { hooks: { memoryContext: relayMemoryContext } } : {}),
+          });
 
           // Refactor item 6: Codex (plano Coding) executa via broker privado
           // (sessão de browser), nunca via relay HTTP (o relay só permite
@@ -789,6 +927,26 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           }
           await this.persistMessages([assistantMsg]);
 
+          // Part B: post-turn learning (heuristic only on the relay leg —
+          // no extra inference cost). New learnings ride the response so
+          // the PWA can toast "TED memorizou: ...".
+          let memorized: string[] = [];
+          if (relaySql) {
+            try {
+              const turnCount = bumpTurnCount(relaySql, workspaceId);
+              const learned = await learnFromTurn(relaySql, {
+                workspaceId,
+                actorId,
+                userText: text,
+                assistantText: output,
+                turnCount,
+              });
+              memorized = learned.map((item) => item.content);
+            } catch {
+              // Learning is best-effort.
+            }
+          }
+
           return Response.json({
             turnId: intentionId,
             intentionId,
@@ -797,11 +955,89 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             workspaceId,
             provider: snapshot.provider_id,
             model: snapshot.model_id,
+            memorized,
           });
         } catch (err) {
           const message = (err as Error)?.message ?? "Erro desconhecido ao processar inferência.";
           return Response.json({ code: "agent.inference_error", message: redactTranscript(message) }, { status: 502 });
         }
+      });
+    }
+
+    // Part B: memory privacy toggle (workspace-scoped, ON by default).
+    if (url.pathname === "/rpc/memory/prefs" && request.method === "POST") {
+      const actorId = request.headers.get("x-agent-actor");
+      const workspaceId = request.headers.get("x-agent-workspace");
+      if (!actorId || !workspaceId || !actorId.trim() || !workspaceId.trim()) {
+        return Response.json({ code: "agent.unauthorized", message: "Missing authenticated actor or workspace" }, { status: 401 });
+      }
+      const sql = this.memorySql();
+      if (!sql) {
+        return Response.json({ code: "agent.persistence_unavailable", message: "Memory storage is not available" }, { status: 503 });
+      }
+      let enabled = true;
+      try {
+        const body = (await request.json()) as { enabled?: unknown };
+        if (typeof body.enabled !== 'boolean') {
+          return Response.json({ code: "agent.invalid_message" }, { status: 400 });
+        }
+        enabled = body.enabled;
+      } catch {
+        return Response.json({ code: "agent.invalid_message" }, { status: 400 });
+      }
+      setMemoryEnabled(sql, workspaceId, enabled);
+      return Response.json({ ok: true, enabled });
+    }
+
+    // Part B: "Nova sessão" — archives the current session (count + best-
+    // effort summary) into the registry, clears the model context (SDK
+    // messages), and starts a fresh session. Stored history rows are
+    // preserved in the registry summary; durable memories are untouched.
+    if (url.pathname === "/rpc/session/new" && request.method === "POST") {
+      const actorId = request.headers.get("x-agent-actor");
+      const workspaceId = request.headers.get("x-agent-workspace");
+      if (!actorId || !workspaceId || !actorId.trim() || !workspaceId.trim()) {
+        return Response.json({ code: "agent.unauthorized", message: "Missing authenticated actor or workspace" }, { status: 401 });
+      }
+      const sql = this.memorySql();
+      if (!sql) {
+        return Response.json({ code: "agent.persistence_unavailable", message: "Session storage is not available" }, { status: 503 });
+      }
+      const turns = this.sdkTurns();
+      const messageCount = turns.length;
+      let summary: string | null = null;
+      if (messageCount > 0) {
+        try {
+          summary = extractiveSummary(turns);
+        } catch {
+          summary = null;
+        }
+      }
+      // Ensure a registry row exists even for the very first session, so the
+      // archived history is never lost when no session was opened before.
+      // Empty renewals only reset the context without archiving noise.
+      let previous: { id: string } | null = null;
+      if (messageCount > 0) {
+        currentSession(sql, workspaceId, actorId);
+        previous = endSession(sql, workspaceId, actorId, {
+          ...(summary ? { summary } : {}),
+          messageCount,
+        });
+      }
+      try {
+        // SDK coupling (documented): the messages table is SDK-internal.
+        sql.exec(`DELETE FROM cf_ai_chat_agent_messages`);
+      } catch {
+        // Best effort: a fresh session id is still returned.
+      }
+      if (Array.isArray(this.messages)) this.messages.length = 0;
+      const next = currentSession(sql, workspaceId, actorId);
+      return Response.json({
+        ok: true,
+        sessionId: next.id,
+        previousSessionId: previous?.id ?? null,
+        messageCount,
+        summarized: summary !== null,
       });
     }
 

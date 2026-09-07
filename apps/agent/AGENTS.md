@@ -26,7 +26,11 @@ operacional vive em `docs/agent/2026-09-08-ted-cognitive-layer.md`.
   - `tools.ts` — adaptador tools geradas → AI SDK, subset curado, gates de
     mutação (primeiro uso real de `safety/tool-approvals.ts`).
   - `web.ts` — busca/fetch web com provider por env + proteção SSRF.
-  - `index.ts` — `assembleCognition()` + `CognitiveHooks` (ganchos da Parte B).
+  - `index.ts` — `assembleCognition()` + `CognitiveHooks`.
+  - `memory/` — Parte B: `store.ts` (agent_memory, prefs, contadores),
+    `sessions.ts` (registro de sessões), `compact.ts` (resumo e contexto),
+    `learn.ts` (aprendizado pós-turno), `tools.ts` (remember_fact, recall,
+    list_past_sessions, get_session_summary).
 - `generated/http-tools.ts` — 52 tools geradas do OpenAPI (não editar à mão;
   regenerar via `scripts/generate-agent-tools.mjs`).
 - `llm/` — providers, failover ativo→fallback, config de runtime.
@@ -43,8 +47,13 @@ tool→skill derivado das definições — ver `toolSkillLines()`.
 Env `TAVILY_API_KEY` (preferido) ou `BRAVE_API_KEY` (nenhuma key no código).
 Sem key: tools respondem "busca web indisponível" com elegância.
 
-## Parte B (não implementada)
+## Memória e sessões (Parte B — implementada)
 
-Memória persistente, compactação de sessão e aprendizado entram via
-`CognitiveHooks` (`memoryContext`, `compactSession`, `learnFromTurn`) sem
-mudar o contrato de montagem do prompt.
+- `agent_memory` (fact|preference|learning|summary, com salience e expiração)
+  + `agent_prefs` (opt-out por workspace, ON por default) + contadores de
+  turno, tudo no SQLite do DO; injeção `MEMÓRIA DO USUÁRIO` com budget fixo.
+- Compactação aos 40 msgs (resumo via modelo, fallback extrativo silencioso;
+  storage preservado); `POST /rpc/session/new` renova arquivando resumo;
+  `POST /rpc/memory/prefs` alterna o opt-out.
+- Nunca persistem secrets ou números de cartão (filtro + redaction);
+  isolamento por (workspace, actor) em memórias e sessões.

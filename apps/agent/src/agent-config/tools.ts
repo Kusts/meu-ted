@@ -63,7 +63,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   update_transaction: 'editar lançamento',
   delete_transaction: 'excluir lançamento',
   create_transfer: 'transferência entre contas',
-  create_transfer: 'transferência entre contas',
   detect_duplicate: 'checagem de lançamento duplicado',
   undo_last_action: 'desfazer a última ação do workspace',
   create_card_purchase: 'compra no cartão (à vista ou 1ª parcela)',
@@ -93,6 +92,10 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   cancel_pending_operation: 'recusar aprovação pendente',
   list_notifications: 'ver notificações',
   audit_logs: 'trilha de auditoria (leitura)',
+  remember_fact: 'guardar fato durável (com pedido)',
+  recall: 'buscar na memória do workspace',
+  list_past_sessions: 'listar sessões anteriores encerradas',
+  get_session_summary: 'ler resumo de sessão anterior',
   web_search: 'busca na web (dados externos atuais)',
   web_fetch: 'ler o conteúdo de uma página',
 };
@@ -123,6 +126,7 @@ export const CORE_READ_TOOLS: readonly string[] = [
   'get_month_summary',
   'list_categories',
   'spending_insights',
+  'recall',
 ];
 
 /** Hard cap of exposed tools per turn (context protection). */
@@ -180,16 +184,23 @@ const sanitizeSchema = (parameters: unknown): Record<string, unknown> =>
  * Builds AI SDK tools bound to a turn context. Reads execute directly;
  * mutations first pass the safety utils (this is their first enforcement
  * point — previously dead code). Web tools resolve availability from env.
+ * Worker-local tools (memory/sessions) arrive via `extraTools`.
  */
 export const buildExposedTools = (
   toolNames: string[],
   ctx: ToolExecutionContext,
+  extraTools?: Record<string, ReturnType<typeof tool>>,
 ): Record<string, ReturnType<typeof tool>> => {
   const generated = generatedByName();
   const out: Record<string, ReturnType<typeof tool>> = {};
   const webProvider = createWebSearchProvider(ctx.webEnv ?? {}, ctx.fetchImpl ?? fetch);
 
   for (const name of toolNames) {
+    const extra = extraTools?.[name];
+    if (extra) {
+      out[name] = extra;
+      continue;
+    }
     if (name === 'web_search') {
       out[name] = tool({
         description: 'Busca na web por informações externas atuais.',

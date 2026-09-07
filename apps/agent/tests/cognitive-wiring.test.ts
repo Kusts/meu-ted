@@ -57,7 +57,7 @@ describe('onChatMessage cognitive wiring (Part A)', () => {
     expect(mockedStreamText).toHaveBeenCalledTimes(1);
     const args = mockedStreamText.mock.calls[0]![0] as {
       system: string;
-      prompt: string;
+      messages: Array<{ role: string; content: string }>;
       tools: Record<string, unknown>;
       stopWhen: unknown;
     };
@@ -72,7 +72,8 @@ describe('onChatMessage cognitive wiring (Part A)', () => {
     expect(Object.keys(args.tools)).toContain('get_balance');
     expect(Object.keys(args.tools)).toContain('list_recent_transactions');
     expect(Object.keys(args.tools)).not.toContain('create_expense');
-    expect(args.prompt).toContain('Qual o meu saldo?');
+    // Compacted context travels as messages (last turn ends the array).
+    expect(args.messages[args.messages.length - 1]).toMatchObject({ role: 'user', content: 'Qual o meu saldo?' });
     expect(args.stopWhen).toBeDefined();
   });
 

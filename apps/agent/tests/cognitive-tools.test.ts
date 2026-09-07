@@ -36,9 +36,11 @@ describe('tool subset + skill map', () => {
 
   it('exposes only real generated tools (no invented names)', async () => {
     const { generatedHttpTools } = await import('../src/generated/http-tools.js');
-    const real = new Set(generatedHttpTools.map((t) => t.name));
+    const { MEMORY_TOOL_NAMES } = await import('../src/agent-config/memory/tools.js');
+    const real = new Set<string>(generatedHttpTools.map((t) => t.name));
+    const workerLocal = new Set<string>([...MEMORY_TOOL_NAMES, 'web_search', 'web_fetch']);
     for (const name of selectToolsFor(['registros', 'relatorios', 'contas-cartoes'])) {
-      if (name === 'web_search' || name === 'web_fetch') continue;
+      if (workerLocal.has(name)) continue;
       expect(real.has(name), name).toBe(true);
     }
   });

@@ -69,13 +69,13 @@ describe('TED instructions (Part A, item 15)', () => {
     });
     expect(system).toContain('SKILL ATIVA');
     expect(system).toContain('# Teste');
-    expect(system).toContain('MEMÓRIA DO WORKSPACE');
+    expect(system).toContain('MEMÓRIA DO USUÁRIO');
     expect(system).toContain('resumos curtos');
   });
 
   it('omits empty skill/memory sections', () => {
     const system = buildSystemPrompt(baseInput);
     expect(system).not.toContain('SKILL ATIVA');
-    expect(system).not.toContain('MEMÓRIA DO WORKSPACE');
+    expect(system).not.toContain('MEMÓRIA DO USUÁRIO');
   });
 });
