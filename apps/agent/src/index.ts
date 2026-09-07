@@ -359,6 +359,11 @@ export class WorkspaceAgent extends DurableObject<AgentRuntimeEnv> {
   }
 
   async processTurn(turnId: string, actorId: string, processor: TurnProcessor = async (input) => input.content): Promise<Response> {
+    // H-02 note: the legacy queue performs NO upstream model invocation —
+    // every real inference flows through the unified attempts executor
+    // (executeLlmAttempts in llm/attempts.ts) on the FinanceChatAgent legs.
+    // This default processor only echoes, so there are no legacy LLM
+    // attempts to unify here.
     const turn = this.readTurn(turnId, actorId);
     if (!turn) return Response.json({ code: "agent.turn_not_found" }, { status: 404 });
     if (turn.status !== "queued") {
@@ -489,14 +494,48 @@ export async function authorizeWorkspaceMembership(
       return Response.json({ code: "agent.service_token_missing", message: "AGENT_AUTH_SERVICE_TOKEN is required" }, { status: 500 });
     }
     const { resolveCanonicalHouseholdId } = await import("./auth/workspace-alias.js");
-    const canonicalWorkspaceId = await resolveCanonicalHouseholdId(env.API_ORIGIN, serviceToken, workspaceId);
-    const { verifyAgentConnectionToken } = await import("./auth/connection-token.js");
+    // C-02 fail-closed: never accept the received alias when the
+    // authoritative resolution cannot confirm the canonical id.
+    let canonicalWorkspaceId: string;
+    try {
+      canonicalWorkspaceId = await resolveCanonicalHouseholdId(env.API_ORIGIN, serviceToken, workspaceId);
+    } catch {
+      return Response.json({ code: "agent.membership_unavailable", message: "Workspace resolution unavailable" }, { status: 503 });
+    }
+    const { verifyAgentConnectionToken, consumeAgentToken } = await import("./auth/connection-token.js");
     try {
       const claims = await verifyAgentConnectionToken(connectionToken, env.AGENT_CONNECTION_TOKEN_SECRET, canonicalWorkspaceId);
       if (claims.workspace !== canonicalWorkspaceId) return Response.json({ code: "agent.workspace_forbidden" }, { status: 403 });
+      // C-01 + M-09: consume the jti exactly once after signature,
+      // membership and workspace validation, before accepting the
+      // connection/turn. A 409 means the token was already used (replay).
+      let consumed: boolean;
+      try {
+        consumed = await consumeAgentToken(env.API_ORIGIN, serviceToken, {
+          jti: claims.jti,
+          workspaceId: canonicalWorkspaceId,
+          actorId: claims.sub,
+          expiresAt: claims.exp * 1000,
+        });
+      } catch (consumeErr) {
+        // M-09: the authority refused consumption because the membership was
+        // revoked after mint — deny as forbidden, not as a generic outage.
+        const status = (consumeErr as { status?: number })?.status;
+        if (status === 401 || status === 403) {
+          return Response.json({ code: "agent.workspace_forbidden", message: "Access to workspace forbidden" }, { status: 403 });
+        }
+        return Response.json({ code: "agent.membership_unavailable", message: "Token consumption unavailable" }, { status: 503 });
+      }
+      if (!consumed) {
+        return Response.json({ code: "agent.token_replayed", message: "Connection token already consumed" }, { status: 401 });
+      }
       const role = claims.role === "owner" ? "owner" as DelegatedRole : "member" as DelegatedRole;
       return { actorId: claims.sub, role, workspaceId: canonicalWorkspaceId };
-    } catch {
+    } catch (err) {
+      // Preserve the explicit replay signal when it surfaces as an error.
+      if ((err as Error)?.message?.includes("token_replayed")) {
+        return Response.json({ code: "agent.token_replayed", message: "Connection token already consumed" }, { status: 401 });
+      }
       return Response.json({ code: "agent.workspace_forbidden" }, { status: 403 });
     }
   }

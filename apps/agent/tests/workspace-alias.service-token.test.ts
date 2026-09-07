@@ -37,9 +37,12 @@ describe('Security: Worker exige AGENT_AUTH_SERVICE_TOKEN dedicado', () => {
     const env = { API_ORIGIN: 'https://api.example.com', AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN, AGENT_CONNECTION_TOKEN_SECRET: CONNECTION_SECRET } as unknown as Record<string, string>;
     // O Worker deve tentar resolver alias via endpoint com service token correto, mas se o token estiver errado, deve falhar
     // Aqui testamos que a chamada com token errado não vaza se alias existe — o helper deve retornar 401
+    // C-02 fail-closed: token errado/resposta não-OK deve LANÇAR (negar),
+    // nunca aceitar silenciosamente o alias original como fallback.
     const { resolveCanonicalHouseholdId } = await import('../src/auth/workspace-alias.js');
-    const withWrongToken = await (resolveCanonicalHouseholdId as unknown as (origin: string, token: string, ws: string) => Promise<string>)('https://api.example.com', 'wrong-token', ALIAS);
-    expect(withWrongToken).toBe(ALIAS); // fallback para o próprio alias quando token errado (não vaza)
+    await expect(
+      (resolveCanonicalHouseholdId as unknown as (origin: string, token: string, ws: string) => Promise<string>)('https://api.example.com', 'wrong-token', ALIAS),
+    ).rejects.toThrow(/workspace alias resolution failed/);
 
     globalThis.fetch = originalFetch;
   });

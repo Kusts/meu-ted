@@ -143,5 +143,9 @@ export const consumeAgentToken = async (
   }
 
   const text = await res.text();
-  throw new Error(`Failed to consume agent token: HTTP ${res.status} ${text}`);
+  // M-09: carry the HTTP status so the gateway maps revocation (401/403)
+  // to denial instead of a generic 503.
+  throw Object.assign(new Error(`Failed to consume agent token: HTTP ${res.status} ${text}`), {
+    status: res.status,
+  });
 };

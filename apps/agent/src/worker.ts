@@ -197,7 +197,7 @@ export default {
     const financeMatch = url.pathname.match(/^\/agents\/finance-chat-agent\/([^/]+)/);
     if (financeMatch) {
       const workspaceId = decodeURIComponent(financeMatch[1]!);
-      const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string }, workspaceId);
+      const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string; AGENT_AUTH_SERVICE_TOKEN?: string }, workspaceId);
       if (auth instanceof Response) return auth;
 
       const subPath = url.pathname.slice(financeMatch[0].length);
@@ -230,7 +230,7 @@ export default {
     const legacyMatch = url.pathname.match(/^\/agents\/workspace\/([^/]+)/);
     if (legacyMatch) {
       const workspaceId = decodeURIComponent(legacyMatch[1]!);
-      const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string }, workspaceId);
+      const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string; AGENT_AUTH_SERVICE_TOKEN?: string }, workspaceId);
       if (auth instanceof Response) return auth;
       // For new message turns, route to the real FinanceChatAgent RPC when a
       // runtime provider is configured; fall back to the legacy WorkspaceAgent
