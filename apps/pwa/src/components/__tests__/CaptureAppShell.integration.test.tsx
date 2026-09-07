@@ -53,8 +53,13 @@ vi.mock("@/lib/unsaved-changes", () => ({
 }));
 
 vi.mock("@/components/BottomNav", () => ({
-  default: ({ onNavClick }: { onNavClick: () => void }) => (
-    <button type="button" aria-label="Nova transação" onClick={onNavClick} />
+  // Mirrors the real FAB quick menu: opens a fresh preselected expense sheet.
+  default: () => (
+    <button
+      type="button"
+      aria-label="Nova transação"
+      onClick={() => window.dispatchEvent(new CustomEvent("pwa:open-tx", { detail: { kind: "expense" } }))}
+    />
   ),
 }));
 

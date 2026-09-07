@@ -139,20 +139,20 @@ describe("WalletPage", () => {
     { name: "Nubank", id: "acc1" },
     { name: "Itaú", id: "acc2" },
     { name: "Inter", id: "acc3" },
-  ])("account card for $name links to /contas?accountId=$id", ({ id }) => {
+  ])("account card for $name links to patrimonio contas with ?accountId=$id", ({ id }) => {
     render(<WalletPage />);
     const links = screen.getAllByRole("link");
-    const cardLink = links.find((l) => l.getAttribute("href") === `/contas?accountId=${id}`);
+    const cardLink = links.find((l) => l.getAttribute("href") === `/hub/patrimonio?aba=contas&accountId=${id}`);
     expect(cardLink).toBeDefined();
   });
 
   it.each([
     { name: "Nubank Crédito", id: "acc4" },
     { name: "Inter Mastercard", id: "acc5" },
-  ])("credit card for $name links to /cartoes?cardId=$id", ({ name, id }) => {
+  ])("credit card for $name links to patrimonio cartoes with ?cardId=$id", ({ name, id }) => {
     render(<WalletPage />);
     const link = screen.getByRole("link", { name: new RegExp(name, "i") });
-    expect(link).toHaveAttribute("href", `/cartoes?cardId=${id}`);
+    expect(link).toHaveAttribute("href", `/hub/patrimonio?aba=cartoes&cardId=${id}`);
   });
 
   // ── Reservas / Metas ────────────────────────────────────
@@ -178,7 +178,7 @@ describe("WalletPage", () => {
   ])("shows open statement section for $name", ({ name, id }) => {
     render(<WalletPage />);
     const link = screen.getByRole("link", { name: new RegExp(name, "i") });
-    expect(link).toHaveAttribute("href", `/cartoes?cardId=${id}`);
+    expect(link).toHaveAttribute("href", `/hub/patrimonio?aba=cartoes&cardId=${id}`);
   });
 
 
