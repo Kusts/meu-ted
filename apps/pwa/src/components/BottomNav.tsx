@@ -1,21 +1,25 @@
 "use client";
 
-import type { ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
+import { useRouter } from "next/navigation";
 import {
-  Home,
-  Receipt,
+  ArrowLeftRight,
   CalendarClock,
-  MoreHorizontal,
+  Home,
+  LayoutGrid,
+  Receipt,
+  ReceiptText,
+  TrendingDown,
+  TrendingUp,
+  X,
   type LucideProps,
 } from "lucide-react";
 import { haptic } from "@/lib/ui/haptics";
 
-export type NavItem = "home" | "records" | "payables" | "more";
+export type NavItem = "home" | "records" | "compromissos" | "hub";
 
 interface BottomNavProps {
-  active: NavItem;
-  onFabClick: () => void;
-  onMoreClick: () => void;
+  active: NavItem | null;
   onNavClick: (item: NavItem) => void;
 }
 
@@ -26,10 +30,25 @@ interface ItemDef {
 }
 
 const ITEMS: ItemDef[] = [
-  { key: "home", label: "Resumo", Icon: Home },
-  { key: "records", label: "Registros", Icon: Receipt },
-  { key: "payables", label: "A pagar", Icon: CalendarClock },
-  { key: "more", label: "Mais", Icon: MoreHorizontal },
+  { key: "home", label: "Início", Icon: Home },
+  { key: "records", label: "Extrato", Icon: Receipt },
+  { key: "compromissos", label: "Compromissos", Icon: CalendarClock },
+  { key: "hub", label: "Hub", Icon: LayoutGrid },
+];
+
+type QuickActionKind = "expense" | "income" | "transfer" | "receipt";
+
+interface QuickActionDef {
+  key: QuickActionKind;
+  label: string;
+  Icon: ComponentType<LucideProps>;
+}
+
+const QUICK_ACTIONS: QuickActionDef[] = [
+  { key: "expense", label: "Despesa", Icon: TrendingDown },
+  { key: "income", label: "Receita", Icon: TrendingUp },
+  { key: "transfer", label: "Transferência", Icon: ArrowLeftRight },
+  { key: "receipt", label: "Ler Comprovante", Icon: ReceiptText },
 ];
 
 function NavButton({
@@ -79,17 +98,41 @@ function NavButton({
 
 export function BottomNav({
   active,
-  onFabClick,
-  onMoreClick,
   onNavClick,
 }: BottomNavProps) {
+  const router = useRouter();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
+  function runQuickAction(action: QuickActionKind) {
+    setMenuOpen(false);
+    haptic(8);
+    if (action === "receipt") {
+      // Share-target/scanner overflow: /capture opens the prefilled sheet.
+      router.push("/capture");
+      return;
+    }
+    // Reuses the capture (preselected) sheet mode via the AppShell listener.
+    window.dispatchEvent(
+      new CustomEvent("pwa:open-tx", { detail: { kind: action } }),
+    );
+  }
+
   return (
     <nav
       data-nav="bottom"
       className="fixed bottom-0 inset-x-0 z-20 mx-auto flex max-w-[var(--shell-max-w)] items-stretch justify-around border-t border-border bg-surface pb-[env(safe-area-inset-bottom)] lg:hidden"
       style={{ height: "var(--tab-bar-height)" }}
     >
-      {/* Items: left side (Resumo, Registros) */}
+      {/* Items: left side (Início, Extrato) */}
       {ITEMS.slice(0, 2).map((item) => (
         <NavButton
           key={item.key}
@@ -99,7 +142,7 @@ export function BottomNav({
         />
       ))}
 
-      {/* FAB — central */}
+      {/* FAB — central: opens the quick-action menu */}
       <div
         className="relative flex flex-none items-start justify-center"
         style={{ width: 64 }}
@@ -107,41 +150,73 @@ export function BottomNav({
         <button
           onClick={() => {
             haptic(8);
-            onFabClick();
+            setMenuOpen((open) => !open);
           }}
           className="relative -top-2.5 flex h-[52px] w-[52px] items-center justify-center rounded-full text-white shadow-fab transition-transform active:scale-95 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           style={{
             background: "linear-gradient(145deg, var(--primary), var(--primary-dark))",
           }}
           aria-label="Nova transação"
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
         >
-          <svg
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.6"
-            strokeLinecap="round"
-          >
-            <path d="M12 5v14M5 12h14" />
-          </svg>
+          {menuOpen ? (
+            <X size={24} strokeWidth={2.6} />
+          ) : (
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.6"
+              strokeLinecap="round"
+            >
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          )}
         </button>
+
+        {menuOpen && (
+          <>
+            <div
+              className="fixed inset-0"
+              aria-hidden="true"
+              onClick={() => setMenuOpen(false)}
+            />
+            <div
+              role="menu"
+              aria-label="Novo lançamento"
+              className="absolute bottom-full left-1/2 mb-3 flex w-[218px] -translate-x-1/2 flex-col gap-1 rounded-[18px] border border-border-subtle bg-surface-1 p-2 shadow-elevated"
+            >
+              {QUICK_ACTIONS.map((action) => (
+                <button
+                  key={action.key}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => runQuickAction(action.key)}
+                  className="flex min-h-[44px] items-center gap-3 rounded-[12px] px-3 py-2 text-left transition-colors hover:bg-surface-2 active:bg-surface-2"
+                >
+                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-primary-tint text-primary">
+                    <action.Icon size={17} strokeWidth={2} />
+                  </span>
+                  <span className="text-[13px] font-bold text-text-primary">
+                    {action.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Items: right side (A pagar, Mais) */}
+      {/* Items: right side (Compromissos, Hub) */}
       {ITEMS.slice(2).map((item) => (
         <NavButton
           key={item.key}
           item={item}
           isActive={active === item.key}
-          onClick={() => {
-            if (item.key === "more") {
-              onMoreClick();
-            } else {
-              onNavClick(item.key);
-            }
-          }}
+          onClick={() => onNavClick(item.key)}
         />
       ))}
     </nav>

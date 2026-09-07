@@ -20,26 +20,22 @@ describe("SidebarRail", () => {
     expect(screen.getByAltText("Meu Ted")).toBeInTheDocument();
   });
 
-  it("renders primary navigation items (Resumo, Registros, A pagar, Cartões, Contas)", () => {
+  it("renders canonical navigation items (item 13)", () => {
     render(<SidebarRail onNewTransaction={vi.fn()} />);
-    expect(screen.getByText("Resumo")).toBeInTheDocument();
-    expect(screen.getByText("Registros")).toBeInTheDocument();
-    expect(screen.getByText("A pagar")).toBeInTheDocument();
-    expect(screen.getByText("Cartões")).toBeInTheDocument();
-    expect(screen.getByText("Contas")).toBeInTheDocument();
-    expect(screen.getByText("Orçamentos")).toBeInTheDocument();
-    expect(screen.getByText("Metas")).toBeInTheDocument();
-    expect(screen.getByText("Patrimônio")).toBeInTheDocument();
+    for (const label of ["Início", "Extrato", "Compromissos", "Hub", "Patrimônio", "Planejamento", "Relatórios", "Alertas", "Categorias", "Configurações"]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    expect(screen.getByRole("link", { name: "Patrimônio" })).toHaveAttribute("href", "/hub/patrimonio");
   });
 
   it("marks the active route with aria-current='page'", () => {
     mockPath = "/registros";
     render(<SidebarRail onNewTransaction={vi.fn()} />);
 
-    const registrosLink = screen.getByText("Registros").closest("a");
+    const registrosLink = screen.getByText("Extrato").closest("a");
     expect(registrosLink).toHaveAttribute("aria-current", "page");
 
-    const resumoLink = screen.getByText("Resumo").closest("a");
+    const resumoLink = screen.getByText("Início").closest("a");
     expect(resumoLink).not.toHaveAttribute("aria-current");
   });
 

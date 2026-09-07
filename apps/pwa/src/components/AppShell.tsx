@@ -7,22 +7,7 @@ import BottomSheet from "@/components/BottomSheet";
 import NewTransactionSheet from "@/components/NewTransactionSheet";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import SidebarRail from "@/components/SidebarRail";
-// T2: drawer "Mais" usa lucide direto (v1 decidiu lucide; Icon.tsx legado fica
-// só com BottomNav/SidebarRail até a migração paralela do Coder 1 concluir).
-import {
-  Bell,
-  Wallet,
-  Home,
-  CreditCard,
-  Tag,
-  PieChart,
-  Target,
-  FolderOpen,
-  Layers,
-  AlertTriangle,
-  FileText,
-  type LucideIcon,
-} from "lucide-react";
+import { Bell } from "lucide-react";
 import { useIsOverlayOpen } from "@/lib/ui/overlay-a11y";
 import type { NavItem } from "@/components/BottomNav";
 import type { SaveData } from "@/components/NewTransactionSheet";
@@ -62,7 +47,7 @@ export default function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [sheetMode, setSheetMode] = useState<"new" | "more" | "preselected">(
+  const [sheetMode, setSheetMode] = useState<"new" | "preselected">(
     "new",
   );
   const [preselectedKind, setPreselectedKind] = useState<
@@ -102,7 +87,7 @@ export default function AppShell({ children }: AppShellProps) {
 
   // Derive sheet open/mode from context (no setState-in-effect)
   const effectiveSheetOpen = sheetOpen || sheetKind !== null;
-  const effectiveSheetMode: "new" | "more" | "preselected" = sheetKind
+  const effectiveSheetMode: "new" | "preselected" = sheetKind
     ? "preselected"
     : sheetMode;
   const effectivePreselectedKind: "expense" | "income" | "transfer" =
@@ -130,14 +115,16 @@ export default function AppShell({ children }: AppShellProps) {
     }
   }, []);
 
-  const activeNav: NavItem =
+  const activeNav: NavItem | null =
     pathname === "/"
       ? "home"
       : pathname === "/registros"
         ? "records"
-        : pathname === "/a-pagar"
-          ? "payables"
-          : "more";
+        : pathname === "/compromissos"
+          ? "compromissos"
+          : pathname === "/hub" || pathname?.startsWith("/hub/")
+            ? "hub"
+            : null;
 
   // B1: top-5 most-used categories feed the picker's "Mais usadas" section.
   const recentCategoryIds = useMemo(() => {
@@ -152,8 +139,8 @@ export default function AppShell({ children }: AppShellProps) {
       .map(([id]) => id);
   }, [transactions]);
 
-  function openSheetLocal(mode: "new" | "more") {
-    setSheetMode(mode);
+  function openSheetLocal() {
+    setSheetMode("new");
     setInitialDescription("");
     setCaptureFlowId(undefined);
     setSheetOpen(true);
@@ -171,7 +158,8 @@ export default function AppShell({ children }: AppShellProps) {
   function navigateTo(item: NavItem) {
     if (item === "home") router.push("/");
     else if (item === "records") router.push("/registros");
-    else if (item === "payables") router.push("/a-pagar");
+    else if (item === "compromissos") router.push("/compromissos");
+    else if (item === "hub") router.push("/hub");
   }
 
   /** Close sheet, but confirm first when the form has unsaved edits. */
@@ -253,23 +241,10 @@ export default function AppShell({ children }: AppShellProps) {
     }
   }
 
-  const moreItems: { label: string; route: string; icon: LucideIcon }[] = [
-    { label: "Patrimônio", route: "/patrimonio", icon: Wallet },
-    { label: "Contas", route: "/contas", icon: Home },
-    { label: "Cartões", route: "/cartoes", icon: CreditCard },
-    { label: "Assinaturas", route: "/assinaturas", icon: Tag },
-    { label: "Orçamentos", route: "/orcamentos", icon: PieChart },
-    { label: "Metas & Dívidas", route: "/metas", icon: Target },
-    { label: "Categorias", route: "/categorias", icon: FolderOpen },
-    { label: "Workspaces", route: "/workspaces", icon: Layers },
-    { label: "Aprovações", route: "/pending", icon: AlertTriangle },
-    { label: "Relatórios", route: "/relatorios", icon: FileText },
-  ];
-
   return (
     <div className="flex min-h-dvh w-full bg-bg">
       {/* Desktop Sidebar Rail */}
-      <SidebarRail onNewTransaction={() => openSheetLocal("new")} />
+      <SidebarRail onNewTransaction={() => openSheetLocal()} />
 
       {/* Main Content Shell */}
       <div
@@ -280,65 +255,38 @@ export default function AppShell({ children }: AppShellProps) {
           <SwipeNav>{children}</SwipeNav>
         </div>
 
-        {/* Mobile Bottom Navigation */}
+        {/* Mobile Bottom Navigation (4 tabs + FAB quick menu) */}
         <BottomNav
           active={activeNav}
-          onFabClick={() => openSheetLocal("new")}
-          onMoreClick={() => openSheetLocal("more")}
           onNavClick={handleNavClick}
         />
 
-        {/* New Transaction / More Drawer */}
+        {/* New Transaction sheet (generic + preselected capture modes) */}
         <BottomSheet
           open={effectiveSheetOpen}
           onClose={requestCloseSheet}
           title={
             effectiveSheetMode === "new"
               ? "Novo lançamento"
-              : effectiveSheetMode === "preselected"
-                ? effectivePreselectedKind === "expense"
-                  ? "Nova despesa"
-                  : effectivePreselectedKind === "income"
-                    ? "Nova receita"
-                    : "Nova transferência"
-                : "Mais"
+              : effectivePreselectedKind === "expense"
+                ? "Nova despesa"
+                : effectivePreselectedKind === "income"
+                  ? "Nova receita"
+                  : "Nova transferência"
           }
         >
-          {effectiveSheetMode === "new" ||
-          effectiveSheetMode === "preselected" ? (
-            <NewTransactionSheet
-              key={effectivePreselectedKind}
-              accounts={accounts}
-              categories={categories}
-              onSave={handleSave}
-              onAddCategory={addCategory}
-              onAddAccount={addAccount}
-              onAddCard={addCard}
-              initialTab={effectivePreselectedKind}
-              initialDescription={initialDescription}
-              recentCategoryIds={recentCategoryIds}
-            />
-          ) : (
-            <div className="grid grid-cols-3 gap-[11px]">
-              {moreItems.map((item) => (
-                <button
-                  key={item.label}
-                  onClick={() => {
-                    closeSheetLocal();
-                    router.push(item.route);
-                  }}
-                  className="flex flex-col items-center gap-2 rounded-[16px] border border-border-subtle bg-surface-2 p-3.5 transition-all hover:bg-surface-3 active:scale-[0.98]"
-                >
-                  <span className="flex h-11 w-11 items-center justify-center rounded-[12px] bg-primary-tint text-primary shadow-xs">
-                    <item.icon size={20} strokeWidth={1.9} />
-                  </span>
-                  <span className="text-center text-[12px] font-semibold text-text-primary">
-                    {item.label}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
+          <NewTransactionSheet
+            key={effectivePreselectedKind}
+            accounts={accounts}
+            categories={categories}
+            onSave={handleSave}
+            onAddCategory={addCategory}
+            onAddAccount={addAccount}
+            onAddCard={addCard}
+            initialTab={effectivePreselectedKind}
+            initialDescription={initialDescription}
+            recentCategoryIds={recentCategoryIds}
+          />
         </BottomSheet>
 
         <ConfirmActionDialog

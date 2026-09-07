@@ -45,8 +45,13 @@ function defaultState(): AppState {
   };
 }
 
-function navButton(label: string): HTMLButtonElement {
-  const bottomNav = document.querySelector('[data-nav="bottom"]');
+async function openSheetViaFab(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByLabelText("Nova transação"));
+  await user.click(screen.getByRole("menuitem", { name: "Despesa" }));
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+}
+
+function navButton(label: string): HTMLButtonElement {  const bottomNav = document.querySelector('[data-nav="bottom"]');
   const elements = screen.getAllByText(label);
   const button = elements
     .map((el) => el.closest("button"))
@@ -81,7 +86,7 @@ describe("AppShell", () => {
 
     it("renders bottom navigation", () => {
       render(<AppShell><div>Content</div></AppShell>);
-      expect(screen.getAllByText("Resumo").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("Início").length).toBeGreaterThanOrEqual(1);
       const bottomNav = document.querySelector('[data-nav="bottom"]');
       expect(bottomNav).toBeInTheDocument();
     });
@@ -107,55 +112,60 @@ describe("AppShell", () => {
   });
 
   describe("active nav state", () => {
-    it("highlights Resumo for /", () => {
+    it("highlights Início for /", () => {
       mockPath = "/";
       render(<AppShell><div>Content</div></AppShell>);
-      expectActive("Resumo");
-      expectInactive("Mais");
+      expectActive("Início");
+      expectInactive("Hub");
     });
 
-    it("highlights Registros for /registros", () => {
+    it("highlights Extrato for /registros", () => {
       mockPath = "/registros";
       render(<AppShell><div>Content</div></AppShell>);
-      expectActive("Registros");
-      expectInactive("Resumo");
+      expectActive("Extrato");
+      expectInactive("Início");
     });
 
-    it("highlights A pagar for /a-pagar", () => {
-      mockPath = "/a-pagar";
+    it("highlights Compromissos for /compromissos", () => {
+      mockPath = "/compromissos";
       render(<AppShell><div>Content</div></AppShell>);
-      expectActive("A pagar");
-      expectInactive("Resumo");
+      expectActive("Compromissos");
+      expectInactive("Início");
     });
 
-    it.each(["/cartoes", "/contas", "/metas", "/perfil", "/assinaturas", "/orcamentos", "/categorias", "/relatorios", "/patrimonio", "/workspaces"])(
-      "highlights Mais for secondary route %s",
+    it("highlights Hub for hub subroutes", () => {
+      mockPath = "/hub/patrimonio";
+      render(<AppShell><div>Content</div></AppShell>);
+      expectActive("Hub");
+      expectInactive("Início");
+    });
+
+    it.each(["/perfil", "/capture", "/convite"])(
+      "leaves every tab inactive on non-tab route %s",
       (route) => {
         mockPath = route;
         render(<AppShell><div>{route}</div></AppShell>);
-        expectActive("Mais");
-        expectInactive("Resumo");
+        expectInactive("Início");
+        expectInactive("Hub");
       },
     );
   });
 
   describe("sheet navigation", () => {
-    it("opens new transaction sheet when FAB is clicked", async () => {
+    it("opens the quick menu when FAB is clicked", async () => {
       const user = userEvent.setup();
       render(<AppShell><div>Content</div></AppShell>);
       await user.click(screen.getByLabelText("Nova transação"));
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(screen.getByRole("menu", { name: "Novo lançamento" })).toBeInTheDocument();
       expect(screen.getByText("Despesa")).toBeInTheDocument();
     });
 
-    it("opens Mais grid when Mais is clicked", async () => {
+    it("opens the preselected expense sheet from the FAB quick menu", async () => {
       const user = userEvent.setup();
       render(<AppShell><div>Content</div></AppShell>);
-      await user.click(navButton("Mais"));
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
-      expect(screen.getAllByText("Cartões").length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByText("Contas").length).toBeGreaterThanOrEqual(1);
-      expect(screen.getAllByText("Workspaces").length).toBeGreaterThanOrEqual(1);
+      await user.click(screen.getByLabelText("Nova transação"));
+      await user.click(screen.getByRole("menuitem", { name: "Despesa" }));
+      expect(screen.getByText("Nova despesa")).toBeInTheDocument();
     });
   });
 
@@ -164,12 +174,11 @@ describe("AppShell", () => {
       const user = userEvent.setup();
       render(<AppShell><div>Content</div></AppShell>);
 
-      // Open sheet via FAB
-      await user.click(screen.getByLabelText("Nova transação"));
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      // Open sheet via FAB quick menu
+      await openSheetViaFab(user);
 
-      // Click bottom nav "Registros"
-      await user.click(navButton("Registros"));
+      // Click bottom nav "Extrato"
+      await user.click(navButton("Extrato"));
 
       // Sheet should close (exit animation plays, then no dialog remains)
       await waitForElementToBeRemoved(() => screen.queryByRole("dialog"));
@@ -180,9 +189,8 @@ describe("AppShell", () => {
       const user = userEvent.setup();
       render(<AppShell><div>Content</div></AppShell>);
 
-      // Open sheet via FAB
-      await user.click(screen.getByLabelText("Nova transação"));
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      // Open sheet via FAB quick menu
+      await openSheetViaFab(user);
 
       // Press Escape
       await user.keyboard("{Escape}");
@@ -196,9 +204,8 @@ describe("AppShell", () => {
       const user = userEvent.setup();
       render(<AppShell><div>Content</div></AppShell>);
 
-      // Open sheet
-      await user.click(screen.getByLabelText("Nova transação"));
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      // Open sheet via FAB quick menu
+      await openSheetViaFab(user);
 
       // Close via backdrop
       const dialog = screen.getByRole("dialog");
@@ -220,7 +227,7 @@ describe("AppShell", () => {
       const user = userEvent.setup();
       render(<AppShell><div>Content</div></AppShell>);
 
-      await user.click(screen.getByLabelText("Nova transação"));
+      await openSheetViaFab(user);
       const amountInput = screen.getByPlaceholderText("0,00");
       await user.type(amountInput, "5000");
       const descInput = screen.getByPlaceholderText(/Aluguel, mercado/);
@@ -252,7 +259,7 @@ describe("AppShell", () => {
       const user = userEvent.setup();
       render(<AppShell><div>Content</div></AppShell>);
 
-      await user.click(screen.getByLabelText("Nova transação"));
+      await openSheetViaFab(user);
       await user.click(screen.getByText("Transferência"));
       const amountInput = screen.getByPlaceholderText("0,00");
       await user.type(amountInput, "10000");
@@ -279,7 +286,7 @@ describe("AppShell", () => {
       const user = userEvent.setup();
       render(<AppShell><div>Content</div></AppShell>);
 
-      await user.click(screen.getByLabelText("Nova transação"));
+      await openSheetViaFab(user);
       const valorInput = screen.getByPlaceholderText(/0,00/);
       await user.type(valorInput, "600000");
       const descInput = screen.getByPlaceholderText(/Aluguel, mercado/);
@@ -329,18 +336,4 @@ describe("AppShell", () => {
       expect(screen.getByTestId("pending-invites-badge").querySelector("svg")).toBeInTheDocument();
     });
 
-    it("renders the Mais drawer with one distinct icon per item (v2 A6)", async () => {
-      const user = userEvent.setup();
-      const { container } = render(<AppShell><div>Content</div></AppShell>);
-      await user.click(navButton("Mais"));
-      const dialog = screen.getByRole("dialog");
-      const buttons = Array.from(dialog.querySelectorAll("button")).filter((b) =>
-        b.textContent && ["Patrimônio", "Contas", "Cartões", "Assinaturas", "Orçamentos", "Metas", "Categorias", "Workspaces", "Aprovações", "Relatórios"].some((l) => b.textContent!.includes(l)),
-      );
-      expect(buttons.length).toBe(10);
-      const icons = buttons.map((b) => b.querySelector("svg")?.outerHTML);
-      expect(icons.every(Boolean)).toBe(true);
-      expect(new Set(icons).size).toBe(10);
-      expect(container.querySelector('[data-shell="root"]')).toBeInTheDocument();
-    });
   });

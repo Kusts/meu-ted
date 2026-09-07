@@ -14,15 +14,14 @@ import {
   Home,
   Receipt,
   CalendarClock,
-  CreditCard,
+  LayoutGrid,
   Wallet,
-  BarChart3,
-  Target,
-  Tag,
-  FolderOpen,
-  TriangleAlert,
+  CalendarCheck,
+  FileText,
   Bell,
-  Shield,
+  FolderOpen,
+  Settings,
+  Layers,
   User,
   type LucideProps,
 } from "lucide-react";
@@ -39,23 +38,20 @@ interface NavItemDef {
 }
 
 const PRIMARY_NAV: NavItemDef[] = [
-  { label: "Resumo", href: "/", icon: Home },
-  { label: "Registros", href: "/registros", icon: Receipt },
-  { label: "A pagar", href: "/a-pagar", icon: CalendarClock },
-  { label: "Cartões", href: "/cartoes", icon: CreditCard },
-  { label: "Contas", href: "/contas", icon: Wallet },
-  { label: "Orçamentos", href: "/orcamentos", icon: BarChart3 },
-  { label: "Metas", href: "/metas", icon: Target },
-  { label: "Patrimônio", href: "/patrimonio", icon: Wallet },
+  { label: "Início", href: "/", icon: Home },
+  { label: "Extrato", href: "/registros", icon: Receipt },
+  { label: "Compromissos", href: "/compromissos", icon: CalendarClock },
+  { label: "Hub", href: "/hub", icon: LayoutGrid },
 ];
 
 const SECONDARY_NAV: NavItemDef[] = [
-  { label: "Assinaturas", href: "/assinaturas", icon: Tag },
-  { label: "Categorias", href: "/categorias", icon: FolderOpen },
-  { label: "Workspaces", href: "/workspaces", icon: FolderOpen },
-  { label: "Aprovações", href: "/pending", icon: TriangleAlert },
-  { label: "Alertas", href: "/alerts/price", icon: Bell },
-  { label: "Auditoria", href: "/audit", icon: Shield },
+  { label: "Patrimônio", href: "/hub/patrimonio", icon: Wallet },
+  { label: "Planejamento", href: "/hub/planejamento", icon: CalendarCheck },
+  { label: "Relatórios", href: "/hub/relatorios", icon: FileText },
+  { label: "Alertas", href: "/hub/alertas", icon: Bell },
+  { label: "Categorias", href: "/hub/categorias", icon: FolderOpen },
+  { label: "Configurações", href: "/hub/configuracoes", icon: Settings },
+  { label: "Workspaces", href: "/workspaces", icon: Layers },
 ];
 
 export function SidebarRail({
