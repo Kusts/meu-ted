@@ -21,6 +21,7 @@ import { useAnimatedNumber } from "./hooks/useAnimatedNumber";
 import { LoadingScreen } from "./components/LoadingScreen";
 import { HeroSection } from "./components/HeroSection";
 import { QuickActions, type NewTxKind } from "./components/QuickActions";
+import { HomeAnalyticsZone } from "./components/AnalyticsZone";
 import { DeltaCards } from "./components/DeltaCards";
 import { AccountsCard } from "./components/AccountsCard";
 import { CreditCardsCard } from "./components/CreditCardsCard";
@@ -190,6 +191,8 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
               <span className="text-[11px] font-bold text-warning">Ver →</span>
             </button>
           )}
+
+          <HomeAnalyticsZone accounts={accounts.map((a) => ({ id: a.id, name: a.name }))} />
 
           <DeltaCards incomeDeltaPct={incomeDeltaPct} expenseDeltaPct={expenseDeltaPct} />
 

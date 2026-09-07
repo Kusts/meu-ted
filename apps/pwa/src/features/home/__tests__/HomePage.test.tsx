@@ -521,7 +521,9 @@ describe("HomePage", () => {
       } as AppState);
       render(<HomePage />);
       expect(screen.getByText("Caixa crescendo")).toBeInTheDocument();
-      expect(screen.getByText(/últimos 30 dias/i)).toBeInTheDocument();
+      // String completa do insight (a Home agora tem filtro global de
+      // período com o mesmo vocabulário — o pin segue exato no card).
+      expect(screen.getByText("Caixa subiu R$ 100,00 nos últimos 30 dias.")).toBeInTheDocument();
     });
   });
 
