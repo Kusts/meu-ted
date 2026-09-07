@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { apiFetch, isApiConfigured } from "./client";
-import { fetchAgentConnectionToken, clearAgentConnectionTokenCache } from "./agent-auth";
+import { fetchAgentConnectionToken, clearAgentConnectionTokenCache, trackAgentConnection } from "./agent-auth";
 
 export const attachmentSchema = z.object({
   type: z.enum(["image", "pdf", "audio"]),
@@ -120,10 +120,19 @@ const peekErrorCode = async (response: Response): Promise<string | undefined> =>
 async function fetchWithAgentAuth(workspaceId: string, url: string, init: RequestInit): Promise<Response> {
   const attempt = async (): Promise<Response> => {
     const authHeaders = await agentAuthHeaders(workspaceId, true);
-    return fetch(url, {
-      ...init,
-      headers: { ...((init.headers as Record<string, string> | undefined) ?? {}), ...authHeaders },
-    });
+    // H-13: the flight is tracked so logout/401/workspace-switch aborts it.
+    // The caller's own signal (if any) is linked, never replaced.
+    const callerSignal = init.signal instanceof AbortSignal ? init.signal : null;
+    const { signal, release } = trackAgentConnection(callerSignal);
+    try {
+      return await fetch(url, {
+        ...init,
+        headers: { ...((init.headers as Record<string, string> | undefined) ?? {}), ...authHeaders },
+        signal,
+      });
+    } finally {
+      release();
+    }
   };
   let res = await attempt();
   if (res.ok) return res;
@@ -273,12 +282,19 @@ export async function reconnectAgentTurn(workspaceId: string, turnId: string, la
 }
 
 export async function streamAgentTurn(workspaceId: string, turnId: string, lastEventId = 0): Promise<string> {
-  const response = await fetch(agentRequestUrl(workspaceId, `/stream/${encodeURIComponent(turnId)}`), {
-    credentials: "include",
-    headers: { "Accept": "text/event-stream", "Last-Event-ID": String(lastEventId), "X-Workspace-Id": workspaceId },
-  });
-  if (!response.ok) throw new Error("Reconexão do agente falhou.");
-  return response.text();
+  // H-13: tracked so session clears abort a hanging SSE reconnect.
+  const { signal, release } = trackAgentConnection();
+  try {
+    const response = await fetch(agentRequestUrl(workspaceId, `/stream/${encodeURIComponent(turnId)}`), {
+      credentials: "include",
+      headers: { "Accept": "text/event-stream", "Last-Event-ID": String(lastEventId), "X-Workspace-Id": workspaceId },
+      signal,
+    });
+    if (!response.ok) throw new Error("Reconexão do agente falhou.");
+    return await response.text();
+  } finally {
+    release();
+  }
 }
 
 export async function exportAgentHistory(workspaceId: string): Promise<AgentHistoryExport> {

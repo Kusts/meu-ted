@@ -19,7 +19,7 @@
 import { clearToken, clearSessionToken } from "@/lib/auth/token-store";
 import { deleteV2Snapshot } from "@/lib/state/snapshot-db";
 import { clearActiveWorkspaceId } from "@/lib/api/client";
-import { clearAgentConnectionTokenCache } from "@/lib/api/agent-auth";
+import { clearAgentSession } from "@/lib/api/agent-auth";
 
 const SNAPSHOT_KEY = "pi-finance:snapshot:v1";
 const PROFILE_KEY = "pi-finance:profile";
@@ -89,14 +89,14 @@ export async function clearSensitiveSession(
     tasks.push(deleteV2Snapshot().catch(() => { /* noop */ }));
   }
 
-  if (doToken || doSnapshot) {
-    // H-05: the in-memory agent connection bearer must die with the session
-    // (logout/401) and on workspace switch — otherwise the client reuses a
-    // token issued for the previous user/workspace until it expires.
-    tasks.push(
-      Promise.resolve().then(() => { try { clearAgentConnectionTokenCache(); } catch { /* noop */ } }),
-    );
-  }
+  // H-13: THE central agent cleanup — cache + every in-flight agent
+  // connection, unconditional. Any session cleanup may imply a context
+  // change (logout, 401, user switch, workspace switch, unmount), and the
+  // bearer is cheap to re-mint (single-use per call). This single call site
+  // is the whole contract: no caller needs its own agent cleanup.
+  tasks.push(
+    Promise.resolve().then(() => { try { clearAgentSession(); } catch { /* noop */ } }),
+  );
 
   // Await every attempt. allSettled guarantees no rejection escapes even if a
   // store fails, and all stores are attempted regardless of earlier failures.

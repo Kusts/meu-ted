@@ -17,11 +17,14 @@ describe("agent-auth", () => {
     const token = await fetchAgentConnectionToken("workspace-test-123");
 
     expect(token).toBe("signed-connection-token-xyz");
+    // H-13: the mint flight carries a tracked AbortSignal (session clears
+    // abort it); the workspace header contract is unchanged.
     expect(apiFetchSpy).toHaveBeenCalledWith("/auth/agent-token", {
       method: "POST",
       headers: {
         "X-Workspace-Id": "workspace-test-123",
       },
+      signal: expect.any(AbortSignal),
     });
   });
 });

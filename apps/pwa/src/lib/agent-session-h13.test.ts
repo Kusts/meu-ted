@@ -1,0 +1,116 @@
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { clearSensitiveSession } from "@/lib/session";
+import { resetLocalSession } from "@/lib/reset-session";
+import * as client from "@/lib/api/client";
+import * as agentAuth from "@/lib/api/agent-auth";
+import { sendAgentMessage, streamAgentTurn } from "@/lib/api/agent-client";
+
+describe("H-13: limpeza central do agent no logout/401/troca (+ abort)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    agentAuth.clearAgentConnectionTokenCache();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("logout -> login de outro usuário nunca reutiliza o bearer antigo", async () => {
+    const apiSpy = vi
+      .spyOn(client, "apiFetch")
+      .mockResolvedValueOnce({ token: "agent-token-user-1", expiresIn: 120 })
+      .mockResolvedValueOnce({ token: "agent-token-user-2", expiresIn: 120 });
+    const ws = "ws-h13-logout";
+
+    await agentAuth.fetchAgentConnectionToken(ws);
+    await resetLocalSession();
+    const second = await agentAuth.fetchAgentConnectionToken(ws);
+
+    expect(apiSpy).toHaveBeenCalledTimes(2);
+    expect(second).toBe("agent-token-user-2");
+  });
+
+  it("troca rápida de workspace invalida o cache mesmo sem clearToken", async () => {
+    const apiSpy = vi
+      .spyOn(client, "apiFetch")
+      .mockResolvedValueOnce({ token: "agent-token-ws-a", expiresIn: 120 })
+      .mockResolvedValueOnce({ token: "agent-token-ws-b", expiresIn: 120 });
+
+    await agentAuth.fetchAgentConnectionToken("ws-a");
+    // selectWorkspace path: snapshot/profile clear, sem clearToken.
+    await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true });
+    const second = await agentAuth.fetchAgentConnectionToken("ws-a");
+
+    expect(apiSpy).toHaveBeenCalledTimes(2);
+    expect(second).toBe("agent-token-ws-b");
+  });
+
+  it("401 no turno: voo em curso é abortado e o cache morre", async () => {
+    const apiSpy = vi.spyOn(client, "apiFetch").mockResolvedValue({ token: "agent-token-flight", expiresIn: 120 });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          // Mock fiel: respeita o AbortSignal como o fetch real.
+          const signal = (init as RequestInit | undefined)?.signal;
+          if (signal instanceof AbortSignal) {
+            if (signal.aborted) {
+              reject(new DOMException("Aborted", "AbortError"));
+              return;
+            }
+            signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+              once: true,
+            });
+          }
+        }),
+    );
+
+    const flight = sendAgentMessage("ws-h13-401", "qual meu saldo?");
+    // Deixa o turno alcançar o voo (token mintado + fetch pendente).
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetchSpy).toHaveBeenCalled();
+
+    await resetLocalSession();
+    await expect(flight).rejects.toSatisfy(
+      (err) => err instanceof Error || (typeof err === "object" && err !== null && (err as { name?: string }).name === "AbortError"),
+    );
+
+    // Cache morto pelo próprio reset (sem clear manual): próximo mint busca de novo.
+    await agentAuth.fetchAgentConnectionToken("ws-h13-401");
+    expect(apiSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("stream SSE em curso é abortado na limpeza", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = (init as RequestInit | undefined)?.signal;
+          if (signal instanceof AbortSignal) {
+            if (signal.aborted) {
+              reject(new DOMException("Aborted", "AbortError"));
+              return;
+            }
+            signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+              once: true,
+            });
+          }
+        }),
+    );
+    const flight = streamAgentTurn("ws-h13-stream", "turn-1");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await clearSensitiveSession({ clearToken: true });
+    await expect(flight).rejects.toSatisfy(
+      (err) => err instanceof Error || (typeof err === "object" && err !== null && (err as { name?: string }).name === "AbortError"),
+    );
+  });
+
+  it("chamada vazia também limpa o agent (contrato central único)", async () => {
+    const apiSpy = vi.spyOn(client, "apiFetch").mockResolvedValue({ token: "agent-token-x", expiresIn: 120 });
+    await agentAuth.fetchAgentConnectionToken("ws-h13-empty");
+    expect(apiSpy).toHaveBeenCalledTimes(1);
+    await clearSensitiveSession({});
+    await agentAuth.fetchAgentConnectionToken("ws-h13-empty");
+    expect(apiSpy).toHaveBeenCalledTimes(2);
+  });
+});

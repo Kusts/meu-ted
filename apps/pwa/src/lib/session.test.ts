@@ -315,10 +315,11 @@ describe("clearSensitiveSession", () => {
     await agentAuth.fetchAgentConnectionToken(ws);
     expect(apiSpy).toHaveBeenCalledTimes(3);
 
-    // No-op call preserves the cache.
+    // No-op call still clears the agent session (H-13 central contract:
+    // every session cleanup may imply a context change).
     await agentAuth.fetchAgentConnectionToken(ws);
     await clearSensitiveSession({});
     await agentAuth.fetchAgentConnectionToken(ws);
-    expect(apiSpy).toHaveBeenCalledTimes(3);
+    expect(apiSpy).toHaveBeenCalledTimes(4);
   });
 });
