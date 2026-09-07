@@ -17,6 +17,7 @@ export const FIXED_ENDPOINTS: Record<string, string> = {
   qwen: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
   glm: 'https://open.bigmodel.cn/api/paas/v4',
   minimax: 'https://api.minimax.chat/v1',
+  kimi: 'https://api.moonshot.ai/v1',
   google: 'https://generativelanguage.googleapis.com/v1beta',
   openrouter: 'https://openrouter.ai/api/v1',
 };
@@ -31,6 +32,22 @@ export const FIXED_ENDPOINTS: Record<string, string> = {
  */
 export { REGISTRY_UNSUPPORTED_KINDS };
 export type { RegistryUnsupportedKind } from '@pi-finance/llm-contracts/types';
+
+/** Fixed 10-provider catalog (refactor item 1): single source is the shared
+ * contract; re-exported here so agent imports keep working. */
+export {
+  PROVIDER_CATALOG,
+  getCatalogEntry,
+  isCatalogProvider,
+  maskApiKey,
+  resolveProviderDisplayStatus,
+  type ProviderCatalogEntry,
+  type ProviderCredentialStatus,
+  type ProviderDisplayStatus,
+  type RemoteModelItem,
+  type RemoteModelsResponse,
+  type LlmFailoverEvent,
+} from '@pi-finance/llm-contracts/types';
 
 export const ALLOWLISTED_SECRETS = SECRET_ALIASES;
 export type SecretAlias = ContractSecretAlias;

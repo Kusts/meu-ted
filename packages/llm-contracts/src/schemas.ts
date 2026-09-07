@@ -41,7 +41,7 @@ export const toggleEnabledSchema = z
   .strict();
 
 export const testConnectionSchema = z
-  .object({ providerId: providerIdSchema.optional() })
+  .object({ providerId: providerIdSchema.optional(), dryRun: z.boolean().optional() })
   .strict();
 
 export const retentionSchema = z.string().trim().max(120, 'retention must be at most 120 characters');
@@ -122,6 +122,57 @@ export const patchProviderSchema = z
   .strict();
 
 export const securityEpochSchema = z.object({}).strict();
+
+/**
+ * Credential CRUD (item 2). The key travels ONLY on write (POST credential);
+ * reads always return the masked status. `dryRun` performs validation +
+ * masking without persisting — used by tests and connection checks so no
+ * real key is ever required in CI.
+ */
+export const apiKeyValueSchema = z
+  .string()
+  .trim()
+  .min(8, 'api key is too short')
+  .max(256, 'api key is too long');
+
+export const setCredentialSchema = z
+  .object({
+    apiKey: apiKeyValueSchema,
+    dryRun: z.boolean().optional(),
+  })
+  .strict();
+
+export const credentialStatusSchema = z.object({
+  providerId: providerIdSchema,
+  configured: z.boolean(),
+  masked: z.string().nullable(),
+  updatedAt: z.string().nullable(),
+});
+
+export const remoteModelItemSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  ownedBy: z.string().trim().max(120).nullable().optional(),
+});
+
+export const remoteModelsResponseSchema = z.object({
+  providerId: providerIdSchema,
+  models: z.array(remoteModelItemSchema).max(500),
+  cached: z.boolean(),
+  manualEntryAllowed: z.boolean(),
+});
+
+/** Codex browser-login flow (item 6): callback carries an opaque code, the
+ * broker exchanges it server-side and persists via atomic 0600 write. */
+export const codexLoginBeginSchema = z
+  .object({ callbackUrl: z.string().trim().url().max(500).optional() })
+  .strict();
+
+export const codexLoginCallbackSchema = z
+  .object({
+    code: z.string().trim().min(4).max(500),
+    state: z.string().trim().max(128).optional(),
+  })
+  .strict();
 
 export const llmProviderSlotSchema = z.object({
   id: z.string(),

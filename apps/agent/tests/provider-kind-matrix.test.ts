@@ -18,6 +18,7 @@ const EXPECTED_ENDPOINTS: Record<string, string> = {
   qwen: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
   glm: 'https://open.bigmodel.cn/api/paas/v4',
   minimax: 'https://api.minimax.chat/v1',
+  kimi: 'https://api.moonshot.ai/v1',
   google: 'https://generativelanguage.googleapis.com/v1beta',
   openrouter: 'https://openrouter.ai/api/v1',
 };
@@ -31,6 +32,7 @@ const CHAT_COMPAT_MODELS: Record<string, string> = {
   qwen: 'qwen-max',
   glm: 'glm-4',
   minimax: 'minimax-text-01',
+  kimi: 'kimi-k2',
   // Real OpenRouter `owner/model` shape (Fase 1b-FIX item 8).
   openrouter: 'meta-llama/llama-3-8b',
 };

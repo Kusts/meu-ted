@@ -15,6 +15,7 @@ export const PROVIDER_KINDS = [
   'qwen',
   'glm',
   'minimax',
+  'kimi',
   'google',
   'openrouter',
 ] as const;
@@ -29,6 +30,7 @@ export const SECRET_ALIASES = [
   'QWEN_API_KEY',
   'GLM_API_KEY',
   'MINIMAX_API_KEY',
+  'KIMI_API_KEY',
   'GOOGLE_API_KEY',
   'OPENROUTER_API_KEY',
 ] as const;
@@ -57,6 +59,7 @@ export const KIND_SECRET_ALIASES: Record<ProviderKind, readonly SecretAlias[]> =
   qwen: ['QWEN_API_KEY'],
   glm: ['GLM_API_KEY'],
   minimax: ['MINIMAX_API_KEY'],
+  kimi: ['KIMI_API_KEY'],
   google: ['GOOGLE_API_KEY'],
   openrouter: ['OPENROUTER_API_KEY'],
 };
@@ -108,6 +111,7 @@ export const KIND_PROTOCOL_COMPAT: Record<
   qwen: ['chat-completions', 'responses'],
   glm: ['chat-completions', 'responses'],
   minimax: ['chat-completions', 'responses'],
+  kimi: ['chat-completions', 'responses'],
   google: ['google-generative-ai'],
   openrouter: ['chat-completions', 'responses'],
 };
@@ -188,4 +192,102 @@ export interface RuntimeSnapshot {
   activeModelName: string | null;
   /** Bare upstream model id for the fallback slot (same semantics). */
   fallbackModelName: string | null;
+}
+
+/**
+ * Fixed provider catalog (refactor item 1). The 10 entries below are the
+ * ONLY providers the "Gerenciador de IA" UI offers — provider CRUD for
+ * arbitrary ids stays available on the legacy advanced path for backwards
+ * compatibility, but new credentials are managed per catalog entry only.
+ * Kimi = Moonshot AI (https://api.moonshot.ai/v1, OpenAI-compatible).
+ * Codex = Coding-plan subscription via the private broker (browser login,
+ * no API key, no public model listing — manual model id only).
+ */
+export type ProviderAuthFormat = 'bearer-key' | 'browser-session';
+
+export interface ProviderCatalogEntry {
+  id: string;
+  kind: ProviderKind;
+  displayName: string;
+  baseUrl: string | null;
+  modelsPath: string | null;
+  authFormat: ProviderAuthFormat;
+  secretAlias: SecretAlias | null;
+  supportsDynamicModels: boolean;
+}
+
+export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
+  { id: 'minimax', kind: 'minimax', displayName: 'MiniMax', baseUrl: 'https://api.minimax.chat/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'MINIMAX_API_KEY', supportsDynamicModels: true },
+  { id: 'qwen', kind: 'qwen', displayName: 'Qwen (DashScope)', baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'QWEN_API_KEY', supportsDynamicModels: true },
+  { id: 'glm', kind: 'glm', displayName: 'GLM (Zhipu)', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'GLM_API_KEY', supportsDynamicModels: true },
+  { id: 'opencode-zen', kind: 'opencode-zen', displayName: 'OpenCode Zen', baseUrl: 'https://opencode.ai/zen/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'OPENCODE_ZEN_API_KEY', supportsDynamicModels: true },
+  { id: 'opencode-go', kind: 'opencode-go', displayName: 'OpenCode Go', baseUrl: 'https://opencode.ai/zen/go/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'OPENCODE_GO_API_KEY', supportsDynamicModels: true },
+  { id: 'openai', kind: 'openai', displayName: 'OpenAI', baseUrl: 'https://api.openai.com/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'OPENAI_API_KEY', supportsDynamicModels: true },
+  { id: 'openrouter', kind: 'openrouter', displayName: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'OPENROUTER_API_KEY', supportsDynamicModels: true },
+  { id: 'deepseek', kind: 'deepseek', displayName: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'DEEPSEEK_API_KEY', supportsDynamicModels: true },
+  { id: 'kimi', kind: 'kimi', displayName: 'Kimi (Moonshot)', baseUrl: 'https://api.moonshot.ai/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'KIMI_API_KEY', supportsDynamicModels: true },
+  { id: 'openai-codex-subscription', kind: 'openai-codex-subscription', displayName: 'Codex (plano Coding)', baseUrl: null, modelsPath: null, authFormat: 'browser-session', secretAlias: null, supportsDynamicModels: false },
+];
+
+export const getCatalogEntry = (id: string): ProviderCatalogEntry | undefined =>
+  PROVIDER_CATALOG.find((e) => e.id === id || e.kind === id);
+
+export const isCatalogProvider = (id: string): boolean => getCatalogEntry(id) !== undefined;
+
+/**
+ * Credential CRUD surface (refactor item 2). The full key is NEVER returned
+ * to the front — only `masked` (ex. `sk-…abcd`) plus a boolean. `maskApiKey`
+ * is the single masking implementation shared by API responses and tests.
+ */
+export interface ProviderCredentialStatus {
+  providerId: string;
+  configured: boolean;
+  masked: string | null;
+  updatedAt: string | null;
+}
+
+export const maskApiKey = (key: string): string => {
+  const trimmed = (key ?? '').trim();
+  if (trimmed.length === 0) return '…';
+  if (trimmed.length <= 4) return `…${trimmed}`;
+  const prefix = trimmed.length >= 3 && trimmed[2] === '-' ? trimmed.slice(0, 3) : trimmed.slice(0, 2);
+  return `${prefix}…${trimmed.slice(-4)}`;
+};
+
+/** UI status per provider (refactor item 7). Exactly one provider/model pair
+ * is ATIVO and at most one is FALLBACK; anything with a key is configurado. */
+export type ProviderDisplayStatus = 'nao-configurado' | 'configurado' | 'ativo' | 'fallback';
+
+export const resolveProviderDisplayStatus = (input: {
+  configured: boolean;
+  isActive: boolean;
+  isFallback: boolean;
+}): ProviderDisplayStatus => {
+  if (input.isActive) return 'ativo';
+  if (input.isFallback) return 'fallback';
+  return input.configured ? 'configurado' : 'nao-configurado';
+};
+
+/** Remote model item returned by the dynamic listing endpoint (item 3). */
+export interface RemoteModelItem {
+  id: string;
+  ownedBy?: string | null;
+}
+
+export interface RemoteModelsResponse {
+  providerId: string;
+  models: RemoteModelItem[];
+  cached: boolean;
+  manualEntryAllowed: boolean;
+}
+
+/** Failover log/metric payload (item 5). Never carries secrets. */
+export interface LlmFailoverEvent {
+  intentionId: string;
+  primaryProviderId: string;
+  primaryModelId: string;
+  fallbackProviderId: string | null;
+  fallbackModelId: string | null;
+  usedFallback: boolean;
+  failoverReason: string | null;
 }
