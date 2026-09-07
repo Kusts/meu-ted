@@ -5,6 +5,7 @@ import { useWorkspaceSafe } from "@/lib/auth/workspace-context";
 import {
   fetchAgentHistory,
   sendAgentMessage,
+  renewAgentSession,
   fetchPendingOperations,
   type AgentMessage,
   type PendingOperation,
@@ -12,7 +13,7 @@ import {
 import { TedMessage } from "./TedMessage";
 import { TedApprovalCard } from "./TedApprovalCard";
 import { useBodyScrollLock } from "@/lib/ui/overlay-a11y";
-import { Sparkles, X, Send, Mic, MicOff, Image as ImageIcon, FileText, Paperclip, Trash2 } from "lucide-react";
+import { Sparkles, X, Send, Mic, MicOff, Image as ImageIcon, FileText, Paperclip, Trash2, RefreshCw } from "lucide-react";
 
 const HISTORY_LOAD_ERROR = "Não foi possível carregar o histórico. Tente novamente.";
 const MESSAGE_SEND_ERROR = "Não foi possível enviar a mensagem. Tente novamente.";
@@ -33,6 +34,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [status, setStatus] = useState<"connecting" | "ready" | "streaming" | "error">("ready");
   const [attachments, setAttachments] = useState<TedAttachment[]>([]);
   const [recording, setRecording] = useState(false);
@@ -43,6 +45,19 @@ export function TedChat({ open, onClose }: TedChatProps) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const prevWorkspaceIdRef = useRef<string | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flashNotice = useCallback((text: string) => {
+    setNotice(text);
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = setTimeout(() => setNotice(null), 6000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
   // Full-screen overlay como as demais superfícies: trava o scroll do body
   // (ref-counted, libera ao fechar/desmontar) e conta para useIsOverlayOpen.
   useBodyScrollLock(open);
@@ -224,10 +239,12 @@ export function TedChat({ open, onClose }: TedChatProps) {
       const textWithAttachments = attachmentsToSend.length > 0
         ? `${userText} ${attachmentsToSend.map((a) => `[${a.type}: ${a.name}]`).join(" ")}`.trim()
         : userText;
-      if (attachmentsToSend.length > 0) {
-        await sendAgentMessage(activeWorkspace.id, textWithAttachments, { attachments: attachmentsToSend } as unknown as never);
-      } else {
-        await sendAgentMessage(activeWorkspace.id, textWithAttachments);
+      const turn =
+        attachmentsToSend.length > 0
+          ? await sendAgentMessage(activeWorkspace.id, textWithAttachments, { attachments: attachmentsToSend } as unknown as never)
+          : await sendAgentMessage(activeWorkspace.id, textWithAttachments);
+      if (turn.memorized && turn.memorized.length > 0) {
+        flashNotice(`TED memorizou: ${turn.memorized.slice(0, 2).join(" · ")}`);
       }
       await loadHistory();
     } catch {
@@ -236,6 +253,21 @@ export function TedChat({ open, onClose }: TedChatProps) {
       await loadHistory(true);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleNewSession = async () => {
+    if (!activeWorkspace || loading) return;
+    setError(null);
+    try {
+      await renewAgentSession(activeWorkspace.id);
+      setMessages([]);
+      setPendingOps([]);
+      setInput("");
+      flashNotice("Nova sessão iniciada — o TED mantém o que aprendeu.");
+      await loadHistory();
+    } catch {
+      setError("Não foi possível iniciar uma nova sessão. Tente novamente.");
     }
   };
 
@@ -272,6 +304,16 @@ export function TedChat({ open, onClose }: TedChatProps) {
             </div>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => void handleNewSession()}
+              disabled={loading}
+              aria-label="Nova sessão"
+              title="Nova sessão (mantém memórias)"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-surface-3 text-text-secondary shadow-xs transition-colors hover:bg-surface-4 hover:text-text-primary disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw size={14} />
+            </button>
             <button
               type="button"
               onClick={onClose}
@@ -353,6 +395,13 @@ export function TedChat({ open, onClose }: TedChatProps) {
 
           <div ref={messagesEndRef} />
         </div>
+
+        {notice && (
+          <div role="status" className="mx-4 mb-2 flex items-center gap-2 rounded-[12px] border border-primary/30 bg-primary-tint px-3.5 py-2 text-[12px] font-semibold text-primary shadow-xs">
+            <Sparkles size={13} className="flex-none" />
+            <span className="truncate">{notice}</span>
+          </div>
+        )}
 
         {/* Footer Input */}
         <form onSubmit={handleSend} className="border-t border-border-subtle bg-surface-1 p-3 pb-[env(safe-area-inset-bottom)]">

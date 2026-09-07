@@ -42,7 +42,7 @@ function agentBaseUrl(): string {
   return "/api/agent";
 }
 
-export type AgentTurn = { turnId: string; status: string; attempts?: number; output?: string };
+export type AgentTurn = { turnId: string; status: string; attempts?: number; output?: string; memorized?: string[] };
 
 const agentHistoryExportSchema = z.object({
   version: z.number(),
@@ -140,12 +140,47 @@ export async function sendAgentMessage(
     else if (response.status === 403) err.code = "auth.workspace_forbidden";
     throw err;
   }
-  const data = await response.json() as { turnId?: string; intentionId?: string; status?: string; output?: string };
+  const data = await response.json() as { turnId?: string; intentionId?: string; status?: string; output?: string; memorized?: string[] };
   return {
     turnId: data.turnId ?? data.intentionId ?? `turn-${Date.now()}`,
     status: data.status ?? "completed",
     output: data.output,
+    ...(Array.isArray(data.memorized) ? { memorized: data.memorized.filter((m): m is string => typeof m === "string") } : {}),
   };
+}
+
+export type AgentSessionRenewal = {
+  ok: boolean;
+  sessionId: string;
+  previousSessionId: string | null;
+  messageCount: number;
+  summarized: boolean;
+};
+
+/**
+ * Starts a fresh chat session (Part B): archives the current context into
+ * the session registry and clears the model context. Durable memories are
+ * kept. Plain fetch (same shape as sendAgentMessage) — intentionally not
+ * an apiFetch endpoint write.
+ */
+export async function renewAgentSession(workspaceId: string): Promise<AgentSessionRenewal> {
+  const baseUrl = agentBaseUrl();
+  const authHeaders = await agentAuthHeaders(workspaceId);
+  const response = await fetch(
+    `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/session/new`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "content-type": "application/json",
+        "X-Workspace-Id": workspaceId,
+        ...authHeaders,
+      },
+      body: JSON.stringify({}),
+    },
+  );
+  if (!response.ok) throw new Error("Não foi possível iniciar uma nova sessão.");
+  return (await response.json()) as AgentSessionRenewal;
 }
 
 export async function cancelAgentTurn(workspaceId: string, turnId: string): Promise<AgentTurn> {
