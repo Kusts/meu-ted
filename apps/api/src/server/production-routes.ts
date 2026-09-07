@@ -16,6 +16,7 @@ import type { VapidConfig } from "../push/vapid.js";
 import { createLegacyPostgresReadModelStore } from "../read-models/legacy-postgres-store.js";
 import { createPostgresReadModelStore } from "../read-models/postgres-store.js";
 import { registerRoutes } from "../routes/index.js";
+import { createSqlAnalyticsSource } from "../analytics/source.js";
 import { createLegacyPostgresSubscriptionStore } from "../subscriptions/legacy-postgres.js";
 import { createPostgresSubscriptionStore } from "../subscriptions/postgres.js";
 import { createLegacyPostgresWriteStore } from "../writes/legacy-postgres.js";
@@ -159,6 +160,10 @@ export const registerPostgresProductionRoutes = (
       pushStore,
       auditLogs,
       disableDeviceRegistration: true,
+      analyticsSource: createSqlAnalyticsSource(pool, {
+        legacy: true,
+        stores: { store, cardStore, budgetStore, subscriptionStore },
+      }),
       ...(betterAuth ? { auth: betterAuth } : {}),
       ...(workspaceAccess ? { workspaceAccess } : {}),
       ...(workspaceStore ? { workspaceStore } : {}),
@@ -197,6 +202,9 @@ export const registerPostgresProductionRoutes = (
     pushStore,
     auditLogs,
     disableDeviceRegistration: true,
+    analyticsSource: createSqlAnalyticsSource(pool, {
+      stores: { store, cardStore, budgetStore, subscriptionStore },
+    }),
     ...(betterAuth ? { auth: betterAuth } : {}),
     ...(workspaceAccess ? { workspaceAccess } : {}),
     ...(workspaceStore ? { workspaceStore } : {}),

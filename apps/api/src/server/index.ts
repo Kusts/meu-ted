@@ -35,6 +35,7 @@ import { createPostgresReadModelStore } from "../read-models/postgres-store.js";
 import { runMigrations } from "../read-models/sql/migrate.js";
 import { createInMemoryReadModelStoreFromState } from "../read-models/store.js";
 import { registerRoutes } from "../routes/index.js";
+import { createSqlAnalyticsSource } from "../analytics/source.js";
 import { createInMemorySubscriptionStore } from "../subscriptions/in-memory.js";
 import { createLegacyPostgresSubscriptionStore } from "../subscriptions/legacy-postgres.js";
 import { createPostgresSubscriptionStore } from "../subscriptions/postgres.js";
@@ -203,6 +204,10 @@ const start = async (): Promise<void> => {
         ...inviteRuntime,
         ...accountInviteRuntime,
         inviteSignupGuard,
+        analyticsSource: createSqlAnalyticsSource(pool, {
+          legacy: true,
+          stores: { store, cardStore, budgetStore, subscriptionStore },
+        }),
         llmConfigStore: createPostgresLlmConfigStore(pool),
         agentConnectionSecret: cfg.agentConnectionSecret,
         agentConfigToken: cfg.agentConfigToken,
@@ -303,6 +308,9 @@ const start = async (): Promise<void> => {
         trustedOrigins: cfg.trustedOrigins,
         disableDeviceRegistration: cfg.disableDeviceRegistration,
         pool,
+        analyticsSource: createSqlAnalyticsSource(pool, {
+          stores: { store, cardStore, budgetStore, subscriptionStore },
+        }),
         ...(vapid?.publicKey ? { vapidPublicKey: vapid.publicKey } : {}),
         ...(pushDelivery ? { pushDelivery } : {}),
       });

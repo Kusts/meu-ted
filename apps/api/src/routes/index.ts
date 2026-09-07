@@ -44,6 +44,8 @@ import { registerAuthRoutes } from "./auth.js";
 import { registerPendingOperationRoutes } from "./pending-operations.js";
 import { registerAccountRoutes } from "./accounts.js";
 import { registerCategoryRoutes } from "./categories.js";
+import { registerAnalyticsRoutes } from "./analytics.js";
+import { createStoreAnalyticsSource, type AnalyticsSource } from "../analytics/source.js";
 import { registerTransactionRoutes } from "./transactions.js";
 import { registerTransactionWriteRoutes } from "./transactions-write.js";
 import { registerDashboardRoutes } from "./dashboard.js";
@@ -135,6 +137,8 @@ export type RouteDeps = {
   adminLlmAuditLog?: (event: AdminLlmReadAudit) => void;
   inviteSignupGuard?: import('../auth/invite-signup-guard.js').InviteSignupGuard;
   pool?: { query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }> } | null;
+  /** Overrides the analytics source (SQL-backed in production, store-backed by default). */
+  analyticsSource?: AnalyticsSource;
 };
 
 
@@ -399,6 +403,18 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     idempotency,
   });
   registerDashboardRoutes(app, { store: deps.store, resolveToken, clock });
+  registerAnalyticsRoutes(app, {
+    source:
+      deps.analyticsSource ??
+      createStoreAnalyticsSource({
+        store: deps.store,
+        ...(deps.cardStore ? { cardStore: deps.cardStore } : {}),
+        ...(deps.budgetStore ? { budgetStore: deps.budgetStore } : {}),
+        ...(deps.subscriptionStore ? { subscriptionStore: deps.subscriptionStore } : {}),
+      }),
+    resolveToken,
+    clock,
+  });
   registerInsightRoutes(app, {
     store: deps.store,
     resolveToken,

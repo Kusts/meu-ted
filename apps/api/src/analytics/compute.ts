@@ -1,0 +1,236 @@
+/**
+ * Pure analytics computations (item 14, etapa A). These functions operate on
+ * aggregate outputs from `AnalyticsSource` (daily/category/monthly sums plus
+ * small entity lists), so the same code serves every backend: the
+ * per-backend sources decide how inputs are loaded (in-memory loops vs
+ * aggregate SQL).
+ */
+
+import type { BudgetStatus, Category, Statement } from '../types/domain.js';
+import type {
+  AnalyticsRange,
+  BudgetConsumptionItem,
+  CashflowSeries,
+  CategoryBreakdown,
+  DailyHeatmap,
+  HeatmapDay,
+  MoneyPoint,
+  NetWorthPoint,
+} from './types.js';
+import type { CategorySum, DailySum, MonthlyFlow } from './source.js';
+
+export const toISODate = (date: Date): string => date.toISOString().slice(0, 10);
+
+export const addDays = (iso: string, days: number): string => {
+  const date = new Date(`${iso}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return toISODate(date);
+};
+
+const daysBetween = (from: string, to: string): number =>
+  Math.round((new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86_400_000);
+
+export const resolveRange = (
+  period: 'last30days' | 'lastMonth' | 'thisYear' | 'custom' | undefined,
+  today: string,
+  from?: string,
+  to?: string,
+): AnalyticsRange => {
+  const kind = period ?? 'last30days';
+  if (kind === 'custom') return { from: from as string, to: to as string };
+  if (kind === 'lastMonth') {
+    const first = new Date(`${today.slice(0, 7)}-01T00:00:00.000Z`);
+    first.setUTCMonth(first.getUTCMonth() - 1);
+    return { from: toISODate(first), to: addDays(`${today.slice(0, 7)}-01`, -1) };
+  }
+  if (kind === 'thisYear') return { from: `${today.slice(0, 4)}-01-01`, to: today };
+  return { from: addDays(today, -29), to: today };
+};
+
+/** Same-length range immediately before `range` (for deltas/overlays). */
+export const previousRangeOf = (range: AnalyticsRange): AnalyticsRange => {
+  const length = daysBetween(range.from, range.to) + 1;
+  return { from: addDays(range.from, -length), to: addDays(range.from, -1) };
+};
+
+export const savingsRatePct = (incomeCents: number, expenseCents: number): number | null => {
+  if (incomeCents <= 0) return null;
+  return Math.round(((incomeCents - expenseCents) / incomeCents) * 1000) / 10;
+};
+
+/** Monthly-normalized fixed costs: subscriptions + active card recurrings. */
+export const MONTHLY_FACTOR: Record<string, number> = { weekly: 30 / 7, monthly: 1, quarterly: 1 / 3, yearly: 1 / 12 };
+
+export const normalizeMonthly = (amountCents: number, cycle: string): number =>
+  Math.round(amountCents * (MONTHLY_FACTOR[cycle] ?? 1));
+
+export const statementRemaining = (statement: Pick<Statement, 'totalCents' | 'paidCents'>): number =>
+  Math.max(0, statement.totalCents - statement.paidCents);
+
+export const isOpenStatement = (statement: Pick<Statement, 'status'>): boolean =>
+  statement.status === 'open' ||
+  statement.status === 'closed' ||
+  statement.status === 'overdue' ||
+  statement.status === 'partial';
+
+/** Open statements due within `withinDays` days from `today` (inclusive). */
+export const statementsDueSoon = <T extends Pick<Statement, 'status' | 'dueDate'>>(
+  statements: T[],
+  today: string,
+  withinDays: number,
+): T[] => {
+  const limit = addDays(today, withinDays);
+  return statements.filter((s) => isOpenStatement(s) && s.dueDate >= today && s.dueDate <= limit);
+};
+
+const accumulateDaily = (slot: AnalyticsRange, sums: DailySum[]): MoneyPoint[] => {
+  const byDay = new Map(sums.map((s) => [s.date, s.incomeCents - s.expenseCents]));
+  const points: MoneyPoint[] = [];
+  let cumulative = 0;
+  for (let cursor = slot.from; cursor <= slot.to; cursor = addDays(cursor, 1)) {
+    cumulative += byDay.get(cursor) ?? 0;
+    points.push({ date: cursor, valueCents: cumulative });
+  }
+  return points;
+};
+
+export const buildCashflowSeries = (
+  range: AnalyticsRange,
+  previous: AnalyticsRange,
+  currentSums: DailySum[],
+  previousSums: DailySum[],
+): CashflowSeries => ({
+  period: range,
+  current: accumulateDaily(range, currentSums),
+  previous: accumulateDaily(previous, previousSums),
+});
+
+const MACRO_PALETTE = ['#0E8C5A', '#3E6FB0', '#B7791F', '#C8483B', '#805AD5'];
+export const DONUT_MAX_SLICES = 5;
+
+export const buildCategoryBreakdown = (
+  sums: CategorySum[],
+  categories: Pick<Category, 'id' | 'name' | 'parentId' | 'color'>[],
+  range: AnalyticsRange,
+  kind: 'expense' | 'income',
+  maxSlices = DONUT_MAX_SLICES,
+): CategoryBreakdown => {
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const totals = new Map<string, number>();
+  let totalCents = 0;
+  for (const sum of sums) {
+    const cat = byId.get(sum.categoryId);
+    const macroId = cat ? (cat.parentId ?? cat.id) : sum.categoryId;
+    totals.set(macroId, (totals.get(macroId) ?? 0) + sum.totalCents);
+    totalCents += sum.totalCents;
+  }
+  const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+  const head = ranked.slice(0, Math.max(1, maxSlices));
+  const tailTotal = ranked.slice(Math.max(1, maxSlices)).reduce((acc, [, value]) => acc + value, 0);
+  const pctOf = (value: number): number => (totalCents > 0 ? Math.round((value / totalCents) * 1000) / 10 : 0);
+  const slices = head.map(([macroId, value], index) => {
+    const cat = byId.get(macroId);
+    return {
+      categoryId: macroId,
+      name: cat?.name ?? 'Outras',
+      totalCents: value,
+      pct: pctOf(value),
+      color: cat?.color ?? MACRO_PALETTE[index % MACRO_PALETTE.length] ?? '#0E8C5A',
+    };
+  });
+  if (tailTotal > 0) {
+    slices.push({ categoryId: 'outras', name: 'Outras', totalCents: tailTotal, pct: pctOf(tailTotal), color: '#9AA5A0' });
+  }
+  return { period: range, kind, totalCents, slices };
+};
+
+export const buildBudgetConsumption = (budgets: BudgetStatus[]): BudgetConsumptionItem[] =>
+  budgets.map((budget) => {
+    const pctUsed = budget.amountCents > 0 ? Math.round((budget.spentCents / budget.amountCents) * 1000) / 10 : 0;
+    return {
+      budgetId: budget.id,
+      name: budget.name,
+      categoryId: budget.categoryId,
+      spentCents: budget.spentCents,
+      amountCents: budget.amountCents,
+      pctUsed,
+      overBudget: pctUsed > 100,
+      thresholdBreached: pctUsed >= (budget.alertThreshold ?? 80),
+    };
+  });
+
+const heatLevel = (value: number, max: number): 0 | 1 | 2 | 3 | 4 => {
+  if (value <= 0 || max <= 0) return 0;
+  const ratio = value / max;
+  if (ratio <= 0.25) return 1;
+  if (ratio <= 0.5) return 2;
+  if (ratio <= 0.75) return 3;
+  return 4;
+};
+
+/** Monday of the week containing `iso`. */
+export const mondayOf = (iso: string): string => {
+  const date = new Date(`${iso}T00:00:00.000Z`);
+  return addDays(iso, -((date.getUTCDay() + 6) % 7));
+};
+
+/**
+ * Last 4 Monday-first weeks ending with the week that contains `endDate`
+ * (GitHub style, exactly 7x4). Cells outside [gridStart, endDate] render
+ * empty; `sums` may cover a wider window and are clipped.
+ */
+export const buildDailyHeatmap = (sums: DailySum[], endDate: string): DailyHeatmap => {
+  const gridStart = addDays(mondayOf(endDate), -21);
+  const byDay = new Map<string, number>();
+  for (const sum of sums) {
+    if (sum.date < gridStart || sum.date > endDate) continue;
+    byDay.set(sum.date, (byDay.get(sum.date) ?? 0) + sum.expenseCents);
+  }
+  let max = 0;
+  for (const value of byDay.values()) max = Math.max(max, value);
+  const weeks: DailyHeatmap['weeks'] = [];
+  for (let week = 0; week < 4; week += 1) {
+    const weekStart = addDays(gridStart, week * 7);
+    const days: HeatmapDay[] = [];
+    for (let day = 0; day < 7; day += 1) {
+      const date = addDays(weekStart, day);
+      const inWindow = date >= gridStart && date <= endDate;
+      const totalCents = inWindow ? (byDay.get(date) ?? 0) : 0;
+      days.push({ date, totalCents, level: heatLevel(totalCents, max) });
+    }
+    weeks.push({ weekStart, days });
+  }
+  return { endDate, weeks };
+};
+
+/**
+ * Net worth per month for the last `months` months, reconstructed backwards
+ * from today's position: worth(month) = now − flows strictly after it.
+ */
+export const buildNetWorthHistory = (
+  currentNetWorthCents: number,
+  flows: MonthlyFlow[],
+  today: string,
+  months: number,
+): NetWorthPoint[] => {
+  const monthStartOf = (back: number): string => {
+    const cursor = new Date(`${today.slice(0, 7)}-01T00:00:00.000Z`);
+    cursor.setUTCMonth(cursor.getUTCMonth() - back);
+    return toISODate(cursor);
+  };
+  const points: NetWorthPoint[] = [];
+  for (let back = months - 1; back >= 0; back -= 1) {
+    const start = monthStartOf(back);
+    if (back === 0) {
+      points.push({ month: start.slice(0, 7), netWorthCents: currentNetWorthCents });
+      continue;
+    }
+    const windowStart = monthStartOf(back - 1);
+    let flowAfter = 0;
+    for (const flow of flows) {
+      if (flow.month >= windowStart.slice(0, 7)) flowAfter += flow.incomeCents - flow.expenseCents;
+    }
+    points.push({ month: start.slice(0, 7), netWorthCents: currentNetWorthCents - flowAfter });
+  }
+  return points;
+};
