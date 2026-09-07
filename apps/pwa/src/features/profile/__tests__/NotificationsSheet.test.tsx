@@ -132,7 +132,7 @@ describe("NotificationsSheet", () => {
     expect(screen.getByText(/85%.*limite/i)).toBeInTheDocument();
   });
 
-  it("clicking 'Abrir' navigates to /a-pagar and closes the sheet", async () => {
+  it("clicking 'Abrir' navigates to compromissos and closes the sheet", async () => {
     const onClose = vi.fn();
     vi.spyOn(appStateModule, "useAppState").mockReturnValue({
       ...baseState(),
@@ -143,11 +143,11 @@ describe("NotificationsSheet", () => {
     const user = userEvent.setup();
     render(<NotificationsSheet open onClose={onClose} />);
     await user.click(screen.getByText("Abrir"));
-    expect(mockRouter.push).toHaveBeenCalledWith("/a-pagar");
+    expect(mockRouter.push).toHaveBeenCalledWith("/compromissos?aba=a-pagar");
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("clicking 'Abrir' on a card-near-limit item navigates to /cartoes?cardId=", async () => {
+  it("clicking 'Abrir' on a card-near-limit item navigates to patrimonio cartoes", async () => {
     const onClose = vi.fn();
     vi.spyOn(appStateModule, "useAppState").mockReturnValue({
       ...baseState(),
@@ -164,7 +164,7 @@ describe("NotificationsSheet", () => {
     const user = userEvent.setup();
     render(<NotificationsSheet open onClose={onClose} />);
     await user.click(screen.getByText("Abrir"));
-    expect(mockRouter.push).toHaveBeenCalledWith("/cartoes?cardId=card-x");
+    expect(mockRouter.push).toHaveBeenCalledWith("/hub/patrimonio?aba=cartoes&cardId=card-x");
     expect(onClose).toHaveBeenCalled();
   });
 

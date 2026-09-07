@@ -6,11 +6,17 @@ import BottomSheet from "@/components/BottomSheet";
 import PushNotificationsCard from "./PushNotificationsCard";
 import { useAppState } from "@/lib/state/app-state-context";
 import { useWorkspaceSafe } from "@/lib/auth/workspace-context";
+import { routeCompromissos, routePatrimonio, routePlanejamento } from "@/lib/routes";
 
 interface NotificationsSheetProps {
   open: boolean;
   onClose: () => void;
   workspaceId?: string;
+  /**
+   * Inline mode renders the panel content without the BottomSheet wrapper
+   * (used by the /hub/alertas Financeiras tab, item 13). Defaults to sheet.
+   */
+  inline?: boolean;
 }
 
 const DISMISSED_STORAGE_KEY = "pi-finance:notifications-dismissed";
@@ -47,6 +53,7 @@ export default function NotificationsSheet({
   open,
   onClose,
   workspaceId,
+  inline = false,
 }: NotificationsSheetProps) {
   const router = useRouter();
   const { payables, budgets, transactions, accounts, cardStatements, goals } = useAppState();
@@ -54,7 +61,7 @@ export default function NotificationsSheet({
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!open) return;
+    if (!open && !inline) return;
     try {
       const raw = localStorage.getItem(DISMISSED_STORAGE_KEY);
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -62,7 +69,7 @@ export default function NotificationsSheet({
     } catch {
       // ignore
     }
-  }, [open]);
+  }, [open, inline]);
 
   const items = useMemo<AlertItem[]>(() => {
     const now = todayISO();
@@ -81,7 +88,7 @@ export default function NotificationsSheet({
           typeLabel: "Conta a pagar",
           title: `${p.description} vencida`,
           detail: `${amount} • venceu em ${p.dueDate}`,
-          href: "/a-pagar",
+          href: routeCompromissos("a-pagar"),
         });
       } else if (ahead <= 0) {
         list.push({
@@ -90,7 +97,7 @@ export default function NotificationsSheet({
           typeLabel: "Conta a pagar",
           title: `${p.description} vence hoje`,
           detail: amount,
-          href: "/a-pagar",
+          href: routeCompromissos("a-pagar"),
         });
       } else if (ahead <= 7) {
         list.push({
@@ -99,7 +106,7 @@ export default function NotificationsSheet({
           typeLabel: "Conta a pagar",
           title: `${p.description} vence em ${ahead} ${ahead === 1 ? "dia" : "dias"}`,
           detail: `${amount} • ${p.dueDate}`,
-          href: "/a-pagar",
+          href: routeCompromissos("a-pagar"),
         });
       }
     }
@@ -118,7 +125,7 @@ export default function NotificationsSheet({
         typeLabel: "Orçamento",
         title: `Orçamento ${b.name} ${ratio >= 1 ? "estourou" : "quase no limite"}`,
         detail: `${(ratio * 100).toFixed(0)}% usado (${spent} de ${total})`,
-        href: "/orcamentos",
+        href: routePlanejamento("orcamentos"),
       });
     }
 
@@ -149,7 +156,7 @@ export default function NotificationsSheet({
         typeLabel: "Cartão",
         title: `${card.name} — ${(ratio * 100).toFixed(0)}% do limite`,
         detail: `${spentBRL} usado de ${limitBRL}`,
-        href: `/cartoes?cardId=${encodeURIComponent(card.id)}`,
+        href: routePatrimonio("cartoes", { cardId: card.id }),
       });
     }
 
@@ -165,7 +172,7 @@ export default function NotificationsSheet({
           typeLabel: "Meta",
           title: `${g.name} — só ${pct.toFixed(0)}% concluída`,
           detail: `${fmtBRL(g.currentAmountCents)} de ${fmtBRL(g.targetAmountCents)}`,
-          href: "/metas",
+          href: routePlanejamento("metas"),
         });
       }
     }
@@ -202,7 +209,7 @@ export default function NotificationsSheet({
   };
 
   const goToItem = (href: string) => {
-    onClose();
+    if (!inline) onClose();
     router.push(href);
   };
 
@@ -222,8 +229,8 @@ export default function NotificationsSheet({
     }
   };
 
-  return (
-    <BottomSheet open={open} onClose={onClose} title="Notificações">
+  const panel = (
+    <>
       <PushNotificationsCard workspaceId={workspaceId ?? workspace?.activeWorkspace?.id} />
       <div className="mb-4 rounded-[18px] bg-fill-light p-4">
         <div className="mb-1 text-[15px] font-bold text-text-primary">
@@ -299,7 +306,7 @@ export default function NotificationsSheet({
         </div>
       ))}
 
-      {grouped.length > 0 && (
+      {!inline && grouped.length > 0 && (
         <button
           type="button"
           onClick={onClose}
@@ -308,6 +315,13 @@ export default function NotificationsSheet({
           Fechar
         </button>
       )}
+    </>
+  );
+
+  if (inline) return <div>{panel}</div>;
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Notificações">
+      {panel}
     </BottomSheet>
   );
 }
