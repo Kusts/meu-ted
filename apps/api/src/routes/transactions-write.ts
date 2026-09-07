@@ -11,6 +11,41 @@ import type { AuthResolver } from './auth.js';
 
 const IDEMPOTENCY_HEADER = 'idempotency-key';
 
+/**
+ * Origin-aware body for expense/income (item 10/B2).
+ *
+ * Cards and bank accounts share the same id space, but the client must name
+ * the origin exactly once: `accountId` (Conta) XOR `cardId` (Cartão).
+ * Both set (ambiguous origin) or neither set (missing origin) is a 422 —
+ * a semantic error, not a malformed body (400).
+ */
+const originBodyExtension = {
+  accountId: z.string().uuid().optional(),
+  cardId: z.string().uuid().optional(),
+};
+const expenseOriginSchema = createExpenseInputSchema.extend(originBodyExtension).extend({
+  accountId: z.string().uuid().optional(),
+});
+const incomeOriginSchema = createIncomeInputSchema.extend(originBodyExtension).extend({
+  accountId: z.string().uuid().optional(),
+});
+
+type OriginResolution =
+  | { ok: true; accountId: string }
+  | { ok: false; code: 'validation.origin_conflict' | 'validation.origin_required'; message: string };
+
+const resolveOrigin = (body: { accountId?: string | undefined; cardId?: string | undefined }): OriginResolution => {
+  const hasAccount = body.accountId !== undefined;
+  const hasCard = body.cardId !== undefined;
+  if (hasAccount && hasCard) {
+    return { ok: false, code: 'validation.origin_conflict', message: 'informe conta OU cartão, nunca ambos' };
+  }
+  if (!hasAccount && !hasCard) {
+    return { ok: false, code: 'validation.origin_required', message: 'informe a conta ou o cartão de origem' };
+  }
+  return { ok: true, accountId: (body.accountId ?? body.cardId) as string };
+};
+
 export const registerTransactionWriteRoutes = (
   app: FastifyInstance,
   opts: { store: ReadModelStore; writes: WriteStore; resolveToken: AuthResolver; idempotency: IdempotencyStore },
@@ -57,13 +92,38 @@ export const registerTransactionWriteRoutes = (
     });
   };
 
-  postHandler('/transactions/expense', createExpenseInputSchema, async (ctx, input) => {
-    const tx = await opts.writes.createExpense(ctx.householdId, input);
+  const originPostHandler = (
+    path: string,
+    schema: typeof expenseOriginSchema | typeof incomeOriginSchema,
+    strict: typeof createExpenseInputSchema | typeof createIncomeInputSchema,
+    producer: (ctx: { householdId: string }, input: { accountId: string } & Record<string, unknown>) => Promise<{ status: number; body: unknown }>,
+  ) => {
+    app.post(path, async (req, reply) => {
+      let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
+      const parsed = schema.safeParse(req.body ?? {});
+      if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+      const origin = resolveOrigin(parsed.data);
+      if (!origin.ok) return reply.code(422).send({ code: origin.code, message: origin.message });
+      const { cardId: _cardId, ...rest } = parsed.data;
+      const normalized = strict.safeParse({ ...rest, accountId: origin.accountId });
+      if (!normalized.success) return reply.code(400).send({ code: 'validation.error', issues: normalized.error.issues });
+      const key = idemKey(req);
+      const fn = async () => producer(ctx, normalized.data as { accountId: string } & Record<string, unknown>);
+      try {
+        const result = key && opts.idempotency ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, normalized.data, fn) : { response: await fn(), replayed: false };
+        if (result.replayed) reply.header('Idempotent-Replayed', 'true');
+        return reply.code(result.response.status).send(result.response.body);
+      } catch (e) { return handleError(e, reply); }
+    });
+  };
+
+  originPostHandler('/transactions/expense', expenseOriginSchema, createExpenseInputSchema, async (ctx, input) => {
+    const tx = await opts.writes.createExpense(ctx.householdId, input as unknown as Parameters<WriteStore['createExpense']>[1]);
     return { status: 201, body: tx };
   });
 
-  postHandler('/transactions/income', createIncomeInputSchema, async (ctx, input) => {
-    const tx = await opts.writes.createIncome(ctx.householdId, input);
+  originPostHandler('/transactions/income', incomeOriginSchema, createIncomeInputSchema, async (ctx, input) => {
+    const tx = await opts.writes.createIncome(ctx.householdId, input as unknown as Parameters<WriteStore['createIncome']>[1]);
     return { status: 201, body: tx };
   });
 

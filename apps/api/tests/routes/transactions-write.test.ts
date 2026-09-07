@@ -98,6 +98,75 @@ describe('POST /transactions/expense', () => {
     });
     expect(res.statusCode).toBe(400);
   });
+
+  it('rejects 422 when both accountId and cardId are sent (ambiguous origin, item 10/B2)', async () => {
+    const res = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'X',
+        amountCents: 100,
+        date: isoDate,
+        accountId: s.accountId,
+        cardId: s.accountId,
+        categoryId: s.categoryId,
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().code).toBe('validation.origin_conflict');
+  });
+
+  it('rejects 422 when neither accountId nor cardId is sent (missing origin, item 10/B2)', async () => {
+    const res = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/income',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'X',
+        amountCents: 100,
+        date: isoDate,
+        categoryId: s.categoryId,
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().code).toBe('validation.origin_required');
+  });
+
+  it('accepts cardId as the card origin alias (item 10/B2)', async () => {
+    const res = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'Card lunch',
+        amountCents: 1500,
+        date: isoDate,
+        cardId: s.accountId,
+        categoryId: s.categoryId,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().accountId).toBe(s.accountId);
+  });
+
+  it('persists notes from Mais detalhes and returns them (item 10/B4)', async () => {
+    const res = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'Lunch',
+        amountCents: 1500,
+        date: isoDate,
+        accountId: s.accountId,
+        categoryId: s.categoryId,
+        notes: 'Almoço com cliente, reembolsável',
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().notes).toBe('Almoço com cliente, reembolsável');
+  });
 });
 
 describe('POST /transactions/income', () => {
@@ -211,6 +280,30 @@ describe('PATCH /transactions/:id', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().description).toBe('New');
+  });
+
+  it('patches notes on expense (item 10/B4)', async () => {
+    const s = await setupAccountAndCategory();
+    const tx = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'Old',
+        amountCents: 1000,
+        date: isoDate,
+        accountId: s.accountId,
+        categoryId: s.categoryId,
+      },
+    });
+    const res = await s.app.inject({
+      method: 'PATCH',
+      url: `/transactions/${tx.json().id}`,
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { notes: 'Nota adicionada depois' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().notes).toBe('Nota adicionada depois');
   });
 
   it('rejects amount change on transfer (unsupported)', async () => {

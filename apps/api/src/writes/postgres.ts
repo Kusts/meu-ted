@@ -463,8 +463,8 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
           await resolveSubcategoryInTx(client, householdId, input.subcategoryId, 'income');
         }
         const txRes = await client.query<Row>(
-          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id, subcategory_id)
-           VALUES (gen_random_uuid(), $1, 'income', $2, $3, $4, $5, $6, $7)
+          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id, subcategory_id, notes)
+           VALUES (gen_random_uuid(), $1, 'income', $2, $3, $4, $5, $6, $7, $8)
            RETURNING ${TRANSACTION_COLUMNS}`,
           [
             householdId,
@@ -474,6 +474,7 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
             input.accountId,
             input.categoryId,
             input.subcategoryId ?? null,
+            input.notes ?? null,
           ],
         );
         await client.query(
@@ -495,10 +496,10 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
         const to = await findAccountInHousehold(client, input.toAccountId, householdId);
         if (to.status !== 'active') throw domainErrors.notFound('Conta');
         const txRes = await client.query<Row>(
-          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id, notes)
-           VALUES (gen_random_uuid(), $1, 'income', $2, $3, $4, $5, $6, $7)
-           RETURNING id, household_id, kind, description, amount_cents, date, account_id, category_id, transfer_to_account_id, notes`,
-          [householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId, input.notes ?? null],
+          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, transfer_to_account_id)
+           VALUES (gen_random_uuid(), $1, 'transfer', $2, $3, $4, $5, $6)
+           RETURNING id, household_id, kind, description, amount_cents, date, account_id, category_id, transfer_to_account_id`,
+          [householdId, input.description, input.amountCents, input.date, input.fromAccountId, input.toAccountId],
         );
         await client.query(
           `UPDATE accounts

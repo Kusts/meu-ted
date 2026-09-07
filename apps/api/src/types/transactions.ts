@@ -67,6 +67,7 @@ export const transactionSchema = z.object({
   accountId: z.string().uuid(),
   categoryId: z.string().uuid().optional(),
   transferToAccountId: z.string().uuid().optional(),
+  notes: z.string().max(2000).optional(),
 });
 
 export const dashboardSummarySchema = z.object({
