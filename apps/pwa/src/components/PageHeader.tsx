@@ -38,26 +38,21 @@ export function PageHeader({ title, subtitle, action, compactTitle }: PageHeader
 
   return (
     <>
-      {/* Compact bar: appears past the threshold */}
-      <div
-        aria-hidden={!scrolled}
-        className={`morph-bar transition-morph fixed inset-x-0 top-0 z-30 mx-auto w-full max-w-[var(--shell-max-w)] ${
-          scrolled ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
-        }`}
-      >
+      {/* Compact bar: mounted past the threshold, cross-fades in */}
+      {scrolled && (
         <div
-          className="flex items-center justify-center px-5"
-          style={{ height: "calc(56px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}
+          className="morph-bar transition-morph fixed inset-x-0 top-0 z-30 mx-auto w-full max-w-[var(--shell-max-w)] opacity-100"
         >
-          <span
-            className={`transition-morph truncate text-[15px] font-extrabold tracking-tight text-text-primary ${
-              scrolled ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
-            }`}
+          <div
+            className="flex items-center justify-center px-5"
+            style={{ height: "calc(56px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}
           >
-            {compactTitle ?? title}
-          </span>
+            <span className="transition-morph translate-y-0 truncate text-[15px] font-extrabold tracking-tight text-text-primary opacity-100">
+              {compactTitle ?? title}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Rest state: transparent row + Large Title in flow */}
       <div className="px-5 pb-2 pt-[calc(var(--page-pt)+env(safe-area-inset-top))] sm:px-8 lg:px-12">

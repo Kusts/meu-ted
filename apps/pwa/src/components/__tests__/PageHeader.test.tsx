@@ -32,15 +32,15 @@ describe("PageHeader morphing (item premium 1)", () => {
     expect(screen.getByRole("link", { name: "Abrir perfil" })).toHaveAttribute("href", "/perfil");
   });
 
-  it("keeps the compact bar hidden at rest and shows it past 20px", () => {
+  it("mounts the compact bar only past 20px", () => {
     const { container } = render(<PageHeader title="Contas a pagar" />);
-    const bar = container.querySelector(".morph-bar") as HTMLElement;
-    expect(bar).toBeInTheDocument();
-    expect(bar.className).toMatch(/opacity-0/);
+    expect(container.querySelector(".morph-bar")).not.toBeInTheDocument();
 
     setScrollY(64);
     fireEvent.scroll(window);
-    expect(bar.className).toMatch(/opacity-100/);
+    const bar = container.querySelector(".morph-bar") as HTMLElement;
+    expect(bar).toBeInTheDocument();
+    expect(bar.textContent).toContain("Contas a pagar");
   });
 
   it("opens the TED chat from the header shortcut", async () => {

@@ -92,6 +92,7 @@ start-planner.bat
 start-agents.bat
 
 # Agent runtimes & IDE session caches
+.claude/
 .opencode/
 .pi-subagents/
 .pi/extensions/
