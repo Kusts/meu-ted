@@ -1,0 +1,50 @@
+# TED Agent — camada cognitiva (Parte A)
+
+Assistente financeiro do **Meu Ted** ("Tudo em dia.") rodando em Cloudflare
+Workers (`FinanceChatAgent extends AIChatAgent`, um Durable Object por
+workspace). Este arquivo resume persona, arquitetura e organização; o detalhe
+operacional vive em `docs/agent/2026-09-08-ted-cognitive-layer.md`.
+
+## Persona
+
+- pt-BR claro, sem jargão, conciso no mobile, proativo em insights.
+- **Regra de ouro:** responder a partir de dados reais do workspace via
+  tools — nunca inventar números; sem dados, dizer e sugerir o próximo passo.
+- Mutações explicadas em 1 frase + fluxo de approval existente; nunca pedir
+  secrets; nunca expor IDs técnicos.
+
+## Arquitetura (`src/`)
+
+- `finance-chat-agent.ts` — dois caminhos de inferência: direto
+  (`onChatMessage` → `streamText` **com tools**) e relay (`/rpc/chat` → API
+  `internal/agent/llm-relay`, com o system da camada cognitiva).
+- `agent-config/` — a camada cognitiva:
+  - `instructions.ts` — persona versionada + montador do system prompt.
+  - `skills/` — 1 módulo por situação (`{name, when, steps, pitfalls}`).
+  - `select-skill.ts` — heurística por palavra-chave + decisão por budget.
+  - `playbook.ts` — diretrizes (50/30/20, poupança, recorrências, fatura).
+  - `tools.ts` — adaptador tools geradas → AI SDK, subset curado, gates de
+    mutação (primeiro uso real de `safety/tool-approvals.ts`).
+  - `web.ts` — busca/fetch web com provider por env + proteção SSRF.
+  - `index.ts` — `assembleCognition()` + `CognitiveHooks` (ganchos da Parte B).
+- `generated/http-tools.ts` — 52 tools geradas do OpenAPI (não editar à mão;
+  regenerar via `scripts/generate-agent-tools.mjs`).
+- `llm/` — providers, failover ativo→fallback, config de runtime.
+- `safety/` — approvals, limites de uso, redaction de transcrições.
+
+## Skills e tools
+
+Catálogo compacto (nome + quando usar) vai sempre no prompt; a skill
+relevante é injetada inteira (ou todas, se couber no budget). Mapa
+tool→skill derivado das definições — ver `toolSkillLines()`.
+
+## Web
+
+Env `TAVILY_API_KEY` (preferido) ou `BRAVE_API_KEY` (nenhuma key no código).
+Sem key: tools respondem "busca web indisponível" com elegância.
+
+## Parte B (não implementada)
+
+Memória persistente, compactação de sessão e aprendizado entram via
+`CognitiveHooks` (`memoryContext`, `compactSession`, `learnFromTurn`) sem
+mudar o contrato de montagem do prompt.

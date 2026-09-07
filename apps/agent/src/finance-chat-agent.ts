@@ -1,5 +1,5 @@
 import { AIChatAgent, type UIMessage } from "agents/ai-chat-agent";
-import { streamText, generateText } from "ai";
+import { streamText, generateText, stepCountIs } from "ai";
 import { z } from "zod";
 import { protocolSchema } from "@pi-finance/llm-contracts/schemas";
 import { fetchRuntimeConfig, type RuntimeSnapshot } from "./llm/runtime-config-client.js";
@@ -7,6 +7,12 @@ import { createLanguageModel } from "./llm/model-factory.js";
 import type { Protocol } from "./llm/provider-registry.js";
 import { executeWithFallback, failoverReasonOf, logFailoverEvent } from "./llm/failover.js";
 import { executeBrokerCompletion } from "./llm/private-broker-client.js";
+import {
+  assembleCognition,
+  buildExposedTools,
+  INSTRUCTIONS_VERSION as TED_INSTRUCTIONS_VERSION,
+  TED_SYSTEM_PROMPT_LEGACY,
+} from "./agent-config/index.js";
 import {
   checkUsageLimit,
   estimateTokens,
@@ -39,6 +45,8 @@ export type Env = {
   CODEX_BROKER_ACCESS_CLIENT_ID?: string;
   CODEX_BROKER_ACCESS_CLIENT_SECRET?: string;
   CODEX_BROKER_REQUEST_SIGNING_KEY?: string;
+  TAVILY_API_KEY?: string;
+  BRAVE_API_KEY?: string;
 };
 
 export type IntentionSnapshotRow = {
@@ -211,13 +219,14 @@ export const runCodexBrokerText = async (
   return text;
 };
 
-export const TED_SYSTEM_PROMPT = `Você é o TED, o assistente financeiro inteligente, seguro e proativo do Pi Financeiro.
-Suas diretrizes fundamentais são:
-1. Comunicação sempre em Português do Brasil (pt-BR), com tom profissional, encorajador, claro e objetivo.
-2. Todas as informações financeiras pertencem estritamente ao workspace ativo; nunca assuma dados de terceiros.
-3. Forneça respostas analíticas, projeções mensais, análises de gastos e sugestões orçamentárias fundamentadas nos dados do usuário.
-4. Jamais divulgue segredos de infraestrutura, tokens ou chaves internas.
-5. Você tem acesso a ferramentas (tools) autorizadas e isoladas por workspace: saldo e contas (get_balance, list_accounts), transações e extratos (list_recent_transactions, create_expense, create_income, update_transaction), metas financeiras (list_goals, create_goal, contribute_to_goal), orçamentos (list_budgets, check_budgets, create_budget), cartões e faturas (list_statements, get_statement_details, pay_statement, create_credit_card_account), contas a pagar (list_accounts_payable, create_account_payable) e auditoria. Sempre utilize a ferramenta adequada em vez de responder "sem autorização" ou "não tenho acesso".`;
+export const TED_SYSTEM_PROMPT = TED_SYSTEM_PROMPT_LEGACY;
+export { TED_INSTRUCTIONS_VERSION };
+
+/**
+ * Regra de ouro da camada cognitiva (ver agent-config/instructions.ts):
+ * sempre utilize a ferramenta adequada em vez de responder "sem autorização"
+ * ou "não tenho acesso" — a partir de dados reais do workspace via tools.
+ */
 
 export class FinanceChatAgent extends AIChatAgent<Env> {
   static override readonly messageConcurrency = "queue" as const;
@@ -394,11 +403,14 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             ) ?? snapshot.fallback_model_id)
           : null;
       const runDirect = async (providerId: string, modelId: string) => {
+        // Cognitive layer (Part A, item 15): versioned persona + skills +
+        // playbook assembled per turn, with the model's tools actually wired.
+        const cognition = assembleCognition(text, { webEnv: (this.env ?? {}) as Record<string, string | undefined> });
         if (isCodexProviderId(providerId)) {
           const brokerText = await runCodexBrokerText((this.env ?? {}) as CodexBrokerEnv, {
             model: modelId,
             prompt: text,
-            system: TED_SYSTEM_PROMPT,
+            system: cognition.system,
             requestId: `direct-${intentionId}`,
             intentionId,
             workspaceId: 'direct',
@@ -412,10 +424,20 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           snapshot.protocol as Protocol,
           (this.env ?? {}) as Record<string, string | undefined>,
         );
+        const exposedTools = buildExposedTools(cognition.toolNames, {
+          apiOrigin: this.env?.API_ORIGIN,
+          workspaceId: 'direct',
+          actorId,
+          intentionId,
+          lastUserMessage: text,
+          webEnv: (this.env ?? {}) as Record<string, string | undefined>,
+        });
         return streamText({
           model: modelInstance.model,
-          system: TED_SYSTEM_PROMPT,
+          system: cognition.system,
           prompt: text,
+          tools: exposedTools,
+          stopWhen: stepCountIs(5),
         });
       };
       const outcome = await executeWithFallback(
@@ -587,6 +609,11 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           let usedFallback = false;
           let failoverReason: string | null = null;
 
+          // Cognitive layer for the relay leg too: persona + skills +
+          // playbook travel as the system prompt (the relay has no tool
+          // loop, so the enriched prompt keeps carrying workspace data).
+          const cognition = assembleCognition(text, { webEnv: (this.env ?? {}) as Record<string, string | undefined> });
+
           // Refactor item 6: Codex (plano Coding) executa via broker privado
           // (sessão de browser), nunca via relay HTTP (o relay só permite
           // zen/go). O resultado é sintetizado no mesmo formato relay para
@@ -599,7 +626,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
               const brokerText = await runCodexBrokerText((this.env ?? {}) as CodexBrokerEnv, {
                 model: codexModel,
                 prompt: enrichedPrompt,
-                system: TED_SYSTEM_PROMPT,
+                system: cognition.system,
                 requestId: intentionId,
                 intentionId,
                 workspaceId,
@@ -633,7 +660,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
                 provider: snapshot.provider_id,
                 model: snapshot.model_id,
                 prompt: enrichedPrompt,
-                system: TED_SYSTEM_PROMPT,
+                system: cognition.system,
               }),
             });
             relayRaw = await primaryRes.text().catch(() => "");
@@ -658,7 +685,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
                 const fbText = await runCodexBrokerText((this.env ?? {}) as CodexBrokerEnv, {
                   model: fbModel,
                   prompt: enrichedPrompt,
-                  system: TED_SYSTEM_PROMPT,
+                  system: cognition.system,
                   requestId: `${intentionId}:fallback`,
                   intentionId,
                   workspaceId,
@@ -685,7 +712,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
                   provider: snapshot.fallback_provider_id,
                   model: snapshot.fallback_model_id,
                   prompt: enrichedPrompt,
-                  system: TED_SYSTEM_PROMPT,
+                  system: cognition.system,
                 }),
               });
               if (fallbackRes.ok) {

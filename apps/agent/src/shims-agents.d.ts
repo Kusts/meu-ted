@@ -39,6 +39,11 @@ declare module "ai" {
   export function streamText(...args: unknown[]): unknown;
   export function generateText(...args: unknown[]): Promise<{ text: string; usage?: unknown; finishReason?: string }>;
   export type LanguageModel = unknown;
+  // Part A cognitive wiring: loosely typed so the edge shim stays small;
+  // runtime semantics come from the real `ai` package (v5).
+  export function tool(...args: unknown[]): unknown;
+  export function jsonSchema(...args: unknown[]): unknown;
+  export function stepCountIs(...args: unknown[]): unknown;
 }
 declare module "@cloudflare/ai-chat" {
   export type UIMessage = unknown;
