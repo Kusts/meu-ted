@@ -195,7 +195,8 @@ export const registerWorkspaceRoutes = (app: FastifyInstance, opts: {
     const parsed = workspaceParams.safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     try {
-      return reply.send({ items: await opts.store.listMembers({ authUserId, householdId: parsed.data.householdId }) });
+      const items = await opts.store.listMembers({ authUserId, householdId: parsed.data.householdId });
+      return reply.send({ items, total: items.length });
     } catch (error) {
       return sendWorkspaceError(reply, error);
     }

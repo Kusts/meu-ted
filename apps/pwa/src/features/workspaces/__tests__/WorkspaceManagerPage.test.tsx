@@ -116,6 +116,41 @@ describe("WorkspaceManagerPage", () => {
     expect(context.transferOwnership).toHaveBeenCalledWith("user-2");
   });
 
+  it("lists accepted members with role and active status (item 9 regression)", () => {
+    context.activeWorkspace = { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "owner", status: "active" };
+    context.workspaces = [
+      { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "owner", status: "active" },
+    ];
+    context.members = [
+      { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner", status: "active" },
+      { userId: "user-2", name: "Bob Member", email: "bob@example.com", role: "member", status: "active" },
+    ];
+    context.pendingInvites = [
+      { id: "inv-1", householdId: "ws-2", email: "convidado@example.com", role: "member", expiresAt: "2026-09-07T12:00:00.000Z" },
+    ];
+    context.ownershipTransfers = [];
+    render(<WorkspaceManagerPage />);
+
+    // Accepted members appear with role + active status, not "Nenhum membro encontrado."
+    expect(screen.getByText("Bob Member")).toBeInTheDocument();
+    expect(screen.getByText("Membro")).toBeInTheDocument();
+    expect(screen.getAllByText("Ativo").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("Nenhum membro encontrado.")).not.toBeInTheDocument();
+    // Pending invite is explicitly marked pending.
+    expect(screen.getByText("convidado@example.com")).toBeInTheDocument();
+    expect(screen.getByText("Pendente")).toBeInTheDocument();
+
+    // Restore the shared context fixture for the tests below.
+    context.workspaces = [
+      { id: "ws-1", name: "Minhas Finanças", kind: "personal", role: "owner", status: "active" },
+      { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "owner", status: "archived" },
+    ];
+    context.activeWorkspace = { id: "ws-1", name: "Minhas Finanças", kind: "personal", role: "owner", status: "active" };
+    context.members = [];
+    context.pendingInvites = [];
+    context.ownershipTransfers = [];
+  });
+
   it("member can invite a member via email form in shared workspace", async () => {
     const user = userEvent.setup();
     context.activeWorkspace = { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "member", status: "active" };

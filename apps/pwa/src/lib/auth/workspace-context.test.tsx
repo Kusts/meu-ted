@@ -23,6 +23,7 @@ const api = vi.hoisted(() => ({
   renameWorkspace: vi.fn(),
   archiveWorkspace: vi.fn(),
   restoreWorkspace: vi.fn(),
+  acceptWorkspaceInvite: vi.fn(),
   closeAllSockets: vi.fn(),
 }));
 const clientState = vi.hoisted(() => ({ active: undefined as string | undefined }));
@@ -63,6 +64,7 @@ function Probe() {
     renameWorkspace,
     archiveWorkspace,
     restoreWorkspace,
+    acceptInvite,
     resendInvite,
     revokeInvite,
     transferOwnership,
@@ -80,6 +82,7 @@ function Probe() {
     <button onClick={() => void renameWorkspace("workspace-1", "Casa renomeada")}>Rename</button>
     <button onClick={() => void archiveWorkspace("workspace-1")}>Archive</button>
     <button onClick={() => void restoreWorkspace("workspace-2")}>Restore</button>
+    <button onClick={() => void acceptInvite("a".repeat(64))}>Accept Invite</button>
     <button onClick={() => void resendInvite("invite-1")}>Resend Invite</button>
     <button onClick={() => void revokeInvite("invite-1")}>Revoke Invite</button>
     <button onClick={() => void transferOwnership("user-2")}>Transfer Ownership</button>
@@ -230,6 +233,26 @@ describe("WorkspaceProvider", () => {
     expect(api.renameWorkspace).toHaveBeenCalledWith("workspace-1", "Casa renomeada");
     expect(api.archiveWorkspace).toHaveBeenCalledWith("workspace-1");
     expect(api.restoreWorkspace).toHaveBeenCalledWith("workspace-2");
+  });
+
+  it("reloads members and pending invites after accepting an invite (item 9)", async () => {
+    api.fetchWorkspaces.mockResolvedValue([
+      { id: "workspace-2", name: "Equipe", kind: "shared", role: "member", status: "active" },
+    ]);
+    api.fetchWorkspaceMembers.mockResolvedValue([
+      { userId: "user-1", name: "Alice", email: "alice@example.com", role: "owner", status: "active" },
+      { userId: "user-2", name: "Bob", email: "bob@example.com", role: "member", status: "active" },
+    ]);
+    const user = userEvent.setup();
+    render(<WorkspaceProvider><Probe /></WorkspaceProvider>);
+    expect(await screen.findByTestId("active")).toHaveTextContent("Equipe");
+
+    api.fetchWorkspaceMembers.mockClear();
+    await user.click(screen.getByRole("button", { name: "Accept Invite" }));
+
+    expect(api.acceptWorkspaceInvite).toHaveBeenCalledWith("a".repeat(64));
+    await waitFor(() => expect(api.fetchWorkspaceMembers).toHaveBeenCalled());
+    expect(await screen.findByTestId("members-count")).toHaveTextContent("2");
   });
 
   it("handles pending invites and ownership transfer lifecycle through context actions", async () => {

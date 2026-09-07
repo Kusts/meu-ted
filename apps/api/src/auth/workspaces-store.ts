@@ -17,6 +17,8 @@ export type WorkspaceMember = {
   name: string;
   email: string;
   role: WorkspaceRole;
+  /** Membership lifecycle status. listMembers only returns active members. */
+  status: 'active';
 };
 
 export type WorkspaceStore = {
@@ -94,7 +96,9 @@ export const createInMemoryWorkspaceStore = (): WorkspaceStore => {
     },
     async listMembers(input) {
       ownedWorkspace(input.authUserId, input.householdId);
-      return members.filter((m) => m.householdId === input.householdId).map((m) => m.member);
+      return members
+        .filter((m) => m.householdId === input.householdId)
+        .map((m) => ({ ...m.member, status: 'active' as const }));
     },
     async removeMember(input) {
       const workspace = ownedWorkspace(input.authUserId, input.householdId);

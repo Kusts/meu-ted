@@ -174,6 +174,28 @@ describe("workspace API", () => {
     });
   });
 
+  it("parses the members list contract with role and status per member", async () => {
+    const { workspaceMemberListSchema } = await import("./schemas");
+
+    // Shape returned by GET /workspaces/:id/members (items + total, item 9).
+    const parsed = workspaceMemberListSchema.parse({
+      items: [
+        { userId: "user-1", name: "Alice", email: "alice@example.com", role: "owner", status: "active" },
+        { userId: "user-2", name: "Bob", email: "bob@example.com", role: "member", status: "active" },
+      ],
+      total: 2,
+    });
+    expect(parsed.items).toHaveLength(2);
+    expect(parsed.items[1]).toMatchObject({ role: "member", status: "active" });
+
+    // Back-compat: members without status default to active.
+    const legacy = workspaceMemberListSchema.parse({
+      items: [{ userId: "user-9", name: "Old", email: "old@example.com", role: "member" }],
+      total: 1,
+    });
+    expect(legacy.items[0]?.status).toBe("active");
+  });
+
   it("sends Authorization Bearer for invite create and accept when session token is present", async () => {
     const { getSessionToken } = await import("@/lib/auth/token-store");
     vi.mocked(getSessionToken).mockReturnValue("session-token-123");

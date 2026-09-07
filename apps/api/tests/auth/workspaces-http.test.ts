@@ -15,7 +15,7 @@ const auth = {
 const makeStore = (): WorkspaceStore => ({
   list: vi.fn<WorkspaceStore['list']>(async () => [{ id: 'workspace-1', name: 'Casa', kind: 'shared', role: 'owner', status: 'active' }]),
   create: vi.fn<WorkspaceStore['create']>(async () => ({ id: 'workspace-2', name: 'Equipe', kind: 'shared', role: 'owner', status: 'active' })),
-  listMembers: vi.fn<WorkspaceStore['listMembers']>(async () => [{ userId: 'user-2', name: 'Ana', email: 'ana@example.com', role: 'member' }]),
+  listMembers: vi.fn<WorkspaceStore['listMembers']>(async () => [{ userId: 'user-2', name: 'Ana', email: 'ana@example.com', role: 'member', status: 'active' }]),
   removeMember: vi.fn<WorkspaceStore['removeMember']>(async () => undefined),
   leave: vi.fn<WorkspaceStore['leave']>(async () => undefined),
 });
@@ -64,7 +64,13 @@ describe('workspace management HTTP', () => {
 
     const members = await app.inject({ method: 'GET', url: '/workspaces/00000000-0000-4000-8000-000000000001/members' });
     expect(members.statusCode).toBe(200);
-    expect(members.json().items[0]).toMatchObject({ userId: 'user-2', role: 'member' });
+    // Regression (item 9): members list must be a paged list contract
+    // ({ items, total }) with role + status per member — the PWA client
+    // requires `total` and renders the status badge.
+    expect(members.json()).toEqual({
+      items: [{ userId: 'user-2', name: 'Ana', email: 'ana@example.com', role: 'member', status: 'active' }],
+      total: 1,
+    });
     expect(store.listMembers).toHaveBeenCalledWith({ authUserId: 'auth-user-1', householdId: '00000000-0000-4000-8000-000000000001' });
 
     const removed = await app.inject({ method: 'DELETE', url: '/workspaces/00000000-0000-4000-8000-000000000001/members/00000000-0000-4000-8000-000000000002', headers: { 'idempotency-key': 'remove-1' } });

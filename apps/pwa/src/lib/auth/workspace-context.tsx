@@ -355,7 +355,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const acceptInvite = useCallback(async (token: string) => {
     await acceptWorkspaceInvite(token.trim());
     await refreshWorkspaces();
-  }, [refreshWorkspaces]);
+    // The accepted membership only becomes visible after the members and
+    // pending lists reload (item 9: list must update after accepting).
+    await Promise.all([refreshMembers(), refreshPendingInvites()]);
+  }, [refreshWorkspaces, refreshMembers, refreshPendingInvites]);
 
   const removeMember = useCallback(async (userId: string) => {
     if (!activeWorkspace) throw new Error("Selecione um workspace.");

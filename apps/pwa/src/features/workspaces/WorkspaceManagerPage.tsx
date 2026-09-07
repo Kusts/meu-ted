@@ -412,9 +412,14 @@ export default function WorkspaceManagerPage() {
                         <p className="truncate text-[12px] font-bold text-text-primary">{m.name || m.email}</p>
                         <p className="truncate text-[10px] text-text-muted">{m.email}</p>
                       </div>
-                      <span className={`flex-none rounded-full px-2 py-0.5 text-[10px] font-bold ${m.role === "owner" ? "bg-primary-tint text-primary" : "bg-surface-2 text-text-muted"}`}>
-                        {m.role === "owner" ? "Owner" : "Membro"}
-                      </span>
+                      <div className="flex flex-none items-center gap-1.5">
+                        <span className="rounded-full bg-primary-tint px-2 py-0.5 text-[10px] font-bold text-primary">
+                          Ativo
+                        </span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${m.role === "owner" ? "bg-primary-tint text-primary" : "bg-surface-2 text-text-muted"}`}>
+                          {m.role === "owner" ? "Owner" : "Membro"}
+                        </span>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -650,7 +655,10 @@ export default function WorkspaceManagerPage() {
                               Membro · Expira em {new Date(invite.expiresAt).toLocaleDateString("pt-BR")}
                             </p>
                           </div>
-                          <div className="flex items-center gap-1.5 flex-none">
+                          <div className="flex flex-none items-center gap-1.5">
+                            <span className="rounded-full bg-warning-tint px-2 py-0.5 text-[10px] font-bold text-warning">
+                              Pendente
+                            </span>
                             <Button
                               type="button"
                               variant="outline"

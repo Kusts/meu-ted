@@ -40,6 +40,7 @@ export type WorkspaceMember = {
   name: string;
   email: string;
   role: "owner" | "member";
+  status: "active" | "pending";
 };
 
 export type PendingInvite = {

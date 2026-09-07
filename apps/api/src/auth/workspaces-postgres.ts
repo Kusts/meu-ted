@@ -143,6 +143,7 @@ export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
         name: row['name'] as string,
         email: row['email'] as string,
         role: row['role'] as WorkspaceMember['role'],
+        status: 'active' as const,
       }));
     },
 

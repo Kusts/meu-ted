@@ -293,6 +293,7 @@ export const workspaceMemberSchema = z.object({
   name: z.string(),
   email: z.string().email(),
   role: z.enum(["owner", "member"]),
+  status: z.enum(["active", "pending"]).default("active"),
 });
 export const workspaceMemberListSchema = listResponse(workspaceMemberSchema);
 export const workspaceInviteSchema = z.object({
