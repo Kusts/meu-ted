@@ -137,6 +137,15 @@
   --easing-standard: cubic-bezier(.2,.8,.2,1);
   --duration-standard: 0.28s;
 
+  /* ── Atmosphere Canvas (item premium 2) ── */
+  /* Fixed top radial glow; never pure black. Alpha differs per theme. */
+  --atmosphere-glow: radial-gradient(ellipse 70% 280px at 50% 0%, rgba(14, 140, 90, 0.07), transparent 75%);
+  /* Morphing compact bar: saturated dark-translucent (no milky glass). */
+  --header-bar: color-mix(in srgb, var(--bg-canvas) 82%, #0B7A5B);
+  --header-bar-border: var(--border-subtle);
+  /* S3 top edge for sheets/modals. */
+  --border-elevated: var(--border-medium);
+
   /* PTR capsule (spec AGY Onda 2/3 §3): light = surface-1/subtle */
   --ptr-capsule-bg: var(--surface-1);
   --ptr-capsule-border: var(--border-subtle);
@@ -195,6 +204,12 @@
   /* PTR capsule (spec AGY Onda 2/3 §3): dark = surface-2/medium */
   --ptr-capsule-bg: var(--surface-2);
   --ptr-capsule-border: var(--border-medium);
+
+  /* ── Atmosphere Canvas (item premium 2, dark) ── */
+  --atmosphere-glow: radial-gradient(ellipse 70% 280px at 50% 0%, rgba(11, 122, 91, 0.12), transparent 75%);
+  --header-bar: color-mix(in srgb, var(--bg-canvas) 72%, #0B7A5B);
+  --header-bar-border: rgba(255, 255, 255, 0.06);
+  --border-elevated: rgba(255, 255, 255, 0.14);
 }
 
 @media (min-width: 640px) {
@@ -237,4 +252,77 @@ body {
 /* ── Prevent body scroll when sheet open ── */
 body.overflow-hidden {
   overflow: hidden;
+}
+
+/* ── Atmosphere Canvas layer (item premium 2) ──
+ * Fixed top glow over the canvas, rendered once by AppShell.
+ * pointer-events:none so it never intercepts taps. */
+.atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: var(--atmosphere-glow);
+  background-color: transparent;
+}
+
+/* ── Morph transitions (200ms, easing padrão) ── */
+.transition-morph {
+  transition:
+    opacity 200ms var(--easing-standard),
+    transform 200ms var(--easing-standard),
+    background-color 200ms var(--easing-standard);
+}
+
+/* ── Morphing compact bar (item premium 1) ──
+ * Sticky 56px + safe-area, saturated dark-translucent, tonal separation
+ * (1px border), no diffuse shadows, no milky glass. */
+.morph-bar {
+  background: var(--header-bar);
+  border-bottom: 1px solid var(--header-bar-border);
+}
+
+/* ── Splash keyframes (item premium 3) ── */
+@keyframes mascot-spring {
+  0% { transform: scale(0.6); opacity: 0; }
+  60% { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes check-draw {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.5); opacity: 0.55; }
+}
+
+.splash-mascot {
+  animation: mascot-spring 600ms var(--easing-standard) both;
+}
+
+.splash-check {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: check-draw 500ms var(--easing-standard) 350ms forwards;
+}
+
+.pulse-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+/* ── Acessibilidade: reduz animações decorativas ── */
+@media (prefers-reduced-motion: reduce) {
+  .transition-morph,
+  .splash-mascot,
+  .splash-check,
+  .pulse-dot {
+    animation: none !important;
+    transition: none !important;
+  }
+  .splash-check {
+    stroke-dashoffset: 0 !important;
+  }
 }

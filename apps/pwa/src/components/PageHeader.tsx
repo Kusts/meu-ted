@@ -1,38 +1,106 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { MessageCircle, User } from "lucide-react";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { openTedChat } from "@/features/ted/TedChatLauncher";
 
 export interface PageHeaderProps {
   title: string;
   subtitle?: string;
   action?: ReactNode;
+  /** Compact bar title; defaults to title. */
+  compactTitle?: string;
 }
 
-export function PageHeader({ title, subtitle, action }: PageHeaderProps) {
-  // A2: viewportFit=cover lets content slide under the notch/Dynamic Island
-  // in standalone PWA mode. Compose the --page-pt token with the top safe
-  // area here — this component is the choke point (~15 pages). env() falls
-  // back to 0 where unsupported, so no fallback branch is needed.
+const SCROLL_THRESHOLD_PX = 20;
+
+/**
+ * Morphing header (item premium 1).
+ *
+ * Rest (scroll<=20): transparent row — WorkspaceSwitcher chip left,
+ * action + TED shortcut + avatar right — with the Large Title in flow.
+ * Scrolled: fixed compact bar (56px + safe-area, z-30, saturated
+ * dark-translucent, tonal 1px border, no diffuse shadows) with the compact
+ * title cross-fading in (opacity + translateY 4px, 200ms easing).
+ * Decorative motion honors prefers-reduced-motion via .transition-morph.
+ */
+export function PageHeader({ title, subtitle, action, compactTitle }: PageHeaderProps) {
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > SCROLL_THRESHOLD_PX);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   return (
-    <div className="flex items-center justify-between px-5 pb-2 pt-[calc(var(--page-pt)+env(safe-area-inset-top))]">
-      <div className="min-w-0 flex-1">
-        <h1 className="text-[22px] font-extrabold leading-tight tracking-tight text-text-primary">
-          {title}
-        </h1>
-        {subtitle && (
-          <p className="mt-0.5 text-xs font-semibold text-text-muted">
-            {subtitle}
-          </p>
-        )}
-      </div>
-      <div className="ml-3 flex flex-none items-center gap-2">
-        <div className="lg:hidden">
-          <WorkspaceSwitcher compact />
+    <>
+      {/* Compact bar: appears past the threshold */}
+      <div
+        aria-hidden={!scrolled}
+        className={`morph-bar transition-morph fixed inset-x-0 top-0 z-30 mx-auto w-full max-w-[var(--shell-max-w)] ${
+          scrolled ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+        }`}
+      >
+        <div
+          className="flex items-center justify-center px-5"
+          style={{ height: "calc(56px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}
+        >
+          <span
+            className={`transition-morph truncate text-[15px] font-extrabold tracking-tight text-text-primary ${
+              scrolled ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
+            }`}
+          >
+            {compactTitle ?? title}
+          </span>
         </div>
-        {action && <div>{action}</div>}
       </div>
-    </div>
+
+      {/* Rest state: transparent row + Large Title in flow */}
+      <div className="px-5 pb-2 pt-[calc(var(--page-pt)+env(safe-area-inset-top))] sm:px-8 lg:px-12">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0 flex-none lg:hidden">
+            <WorkspaceSwitcher compact />
+          </div>
+          <div className="hidden min-w-0 flex-none lg:block" aria-hidden="true" />
+          <div className="flex flex-none items-center gap-1.5">
+            {action}
+            <button
+              type="button"
+              onClick={openTedChat}
+              aria-label="Abrir assistente TED"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-surface-2 hover:text-text-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+            >
+              <MessageCircle size={17} strokeWidth={2} />
+            </button>
+            <Link
+              href="/perfil"
+              aria-label="Abrir perfil"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-2 text-text-secondary transition-colors hover:text-text-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+            >
+              <User size={16} strokeWidth={2} />
+            </Link>
+          </div>
+        </div>
+        <div
+          className={`transition-morph min-w-0 flex-1 ${
+            scrolled ? "translate-y-1 opacity-0" : "translate-y-0 opacity-100"
+          }`}
+        >
+          <h1 className="mt-3 text-[26px] font-extrabold leading-tight tracking-tight text-text-primary">
+            {title}
+          </h1>
+          {subtitle && (
+            <p className="mt-0.5 text-xs font-semibold text-text-muted">
+              {subtitle}
+            </p>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
