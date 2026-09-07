@@ -1,6 +1,10 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { expectedMigrationManifest } from '../../src/read-models/sql/migrate.js';
+import {
+  LEGACY_EXCLUDED_JUSTIFICATIONS,
+  LEGACY_SAFE_PREFIXES,
+  expectedMigrationManifest,
+} from '../../src/read-models/sql/migrate.js';
 
 const v047 = readFileSync(new URL('../../src/read-models/sql/V047__statement_uniqueness.sql', import.meta.url), 'utf8');
 const v048 = readFileSync(new URL('../../src/read-models/sql/V048__category_uniqueness.sql', import.meta.url), 'utf8');
@@ -47,5 +51,58 @@ describe('V048 category uniqueness (M-02)', () => {
     expect(v048).toMatch(/COALESCE\(parent_id/);
     expect(v048).toMatch(/lower\(name\)/);
     expect(v048).toMatch(/WHERE status = 'active' AND deleted_at IS NULL/);
+  });
+});
+
+describe('legacy-safe inventory pin (deploy)', () => {
+  const SQL_DIR = new URL('../../src/read-models/sql/', import.meta.url);
+  const migrationFiles = (): string[] =>
+    readdirSync(SQL_DIR)
+      .filter((file) => /^V\d+__.*\.sql$/.test(file))
+      .sort();
+
+  it('every V044+ migration file is either legacy-safe or explicitly justified', () => {
+    const files = migrationFiles();
+    const recent = files.filter((file) => file.slice(0, 4) >= 'V044');
+    expect(recent.length).toBeGreaterThan(0);
+    for (const file of recent) {
+      const safe = LEGACY_SAFE_PREFIXES.some((prefix) => file.startsWith(prefix));
+      const tag = file.slice(0, 4);
+      const justified = Boolean(LEGACY_EXCLUDED_JUSTIFICATIONS[tag]?.trim());
+      expect(
+        safe || justified,
+        `${file} must be legacy-safe or justified in LEGACY_EXCLUDED_JUSTIFICATIONS`,
+      ).toBe(true);
+    }
+    // No stale justifications: every entry must point at a file on disk.
+    for (const tag of Object.keys(LEGACY_EXCLUDED_JUSTIFICATIONS)) {
+      expect(
+        files.some((file) => file.startsWith(tag)),
+        `stale legacy exclusion justification ${tag}`,
+      ).toBe(true);
+    }
+  });
+
+  it('V048 stays excluded: it predicates on categories.status, absent from the legacy projection', () => {
+    expect(LEGACY_EXCLUDED_JUSTIFICATIONS['V048']).toMatch(/status/);
+    expect(v048).toMatch(/status = 'active'/);
+    // The legacy adapter derives status from the `active` boolean in JS —
+    // the legacy categories projection selects no `status` column.
+    const legacyAdapter = readFileSync(new URL('../../src/writes/legacy-postgres.ts', import.meta.url), 'utf8');
+    const lines = legacyAdapter.split('\n');
+    const anchor = lines.findIndex((line) => line.includes('LEGACY_CATEGORY_COLUMNS ='));
+    expect(anchor).toBeGreaterThanOrEqual(0);
+    // The column list may continue on the following line.
+    const columns = lines
+      .slice(anchor, anchor + 2)
+      .join(' ')
+      .split('=')
+      .slice(1)
+      .join('=')
+      .split(',')
+      .map((column) => column.trim().replace(/['";]/g, ''))
+      .filter(Boolean);
+    expect(columns).toContain('active');
+    expect(columns).not.toContain('status');
   });
 });

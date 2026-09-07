@@ -35,7 +35,7 @@ type MigrationManifestEntry = {
 // The canonical V001/V002/V004-V007 and modern workspace/auth migrations V013-V031
 // are skipped in legacy mode because they assume canonical schema or rely on modern
 // tables (Better Auth, workspaces, ownership transfers).
-const LEGACY_SAFE_PREFIXES = [
+export const LEGACY_SAFE_PREFIXES = [
   "V003",
   "V008",
   "V009",
@@ -55,6 +55,25 @@ const LEGACY_SAFE_PREFIXES = [
   "V046",
   "V047",
 ];
+
+/**
+ * Deploy decision log for migration files that exist on disk but are
+ * deliberately NOT legacy-safe. Adding a file here (or to
+ * LEGACY_SAFE_PREFIXES) is a production-boot decision: the VPS boots with
+ * DB_SCHEMA=legacy, so anything outside LEGACY_SAFE_PREFIXES never runs
+ * there, and anything inside MUST run against the legacy pi_financeiro
+ * schema without error.
+ *
+ * - V048: requires canonical categories.status (legacy tracks activity
+ *   with an `active` boolean). Applying it in legacy mode would abort API
+ *   boot with "column status does not exist". The VPS keeps the legacy
+ *   check-then-insert path (no regression); V048 applies automatically if
+ *   the database ever moves to the canonical schema. See
+ *   docs/ops/v048-legacy-boot-decision.md.
+ */
+export const LEGACY_EXCLUDED_JUSTIFICATIONS: Record<string, string> = {
+  V048: 'requires canonical categories.status; legacy categories use an active boolean',
+};
 
 export const migrationChecksum = (sql: string): string =>
   createHash("sha256").update(sql, "utf8").digest("hex");
