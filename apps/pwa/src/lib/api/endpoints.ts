@@ -116,6 +116,7 @@ export async function createExpenseTransaction(input: {
   date: string;
   categoryId: string;
   accountId: string;
+  notes?: string;
   method?: string;
   sourceMessageId?: string;
 }): Promise<Transaction> {
@@ -212,8 +213,50 @@ export async function addCategory(input: {
   name: string;
   kind: "expense" | "income";
   parentId?: string;
+  icon?: string | null;
+  color?: string | null;
 }): Promise<Category> {
   return apiFetch<Category>("/categories", mutationOptions("POST", input));
+}
+
+export type CategoryTreeSub = {
+  id: string;
+  name: string;
+  icon: string | null;
+  kind: "sub";
+  parentId: string;
+};
+
+export type CategoryTreeMacro = {
+  id: string;
+  name: string;
+  icon: string | null;
+  kind: "macro";
+  type: "expense" | "income";
+  isDefault: boolean;
+  subcategories: CategoryTreeSub[];
+};
+
+export async function fetchCategoryTree(params?: { kind?: "expense" | "income" }): Promise<CategoryTreeMacro[]> {
+  const q = params?.kind ? `?kind=${params.kind}` : "";
+  const res = await apiFetch<ListResponse<CategoryTreeMacro>>(`/categories/tree${q}`);
+  return res.items;
+}
+
+export async function applyCategoryDefaults(): Promise<{ ok: boolean; created: number; skipped: number }> {
+  return apiFetch<{ ok: boolean; created: number; skipped: number }>(
+    "/categories/apply-defaults",
+    mutationOptions("POST", {}),
+  );
+}
+
+export async function deleteCategory(
+  id: string,
+  input:
+    | { mode: "move"; destinationCategoryId: string }
+    | { mode: "cascade"; confirm: true },
+): Promise<{ ok: boolean; deletedCategoryIds: string[]; movedTransactions: number; softDeletedTransactions: number }> {
+  return apiFetch(`/categories/${id}/delete`, mutationOptions("POST", input));
 }
 
 export async function fetchSubscriptions(): Promise<Subscription[]> {
@@ -254,6 +297,7 @@ export async function createIncomeTransaction(input: {
   date: string;
   categoryId: string;
   accountId: string;
+  notes?: string;
   method?: string;
   sourceMessageId?: string;
 }): Promise<Transaction> {
@@ -268,6 +312,7 @@ export async function updateTransaction(
     amountCents?: number;
     accountId?: string;
     categoryId?: string;
+    notes?: string;
   },
 ): Promise<Transaction> {
   return apiFetch<Transaction>(`/transactions/${id}`, mutationOptions("PATCH", input));
@@ -290,7 +335,7 @@ export async function deactivateAccount(id: string): Promise<void> {
 
 export async function updateCategory(
   id: string,
-  input: { name: string },
+  input: { name?: string; icon?: string | null; color?: string | null },
 ): Promise<Category> {
   return apiFetch<Category>(`/categories/${id}`, mutationOptions("PATCH", input));
 }

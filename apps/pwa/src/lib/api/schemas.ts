@@ -28,9 +28,12 @@ export const categorySchema = z.object({
   name: z.string(),
   kind: z.enum(["expense", "income"]),
   icon: z.string().default("Tag"),
+  color: z.string().optional(),
   parentId: id.optional(),
   subcategories: z.array(z.string()).optional(),
   status: z.string().optional(),
+  isDefault: z.boolean().optional(),
+  sortOrder: z.number().optional(),
 });
 
 export const transactionSchema = z.object({
@@ -48,6 +51,7 @@ export const transactionSchema = z.object({
   senderName: z.string().optional(),
   installmentsTotal: z.number().int().optional(),
   installmentsCurrent: z.number().int().optional(),
+  notes: z.string().optional(),
 });
 
 export const payableSchema = z.object({

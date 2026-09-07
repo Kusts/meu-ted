@@ -50,6 +50,7 @@ export interface TransactionCreateInput {
   date: string;
   categoryId: string;
   accountId: string;
+  notes?: string;
   idempotencyKey?: string;
 }
 
@@ -59,6 +60,7 @@ export interface TransactionUpdateInput {
   amountCents?: number;
   accountId?: string;
   categoryId?: string;
+  notes?: string;
   idempotencyKey?: string;
 }
 
@@ -213,8 +215,13 @@ export interface Commands {
 
   // ── Categories (create / update / deactivate) ──────────────────
   addCategory(input: CategoryInput): Promise<Category>;
-  updateCategory(id: string, input: { name: string }): Promise<Category>;
+  updateCategory(id: string, input: { name?: string; icon?: string | null; color?: string | null }): Promise<Category>;
   deactivateCategory(id: string): Promise<void>;
+  deleteCategory(
+    id: string,
+    input: { mode: "move"; destinationCategoryId: string } | { mode: "cascade"; confirm: true },
+  ): Promise<{ ok: boolean; deletedCategoryIds: string[]; movedTransactions: number; softDeletedTransactions: number }>;
+  applyCategoryDefaults(): Promise<{ ok: boolean; created: number; skipped: number }>;
 
   // ── Cards (credit) ─────────────────────────────────────────────
   createCard(input: CardInput): Promise<Account>;
@@ -350,6 +357,12 @@ function buildCommands(ctx: CommandsContext): Commands {
     },
     deactivateCategory(id) {
       return guarded("deactivateCategory", ctx, () => a.deactivateCategory(id));
+    },
+    deleteCategory(id, input) {
+      return guarded("deleteCategory", ctx, () => a.deleteCategory(id, input));
+    },
+    applyCategoryDefaults() {
+      return guarded("applyCategoryDefaults", ctx, () => a.applyCategoryDefaults());
     },
 
     // ── Cards ────────────────────────────────────────────────────

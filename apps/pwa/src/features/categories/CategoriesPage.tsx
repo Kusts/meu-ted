@@ -9,9 +9,10 @@ import { CategoryBadge, getCategoryColor } from "@/components/ui/CategoryBadge";
 import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
-import { Plus, Search, X, Check, Sparkles, Tag, ChevronDown } from "lucide-react";
+import type { Category } from "@/lib/state/types";
+import { Plus, Search, X, Check, Sparkles, Tag, ChevronDown, ChevronRight, Trash2, LayoutTemplate } from "lucide-react";
 import * as LucideIcons from "lucide-react";
-import { ICON_GROUPS, COLOR_PALETTE, getCategoryIconName } from "./category-constants";
+import { ICON_GROUPS, COLOR_PALETTE, getCategoryIconName, searchIconGroups } from "./category-constants";
 
 function getIconComponent(name: string) {
   const key = name as keyof typeof LucideIcons;
@@ -26,9 +27,35 @@ function IconPicker({
   value: string | null;
   onChange: (icon: string) => void;
 }) {
+  const [query, setQuery] = useState("");
+  const groups = useMemo(() => searchIconGroups(query), [query]);
   return (
     <div className="flex flex-col gap-4">
-      {ICON_GROUPS.map((group) => (
+      <label className="relative flex items-center">
+        <Search size={14} className="pointer-events-none absolute left-3 text-text-muted" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Buscar símbolo..."
+          aria-label="Buscar símbolo"
+          className="w-full rounded-[12px] border border-border-subtle bg-surface-2 py-2.5 pl-9 pr-8 text-[13px] font-medium text-text-primary placeholder:text-text-muted outline-none focus:border-primary"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery("")}
+            className="absolute right-2 flex h-6 w-6 items-center justify-center rounded-full bg-surface-1 text-text-muted hover:text-text-primary"
+            aria-label="Limpar busca de símbolo"
+          >
+            <X size={12} />
+          </button>
+        )}
+      </label>
+      {groups.length === 0 && (
+        <div className="py-2 text-center text-[12px] text-text-muted">Nenhum símbolo para “{query}”.</div>
+      )}
+      {groups.map((group) => (
         <div key={group.id} data-testid="icon-group" className="flex flex-col gap-2">
           <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">{group.label}</span>
           <div className="grid grid-cols-6 gap-2">
@@ -213,22 +240,28 @@ function NewCategorySheet({
   );
 }
 
+export type CategorySubItem = { id?: string; name: string; icon?: string | null };
+
 interface CategoryRowProps {
-  cat: { id: string; name: string; icon?: string | null; color?: string | null; subcategories?: string[] };
+  cat: Category;
+  subs: CategorySubItem[];
   onAddSub?: (input: { name: string; kind: "expense" | "income"; parentId: string }) => void;
-  onEdit?: (cat: { id: string; name: string }) => void;
+  onEdit?: (cat: Category) => void;
   onDeactivate?: (cat: { id: string; name: string }) => void;
+  onDelete?: (cat: Category) => void;
+  onDeleteSub?: (macro: Category, sub: CategorySubItem) => void;
 }
 
-function CategoryRow({ cat, onAddSub, onEdit, onDeactivate }: CategoryRowProps) {
+function CategoryRow({ cat, subs, onAddSub, onEdit, onDeactivate, onDelete, onDeleteSub }: CategoryRowProps) {
   const [adding, setAdding] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [newSub, setNewSub] = useState("");
   const color = (cat.color as string | undefined) ?? getCategoryColor(cat.name);
   const iconName = (cat.icon as string | undefined) ?? getCategoryIconName(cat.name);
 
   function handleAdd() {
     if (!newSub.trim() || !onAddSub) return;
-    onAddSub({ name: newSub.trim(), kind: "expense" as const, parentId: cat.id });
+    onAddSub({ name: newSub.trim(), kind: cat.kind, parentId: cat.id });
     setNewSub("");
     setAdding(false);
   }
@@ -249,12 +282,30 @@ function CategoryRow({ cat, onAddSub, onEdit, onDeactivate }: CategoryRowProps) 
         </div>
         <div className="min-w-0 flex-1">
           <span className="block truncate text-[14px] font-bold leading-tight text-text-primary">{cat.name}</span>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-muted">
-            <Tag size={10} />
-            {cat.subcategories && cat.subcategories.length > 0 ? `${cat.subcategories.length} sub` : "sem sub"}
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-muted">
+              <Tag size={10} />
+              {subs.length > 0 ? `${subs.length} sub` : "sem sub"}
+            </span>
+            {cat.isDefault && (
+              <span className="inline-flex items-center rounded-full bg-primary-tint px-2 py-0.5 text-[10px] font-bold text-primary">
+                Default
+              </span>
+            )}
           </span>
         </div>
         <div className="flex items-center gap-1">
+          {subs.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setExpanded((e) => !e)}
+              aria-expanded={expanded}
+              aria-label={`Alternar subcategorias de ${cat.name}`}
+              className="rounded-full p-1.5 text-text-muted transition-all hover:bg-surface-2 hover:text-text-primary"
+            >
+              {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setAdding(!adding)}
@@ -265,7 +316,7 @@ function CategoryRow({ cat, onAddSub, onEdit, onDeactivate }: CategoryRowProps) 
           {onEdit && (
             <button
               type="button"
-              onClick={() => onEdit({ id: cat.id, name: cat.name })}
+              onClick={() => onEdit(cat)}
               className="px-2 py-1 text-[11px] font-semibold text-text-muted hover:text-text-primary transition-colors"
             >
               Editar
@@ -280,18 +331,40 @@ function CategoryRow({ cat, onAddSub, onEdit, onDeactivate }: CategoryRowProps) 
               Desativar
             </button>
           )}
+          {onDelete && (
+            <button
+              type="button"
+              onClick={() => onDelete(cat)}
+              aria-label={`Excluir categoria ${cat.name}`}
+              title={`Excluir ${cat.name}`}
+              className="rounded-full p-1.5 text-text-muted transition-all hover:bg-danger-tint hover:text-danger"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
         </div>
       </div>
 
-      {cat.subcategories && cat.subcategories.length > 0 && (
+      {expanded && subs.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1.5">
-          {cat.subcategories.map((sub) => (
+          {subs.map((sub) => (
             <span
-              key={sub}
+              key={sub.id ?? sub.name}
               className="inline-flex items-center gap-1 rounded-full border border-border-subtle bg-surface-2 px-2.5 py-1 text-[11px] font-medium text-text-secondary"
             >
               <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-              {sub}
+              {sub.name}
+              {sub.id && onDeleteSub && (
+                <button
+                  type="button"
+                  onClick={() => onDeleteSub(cat, sub)}
+                  aria-label={`Excluir subcategoria ${sub.name}`}
+                  title={`Excluir ${sub.name}`}
+                  className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full text-text-muted hover:bg-surface-3 hover:text-danger"
+                >
+                  <X size={11} />
+                </button>
+              )}
             </span>
           ))}
         </div>
@@ -335,21 +408,35 @@ function CategoryEditSheet({
   onSave,
 }: {
   open: boolean;
-  category: { id: string; name: string } | null;
+  category: Category | null;
   onClose: () => void;
-  onSave: (id: string, name: string) => void | Promise<void>;
+  onSave: (id: string, input: { name: string; icon?: string | null; color?: string | null }) => void | Promise<void>;
 }) {
   const [name, setName] = useState("");
+  const [icon, setIcon] = useState<string | null>(null);
+  const [color, setColor] = useState<string | null>(null);
+  const [iconTouched, setIconTouched] = useState(false);
+  const [colorTouched, setColorTouched] = useState(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (category) setName(category.name);
+    if (category) {
+      setName(category.name);
+      setIcon((category.icon as string | undefined) ?? null);
+      setColor((category.color as string | undefined) ?? null);
+      setIconTouched(false);
+      setColorTouched(false);
+    }
   }, [category]);
 
   async function handleSave() {
     if (!category || !name.trim()) return;
     try {
-      await onSave(category.id, name.trim());
+      const input: { name: string; icon?: string | null; color?: string | null } = { name: name.trim() };
+      // Only send icon/color when changed, so untouched edits stay { name }.
+      if (iconTouched) input.icon = icon;
+      if (colorTouched) input.color = color;
+      await onSave(category.id, input);
       onClose();
     } catch {
       // keep open
@@ -368,6 +455,26 @@ function CategoryEditSheet({
             className="w-full rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary"
           />
         </fieldset>
+        <fieldset>
+          <label className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Símbolo</label>
+          <IconPicker
+            value={icon}
+            onChange={(v) => {
+              setIcon(v);
+              setIconTouched(true);
+            }}
+          />
+        </fieldset>
+        <fieldset>
+          <label className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-text-muted">Paleta</label>
+          <ColorPicker
+            value={color}
+            onChange={(v) => {
+              setColor(v);
+              setColorTouched(true);
+            }}
+          />
+        </fieldset>
         <button
           type="button"
           onClick={handleSave}
@@ -380,30 +487,191 @@ function CategoryEditSheet({
   );
 }
 
+function CategoryDeleteSheet({
+  open,
+  target,
+  destinations,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  target: { id: string; name: string; kind: "expense" | "income"; subCount: number } | null;
+  destinations: { id: string; name: string }[];
+  onClose: () => void;
+  onConfirm: (input: { mode: "move"; destinationCategoryId: string } | { mode: "cascade"; confirm: true }) => void | Promise<void>;
+}) {
+  const [mode, setMode] = useState<"move" | "cascade">("move");
+  const [destinationId, setDestinationId] = useState("");
+  const [cascadeAck, setCascadeAck] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMode("move");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDestinationId("");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCascadeAck(false);
+    }
+  }, [open ]);
+
+  const canConfirm = mode === "cascade" ? cascadeAck : destinationId !== "";
+
+  async function handleConfirm() {
+    if (!canConfirm) return;
+    try {
+      if (mode === "cascade") await onConfirm({ mode: "cascade", confirm: true });
+      else await onConfirm({ mode: "move", destinationCategoryId: destinationId });
+      onClose();
+    } catch {
+      // keep open on failure
+    }
+  }
+
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Excluir categoria">
+      <div className="flex flex-col gap-4 pb-[env(safe-area-inset-bottom)]">
+        <p className="text-[13px] font-medium leading-relaxed text-text-secondary">
+          Excluir <b className="text-text-primary">“{target?.name ?? ""}”</b>
+          {target && target.subCount > 0 ? ` e suas ${target.subCount} subcategorias` : ""} é permanente.
+          Escolha o destino dos lançamentos vinculados.
+        </p>
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => setMode("move")}
+            aria-pressed={mode === "move"}
+            className={`rounded-[14px] border p-3.5 text-left transition-all ${
+              mode === "move" ? "border-primary bg-primary-tint/30 shadow-xs" : "border-border-subtle bg-surface-2"
+            }`}
+          >
+            <div className="text-[13px] font-bold text-text-primary">Mover lançamentos</div>
+            <div className="mt-0.5 text-[12px] text-text-muted">Reatribui tudo para outra categoria do mesmo tipo.</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("cascade")}
+            aria-pressed={mode === "cascade"}
+            className={`rounded-[14px] border p-3.5 text-left transition-all ${
+              mode === "cascade" ? "border-danger bg-danger-tint/40 shadow-xs" : "border-border-subtle bg-surface-2"
+            }`}
+          >
+            <div className="text-[13px] font-bold text-text-primary">Excluir lançamentos junto</div>
+            <div className="mt-0.5 text-[12px] text-text-muted">Remove os lançamentos vinculados (ação com confirmação).</div>
+          </button>
+        </div>
+        {mode === "move" ? (
+          <fieldset>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-text-muted">
+              Categoria de destino
+            </label>
+            <select
+              aria-label="Categoria de destino"
+              value={destinationId}
+              onChange={(e) => setDestinationId(e.target.value)}
+              className="h-11 w-full rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[14px] font-medium text-text-primary outline-none focus:border-primary"
+            >
+              <option value="">Selecione...</option>
+              {destinations.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </fieldset>
+        ) : (
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-[14px] border border-danger/30 bg-danger-tint/30 p-3.5">
+            <input
+              type="checkbox"
+              checked={cascadeAck}
+              onChange={(e) => setCascadeAck(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-danger"
+            />
+            <span className="text-[12px] font-semibold leading-relaxed text-text-primary">
+              Entendo que os lançamentos vinculados serão excluídos e confirmo a exclusão em cascata.
+            </span>
+          </label>
+        )}
+        <button
+          type="button"
+          disabled={!canConfirm}
+          onClick={handleConfirm}
+          className="w-full rounded-[14px] bg-danger py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
+        >
+          Confirmar exclusão
+        </button>
+      </div>
+    </BottomSheet>
+  );
+}
+
 export default function CategoriesPage() {
-  const { categories, loading, error, writeError, clearWriteError, addCategory, updateCategory, deactivateCategory } = useAppState();
+  const {
+    categories,
+    loading,
+    error,
+    writeError,
+    clearWriteError,
+    addCategory,
+    updateCategory,
+    deactivateCategory,
+    deleteCategory,
+    applyCategoryDefaults,
+  } = useAppState();
   const [createOpen, setCreateOpen] = useState(false);
-  const [editCategory, setEditCategory] = useState<{ id: string; name: string } | null>(null);
+  const [editCategory, setEditCategory] = useState<Category | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState<{ id: string; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Category | null>(null);
   const [query, setQuery] = useState("");
   const [expenseOpen, setExpenseOpen] = useState(true);
   const [incomeOpen, setIncomeOpen] = useState(true);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const expenseCategories = useMemo(() => categories.filter((c) => c.kind === "expense"), [categories]);
-  const incomeCategories = useMemo(() => categories.filter((c) => c.kind === "income"), [categories]);
+  const macros = useMemo(() => categories.filter((c) => !c.parentId), [categories]);
+  const subsByMacro = useMemo(() => {
+    const map = new Map<string, Category[]>();
+    for (const c of categories) {
+      if (!c.parentId) continue;
+      const list = map.get(c.parentId) ?? [];
+      list.push(c);
+      map.set(c.parentId, list);
+    }
+    return map;
+  }, [categories]);
+
+  const subsFor = (macro: Category): CategorySubItem[] => {
+    const legacy = (macro.subcategories ?? []).map((name) => ({ name }));
+    const children = (subsByMacro.get(macro.id) ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      icon: c.icon ?? null,
+    }));
+    const seen = new Set(children.map((c) => c.name.toLowerCase()));
+    return [...children, ...legacy.filter((s) => !seen.has(s.name.toLowerCase()))];
+  };
+
+  const expenseMacros = useMemo(() => macros.filter((c) => c.kind === "expense"), [macros]);
+  const incomeMacros = useMemo(() => macros.filter((c) => c.kind === "income"), [macros]);
+
+  const matchesQuery = (macro: Category, q: string) => {
+    if (!q) return true;
+    const needle = q.toLowerCase();
+    if (macro.name.toLowerCase().includes(needle)) return true;
+    return subsFor(macro).some((s) => s.name.toLowerCase().includes(needle));
+  };
 
   const filteredExpenses = useMemo(() => {
-    if (!query.trim()) return expenseCategories;
-    const q = query.toLowerCase();
-    return expenseCategories.filter((c) => c.name.toLowerCase().includes(q) || (c.subcategories ?? []).some((s) => s.toLowerCase().includes(q)));
-  }, [expenseCategories, query]);
+    const q = query.trim();
+    return expenseMacros.filter((c) => matchesQuery(c, q));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expenseMacros, query]);
 
   const filteredIncomes = useMemo(() => {
-    if (!query.trim()) return incomeCategories;
-    const q = query.toLowerCase();
-    return incomeCategories.filter((c) => c.name.toLowerCase().includes(q) || (c.subcategories ?? []).some((s) => s.toLowerCase().includes(q)));
-  }, [incomeCategories, query]);
+    const q = query.trim();
+    return incomeMacros.filter((c) => matchesQuery(c, q));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomeMacros, query]);
 
   if (loading) {
     return (
@@ -420,6 +688,8 @@ export default function CategoriesPage() {
   }
 
   const hasNoResults = query.trim() && filteredExpenses.length === 0 && filteredIncomes.length === 0;
+
+  const deleteDestinations = (deleteTarget ? macros.filter((m) => m.kind === deleteTarget.kind && m.id !== deleteTarget.id && !(subsByMacro.get(deleteTarget.id) ?? []).some((s) => s.id === m.id)) : []).map((m) => ({ id: m.id, name: m.name }));
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg">
@@ -481,6 +751,24 @@ export default function CategoriesPage() {
         </div>
 
         <div className="flex flex-col gap-6 px-5 py-4 sm:px-8 lg:px-12">
+          {notice && (
+            <div className="rounded-[12px] border border-primary/30 bg-primary-tint px-4 py-2.5 text-[12px] font-semibold text-primary">
+              {notice}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setNotice(null);
+              void applyCategoryDefaults()
+                .then((r) => setNotice(`${r.created} categorias criadas a partir do padrão${r.created === 0 ? " (já aplicado)" : ""}.`))
+                .catch(() => undefined);
+            }}
+            className="flex w-full items-center justify-center gap-2 rounded-[14px] border border-border-subtle bg-surface-1 px-4 py-3 text-[13px] font-bold text-text-secondary shadow-card transition-all hover:bg-surface-2 active:scale-[0.99]"
+          >
+            <LayoutTemplate size={15} className="text-primary" />
+            Aplicar categorias padrão em todas as contas
+          </button>
           {hasNoResults ? (
             <div className="rounded-[18px] border border-dashed border-border-subtle bg-surface-1 px-6 py-12 text-center shadow-card">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-surface-2">
@@ -517,13 +805,19 @@ export default function CategoriesPage() {
                         {filteredExpenses.map((cat) => (
                           <CategoryRow
                             key={cat.id}
-                            cat={cat as unknown as { id: string; name: string; icon?: string | null; color?: string | null; subcategories?: string[] }}
+                            cat={cat}
+                            subs={subsFor(cat)}
                             onAddSub={addCategory as unknown as (input: { name: string; kind: "expense" | "income"; parentId: string }) => void}
                             onEdit={(c) => {
-                              setEditCategory(c);
+                              setEditCategory(c as Category);
                               setEditOpen(true);
                             }}
                             onDeactivate={(c) => setConfirmDeactivate(c)}
+                            onDelete={(c) => setDeleteTarget(c as Category)}
+                            onDeleteSub={(_macro, sub) => {
+                              const full = categories.find((c) => c.id === sub.id);
+                              if (full) setDeleteTarget(full);
+                            }}
                           />
                         ))}
                       </div>
@@ -554,13 +848,19 @@ export default function CategoriesPage() {
                         {filteredIncomes.map((cat) => (
                           <CategoryRow
                             key={cat.id}
-                            cat={cat as unknown as { id: string; name: string; icon?: string | null; color?: string | null; subcategories?: string[] }}
+                            cat={cat}
+                            subs={subsFor(cat)}
                             onAddSub={addCategory as unknown as (input: { name: string; kind: "expense" | "income"; parentId: string }) => void}
                             onEdit={(c) => {
-                              setEditCategory(c);
+                              setEditCategory(c as Category);
                               setEditOpen(true);
                             }}
                             onDeactivate={(c) => setConfirmDeactivate(c)}
+                            onDelete={(c) => setDeleteTarget(c as Category)}
+                            onDeleteSub={(_macro, sub) => {
+                              const full = categories.find((c) => c.id === sub.id);
+                              if (full) setDeleteTarget(full);
+                            }}
                           />
                         ))}
                       </div>
@@ -581,7 +881,34 @@ export default function CategoriesPage() {
           setEditOpen(false);
           setEditCategory(null);
         }}
-        onSave={(id, name) => updateCategory(id, { name })}
+        onSave={(id, input) => updateCategory(id, input)}
+      />
+
+      <CategoryDeleteSheet
+        open={deleteTarget !== null}
+        target={
+          deleteTarget
+            ? {
+                id: deleteTarget.id,
+                name: deleteTarget.name,
+                kind: deleteTarget.kind,
+                subCount: (subsByMacro.get(deleteTarget.id) ?? []).length,
+              }
+            : null
+        }
+        destinations={deleteDestinations}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={(input) => {
+          if (!deleteTarget) return;
+          const id = deleteTarget.id;
+          return deleteCategory(id, input).then((r) => {
+            const parts: string[] = [];
+            if (r.movedTransactions > 0) parts.push(`${r.movedTransactions} lançamento(s) movidos`);
+            if (r.softDeletedTransactions > 0) parts.push(`${r.softDeletedTransactions} lançamento(s) excluídos`);
+            setNotice(`Categoria excluída${parts.length > 0 ? ` — ${parts.join(" · ")}` : ""}.`);
+            setDeleteTarget(null);
+          });
+        }}
       />
 
       <ConfirmActionDialog

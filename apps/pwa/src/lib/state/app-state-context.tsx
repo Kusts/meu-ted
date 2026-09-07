@@ -147,9 +147,16 @@ export interface AppState {
     name: string;
     kind: "expense" | "income";
     parentId?: string;
+    icon?: string | null;
+    color?: string | null;
   }) => Promise<void>;
-  updateCategory: (id: string, input: { name: string }) => Promise<void>;
+  updateCategory: (id: string, input: { name?: string; icon?: string | null; color?: string | null }) => Promise<void>;
   deactivateCategory: (id: string) => Promise<void>;
+  deleteCategory: (
+    id: string,
+    input: { mode: "move"; destinationCategoryId: string } | { mode: "cascade"; confirm: true },
+  ) => Promise<{ movedTransactions: number; softDeletedTransactions: number }>;
+  applyCategoryDefaults: () => Promise<{ created: number; skipped: number }>;
   addCard: (input: {
     name: string;
     creditLimitCents: number;
@@ -529,6 +536,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           date: tx.date,
           categoryId: tx.categoryId,
           accountId: tx.accountId,
+          ...(tx.notes !== undefined ? { notes: tx.notes } : {}),
         });
         setTransactions((prev) =>
           prev.map((t) => (t.id === tx.id ? { ...t, id: created.id } : t)),
@@ -544,6 +552,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           date: tx.date,
           categoryId: tx.categoryId,
           accountId: tx.accountId,
+          ...(tx.notes !== undefined ? { notes: tx.notes } : {}),
         });
         setTransactions((prev) =>
           prev.map((t) => (t.id === tx.id ? { ...t, id: created.id } : t)),
@@ -565,6 +574,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         amountCents?: number;
         accountId?: string;
         categoryId?: string;
+        notes?: string;
       },
     ) => {
       if (guardReadOnlyRef.current()) return;
@@ -590,6 +600,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
                 ...(input.categoryId !== undefined
                   ? { categoryId: input.categoryId }
                   : {}),
+                ...(input.notes !== undefined ? { notes: input.notes } : {}),
               }
             : t,
         ),
@@ -696,13 +707,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // ── Category update / deactivate ───────────────────────────
 
   const updateCategory = useCallback(
-    async (id: string, input: { name: string }) => {
+    async (id: string, input: { name?: string; icon?: string | null; color?: string | null }) => {
       if (guardReadOnlyRef.current()) return;
       const prev = categoriesRef.current.find((c) => c.id === id);
       if (!prev) return;
 
+      // Optimistic: null icon means "no change" (API treats null as keep).
+      const effective: Partial<Category> = {};
+      if (input.name !== undefined) effective.name = input.name;
+      if (input.icon) effective.icon = input.icon;
+      if (input.color !== undefined) effective.color = input.color;
       setCategories((curr) =>
-        curr.map((c) => (c.id === id ? { ...c, name: input.name } : c)),
+        curr.map((c) => (c.id === id ? { ...c, ...effective } : c)),
       );
 
       if (!apiUsable()) return;
@@ -733,6 +749,59 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       setCategories((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
+    }
+  }, []);
+
+  const deleteCategory = useCallback(
+    async (
+      id: string,
+      input: { mode: "move"; destinationCategoryId: string } | { mode: "cascade"; confirm: true },
+    ) => {
+      if (guardReadOnlyRef.current()) return { movedTransactions: 0, softDeletedTransactions: 0 };
+      const prev = [...categoriesRef.current];
+      const doomed = new Set<string>([id]);
+      for (const c of prev) {
+        if (c.parentId === id) doomed.add(c.id);
+      }
+      // Optimistic: drop the macro and its subs; rollback restores on failure.
+      setCategories((curr) => curr.filter((c) => !doomed.has(c.id)));
+
+      if (!apiUsable()) {
+        return { movedTransactions: 0, softDeletedTransactions: 0 };
+      }
+
+      try {
+        const result = await commandsRef.current!.deleteCategory(id, input);
+        // Refresh from the server source of truth after a structural delete.
+        const [freshCategories, freshTransactions] = await Promise.all([
+          endpoints.fetchCategories(),
+          endpoints.fetchTransactions({ limit: 200 }),
+        ]);
+        setCategories(freshCategories);
+        setTransactions(freshTransactions.items);
+        return {
+          movedTransactions: result.movedTransactions,
+          softDeletedTransactions: result.softDeletedTransactions,
+        };
+      } catch (e) {
+        setCategories(prev);
+        handleWriteErrorRef.current(e);
+        throw e;
+      }
+    },
+    [],
+  );
+
+  const applyCategoryDefaults = useCallback(async () => {
+    if (guardReadOnlyRef.current()) return { created: 0, skipped: 0 };
+    if (!apiUsable()) return { created: 0, skipped: 0 };
+    try {
+      const result = await commandsRef.current!.applyCategoryDefaults();
+      setCategories(await endpoints.fetchCategories());
+      return { created: result.created, skipped: result.skipped };
+    } catch (e) {
+      handleWriteErrorRef.current(e);
+      throw e;
     }
   }, []);
 
@@ -1549,6 +1618,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               case "transactions":
                 data = (await endpoints.fetchTransactions({ limit: 200 })).items;
                 break;
+              case "categories":
+                data = await endpoints.fetchCategories();
+                break;
               case "payables":
                 data = await endpoints.fetchPayables();
                 break;
@@ -1633,6 +1705,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       addCategory,
       updateCategory,
       deactivateCategory,
+      deleteCategory,
+      applyCategoryDefaults,
       addCard,
       updateCard,
       addSubscription,
@@ -1686,6 +1760,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       addCategory,
       updateCategory,
       deactivateCategory,
+      deleteCategory,
+      applyCategoryDefaults,
       addCard,
       updateCard,
       addSubscription,

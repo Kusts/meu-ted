@@ -13,6 +13,8 @@ export interface Transaction {
   senderName?: string;
   installmentsTotal?: number;
   installmentsCurrent?: number;
+  /** Free-form observation from "Mais detalhes" (item 10/B4). */
+  notes?: string;
 }
 
 export type AccountKind =
@@ -48,6 +50,29 @@ export interface Category {
   subcategories?: string[];
   parentId?: string;
   status?: string;
+  /** True when the row came from the default template (badge in the UI). */
+  isDefault?: boolean;
+  /** Display order among siblings. */
+  sortOrder?: number;
+}
+
+/** Canonical tree node from GET /categories/tree (macros with nested subs). */
+export interface CategoryTreeSub {
+  id: string;
+  name: string;
+  icon: string | null;
+  kind: "sub";
+  parentId: string;
+}
+
+export interface CategoryTreeMacro {
+  id: string;
+  name: string;
+  icon: string | null;
+  kind: "macro";
+  type: "expense" | "income";
+  isDefault: boolean;
+  subcategories: CategoryTreeSub[];
 }
 
 export interface Payable {
