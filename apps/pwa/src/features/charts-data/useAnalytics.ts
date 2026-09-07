@@ -1,0 +1,171 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch } from "@/lib/api/client";
+import type { AnalyticsFilters } from "@/components/filters/analytics-filters";
+
+export type AnalyticsKpis = {
+  period: { from: string; to: string };
+  previousPeriod: { from: string; to: string };
+  netLiquidBalanceCents: number;
+  accountsTotalCents: number;
+  dueSoonCents: number;
+  openInvoices: { committedCents: number; limitCents: number; utilizationPct: number | null };
+  savingsRatePct: number | null;
+  savingsRateTargetPct: number;
+  previousSavingsRatePct: number | null;
+  fixedVsDiscretionary: { fixedCents: number; discretionaryCents: number; fixedPctOfIncome: number | null };
+  incomeCents: number;
+  expenseCents: number;
+  previousIncomeCents: number;
+  previousExpenseCents: number;
+  netWorthCents: number;
+};
+
+export type CashflowSeries = {
+  period: { from: string; to: string };
+  current: { date: string; valueCents: number }[];
+  previous: { date: string; valueCents: number }[];
+};
+
+export type CategorySlice = {
+  categoryId: string;
+  name: string;
+  totalCents: number;
+  pct: number;
+  color: string | null;
+};
+
+export type CategoryBreakdown = {
+  period: { from: string; to: string };
+  kind: "expense" | "income";
+  totalCents: number;
+  slices: CategorySlice[];
+};
+
+export type BudgetConsumptionItem = {
+  budgetId: string;
+  name: string;
+  categoryId: string;
+  spentCents: number;
+  amountCents: number;
+  pctUsed: number;
+  overBudget: boolean;
+  thresholdBreached: boolean;
+};
+
+export type HeatmapWeek = {
+  weekStart: string;
+  days: { date: string; totalCents: number; level: 0 | 1 | 2 | 3 | 4 }[];
+};
+
+const toQuery = (filters: AnalyticsFilters): string => {
+  const params = new URLSearchParams({ period: filters.period });
+  if (filters.period === "custom" && filters.from && filters.to) {
+    params.set("from", filters.from);
+    params.set("to", filters.to);
+  }
+  if (filters.accountId) params.set("accountId", filters.accountId);
+  return params.toString();
+};
+
+export async function fetchKpis(filters: AnalyticsFilters, signal?: AbortSignal): Promise<AnalyticsKpis> {
+  return apiFetch<AnalyticsKpis>(`/analytics/kpis?${toQuery(filters)}`, signal ? { signal } : {});
+}
+
+export async function fetchCashflowSeries(filters: AnalyticsFilters, signal?: AbortSignal): Promise<CashflowSeries> {
+  return apiFetch<CashflowSeries>(`/analytics/cashflow-series?${toQuery(filters)}`, signal ? { signal } : {});
+}
+
+export async function fetchCategoryBreakdown(
+  filters: AnalyticsFilters,
+  kind: "expense" | "income" = "expense",
+  signal?: AbortSignal,
+): Promise<CategoryBreakdown> {
+  const query = toQuery(filters);
+  return apiFetch<CategoryBreakdown>(`/analytics/category-breakdown?${query}&kind=${kind}`, signal ? { signal } : {});
+}
+
+export async function fetchBudgetConsumption(signal?: AbortSignal): Promise<BudgetConsumptionItem[]> {
+  const res = await apiFetch<{ items: BudgetConsumptionItem[] }>("/analytics/budget-consumption", signal ? { signal } : {});
+  return res.items;
+}
+
+export async function fetchDailyHeatmap(
+  filters: AnalyticsFilters,
+  signal?: AbortSignal,
+): Promise<{ endDate: string; weeks: HeatmapWeek[] }> {
+  return apiFetch(`/analytics/daily-heatmap?${toQuery(filters)}`, signal ? { signal } : {});
+}
+
+export async function fetchNetWorthHistory(
+  filters: AnalyticsFilters,
+  signal?: AbortSignal,
+): Promise<{ month: string; netWorthCents: number }[]> {
+  const res = await apiFetch<{ months: { month: string; netWorthCents: number }[] }>(
+    `/analytics/net-worth-history?${toQuery(filters)}`,
+    signal ? { signal } : {},
+  );
+  return res.months;
+}
+
+export type AnalyticsBundle = {
+  kpis: AnalyticsKpis | null;
+  cashflow: CashflowSeries | null;
+  breakdown: CategoryBreakdown | null;
+  budgets: BudgetConsumptionItem[];
+  heatmap: { endDate: string; weeks: HeatmapWeek[] } | null;
+  netWorth: { month: string; netWorthCents: number }[];
+  loading: boolean;
+  error: string | null;
+  reload: () => void;
+};
+
+/**
+ * Carrega o pacote de analytics para os filtros atuais (etapa A: dados
+ * prontos para a etapa B montar Home e /hub/relatorios).
+ */
+export function useAnalytics(filters: AnalyticsFilters): AnalyticsBundle {
+  const [kpis, setKpis] = useState<AnalyticsKpis | null>(null);
+  const [cashflow, setCashflow] = useState<CashflowSeries | null>(null);
+  const [breakdown, setBreakdown] = useState<CategoryBreakdown | null>(null);
+  const [budgets, setBudgets] = useState<BudgetConsumptionItem[]>([]);
+  const [heatmap, setHeatmap] = useState<{ endDate: string; weeks: HeatmapWeek[] } | null>(null);
+  const [netWorth, setNetWorth] = useState<{ month: string; netWorthCents: number }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setLoading(true);
+    setError(null);
+    void Promise.all([
+      fetchKpis(filters, controller.signal).then(setKpis),
+      fetchCashflowSeries(filters, controller.signal).then(setCashflow),
+      fetchCategoryBreakdown(filters, "expense", controller.signal).then(setBreakdown),
+      fetchBudgetConsumption(controller.signal).then(setBudgets),
+      fetchDailyHeatmap(filters, controller.signal).then(setHeatmap),
+      fetchNetWorthHistory(filters, controller.signal).then(setNetWorth),
+    ])
+      .catch((e: unknown) => {
+        if ((e as { name?: string })?.name !== "AbortError") {
+          setError(e instanceof Error ? e.message : "Falha ao carregar analytics.");
+        }
+      })
+      .finally(() => {
+        if (abortRef.current === controller) setLoading(false);
+      });
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.period, filters.from, filters.to, filters.accountId, nonce]);
+
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  return { kpis, cashflow, breakdown, budgets, heatmap, netWorth, loading, error, reload };
+}
