@@ -19,7 +19,7 @@ test.afterEach(async ({ page }) => {
 });
 
 async function init(page: import("@playwright/test").Page, id: string) {
-  return initSpec(page, id, { navigateTo: "/assinaturas" });
+  return initSpec(page, id, { navigateTo: "/hub/planejamento?aba=assinaturas" });
 }
 
 test("[SUB-01] subscriptions page renders", async ({ page }) => {

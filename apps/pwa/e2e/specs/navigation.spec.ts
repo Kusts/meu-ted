@@ -1,13 +1,14 @@
 /**
- * Navigation E2E tests.
+ * Navigation E2E tests (canonical IA, item 13).
  * IDs: DIRECT-01..12, NAV-01..13
  *
- * DIRECT: direct-load each route, register device, assert URL + heading +
- *   fixture journal has zero unexpected writes.
- * NAV-01..03: click BottomNav button, assert URL changes.
- * NAV-04: click Mais, assert dialog(sheet) opens.
- * NAV-05..12: open More sheet, click item, assert URL.
- * NAV-13: open More, click backdrop, assert sheet closed, route preserved.
+ * DIRECT: direct-load each canonical route, register device, assert URL +
+ *   heading + fixture journal has zero unexpected writes. Legacy page routes
+ *   redirect (temporary) to their canonical tab — covered by REDIRECT tests.
+ * NAV-01..04: click BottomNav button, assert URL changes.
+ * NAV-05..08: FAB quick menu opens and dispatches capture flows.
+ * NAV-09..12: Hub grid navigates to module subroutes.
+ * NAV-13: FAB menu closes on Escape, route preserved.
  *
  * No body-visibility as acceptance, no conditional locators, no arbitrary waits.
  */
@@ -35,7 +36,7 @@ function tid(prefix: string): string {
  *
  * `baselineAllows: false` keeps the original strict guard: this spec tolerated
  * only the service-worker failure, and inheriting the harness baseline set
- * would leave these 25 tests green while detecting less.
+ * would leave these tests green while detecting less.
  */
 async function setup(page: import("@playwright/test").Page, id: string) {
   return prepareSpec(page, id, {
@@ -58,7 +59,7 @@ test.afterEach(async ({ page }) => {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DIRECT-01..12: Direct load each route
+// DIRECT-01..12: Direct load each canonical route
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Each DIRECT test asserts: URL matches route, zero unexpected journal writes, clean guard.
@@ -78,59 +79,59 @@ test("[DIRECT-02] direct load /registros renders shell", async ({ page }) => {
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
-test("[DIRECT-03] direct load /a-pagar renders shell", async ({ page }) => {
+test("[DIRECT-03] direct load /compromissos renders shell", async ({ page }) => {
   const id = tid("direct"); const guard = await setup(page, id);
-  await page.goto("/a-pagar"); await registerDevice(page);
-  expect(page.url()).toContain("/a-pagar");
+  await page.goto("/compromissos"); await registerDevice(page);
+  expect(page.url()).toContain("/compromissos");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
-test("[DIRECT-04] direct load /assinaturas renders shell", async ({ page }) => {
+test("[DIRECT-04] direct load /hub renders shell", async ({ page }) => {
   const id = tid("direct"); const guard = await setup(page, id);
-  await page.goto("/assinaturas"); await registerDevice(page);
-  expect(page.url()).toContain("/assinaturas");
+  await page.goto("/hub"); await registerDevice(page);
+  expect(page.url()).toContain("/hub");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
-test("[DIRECT-05] direct load /cartoes renders shell", async ({ page }) => {
+test("[DIRECT-05] direct load /hub/patrimonio renders shell", async ({ page }) => {
   const id = tid("direct"); const guard = await setup(page, id);
-  await page.goto("/cartoes"); await registerDevice(page);
-  expect(page.url()).toContain("/cartoes");
+  await page.goto("/hub/patrimonio"); await registerDevice(page);
+  expect(page.url()).toContain("/hub/patrimonio");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
-test("[DIRECT-06] direct load /categorias renders shell", async ({ page }) => {
+test("[DIRECT-06] direct load /hub/planejamento renders shell", async ({ page }) => {
   const id = tid("direct"); const guard = await setup(page, id);
-  await page.goto("/categorias"); await registerDevice(page);
-  expect(page.url()).toContain("/categorias");
+  await page.goto("/hub/planejamento"); await registerDevice(page);
+  expect(page.url()).toContain("/hub/planejamento");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
-test("[DIRECT-07] direct load /contas renders shell", async ({ page }) => {
+test("[DIRECT-07] direct load /hub/relatorios renders shell", async ({ page }) => {
   const id = tid("direct"); const guard = await setup(page, id);
-  await page.goto("/contas"); await registerDevice(page);
-  expect(page.url()).toContain("/contas");
+  await page.goto("/hub/relatorios"); await registerDevice(page);
+  expect(page.url()).toContain("/hub/relatorios");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
-test("[DIRECT-08] direct load /metas renders shell", async ({ page }) => {
+test("[DIRECT-08] direct load /hub/alertas renders shell", async ({ page }) => {
   const id = tid("direct"); const guard = await setup(page, id);
-  await page.goto("/metas"); await registerDevice(page);
-  expect(page.url()).toContain("/metas");
+  await page.goto("/hub/alertas"); await registerDevice(page);
+  expect(page.url()).toContain("/hub/alertas");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
-test("[DIRECT-09] direct load /orcamentos renders shell", async ({ page }) => {
+test("[DIRECT-09] direct load /hub/categorias renders shell", async ({ page }) => {
   const id = tid("direct"); const guard = await setup(page, id);
-  await page.goto("/orcamentos"); await registerDevice(page);
-  expect(page.url()).toContain("/orcamentos");
+  await page.goto("/hub/categorias"); await registerDevice(page);
+  expect(page.url()).toContain("/hub/categorias");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
-test("[DIRECT-10] direct load /patrimonio renders shell", async ({ page }) => {
+test("[DIRECT-10] direct load /hub/configuracoes renders shell", async ({ page }) => {
   const id = tid("direct"); const guard = await setup(page, id);
-  await page.goto("/patrimonio"); await registerDevice(page);
-  expect(page.url()).toContain("/patrimonio");
+  await page.goto("/hub/configuracoes"); await registerDevice(page);
+  expect(page.url()).toContain("/hub/configuracoes");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
@@ -141,159 +142,192 @@ test("[DIRECT-11] direct load /perfil renders shell", async ({ page }) => {
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
-test("[DIRECT-12] direct load /relatorios renders shell", async ({ page }) => {
+test("[DIRECT-12] direct load /compromissos?aba=pendencias selects the tab", async ({ page }) => {
   const id = tid("direct"); const guard = await setup(page, id);
-  await page.goto("/relatorios"); await registerDevice(page);
-  expect(page.url()).toContain("/relatorios");
+  await page.goto("/compromissos?aba=pendencias"); await registerDevice(page);
+  expect(page.url()).toContain("/compromissos");
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NAV-01..03: BottomNav navigation
+// REDIRECT-01..04: Legacy page routes land on canonical tabs
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("[NAV-01] BottomNav Resumo click navigates to /", async ({ page }) => {
+test("[REDIRECT-01] legacy /a-pagar lands on /compromissos?aba=a-pagar", async ({ page }) => {
+  const id = tid("redirect"); const guard = await setup(page, id);
+  await page.goto("/a-pagar"); await registerDevice(page);
+  await expect(page).toHaveURL(/\/compromissos\?aba=a-pagar/);
+  assertNoUndeclaredFailures(guard);
+});
+test("[REDIRECT-02] legacy /contas lands on /hub/patrimonio?aba=contas", async ({ page }) => {
+  const id = tid("redirect"); const guard = await setup(page, id);
+  await page.goto("/contas"); await registerDevice(page);
+  await expect(page).toHaveURL(/\/hub\/patrimonio\?aba=contas/);
+  assertNoUndeclaredFailures(guard);
+});
+test("[REDIRECT-03] legacy /cartoes?cardId=<id> preserves the detail param", async ({ page }) => {
+  const id = tid("redirect"); const guard = await setup(page, id);
+  await page.goto("/cartoes?cardId=card-1"); await registerDevice(page);
+  await expect(page).toHaveURL(/\/hub\/patrimonio\?aba=cartoes/);
+  expect(page.url()).toContain("cardId=card-1");
+  assertNoUndeclaredFailures(guard);
+});
+test("[REDIRECT-04] legacy /pending lands on /compromissos?aba=pendencias", async ({ page }) => {
+  const id = tid("redirect"); const guard = await setup(page, id);
+  await page.goto("/pending"); await registerDevice(page);
+  await expect(page).toHaveURL(/\/compromissos\?aba=pendencias/);
+  assertNoUndeclaredFailures(guard);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NAV-01..04: BottomNav navigation
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("[NAV-01] BottomNav Início click navigates to /", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
   await page.goto("/registros"); await registerDevice(page);
 
-  await page.getByRole("button", { name: "Resumo" }).click({ timeout: 5000 });
+  await page.getByRole("button", { name: "Início" }).click({ timeout: 5000 });
   await expect(page).toHaveURL(/\/$/);
   assertNoUndeclaredFailures(guard);
 });
 
-test("[NAV-02] BottomNav Registros click navigates to /registros", async ({ page }) => {
+test("[NAV-02] BottomNav Extrato click navigates to /registros", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
   await page.goto("/"); await registerDevice(page);
 
-  await page.getByRole("button", { name: "Registros" }).click({ timeout: 5000 });
+  await page.getByRole("button", { name: "Extrato" }).click({ timeout: 5000 });
   await expect(page).toHaveURL(/\/registros$/);
   assertNoUndeclaredFailures(guard);
 });
 
-test("[NAV-03] BottomNav A pagar click navigates to /a-pagar", async ({ page }) => {
+test("[NAV-03] BottomNav Compromissos click navigates to /compromissos", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
   await page.goto("/"); await registerDevice(page);
 
-  await page.getByRole("button", { name: "A pagar" }).click({ timeout: 5000 });
-  await expect(page).toHaveURL(/\/a-pagar$/);
+  await page.getByRole("button", { name: "Compromissos" }).click({ timeout: 5000 });
+  await expect(page).toHaveURL(/\/compromissos$/);
+  assertNoUndeclaredFailures(guard);
+});
+
+test("[NAV-04] BottomNav Hub click navigates to /hub", async ({ page }) => {
+  const id = tid("nav"); const guard = await setup(page, id);
+  await page.goto("/"); await registerDevice(page);
+
+  await page.getByRole("button", { name: "Hub" }).click({ timeout: 5000 });
+  await expect(page).toHaveURL(/\/hub$/);
   assertNoUndeclaredFailures(guard);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NAV-04: Mais opens bottom sheet
+// NAV-05..08: FAB quick menu
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("[NAV-04] tap Mais opens bottom sheet overlay (mobile)", async ({ page }) => {
+test("[NAV-05] FAB opens the quick menu with 4 actions", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 
-  await page.getByRole("button", { name: "Mais" }).click({ timeout: 5000 });
+  await page.getByRole("button", { name: "Nova transação" }).click({ timeout: 5000 });
+  await expect(page.getByRole("menu", { name: "Novo lançamento" })).toBeVisible({ timeout: 5000 });
+  assertNoUndeclaredFailures(guard);
+});
 
-  // The sheet is a dialog with role="dialog" and aria-modal="true"
-  await expect(page.locator("[role='dialog']")).toBeVisible({ timeout: 5000 });
+test("[NAV-06] quick menu Despesa opens the preselected expense sheet", async ({ page }) => {
+  const id = tid("nav"); const guard = await setup(page, id);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/"); await registerDevice(page);
+
+  await page.getByRole("button", { name: "Nova transação" }).click({ timeout: 5000 });
+  await page.getByRole("menuitem", { name: "Despesa" }).click({ timeout: 5000 });
+  await expect(page.getByText("Nova despesa")).toBeVisible({ timeout: 5000 });
+  assertNoUndeclaredFailures(guard);
+});
+
+test("[NAV-07] quick menu Ler Comprovante navigates to /capture", async ({ page }) => {
+  const id = tid("nav"); const guard = await setup(page, id);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/"); await registerDevice(page);
+
+  await page.getByRole("button", { name: "Nova transação" }).click({ timeout: 5000 });
+  await page.getByRole("menuitem", { name: "Ler Comprovante" }).click({ timeout: 5000 });
+  await expect(page).toHaveURL(/\/capture/);
+  assertNoUndeclaredFailures(guard);
+});
+
+test("[NAV-08] quick menu Transferência opens the preselected transfer sheet", async ({ page }) => {
+  const id = tid("nav"); const guard = await setup(page, id);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/"); await registerDevice(page);
+
+  await page.getByRole("button", { name: "Nova transação" }).click({ timeout: 5000 });
+  await page.getByRole("menuitem", { name: "Transferência" }).click({ timeout: 5000 });
+  await expect(page.getByText("Nova transferência")).toBeVisible({ timeout: 5000 });
   assertNoUndeclaredFailures(guard);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NAV-05..12: More menu items
+// NAV-09..12: Hub grid modules
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function navigateFromMoreMenu(
+async function navigateFromHub(
   page: import("@playwright/test").Page,
   label: string,
   expectedPath: RegExp,
 ): Promise<void> {
-  await page.getByRole("button", { name: "Mais" }).click({ timeout: 5000 });
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: label }).click({ timeout: 5000 });
+  await page.getByRole("button", { name: "Hub" }).click({ timeout: 5000 });
+  await expect(page).toHaveURL(/\/hub$/);
+  await page.getByRole("link", { name: new RegExp(label) }).click({ timeout: 5000 });
   await expect(page).toHaveURL(expectedPath);
 }
 
-test("[NAV-05] More Patrimônio navigates to /patrimonio", async ({ page }) => {
-  const id = tid("more"); const guard = await setup(page, id);
+test("[NAV-09] Hub Patrimônio navigates to /hub/patrimonio", async ({ page }) => {
+  const id = tid("hub"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
-  await navigateFromMoreMenu(page, "Patrimônio", /\/patrimonio$/);
+  await navigateFromHub(page, "Patrimônio", /\/hub\/patrimonio$/);
   assertNoUndeclaredFailures(guard);
 });
 
-test("[NAV-06] More Contas navigates to /contas", async ({ page }) => {
-  const id = tid("more"); const guard = await setup(page, id);
+test("[NAV-10] Hub Planejamento navigates to /hub/planejamento", async ({ page }) => {
+  const id = tid("hub"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
-  await navigateFromMoreMenu(page, "Contas", /\/contas$/);
+  await navigateFromHub(page, "Planejamento", /\/hub\/planejamento$/);
   assertNoUndeclaredFailures(guard);
 });
 
-test("[NAV-07] More Cartões navigates to /cartoes", async ({ page }) => {
-  const id = tid("more"); const guard = await setup(page, id);
+test("[NAV-11] Hub Alertas navigates to /hub/alertas", async ({ page }) => {
+  const id = tid("hub"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
-  await navigateFromMoreMenu(page, "Cartões", /\/cartoes$/);
+  await navigateFromHub(page, "Alertas", /\/hub\/alertas$/);
   assertNoUndeclaredFailures(guard);
 });
 
-test("[NAV-08] More Assinaturas navigates to /assinaturas", async ({ page }) => {
-  const id = tid("more"); const guard = await setup(page, id);
+test("[NAV-12] Hub Configurações navigates to /hub/configuracoes", async ({ page }) => {
+  const id = tid("hub"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
-  await navigateFromMoreMenu(page, "Assinaturas", /\/assinaturas$/);
-  assertNoUndeclaredFailures(guard);
-});
-
-test("[NAV-09] More Orçamentos navigates to /orcamentos", async ({ page }) => {
-  const id = tid("more"); const guard = await setup(page, id);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/"); await registerDevice(page);
-  await navigateFromMoreMenu(page, "Orçamentos", /\/orcamentos$/);
-  assertNoUndeclaredFailures(guard);
-});
-
-test("[NAV-10] More Metas navigates to /metas", async ({ page }) => {
-  const id = tid("more"); const guard = await setup(page, id);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/"); await registerDevice(page);
-  await navigateFromMoreMenu(page, "Metas", /\/metas$/);
-  assertNoUndeclaredFailures(guard);
-});
-
-test("[NAV-11] More Categorias navigates to /categorias", async ({ page }) => {
-  const id = tid("more"); const guard = await setup(page, id);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/"); await registerDevice(page);
-  await navigateFromMoreMenu(page, "Categorias", /\/categorias$/);
-  assertNoUndeclaredFailures(guard);
-});
-
-test("[NAV-12] More Relatórios navigates to /relatorios", async ({ page }) => {
-  const id = tid("more"); const guard = await setup(page, id);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/"); await registerDevice(page);
-  await navigateFromMoreMenu(page, "Relatórios", /\/relatorios$/);
+  await navigateFromHub(page, "Configurações", /\/hub\/configuracoes$/);
   assertNoUndeclaredFailures(guard);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NAV-13: Backdrop closes sheet
+// NAV-13: Escape closes the quick menu, route preserved
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("[NAV-13] tap overlay/backdrop closes Mais sheet, route preserved", async ({ page }) => {
+test("[NAV-13] Escape closes the FAB quick menu, route preserved", async ({ page }) => {
   const id = tid("nav13"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 
-  // Open More sheet
-  await page.getByRole("button", { name: "Mais" }).click({ timeout: 5000 });
-  await expect(page.locator("[role='dialog']")).toBeVisible({ timeout: 5000 });
+  await page.getByRole("button", { name: "Nova transação" }).click({ timeout: 5000 });
+  await expect(page.getByRole("menu")).toBeVisible({ timeout: 5000 });
 
-  // Click the backdrop/overlay (transparent inset div) to dismiss
-  const backdrop = page.locator("[class*='animate-fade-in']").first();
-  await backdrop.click({ timeout: 3000, position: { x: 200, y: 10 } });
-
-  await expect(page.getByRole("dialog")).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toBeHidden();
   await expect(page).toHaveURL(/\/$/);
   assertNoUndeclaredFailures(guard);
 });

@@ -123,7 +123,7 @@ test("[G3-03] edit persists through PATCH", async ({ page }) => {
 
 test("[G3-04] payment closes only after a successful response", async ({ page }) => {
   const id = testId();
-  const guard = await initSpec(page, id, { navigateTo: "/cartoes" });
+  const guard = await initSpec(page, id, { navigateTo: "/hub/patrimonio?aba=cartoes" });
   const deferred = deferredRequest();
   await page.route("**/cards/statements/stmt-1/pay", async (route) => {
     const response = await route.fetch();

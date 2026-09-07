@@ -1,8 +1,8 @@
 /**
  * Accounts E2E — ACC-01..06
  *
- * Pages structure:
- *   1. /contas → list of accounts. Button "Nova" opens BottomSheet "Nova conta".
+ * Pages structure (canonical IA, item 13 — tab Contas under /hub/patrimonio):
+ *   1. /hub/patrimonio?aba=contas → list of accounts. Button "Nova" opens BottomSheet "Nova conta".
  *   2. Click account row → BottomSheet "Detalhes da conta" with "Editar conta" / "Desativar conta"
  *   3. Click "Editar conta" → BottomSheet "Editar conta" with name input (no placeholder) + "Salvar"
  *   4. Click "Desativar conta" → confirm BottomSheet
@@ -15,7 +15,7 @@ import { initSpec, getJournal, expectJournal } from "../support/harness";
 let c = 0; function tid(): string { c += 1; return `acc-${c}`; }
 
 test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: "ignoreErrors" }); });
-async function init(page: import("@playwright/test").Page, id: string, nav = "/contas") {
+async function init(page: import("@playwright/test").Page, id: string, nav = "/hub/patrimonio?aba=contas") {
   return initSpec(page, id, { navigateTo: nav });
 }
 
@@ -60,7 +60,7 @@ test("[ACC-02] create cash account → POST /accounts", async ({ page }) => {
 
 test("[ACC-03] create card → POST /cards", async ({ page }) => {
   const id = tid(); const g = await init(page, id);
-  await page.goto("/cartoes");
+  await page.goto("/hub/patrimonio?aba=cartoes");
   await expect(page.getByText("Nubank")).toBeVisible({ timeout: 10000 });
 
   await page.getByRole("button", { name: "Novo", exact: true }).click();
@@ -106,7 +106,7 @@ test("[ACC-04] edit account detail sheet opens", async ({ page }) => {
 
 test("[ACC-05] edit card detail opens inline", async ({ page }) => {
   const id = tid(); const g = await init(page, id);
-  await page.goto("/cartoes");
+  await page.goto("/hub/patrimonio?aba=cartoes");
   await expect(page.getByText("Nubank")).toBeVisible({ timeout: 10000 });
 
   // Tap Nubank card (clickable div, not button)

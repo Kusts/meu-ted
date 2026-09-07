@@ -50,9 +50,10 @@ async function setScenario(testId: string, scenario: Record<string, unknown>) {
 
 async function openTransactionSheet(page: import("@playwright/test").Page) {
   await page.getByLabel("Nova transação").click();
+  await page.getByRole("menuitem", { name: "Despesa" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("Novo lançamento")).toBeVisible();
+  await expect(dialog.getByText("Nova despesa")).toBeVisible();
   return dialog;
 }
 
@@ -70,7 +71,7 @@ async function typeAmount(
 
 // ── TX-01 ──────────────────────────────────────────────────────────────────
 
-test("[TX-01] tap FAB opens expense sheet", async ({ page }) => {
+test("[TX-01] tap FAB quick menu Despesa opens expense sheet", async ({ page }) => {
   const id = tid();
   const guard = await init(page, id);
 
@@ -104,11 +105,15 @@ test("[TX-02] save expense via POST /transactions/expense with validation", asyn
   );
   expect(expensePostsBefore).toHaveLength(0);
 
-  // Happy path
+  // Happy path (progressive disclosure: pickers open in nested sheets)
   await typeAmount(dialog, "5000");
   await dialog.getByPlaceholder("Ex: Aluguel, mercado...").fill("Mercado semanal");
-  await dialog.getByRole("button", { name: "Alimentação" }).click();
-  await dialog.getByRole("button", { name: "Conta Corrente" }).click();
+  await dialog.getByRole("button", { name: "Selecionar categoria" }).click();
+  const catSheet = page.getByRole("dialog").last();
+  await catSheet.getByRole("button", { name: "Alimentação" }).click();
+  await dialog.getByRole("button", { name: "Selecionar conta ou cartão" }).click();
+  const originSheet = page.getByRole("dialog").last();
+  await originSheet.getByRole("button", { name: /Conta Corrente/ }).click();
   await expect(saveBtn).toBeEnabled();
   await saveBtn.click();
 
@@ -135,8 +140,12 @@ test("[TX-03] save income via POST /transactions/income with 422 preserved", asy
   await dialog.getByRole("button", { name: /^Receita$/ }).click();
   await typeAmount(dialog, "500000");
   await dialog.getByPlaceholder("Ex: Aluguel, mercado...").fill("Salário mensal");
-  await dialog.getByRole("button", { name: "Salário" }).click();
-  await dialog.getByRole("button", { name: "Conta Corrente" }).click();
+  await dialog.getByRole("button", { name: "Selecionar categoria" }).click();
+  const catSheet = page.getByRole("dialog").last();
+  await catSheet.getByRole("button", { name: "Salário" }).click();
+  await dialog.getByRole("button", { name: "Selecionar conta ou cartão" }).click();
+  const originSheet = page.getByRole("dialog").last();
+  await originSheet.getByRole("button", { name: /Conta Corrente/ }).click();
 
   allowFailure(guard, { message: "422", reason: "expected income validation error" });
   allowFailure(guard, { status: 422, reason: "expected income validation error" });
@@ -212,22 +221,24 @@ test("[TX-05] add category inline via create endpoint", async ({ page }) => {
 
   const dialog = await openTransactionSheet(page);
 
-  // Open inline category form (first "Nova" is category section)
-  await dialog.getByText("Nova").first().click();
-  await expect(dialog.getByPlaceholder("Nome da categoria")).toBeVisible();
+  // Category picker sheet: "Cadastrar nova" creates a top-level category
+  await dialog.getByRole("button", { name: "Selecionar categoria" }).click();
+  const catSheet = page.getByRole("dialog").last();
+  await catSheet.getByRole("button", { name: "Cadastrar nova" }).click();
+  await expect(catSheet.getByPlaceholder("Nome da categoria")).toBeVisible();
 
   // Negative: blank name cancel — no POST /categories
-  await dialog.getByRole("button", { name: "Cancelar" }).click();
-  await expect(dialog.getByPlaceholder("Nome da categoria")).toHaveCount(0);
+  await catSheet.getByRole("button", { name: "Cancelar" }).click();
+  await expect(catSheet.getByPlaceholder("Nome da categoria")).toHaveCount(0);
   const journal = await getJournal(id);
   expect(
     journal.filter((e) => e.method === "POST" && e.path === "/categories"),
   ).toHaveLength(0);
 
   // Happy path
-  await dialog.getByText("Nova").first().click();
-  await dialog.getByPlaceholder("Nome da categoria").fill("Mercado E2E");
-  await dialog.getByRole("button", { name: "Salvar categoria" }).click();
+  await catSheet.getByRole("button", { name: "Cadastrar nova" }).click();
+  await catSheet.getByPlaceholder("Nome da categoria").fill("Mercado E2E");
+  await catSheet.getByRole("button", { name: "Salvar categoria" }).click();
   await expectJournal(id, "POST", "/categories", 200);
   assertNoUndeclaredFailures(guard);
 });
@@ -239,17 +250,19 @@ test("[TX-06] add subcategory inline via create endpoint", async ({ page }) => {
   const guard = await init(page, id);
 
   const dialog = await openTransactionSheet(page);
-  await dialog.getByRole("button", { name: "Alimentação" }).click();
-  await dialog.getByText("Nova subcat.").click();
-  await expect(dialog.getByPlaceholder("Nome da subcategoria")).toBeVisible();
+  await dialog.getByRole("button", { name: "Selecionar categoria" }).click();
+  const catSheet = page.getByRole("dialog").last();
+  await catSheet.getByRole("button", { name: "Alimentação" }).click();
+  await catSheet.getByRole("button", { name: /Nova subcategoria em Alimentação/ }).click();
+  await expect(catSheet.getByPlaceholder("Nome da subcategoria")).toBeVisible();
 
   // Negative: blank cancel
-  await dialog.getByRole("button", { name: "Cancelar" }).click();
-  await expect(dialog.getByPlaceholder("Nome da subcategoria")).toHaveCount(0);
+  await catSheet.getByRole("button", { name: "Cancelar" }).click();
+  await expect(catSheet.getByPlaceholder("Nome da subcategoria")).toHaveCount(0);
 
-  await dialog.getByText("Nova subcat.").click();
-  await dialog.getByPlaceholder("Nome da subcategoria").fill("Hortifruti E2E");
-  await dialog.getByRole("button", { name: "Salvar subcategoria" }).click();
+  await catSheet.getByRole("button", { name: /Nova subcategoria em Alimentação/ }).click();
+  await catSheet.getByPlaceholder("Nome da subcategoria").fill("Hortifruti E2E");
+  await catSheet.getByRole("button", { name: "Salvar subcategoria" }).click();
 
   await expectJournal(id, "POST", "/categories", 200);
   // parentId must be present in the create payload
@@ -272,21 +285,23 @@ test("[TX-07] add account inline via create endpoint", async ({ page }) => {
   const guard = await init(page, id);
 
   const dialog = await openTransactionSheet(page);
-  // Second "Nova" is account section
-  await dialog.getByText("Nova").nth(1).click();
-  await expect(dialog.getByPlaceholder("Nome da conta")).toBeVisible();
+  // Origin sheet hosts the inline account form
+  await dialog.getByRole("button", { name: "Selecionar conta ou cartão" }).click();
+  const originSheet = page.getByRole("dialog").last();
+  await originSheet.getByRole("button", { name: "Nova conta" }).click();
+  await expect(originSheet.getByPlaceholder("Nome da conta")).toBeVisible();
 
   // Negative: blank cancel
-  await dialog.getByRole("button", { name: "Cancelar" }).click();
-  await expect(dialog.getByPlaceholder("Nome da conta")).toHaveCount(0);
+  await originSheet.getByRole("button", { name: "Cancelar" }).click();
+  await expect(originSheet.getByPlaceholder("Nome da conta")).toHaveCount(0);
   const journal = await getJournal(id);
   expect(
     journal.filter((e) => e.method === "POST" && e.path === "/accounts"),
   ).toHaveLength(0);
 
-  await dialog.getByText("Nova").nth(1).click();
-  await dialog.getByPlaceholder("Nome da conta").fill("Caixa E2E");
-  await dialog.getByRole("button", { name: "Salvar conta" }).click();
+  await originSheet.getByRole("button", { name: "Nova conta" }).click();
+  await originSheet.getByPlaceholder("Nome da conta").fill("Caixa E2E");
+  await originSheet.getByRole("button", { name: "Salvar conta" }).click();
   await expectJournal(id, "POST", "/accounts", 200);
   assertNoUndeclaredFailures(guard);
 });
@@ -298,23 +313,26 @@ test("[TX-08] add card inline via create endpoint", async ({ page }) => {
   const guard = await init(page, id);
 
   const dialog = await openTransactionSheet(page);
-  // Card section "Novo" — scroll into view
-  const novoCard = dialog.getByRole("button", { name: "Novo" });
+  // Origin sheet (Cartão tab) hosts the inline card form
+  await dialog.getByRole("button", { name: "Cartão" }).click();
+  await dialog.getByRole("button", { name: "Selecionar conta ou cartão" }).click();
+  const originSheet = page.getByRole("dialog").last();
+  const novoCard = originSheet.getByRole("button", { name: "Novo cartão" });
   await novoCard.scrollIntoViewIfNeeded();
   await novoCard.click();
-  await expect(dialog.getByPlaceholder("Nome do cartão")).toBeVisible();
+  await expect(originSheet.getByPlaceholder("Nome do cartão")).toBeVisible();
 
   // Negative: blank cancel
-  await dialog.getByRole("button", { name: "Cancelar" }).click();
-  await expect(dialog.getByPlaceholder("Nome do cartão")).toHaveCount(0);
+  await originSheet.getByRole("button", { name: "Cancelar" }).click();
+  await expect(originSheet.getByPlaceholder("Nome do cartão")).toHaveCount(0);
   const journal = await getJournal(id);
   expect(
     journal.filter((e) => e.method === "POST" && e.path === "/cards"),
   ).toHaveLength(0);
 
   await novoCard.click();
-  await dialog.getByPlaceholder("Nome do cartão").fill("Inter Card E2E");
-  await dialog.getByRole("button", { name: "Salvar cartão" }).click();
+  await originSheet.getByPlaceholder("Nome do cartão").fill("Inter Card E2E");
+  await originSheet.getByRole("button", { name: "Salvar cartão" }).click();
   await expectJournal(id, "POST", "/cards", 200);
   assertNoUndeclaredFailures(guard);
 });
@@ -336,13 +354,15 @@ test("[TX-09] save installments via POST /cards/installments with invalid count 
   const dialog = await openTransactionSheet(page);
   await typeAmount(dialog, "600000");
   await dialog.getByPlaceholder("Ex: Aluguel, mercado...").fill("Notebook E2E");
-  await dialog.getByLabel("Alternar parcelamento").click();
-  await dialog.getByRole("button", { name: "12x" }).click();
-
+  // Card origin first (installments only exist on card origin)
+  await dialog.getByRole("button", { name: "Cartão" }).click();
+  await dialog.getByRole("button", { name: "Selecionar conta ou cartão" }).click();
+  const originSheet = page.getByRole("dialog").last();
   // Seed card is named "Nubank"
-  const cardBtn = dialog.getByRole("button", { name: "Nubank" });
+  const cardBtn = originSheet.getByRole("button", { name: "Nubank" });
   await cardBtn.scrollIntoViewIfNeeded();
   await cardBtn.click();
+  await dialog.getByRole("button", { name: "12x" }).click();
 
   allowFailure(guard, {
     message: "422",

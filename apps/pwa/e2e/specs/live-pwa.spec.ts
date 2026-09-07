@@ -110,16 +110,14 @@ test.describe("live-pwa", () => {
     const routes: Array<{ path: string; heading?: RegExp; note: string }> = [
       { path: "/", heading: /Resumo financeiro/i, note: "Início" },
       { path: "/registros", heading: /Registros/i, note: "Registros" },
-      { path: "/contas", heading: /Contas/i, note: "Contas" },
-      { path: "/cartoes", heading: /Cart/i, note: "Cartões" },
-      { path: "/categorias", heading: /Categorias/i, note: "Categorias" },
-      { path: "/orcamentos", heading: /Orçamentos/i, note: "Orçamentos" },
-      { path: "/metas", heading: /Metas/i, note: "Metas" },
-      { path: "/a-pagar", heading: /A pagar|Contas a pagar/i, note: "Contas a pagar" },
-      { path: "/assinaturas", heading: /Assinaturas/i, note: "Assinaturas" },
-      { path: "/patrimonio", heading: /Patrim/i, note: "Patrimônio" },
-      { path: "/relatorios", heading: /Relat/i, note: "Relatórios" },
-      { path: "/pending", heading: /Pendente/i, note: "Pendentes (canonical)" },
+      { path: "/compromissos", heading: /A pagar|Contas a pagar/i, note: "Compromissos" },
+      { path: "/hub", heading: /Hub/i, note: "Hub" },
+      { path: "/hub/patrimonio", heading: /Contas/i, note: "Patrimônio" },
+      { path: "/hub/planejamento", heading: /Orçamentos/i, note: "Planejamento" },
+      { path: "/hub/relatorios", heading: /Relat/i, note: "Relatórios" },
+      { path: "/hub/alertas", heading: /Alerta/i, note: "Alertas" },
+      { path: "/hub/categorias", heading: /Categorias/i, note: "Categorias" },
+      { path: "/hub/configuracoes", heading: /Configurações/i, note: "Configurações" },
       { path: "/perfil", heading: /Perfil/i, note: "Perfil" },
     ];
 
@@ -130,10 +128,10 @@ test.describe("live-pwa", () => {
       });
     }
 
-    test("[LIVE-ADMIN-NAV] /pendentes redireciona para /pending", async ({ page }) => {
+    test("[LIVE-ADMIN-NAV] /pendentes redireciona para compromissos pendencias", async ({ page }) => {
       await page.goto("/pendentes", { waitUntil: "domcontentloaded" });
       await page.waitForTimeout(1500);
-      expect(page.url()).toContain("/pending");
+      expect(page.url()).toContain("/compromissos");
     });
 
     test("[LIVE-ADMIN-AUDIT] /audit acessível para admin", async ({ page }) => {
@@ -352,11 +350,11 @@ test.describe("live-pwa", () => {
     test.use({ storageState: USER_STATE_PATH });
 
     test("[LIVE-USER-NAV] membro navega rotas permitidas", async ({ page }) => {
-      const userRoutes = ["/", "/registros", "/contas", "/categorias", "/perfil", "/pending"];
+      const userRoutes = ["/", "/registros", "/hub/patrimonio?aba=contas", "/hub/categorias", "/perfil", "/compromissos?aba=pendencias"];
       for (const p of userRoutes) {
         await page.goto(p, { waitUntil: "domcontentloaded" });
         await expect(page.getByRole("button", { name: "Entrar" })).toBeHidden({ timeout: 8000 });
-        expect(page.url()).toContain(p === "/" ? "/" : p);
+        expect(page.url()).toContain(p === "/" ? "/" : p.split("?")[0]);
       }
     });
 

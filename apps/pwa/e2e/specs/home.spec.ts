@@ -5,9 +5,9 @@
  * HOME-01 profile button → /perfil
  * HOME-02 bell → notification sheet opens
  * HOME-03 quick expense → expense sheet
- * HOME-04 account card → /contas
- * HOME-05 card card → /cartoes
- * HOME-06 payable card → /a-pagar
+ * HOME-04 account card → patrimonio contas
+ * HOME-05 card card → patrimonio cartoes
+ * HOME-06 payable card → compromissos
  * HOME-07 notification item → navigates to target
  * HOME-08 dismiss notification → removed
  * HOME-09 quick income → income sheet
@@ -127,37 +127,37 @@ test("[HOME-03] tap quick expense opens expense sheet", async ({ page }) => {
 
 // ── HOME-04 ────────────────────────────────────────────────────────────────
 
-test("[HOME-04] account card navigates to /contas", async ({ page }) => {
+test("[HOME-04] account card navigates to patrimonio contas", async ({ page }) => {
   const id = tid();
   const guard = await init(page, id);
 
   await page.getByRole("button", { name: "Abrir Conta Corrente em Contas" }).click();
-  await expect(page).toHaveURL(/\/contas/);
+  await expect(page).toHaveURL(/\/hub\/patrimonio\?aba=contas/);
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 
 // ── HOME-05 ────────────────────────────────────────────────────────────────
 
-test("[HOME-05] card card navigates to /cartoes", async ({ page }) => {
+test("[HOME-05] card card navigates to patrimonio cartoes", async ({ page }) => {
   const id = tid();
   const guard = await init(page, id);
 
   await page.getByRole("button", { name: "Abrir Nubank em Cartões" }).click();
-  await expect(page).toHaveURL(/\/cartoes/);
+  await expect(page).toHaveURL(/\/hub\/patrimonio\?aba=cartoes/);
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
 
 // ── HOME-06 ────────────────────────────────────────────────────────────────
 
-test("[HOME-06] payable card navigates to /a-pagar", async ({ page }) => {
+test("[HOME-06] payable card navigates to compromissos", async ({ page }) => {
   const id = tid();
   const guard = await init(page, id);
 
   // Payable summary card is a clickable region (div), not a button
   await page.getByText(/Contas a pagar/).click();
-  await expect(page).toHaveURL(/\/a-pagar$/);
+  await expect(page).toHaveURL(/\/compromissos\?aba=a-pagar/);
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });
@@ -172,13 +172,13 @@ test("[HOME-07] tap notification item navigates to target", async ({ page }) => 
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 
-  // Seed Internet due 2026-07-15 with clock 2026-07-17 → overdue payable alert → /a-pagar
+  // Seed Internet due 2026-07-15 with clock 2026-07-17 → overdue payable alert → compromissos
   const item = dialog.getByTestId("notification-item").first();
   await expect(item).toBeVisible();
   await item.getByRole("button", { name: "Abrir" }).click();
 
   await expect(dialog).toBeHidden();
-  await expect(page).toHaveURL(/\/a-pagar/);
+  await expect(page).toHaveURL(/\/compromissos\?aba=a-pagar/);
   await assertNoUnexpectedWrites(id);
   assertNoUndeclaredFailures(guard);
 });

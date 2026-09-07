@@ -153,7 +153,7 @@ test("[PWA-03] route HTML and _rsc never enter CacheStorage after activation", a
   await waitForController(page);
 
   await page.goto("/registros", { waitUntil: "domcontentloaded" });
-  await page.goto("/contas", { waitUntil: "domcontentloaded" });
+  await page.goto("/hub/patrimonio?aba=contas", { waitUntil: "domcontentloaded" });
 
   const banned = await page.evaluate(async () => {
     const names = await caches.keys();
@@ -171,7 +171,7 @@ test("[PWA-03] route HTML and _rsc never enter CacheStorage after activation", a
         if (
           (u.pathname === "/" ||
             u.pathname === "/registros" ||
-            u.pathname === "/contas") &&
+            u.pathname === "/hub/patrimonio") &&
           !u.pathname.includes("offline-shell")
         ) {
           hits.push(`${name}:${u.pathname}`);
@@ -241,7 +241,7 @@ test("[PWA-05] reload with active SW → offline shell still renders on network 
   await waitForController(page);
 
   await context.setOffline(true);
-  await page.goto("/a-pagar", { waitUntil: "domcontentloaded" }).catch(() => undefined);
+  await page.goto("/compromissos", { waitUntil: "domcontentloaded" }).catch(() => undefined);
   await expect
     .poll(async () => page.title(), { timeout: 15000 })
     .toMatch(/Offline|Pi Financeiro/i);

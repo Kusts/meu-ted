@@ -162,7 +162,7 @@ test("[PROF-04] tap notification opens item / target state", async ({ page }) =>
   await item.getByRole("button", { name: "Abrir" }).click();
 
   await expect(dialog).toBeHidden();
-  await expect(page).toHaveURL(/\/a-pagar/);
+  await expect(page).toHaveURL(/\/compromissos\?aba=a-pagar/);
   assertNoUndeclaredFailures(guard);
 });
 

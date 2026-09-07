@@ -20,7 +20,7 @@ test.afterEach(async ({ page }) => {
 });
 
 async function init(page: import("@playwright/test").Page, id: string) {
-  const guard = await initSpec(page, id, { navigateTo: "/categorias" });
+  const guard = await initSpec(page, id, { navigateTo: "/hub/categorias" });
   // Sync barrier: the original init waited for the page to render before
   // handing control to the test body. Without it, assertions can start
   // against a blank route.

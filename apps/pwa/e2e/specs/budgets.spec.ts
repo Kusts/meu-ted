@@ -18,7 +18,7 @@ test.afterEach(async ({ page }) => {
 });
 
 async function init(page: import("@playwright/test").Page, id: string) {
-  return initSpec(page, id, { navigateTo: "/orcamentos" });
+  return initSpec(page, id, { navigateTo: "/hub/planejamento?aba=orcamentos" });
 }
 
 test("[BUD-01] expense categories shown on budgets page", async ({ page }) => {

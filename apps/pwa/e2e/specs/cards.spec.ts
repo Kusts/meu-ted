@@ -19,7 +19,7 @@ test.afterEach(async ({ page }) => {
 });
 
 async function init(page: import("@playwright/test").Page, id: string) {
-  return initSpec(page, id, { navigateTo: "/cartoes" });
+  return initSpec(page, id, { navigateTo: "/hub/patrimonio?aba=cartoes" });
 }
 
 test("[CARD-01] create card → POST /cards", async ({ page }) => {

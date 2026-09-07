@@ -31,12 +31,12 @@ test.afterEach(async ({ page }) => {
 
 
 async function init(page: import("@playwright/test").Page, id: string) {
-  // Deep-links into /relatorios before registering — order preserved.
+  // Deep-links into /hub/relatorios before registering — order preserved.
   const guard = await prepareSpec(page, id, {
     baselineAllows: false,
     allow: [{ message: "reading 'waiting'", reason: "SW blocked" }],
   });
-  await page.goto("/relatorios");
+  await page.goto("/hub/relatorios");
   await authenticate(page);
   await expect(page.getByRole("heading", { name: "Relatórios" })).toBeVisible({
     timeout: 10000,

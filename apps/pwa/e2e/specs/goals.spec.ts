@@ -18,7 +18,7 @@ test.afterEach(async ({ page }) => {
 });
 
 async function init(page: import("@playwright/test").Page, id: string) {
-  return initSpec(page, id, { navigateTo: "/metas" });
+  return initSpec(page, id, { navigateTo: "/hub/planejamento?aba=metas" });
 }
 
 test("[GOAL-01] goals page renders", async ({ page }) => {

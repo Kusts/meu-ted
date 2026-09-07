@@ -49,14 +49,16 @@ test.describe("production-smoke", () => {
     await expect(page.getByRole("heading", { name: /Registros/i })).toBeHidden();
   });
 
-  test("[SMOKE-03] direct load /contas shows registration shell", async ({ page }) => {
+  test("[SMOKE-03] direct load legacy /contas redirects and shows registration shell", async ({ page }) => {
     await gotoReadOnly(page, "/contas");
+    await expect(page).toHaveURL(/\/hub\/patrimonio\?aba=contas/);
     await expect(page.getByRole("button", { name: /Registrar|Entrar/i })).toBeVisible({ timeout: 15000 });
     await expect(page.getByRole("heading", { name: /Contas/i })).toBeHidden();
   });
 
-  test("[SMOKE-04] direct load /cartoes shows registration shell", async ({ page }) => {
+  test("[SMOKE-04] direct load legacy /cartoes redirects and shows registration shell", async ({ page }) => {
     await gotoReadOnly(page, "/cartoes");
+    await expect(page).toHaveURL(/\/hub\/patrimonio\?aba=cartoes/);
     await expect(page.getByRole("button", { name: /Registrar|Entrar/i })).toBeVisible({ timeout: 15000 });
     await expect(page.getByRole("heading", { name: /Cartões/i })).toBeHidden();
   });
