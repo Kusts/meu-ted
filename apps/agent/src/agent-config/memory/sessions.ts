@@ -7,6 +7,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { scrubForPersistence } from '../../privacy/dlp.js';
 import type { MemorySql } from './store.js';
 
 export type ChatSession = {
@@ -93,7 +94,8 @@ export const endSession = (
     ...current,
     endedAt: nowIso(),
     messageCount: input?.messageCount ?? current.messageCount,
-    summary: input?.summary ?? current.summary,
+    // H-09: session summaries are durable — scrub before persisting.
+    summary: input?.summary ? scrubForPersistence(input.summary) : current.summary,
   };
   sql.exec(`UPDATE agent_sessions SET ended_at = ?, message_count = ?, summary = ? WHERE id = ?`, closed.endedAt, closed.messageCount, closed.summary, current.id);
   return closed;

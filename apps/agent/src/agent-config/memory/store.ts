@@ -6,14 +6,15 @@
  *   (fact|preference|learning|summary), content, salience, created_at,
  *   last_seen_at, expires_at (nullable).
  * - Table `agent_prefs`: per-workspace privacy toggle (ON by default).
- * - NEVER persists secrets or card numbers: card-like digit runs refuse
- *   the write; secret patterns go through `redactTranscript` first.
+ * - NEVER persists secrets or card numbers: PAN in any separator variant
+ *   refuses the write; every other write funnels through the central DLP
+ *   scrub (`privacy/dlp.ts`: secrets, PAN, CVV, CPF/CNPJ).
  * - Recall ranks by salience × recency-decay + keyword overlap, top-K
  *   within a fixed char budget for prompt injection via CognitiveHooks.
  */
 
 import { randomUUID } from 'node:crypto';
-import { redactTranscript } from '../../transcript-safety.js';
+import { containsCardPan, containsSensitiveDocument, scrubForPersistence } from '../../privacy/dlp.js';
 
 export type MemorySql = {
   exec<T = Record<string, unknown>>(query: string, ...bindings: unknown[]): Iterable<T>;
@@ -40,9 +41,10 @@ export const MEMORY_SIMILARITY_THRESHOLD = 0.55;
 /** 15–16 digit runs (with optional separators): never persisted. */
 const CARD_NUMBER_RE = /\b(?:\d[ -]?){15,16}\b/;
 
-export const containsCardNumber = (text: string): boolean => CARD_NUMBER_RE.test(text ?? '');
+export const containsCardNumber = (text: string): boolean => CARD_NUMBER_RE.test(text ?? '') || containsCardPan(text ?? '');
 
-export const sanitizeMemoryContent = (raw: string): string => redactTranscript((raw ?? '').trim());
+/** H-09: every memory write funnels through the central DLP scrub. */
+export const sanitizeMemoryContent = (raw: string): string => scrubForPersistence((raw ?? '').trim());
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -152,7 +154,7 @@ const mapRow = (row: Record<string, unknown>): MemoryItem => ({
 
 export type RememberResult =
   | { stored: true; deduped: boolean; item: MemoryItem }
-  | { stored: false; reason: 'card_number' | 'empty' | 'disabled' };
+  | { stored: false; reason: 'card_number' | 'sensitive_data' | 'empty' | 'disabled' };
 
 export const rememberFact = (
   sql: MemorySql,
@@ -167,9 +169,17 @@ export const rememberFact = (
 ): RememberResult => {
   const raw = (input.content ?? '').trim();
   if (raw.length === 0) return { stored: false, reason: 'empty' };
+  // H-09: PAN in ANY separator variant refuses the whole write (card
+  // numbers teach nothing durable); CVV/documents are scrubbed but storable.
   if (containsCardNumber(raw)) return { stored: false, reason: 'card_number' };
+  const scrubbedSensitive = containsSensitiveDocument(raw);
   const content = sanitizeMemoryContent(raw);
   if (content.length === 0) return { stored: false, reason: 'empty' };
+  if (scrubbedSensitive && content === raw) {
+    // Belt and suspenders: detection fired but nothing was redacted —
+    // refuse rather than persist a possibly-raw value.
+    return { stored: false, reason: 'sensitive_data' };
+  }
 
   // Dedup: same workspace + actor, similar content → bump instead of insert.
   const existing = [

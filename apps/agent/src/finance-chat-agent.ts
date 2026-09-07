@@ -36,6 +36,7 @@ import {
   recordUsage,
 } from "./safety/usage-policy.js";
 import { redactTranscript } from "./transcript-safety.js";
+import { scrubAttachments, scrubForPersistence } from "./privacy/dlp.js";
 import {
   migrateLegacyHistory,
   transformLegacyMessages,
@@ -700,9 +701,13 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       }
       const rawText = typeof body.text === "string" ? body.text : (typeof body.content === "string" ? body.content : "");
       const unredactedText = rawText.trim();
-      const incomingAttachments = Array.isArray(body.attachments) ? (body.attachments as Array<{ type: string; url: string; name: string }>) : [];
+      // H-09: attachments persist as METADATA ONLY — inline content and
+      // data: URLs are dropped before anything becomes durable.
+      const { attachments: incomingAttachments } = scrubAttachments(body.attachments);
       if (!unredactedText && incomingAttachments.length === 0) return Response.json({ code: "agent.invalid_message" }, { status: 400 });
-      const text = unredactedText ? redactTranscript(unredactedText) : incomingAttachments.length > 0 ? `[anexo ${incomingAttachments.map((a) => a.name).join(", ")}]` : "";
+      // H-09: central DLP scrub before the text becomes durable (transcript,
+      // memory, summary, learning, export all read this value downstream).
+      const text = unredactedText ? scrubForPersistence(unredactedText) : incomingAttachments.length > 0 ? `[anexo ${incomingAttachments.map((a) => a.name).join(", ")}]` : "";
       const intentionId = typeof body.intentionId === "string" && body.intentionId.trim()
         ? body.intentionId.trim()
         : `intent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

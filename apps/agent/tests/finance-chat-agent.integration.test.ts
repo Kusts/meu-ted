@@ -51,7 +51,10 @@ describe("FinanceChatAgent & Worker Integration (Task 4)", () => {
   it("routes /agents/finance-chat-agent/:workspaceId/rpc/history after validating workspace membership", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ userId: "user-1", role: "member" }] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ user: { id: "user-1" } }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ user: { id: "user-1" } }), { status: 200 }))
+      // C-05: the cookie fallback resolves the canonical id before naming
+      // the DO (fail-closed when the authority is reachable).
+      .mockResolvedValueOnce(new Response(JSON.stringify({ canonicalHouseholdId: WORKSPACE_ID }), { status: 200 }));
 
     const res = await worker.fetch(
       new Request(`https://agent.example.test/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/history`, {

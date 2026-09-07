@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { sanitizeForPersistence } from '../privacy/history.js';
-import { redactTranscript } from '../transcript-safety.js';
+import { scrubForPersistence } from '../privacy/dlp.js';
 
 export type LegacyMessage = {
   id: string;
@@ -74,7 +73,8 @@ export const transformLegacyMessages = (messages: LegacyMessage[], workspaceId =
       parsedContent = msg.content_json;
     }
 
-    const sanitized = redactTranscript(sanitizeForPersistence(parsedContent));
+    // H-09: migrated history is re-persisted — full central DLP scrub.
+    const sanitized = scrubForPersistence(parsedContent);
     const validRole: 'user' | 'assistant' | 'system' =
       msg.role === 'assistant' ? 'assistant' : msg.role === 'system' ? 'system' : 'user';
     const actorId = validRole === 'assistant' ? 'ted' : msg.actor_id;
