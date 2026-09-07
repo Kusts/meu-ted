@@ -207,6 +207,17 @@ export interface AppState {
     purchaseDate: string;
     installmentsTotal: number;
     categoryId?: string;
+    subcategoryId?: string;
+    notes?: string;
+  }) => Promise<void>;
+  createCardPurchase: (input: {
+    accountId: string;
+    description: string;
+    amountCents: number;
+    date: string;
+    categoryId?: string;
+    subcategoryId?: string;
+    notes?: string;
   }) => Promise<void>;
   /**
    * Re-fetches the given domains from the API and updates provider state
@@ -1516,6 +1527,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       purchaseDate: string;
       installmentsTotal: number;
       categoryId?: string;
+      subcategoryId?: string;
+      notes?: string;
     }) => {
       if (guardReadOnlyRef.current()) return;
       if (!apiUsable()) {
@@ -1525,6 +1538,34 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       try {
         await commandsRef.current!.createInstallments(input);
+        const stmts = await endpoints.fetchStatements(input.accountId);
+        setCardStatements(stmts);
+      } catch (e) {
+        handleWriteErrorRef.current(e);
+        throw e;
+      }
+    },
+    [],
+  );
+
+  const createCardPurchase = useCallback(
+    async (input: {
+      accountId: string;
+      description: string;
+      amountCents: number;
+      date: string;
+      categoryId?: string;
+      subcategoryId?: string;
+      notes?: string;
+    }) => {
+      if (guardReadOnlyRef.current()) return;
+      if (!apiUsable()) {
+        setWriteError("API não configurada para compras no cartão");
+        return;
+      }
+
+      try {
+        await commandsRef.current!.createCardPurchase(input);
         const stmts = await endpoints.fetchStatements(input.accountId);
         setCardStatements(stmts);
       } catch (e) {
@@ -1716,6 +1757,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       createTransfer,
       payStatement,
       createInstallments,
+      createCardPurchase,
       refreshDomains,
     }),
     [
@@ -1771,6 +1813,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       createTransfer,
       payStatement,
       createInstallments,
+      createCardPurchase,
       refreshDomains,
     ],
   );

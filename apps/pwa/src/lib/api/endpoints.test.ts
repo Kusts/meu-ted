@@ -126,6 +126,11 @@ describe("endpoints — writes", () => {
     expect(pathOf()).toBe("/cards/installments");
     expect(methodOf()).toBe("POST");
   });
+  it("createCardPurchase POST /cards/purchases with metadata (H-01/M-04)", async () => {
+    await endpoints.createCardPurchase({ accountId: "card1", description: "d", amountCents: 100, date: "2026-01-01", categoryId: "c1", subcategoryId: "s1", notes: "n" });
+    expect(pathOf()).toBe("/cards/purchases");
+    expect(methodOf()).toBe("POST");
+  });
   it("createTransfer POST /transfers", async () => {
     await endpoints.createTransfer({ fromAccountId: "a", amountCents: 1, description: "d", date: "2026-01-01" });
     expect(pathOf()).toBe("/transfers");

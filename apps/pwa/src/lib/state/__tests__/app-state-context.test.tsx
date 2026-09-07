@@ -1713,7 +1713,7 @@ const CMD_METHODS = [
   "undoPayablePayment", "cancelPayable", "updatePayable", "createBudget",
   "updateBudget", "createGoal", "contributeToGoal", "cancelGoal",
   "updateGoal", "addSubscription", "cancelSubscription", "updateSubscription",
-  "payStatement", "createInstallments", "patchProfile",
+  "payStatement", "createInstallments", "createCardPurchase", "patchProfile",
 ] as const;
 
 type CmdMock = Record<(typeof CMD_METHODS)[number], ReturnType<typeof vi.fn>> & {
@@ -1784,6 +1784,7 @@ async function exerciseAll(result: { current: ReturnType<typeof useAppState> }) 
   await s.createTransfer({ description: "t", amountCents: 100, date: "2026-01-01", fromAccountId: "a1", toAccountId: "a2" });
   await s.payStatement("st1", { amountCents: 50, fromAccountId: "a1" });
   await s.createInstallments({ accountId: "card1", description: "inst", totalAmountCents: 1000, purchaseDate: "2026-01-01", installmentsTotal: 3 });
+  await s.createCardPurchase({ accountId: "card1", description: "pc", amountCents: 100, date: "2026-01-01" });
   await s.saveProfile({ name: "Marina" });
   await s.refreshProfile();
   // Destructive actions last so their update counterparts already ran.
@@ -1842,6 +1843,7 @@ describe("AppStateProvider — every write action (coverage-core)", () => {
     expect(cmds.createTransfer).toHaveBeenCalled();
     expect(cmds.payStatement).toHaveBeenCalled();
     expect(cmds.createInstallments).toHaveBeenCalled();
+    expect(cmds.createCardPurchase).toHaveBeenCalled();
     expect(result.current.profile).not.toBeNull();
   });
 

@@ -18,6 +18,7 @@ import type { Account, Category } from "@/lib/state/types";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { checkDuplicate, formatDuplicateWarning } from "@/lib/api/endpoints";
 import { isApiConfigured } from "@/lib/api/client";
+import { splitInstallmentAmounts } from "@/lib/finance/installments";
 
 export type SheetTab = "expense" | "income" | "transfer";
 
@@ -29,6 +30,8 @@ export interface SaveData {
   categoryId?: string;
   subcategoryId?: string;
   accountId?: string;
+  /** H-01: preserves the card nature to the executor (account = Conta). */
+  originKind?: "account" | "card";
   fromAccountId?: string;
   toAccountId?: string;
   installmentsTotal?: number;
@@ -299,8 +302,12 @@ export default function NewTransactionSheet({
 
   const amountCents = parseBRLToCents(amountDisplay);
   const parcelado = !isTransfer && originKind === "card" && installmentsCount > 1;
-  const installmentCents =
-    installmentsCount > 0 ? Math.round(amountCents / installmentsCount) : amountCents;
+  // L-01: same distribution as the backend (remainder on the last parcel).
+  const installmentParts =
+    parcelado && amountCents > 0 ? splitInstallmentAmounts(amountCents, installmentsCount) : null;
+  const installmentCents = installmentParts ? installmentParts[0]! : amountCents;
+  const lastInstallmentCents = installmentParts ? installmentParts[installmentParts.length - 1]! : amountCents;
+  const installmentsUneven = installmentParts !== null && installmentCents !== lastInstallmentCents;
 
   function handleAmountInput(e: React.ChangeEvent<HTMLInputElement>) {
     const raw = e.target.value.replace(/\D/g, "");
@@ -414,6 +421,8 @@ export default function NewTransactionSheet({
     } else {
       // B2: origin is mandatory and exclusive by construction (single id).
       if (!originId) return;
+      // H-01: income on a card is rejected (the API answers 422 as well).
+      if (tab === "income" && originKind === "card") return;
       data = {
         kind: tab,
         amountCents,
@@ -422,6 +431,7 @@ export default function NewTransactionSheet({
         categoryId: subcategoryId || categoryId,
         subcategoryId: subcategoryId || undefined,
         accountId: originId,
+        originKind,
       };
       if (parcelado) {
         data.installmentsTotal = installmentsCount;
@@ -673,22 +683,29 @@ export default function NewTransactionSheet({
                 { key: "card", label: "Cartão", Icon: CreditCard },
                 { key: "account", label: "Conta", Icon: Wallet },
               ] as const
-            ).map(({ key, label, Icon }) => (
-              <button
-                key={key}
-                type="button"
-                aria-pressed={originKind === key}
-                onClick={() => switchOriginKind(key)}
-                className={`flex flex-1 items-center justify-center gap-1.5 rounded-[10px] text-[13px] font-bold transition-colors ${
-                  originKind === key
-                    ? "bg-surface text-text-primary shadow-sm"
-                    : "text-text-muted"
-                }`}
-              >
-                <Icon size={15} />
-                {label}
-              </button>
-            ))}
+            ).map(({ key, label, Icon }) => {
+              // H-01: income never runs on a card (the API rejects it with
+              // 422); the option is disabled instead of failing on save.
+              const disabled = tab === "income" && key === "card";
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={originKind === key}
+                  disabled={disabled}
+                  title={disabled ? "Receitas usam conta" : undefined}
+                  onClick={() => switchOriginKind(key)}
+                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-[10px] text-[13px] font-bold transition-colors ${
+                    originKind === key
+                      ? "bg-surface text-text-primary shadow-sm"
+                      : "text-text-muted"
+                  } ${disabled ? "opacity-40" : ""}`}
+                >
+                  <Icon size={15} />
+                  {label}
+                </button>
+              );
+            })}
           </div>
           <button
             type="button"
@@ -774,6 +791,9 @@ export default function NewTransactionSheet({
               <p className="mt-2.5 border-t border-border pt-2.5 text-[12px] text-text-secondary">
                 {installmentsCount}x de {formatBRL(installmentCents)} na fatura de{" "}
                 {invoiceMonthLabel(date, selectedOrigin.closingDay ?? 15)}
+                {installmentsUneven && (
+                  <> · última de {formatBRL(lastInstallmentCents)}</>
+                )}
               </p>
             )}
           </div>

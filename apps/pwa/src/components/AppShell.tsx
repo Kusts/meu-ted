@@ -65,6 +65,7 @@ export default function AppShell({ children }: AppShellProps) {
     addCategory,
     addCard,
     createInstallments,
+    createCardPurchase,
     readOnly,
   } = useAppState();
   const { sheetKind, closeSheet } = useSheet();
@@ -206,19 +207,34 @@ export default function AppShell({ children }: AppShellProps) {
           fromAccountId: data.fromAccountId ?? "",
           toAccountId: data.toAccountId ?? "",
         });
-      } else if (
-        data.installmentsTotal &&
-        data.installmentsTotal > 1 &&
-        data.accountId
-      ) {
-        await createInstallments({
-          accountId: data.accountId,
-          description: data.description,
-          totalAmountCents: data.amountCents,
-          purchaseDate: data.date,
-          installmentsTotal: data.installmentsTotal,
-          categoryId: data.categoryId,
-        });
+      } else if (data.originKind === "card" && data.accountId) {
+        // H-01: the card nature is preserved to the executor — invoice path
+        // only; income on a card is rejected (the API answers 422 as well).
+        if (data.kind !== "expense") {
+          throw new Error("Apenas despesas podem usar cartão.");
+        }
+        if (data.installmentsTotal && data.installmentsTotal > 1) {
+          await createInstallments({
+            accountId: data.accountId,
+            description: data.description,
+            totalAmountCents: data.amountCents,
+            purchaseDate: data.date,
+            installmentsTotal: data.installmentsTotal,
+            categoryId: data.categoryId,
+            ...(data.subcategoryId ? { subcategoryId: data.subcategoryId } : {}),
+            ...(data.notes ? { notes: data.notes } : {}),
+          });
+        } else {
+          await createCardPurchase({
+            accountId: data.accountId,
+            description: data.description,
+            amountCents: data.amountCents,
+            date: data.date,
+            categoryId: data.categoryId,
+            ...(data.subcategoryId ? { subcategoryId: data.subcategoryId } : {}),
+            ...(data.notes ? { notes: data.notes } : {}),
+          });
+        }
       } else {
         await addTransaction({
           id: nextId(),

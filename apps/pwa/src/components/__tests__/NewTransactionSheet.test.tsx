@@ -351,6 +351,50 @@ describe("NewTransactionSheet", () => {
     expect(onSave.mock.calls[0][0].installmentsTotal).toBe(5);
   });
 
+  // ── Origin kind preservation (H-01) ──
+
+  it("tags saved data with originKind card when a card is picked", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={onSave} />);
+    await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+    await user.click(screen.getByRole("button", { name: "Cartão" }));
+    await selectOrigin(user, "Nubank Card");
+    await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0]).toMatchObject({ accountId: "card1", originKind: "card" });
+  });
+
+  it("tags saved data with originKind account when a bank account is picked", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={onSave} />);
+    await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+    await selectOrigin(user, "Itaú");
+    await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+    expect(onSave.mock.calls[0][0]).toMatchObject({ accountId: "acc2", originKind: "account" });
+  });
+
+  it("disables the Cartão toggle on the income tab (H-01)", async () => {
+    const user = userEvent.setup();
+    render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={vi.fn()} initialTab="income" />);
+    const cardToggle = screen.getByRole("button", { name: "Cartão" });
+    expect(cardToggle).toBeDisabled();
+    expect(cardToggle).toHaveAttribute("title", "Receitas usam conta");
+  });
+
+  it("shows the last-parcel remainder in the preview for uneven splits (L-01)", async () => {
+    const user = userEvent.setup();
+    render(<NewTransactionSheet accounts={accountsWithCard} categories={categories} onSave={vi.fn()} />);
+    await user.type(screen.getByPlaceholderText(/0,00/), "100000");
+    await user.click(screen.getByRole("button", { name: "Cartão" }));
+    await selectOrigin(user, "Nubank Card");
+    await user.click(screen.getByRole("button", { name: "3x" }));
+    // 100000/3 → 33333 + 33333 + 33334: last parcel absorbs the remainder.
+    expect(screen.getByText(/3x de R\$ 333,33 na fatura de/)).toBeInTheDocument();
+    expect(screen.getByText(/última de R\$ 333,34/)).toBeInTheDocument();
+  });
+
   // ── Mais detalhes (B4) ──
 
   it("saves notes from Mais detalhes", async () => {

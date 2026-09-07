@@ -207,6 +207,19 @@ export interface InstallmentsInput {
   purchaseDate: string;
   installmentsTotal: number;
   categoryId?: string;
+  subcategoryId?: string;
+  notes?: string;
+  idempotencyKey?: string;
+}
+
+export interface CardPurchaseInput {
+  accountId: string;
+  description: string;
+  amountCents: number;
+  date: string;
+  categoryId?: string;
+  subcategoryId?: string;
+  notes?: string;
   idempotencyKey?: string;
 }
 
@@ -272,6 +285,7 @@ export interface Commands {
   // ── Statements / Installments ──────────────────────────────────
   payStatement(statementId: string, input: PayStatementInput): Promise<CardStatement>;
   createInstallments(input: InstallmentsInput): Promise<unknown>;
+  createCardPurchase(input: CardPurchaseInput): Promise<unknown>;
 
   // ── Profile patch ──────────────────────────────────────────────
   patchProfile(input: ProfileInput): Promise<unknown>;
@@ -460,6 +474,11 @@ function buildCommands(ctx: CommandsContext): Commands {
     createInstallments(input) {
       return guarded("createInstallments", ctx, () =>
         a.createInstallments(input),
+      );
+    },
+    createCardPurchase(input) {
+      return guarded("createCardPurchase", ctx, () =>
+        a.createCardPurchase(input),
       );
     },
 

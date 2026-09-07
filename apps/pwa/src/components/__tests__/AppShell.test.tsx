@@ -42,6 +42,7 @@ function defaultState(): AppState {
     addAccount: vi.fn(), addCategory: vi.fn(), addCard: vi.fn(), updateCard: vi.fn(),
     addSubscription: vi.fn(), cancelSubscription: vi.fn(),
     createTransfer: vi.fn(), payStatement: vi.fn(), createInstallments: vi.fn(),
+    createCardPurchase: vi.fn(),
   };
 }
 
@@ -305,7 +306,59 @@ describe("AppShell", () => {
          expect.objectContaining({ totalAmountCents: 600000, installmentsTotal: 12, description: "Notebook" }),
        );
      });
-   });
+
+    it("routes a 1x card expense to createCardPurchase, never addTransaction (H-01)", async () => {
+      const purchaseSpy = vi.fn().mockResolvedValue(undefined);
+      const addSpy = vi.fn().mockResolvedValue(undefined);
+      const state = { ...defaultState(), createCardPurchase: purchaseSpy, addTransaction: addSpy };
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(state);
+
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      await openSheetViaFab(user);
+      await user.type(screen.getByPlaceholderText(/0,00/), "10000");
+      await user.type(screen.getByPlaceholderText(/Aluguel, mercado/), "Almoço");
+      await user.click(screen.getByRole("button", { name: "Cartão" }));
+      await user.click(screen.getByRole("button", { name: "Selecionar conta ou cartão" }));
+      const originDialog = (await screen.findAllByRole("dialog")).at(-1)!;
+      await user.click(within(originDialog).getByRole("button", { name: /Nubank Crédito/ }));
+      await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1));
+      await user.click(screen.getByRole("button", { name: /^Salvar$/ }));
+
+      expect(purchaseSpy).toHaveBeenCalledTimes(1);
+      expect(purchaseSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ amountCents: 10000, description: "Almoço" }),
+      );
+      expect(addSpy).not.toHaveBeenCalled();
+    });
+
+    it("forwards notes and subcategoryId to createInstallments (M-04)", async () => {
+      const installmentsSpy = vi.fn().mockResolvedValue(undefined);
+      const state = { ...defaultState(), createInstallments: installmentsSpy };
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(state);
+
+      const user = userEvent.setup();
+      render(<AppShell><div>Content</div></AppShell>);
+
+      await openSheetViaFab(user);
+      await user.type(screen.getByPlaceholderText(/0,00/), "600000");
+      await user.type(screen.getByPlaceholderText(/Aluguel, mercado/), "Notebook");
+      await user.click(screen.getByRole("button", { name: "Cartão" }));
+      await user.click(screen.getByRole("button", { name: "Selecionar conta ou cartão" }));
+      const originDialog = (await screen.findAllByRole("dialog")).at(-1)!;
+      await user.click(within(originDialog).getByRole("button", { name: /Nubank Crédito/ }));
+      await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1));
+      await user.click(screen.getByText("12x"));
+      await user.click(screen.getByRole("button", { name: "Mais detalhes" }));
+      await user.type(screen.getByLabelText("Observações"), "Para o trabalho");
+      await user.click(screen.getByText("Salvar em 12x"));
+
+      expect(installmentsSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ notes: "Para o trabalho" }),
+      );
+    });
+    });
 
    it("shows pending invites badge when there are pending invites", async () => {
      const { fetchPendingMe } = await import("@/lib/api/auth");

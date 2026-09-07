@@ -185,8 +185,24 @@ export async function createInstallments(input: {
   purchaseDate: string;
   installmentsTotal: number;
   categoryId?: string;
+  subcategoryId?: string;
+  notes?: string;
 }): Promise<Transaction[]> {
   const res = await apiFetch<{ items: Transaction[] }>("/cards/installments", mutationOptions("POST", input));
+  return res.items;
+}
+
+/** H-01: single (1x) card purchase through the CardStore invoice path. */
+export async function createCardPurchase(input: {
+  accountId: string;
+  description: string;
+  amountCents: number;
+  date: string;
+  categoryId?: string;
+  subcategoryId?: string;
+  notes?: string;
+}): Promise<Transaction[]> {
+  const res = await apiFetch<{ items: Transaction[] }>("/cards/purchases", mutationOptions("POST", input));
   return res.items;
 }
 
