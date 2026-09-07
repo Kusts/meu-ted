@@ -114,8 +114,9 @@ describe('H-03: rollout/canary/epoch aplicados no executor', () => {
     expect(deleteCached).toHaveBeenCalledTimes(1);
   });
 
-  it('falha ao consultar a autoridade: mantém o snapshot (disponibilidade, logado pelo chamador)', async () => {
-    const eff = await authorizeTurnExecution({
+  it('H-14: falha ao consultar a autoridade nega o turno (fail-closed, 503)', async () => {
+    const onUnreachable = vi.fn();
+    const err = await authorizeTurnExecution({
       snapshot: { ...SNAP },
       workspaceId: 'ws-1',
       actorId: 'actor-1',
@@ -123,8 +124,10 @@ describe('H-03: rollout/canary/epoch aplicados no executor', () => {
       fetchConfig: async () => {
         throw new Error('api down');
       },
-    });
-    expect(eff.provider_id).toBe('zen');
+      onAuthorityUnreachable: onUnreachable,
+    }).catch((e) => e);
+    expect(err).toMatchObject({ code: 'agent.provider_not_configured', status: 503 });
+    expect(onUnreachable).toHaveBeenCalledTimes(1);
   });
 
   it('modo desconhecido falha fechado', async () => {

@@ -54,6 +54,31 @@ const createTestAgent = () => {
   return { agent, persisted };
 };
 
+// H-14: valid authority snapshot for URL-routed fetch mocks (fail-closed
+// when the authority is unreachable — tests must serve this explicitly).
+// securityEpoch 1 matches createTestAgent's stubbed snapshot above.
+const snapshotBody = () => ({
+  runtime: {
+    singleton: 'active',
+    version: 3,
+    securityEpoch: 1,
+    activeProviderId: 'opencode-zen',
+    activeModelId: 'opencode-zen:zen-1',
+    activeProtocol: 'chat-completions',
+    activeRolloutPercentage: 100,
+    activeRolloutMode: 'all',
+    fallbackProviderId: null,
+    fallbackModelId: null,
+    updatedBy: null,
+  },
+  activeProvider: null,
+  activeModel: null,
+  fallbackProvider: null,
+  fallbackModel: null,
+  activeDisabled: false,
+  fallbackDisabled: false,
+});
+
 describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -103,12 +128,20 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     const { agent, persisted } = createTestAgent();
     // Fresh Response per call: a Response body can only be consumed once,
     // and each turn performs 2+ fetches (H-03 authority re-verify + relay).
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      new Response(JSON.stringify({ text: "Seu saldo atual é R$ 1.500,00." }), {
+    // H-14: the authority URL serves a valid snapshot (fail-closed when
+    // unreachable); only the relay URL serves the model text.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      if (String(info).includes("/internal/agent/llm-config")) {
+        return new Response(JSON.stringify(snapshotBody()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ text: "Seu saldo atual é R$ 1.500,00." }), {
         status: 200,
         headers: { "content-type": "application/json" },
-      }),
-    );
+      });
+    });
 
     const trustedActor = "user-genuine-456";
     const trustedWorkspace = "ws-shared-family-789";
@@ -348,7 +381,14 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
   it("(6) RED: redacts sensitive secrets from user input, relay prompt, persisted messages, output and error bodies", async () => {
     const { agent, persisted } = createTestAgent();
     let capturedRelayBody: { prompt?: string } = {};
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (_info, init) => {
+    // H-14: authority URL serves the snapshot; every other URL serves relay.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info, init) => {
+      if (String(info).includes("/internal/agent/llm-config")) {
+        return new Response(JSON.stringify(snapshotBody()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
       if (init?.body) {
         capturedRelayBody = JSON.parse(init.body as string);
       }
@@ -478,7 +518,20 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     const { agent } = createTestAgent();
     // Overwrite persistMessages to undefined
     (agent as unknown as { persistMessages: unknown }).persistMessages = undefined;
-
+    // H-14: serve the authority so the turn reaches the persistence gate
+    // (an unreachable authority now fails closed before it).
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      if (String(info).includes("/internal/agent/llm-config")) {
+        return new Response(JSON.stringify(snapshotBody()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ text: "relay" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
     const res = await agent.fetch(
       new Request("https://agent.test.local/rpc/chat", {
         method: "POST",

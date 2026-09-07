@@ -37,7 +37,12 @@ const snapshotBody = {
 describe('onChatMessage cognitive wiring (Part A)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(snapshotBody), { status: 200 }));
+    // Fresh Response per call: a body can be consumed only once, and each
+    // turn fetches the authority snapshot 2+ times (resolve + H-03/H-14
+    // re-verification, fail-closed when unreachable).
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () => new Response(JSON.stringify(snapshotBody), { status: 200 }),
+    );
   });
 
   it('passes tools, stopWhen and the assembled system prompt to streamText', async () => {

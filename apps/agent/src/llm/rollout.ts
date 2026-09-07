@@ -13,9 +13,11 @@ import type { RuntimeSnapshot } from './runtime-config-client.js';
  * - The security epoch is re-verified against the authority every turn: a
  *   bumped epoch invalidates the cached snapshot and aborts the turn so
  *   already-queued/streaming work cannot keep running on revoked config.
- * - An unreachable authority keeps the cached snapshot (availability over
- *   strictness on transient failure; the caller logs). An unknown mode
- *   fails closed.
+ * - H-14 fail-closed: an unreachable authority DENIES the turn (503). A
+ *   stale cached snapshot is never served when the authority cannot be
+ *   consulted — a blip denies turns rather than risking execution on
+ *   revoked config (documented availability trade-off, tested in
+ *   llm-epoch-midturn.test.ts). An unknown mode fails closed.
  */
 
 export type TurnSnapshot = {
@@ -94,10 +96,15 @@ export const authorizeTurnExecution = async <S extends TurnSnapshot>(opts: {
   try {
     fresh = await opts.fetchConfig();
   } catch (err) {
-    // Transient authority failure: keep serving the cached snapshot rather
-    // than denying every turn during an API blip. The caller logs it.
+    // H-14 fail-closed: the authority could not be consulted, so the turn
+    // is denied instead of running on a possibly-revoked snapshot. The
+    // caller still logs via onAuthorityUnreachable for observability.
     opts.onAuthorityUnreachable?.(err);
-    return opts.snapshot;
+    throw turnError(
+      'agent.provider_not_configured',
+      503,
+      'Autoridade de configuração indisponível; turno negado (fail-closed).',
+    );
   }
 
   if (fresh.securityEpoch !== opts.snapshot.security_epoch) {

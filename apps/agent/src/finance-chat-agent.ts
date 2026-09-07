@@ -560,6 +560,17 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         outcome,
       );
 
+      // H-14: same post-inference re-verification as the relay leg — a
+      // revocation during inference blocks publication of the result.
+      try {
+        await this.authorizeTurn(activeSnapshot, { workspaceId: 'direct', actorId, intentionId });
+      } catch (postErr) {
+        if ((postErr as { code?: string })?.code === 'agent.security_epoch_changed') {
+          return { text: "Configuração de IA atualizada durante o turno. Tente de novo." };
+        }
+        return { text: "TED ready: provider not configured" };
+      }
+
       const result = outcome.result;
 
       if (this.state?.storage?.sql) {
@@ -856,9 +867,9 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           const runBufferedLeg = async (
             target: { providerId: string; modelName: string },
             attempt: 'primary' | 'fallback',
+            signal?: AbortSignal,
           ): Promise<string> => {
-            if (isCodexProviderId(target.providerId)) {
-              // Codex executes via the private broker (browser-session
+            if (isCodexProviderId(target.providerId)) {              // Codex executes via the private broker (browser-session
               // auth), never via relay HTTP. Broker errors already carry
               // { code, status } for the shared classification below.
               return runCodexBrokerText((this.env ?? {}) as CodexBrokerEnv, {
@@ -877,6 +888,9 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
                 "content-type": "application/json",
                 "x-agent-runtime-admin-token": adminToken,
               },
+              // H-14: abortable — a revocation detected post-inference
+              // cancels the in-flight relay call.
+              ...(signal ? { signal } : {}),
               body: JSON.stringify({
                 provider: target.providerId,
                 model: target.modelName,
@@ -897,11 +911,14 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           };
 
           let attemptOutcome: Awaited<ReturnType<typeof executeLlmAttempts<string>>>;
+          // H-14: per-turn abort scope — a post-inference revocation aborts
+          // the in-flight relay HTTP and blocks publication below.
+          const turnAbort = new AbortController();
           try {
             attemptOutcome = await executeLlmAttempts<string>({
               snapshot: activeSnapshot,
               intentionId,
-              runLeg: (target, attempt) => runBufferedLeg(target, attempt),
+              runLeg: (target, attempt) => runBufferedLeg(target, attempt, turnAbort.signal),
             });
           } catch (attemptErr) {
             const attemptCode = (attemptErr as { code?: string })?.code;
@@ -929,6 +946,25 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
               },
               { status },
             );
+          }
+
+          // H-14: epoch/version are compared AGAIN after inference, before
+          // anything is persisted or published. A bump, a `disabled`
+          // rollout or an unreachable authority aborts the turn: the revoked
+          // output is never persisted and never returned. (The
+          // pre-inference user message stays — it was authorized when
+          // written and contains no model output.)
+          try {
+            await this.authorizeTurn(activeSnapshot, { workspaceId: identity.workspaceId, actorId: identity.actorId, intentionId });
+          } catch (postErr) {
+            turnAbort.abort();
+            if ((postErr as { code?: string })?.code === 'agent.security_epoch_changed') {
+              return Response.json(
+                { code: 'agent.security_epoch_changed', message: 'Configuração de IA revogada durante o turno. Tente de novo.' },
+                { status: 409 },
+              );
+            }
+            return Response.json({ code: "agent.provider_not_configured", message: "Nenhum provedor de IA ativo configurado." }, { status: 503 });
           }
 
           const usedFallback = attemptOutcome.usedFallback;
