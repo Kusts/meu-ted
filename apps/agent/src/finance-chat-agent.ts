@@ -5,7 +5,7 @@ import { protocolSchema } from "@pi-finance/llm-contracts/schemas";
 import { fetchRuntimeConfig, type RuntimeSnapshot } from "./llm/runtime-config-client.js";
 import { createLanguageModel } from "./llm/model-factory.js";
 import type { Protocol } from "./llm/provider-registry.js";
-import { executeWithFallback, failoverReasonOf, logFailoverEvent } from "./llm/failover.js";
+import { logFailoverEvent } from "./llm/failover.js";
 import { executeBrokerCompletion } from "./llm/private-broker-client.js";
 import {
   assembleCognition,
@@ -47,6 +47,7 @@ import {
 import { generatedHttpTools } from "./generated/http-tools.js";
 import { setGlobalApiContext } from "./tools/api-client.js";
 import { createDelegatedTurnToken } from "./delegated-token.js";
+import { verifyAgentConnectionToken } from "./auth/connection-token.js";
 
 export type Env = {
   AGENT_DELEGATION_SECRET?: string;
@@ -91,25 +92,11 @@ export const INTENTION_SNAPSHOT_FALLBACK_COLUMNS = ['fallback_provider_id', 'fal
 /** Fase 3 item 5: bare upstream names persisted alongside the row ids. */
 export const INTENTION_SNAPSHOT_MODEL_COLUMNS = ['model_name', 'fallback_model_name'] as const;
 
-/**
- * Fase 3-FIX R2: resolves the executable upstream name or null. A stored
- * name wins; otherwise only the conventional `provider_id:` prefix is
- * derivable. Anything else is an opaque row id — returning it as the bare
- * model would send a configuration key to the provider, so callers must
- * fail closed (refetch, never execute with the row id).
- */
-export const resolveBareModelName = (
-  providerId: string,
-  modelId: string,
-  storedName?: string | null,
-): string | null => {
-  if (typeof storedName === "string" && storedName.length > 0) return storedName;
-  const prefix = `${providerId}:`;
-  if (modelId.startsWith(prefix) && modelId.length > prefix.length) {
-    return modelId.slice(prefix.length);
-  }
-  return null;
-};
+import { executeLlmAttempts, isCodexProviderId, resolveBareModelName } from "./llm/attempts.js";
+import { authorizeTurnExecution } from "./llm/rollout.js";
+// Re-exported so existing import sites (tests, compat) keep working —
+// the canonical definitions live in llm/attempts.ts (H-02 executor).
+export { isCodexProviderId, resolveBareModelName } from "./llm/attempts.js";
 
 /**
  * Fase 3-FIX R2: local persisted rows are validated with the same
@@ -177,15 +164,6 @@ export const ensureIntentionSnapshotColumns = (sql: {
     }
   }
 };
-
-/**
- * Refactor item 6: Codex (plano Coding) executes through the private broker
- * (browser-session auth), never through a direct endpoint. The snapshot only
- * carries the provider id, so routing is by id convention — any provider id
- * containing `codex` resolves to the broker leg.
- */
-export const isCodexProviderId = (providerId: string): boolean =>
-  providerId.toLowerCase().includes('codex');
 
 export type CodexBrokerEnv = {
   CODEX_BROKER_ORIGIN?: string;
@@ -313,6 +291,37 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     );
   }
 
+  /**
+   * H-03: per-turn authority re-verification (epoch + rollout/canary),
+   * applied on BOTH legs right after the snapshot resolves and before any
+   * attempt executes. A bumped epoch invalidates the cached row and aborts
+   * the turn; `disabled` blocks; canary non-cohort promotes the fallback.
+   */
+  private async authorizeTurn(
+    snapshot: IntentionSnapshotRow,
+    input: { workspaceId: string; actorId: string; intentionId: string },
+  ): Promise<IntentionSnapshotRow> {
+    const apiOrigin = this.env?.API_ORIGIN ?? "https://api.synkroo.com.br";
+    const configToken = this.env?.AGENT_CONFIG_TOKEN ?? "";
+    return authorizeTurnExecution({
+      snapshot,
+      workspaceId: input.workspaceId,
+      actorId: input.actorId,
+      intentionId: input.intentionId,
+      fetchConfig: () => fetchRuntimeConfig(apiOrigin, configToken),
+      deleteCachedSnapshot: () => {
+        try {
+          this.state?.storage?.sql?.exec(`DELETE FROM intention_snapshots WHERE intention_id = ?`, snapshot.intention_id);
+        } catch {
+          // Best effort: the abort below enforces the revocation.
+        }
+      },
+      onAuthorityUnreachable: (err) => {
+        console.warn(`llm.rollout authority unreachable intention=${input.intentionId}: ${(err as Error)?.message ?? err}`);
+      },
+    });
+  }
+
   private async resolveIntentionSnapshot(intentionId: string): Promise<IntentionSnapshotRow | null> {
     if (this.state?.storage?.sql) {
       try {
@@ -434,29 +443,24 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       return { text: "TED ready: provider not configured" };
     }
 
+    // H-03: epoch + rollout/canary re-verified per turn before any attempt.
+    let activeSnapshot: IntentionSnapshotRow;
     try {
-      // Fase 3-FIX R2: execute with the bare upstream name, never the store
-      // row id. An unresolvable name is fail-closed here as well (defense in
-      // depth — resolveIntentionSnapshot already refetches such rows).
-      const bareModelId = resolveBareModelName(
-        snapshot.provider_id,
-        snapshot.model_id,
-        snapshot.model_name,
-      );
-      if (!bareModelId) {
-        return { text: "TED ready: provider not configured" };
+      activeSnapshot = await this.authorizeTurn(snapshot, { workspaceId: 'direct', actorId, intentionId });
+    } catch (turnErr) {
+      if ((turnErr as { code?: string })?.code === 'agent.security_epoch_changed') {
+        return { text: "Configuração de IA atualizada durante o turno. Tente de novo." };
       }
-      // Refactor item 5: direct path retries the configured fallback in the
-      // same request on retryable failures (timeout, 429/5xx, auth).
-      const fallbackBareModelId =
-        snapshot.fallback_provider_id && snapshot.fallback_model_id
-          ? (resolveBareModelName(
-              snapshot.fallback_provider_id,
-              snapshot.fallback_model_id,
-              snapshot.fallback_model_name,
-            ) ?? snapshot.fallback_model_id)
-          : null;
-      const runDirect = async (providerId: string, modelId: string) => {
+      return { text: "TED ready: provider not configured" };
+    }
+
+    try {
+      // H-02: the direct leg runs inside the unified attempts executor —
+      // concrete upstream pairs, one primary + one distinct fallback,
+      // retryable-only failover. Unresolvable snapshots fail closed.
+      const runDirect = async (target: { providerId: string; modelName: string }) => {
+        const providerId = target.providerId;
+        const modelId = target.modelName;
         // Cognitive layer (Parts A+B, item 15): versioned persona + skills +
         // playbook + workspace memory assembled per turn, with the model's
         // tools actually wired.
@@ -482,7 +486,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         const modelInstance = createLanguageModel(
           providerId,
           modelId,
-          snapshot.protocol as Protocol,
+          activeSnapshot.protocol as Protocol,
           (this.env ?? {}) as Record<string, string | undefined>,
         );
         const memoryTools = sql ? buildMemoryTools({ sql, workspaceId: memoryWorkspace, actorId }) : {};
@@ -534,19 +538,18 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           stopWhen: stepCountIs(5),
         });
       };
-      const outcome = await executeWithFallback(
-        () => runDirect(snapshot.provider_id, bareModelId),
-        snapshot.fallback_provider_id && fallbackBareModelId
-          ? () => runDirect(snapshot.fallback_provider_id as string, fallbackBareModelId as string)
-          : null,
-      );
+      const outcome = await executeLlmAttempts({
+        snapshot: activeSnapshot,
+        intentionId,
+        runLeg: (target) => runDirect(target),
+      });
       logFailoverEvent(
         {
           intentionId,
-          primaryProviderId: snapshot.provider_id,
-          primaryModelId: bareModelId,
-          fallbackProviderId: snapshot.fallback_provider_id,
-          fallbackModelId: fallbackBareModelId,
+          primaryProviderId: outcome.primary.providerId,
+          primaryModelId: outcome.primary.modelName,
+          fallbackProviderId: outcome.fallback?.providerId ?? activeSnapshot.fallback_provider_id,
+          fallbackModelId: outcome.fallback?.modelName ?? activeSnapshot.fallback_model_id,
         },
         outcome,
       );
@@ -573,9 +576,9 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             llmExtract: async (transcript) => {
               try {
                 const learnModel = createLanguageModel(
-                  snapshot.provider_id,
-                  bareModelId,
-                  snapshot.protocol as Protocol,
+                  outcome.primary.providerId,
+                  outcome.primary.modelName,
+                  activeSnapshot.protocol as Protocol,
                   (this.env ?? {}) as Record<string, string | undefined>,
                 );
                 const extracted = await generateText({
@@ -597,6 +600,9 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
 
       return result;
     } catch (err) {
+      if ((err as { code?: string })?.code === 'agent.provider_not_configured') {
+        return { text: "TED ready: provider not configured" };
+      }
       const message = (err as Error)?.message ?? "Erro desconhecido ao processar inferência.";
       return { text: `TED error: ${redactTranscript(message)}` };
     }
@@ -613,6 +619,33 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
 
   private chatQueue?: Promise<unknown>;
 
+  /**
+   * H-07: binds the Worker-stamped identity headers to the verified
+   * connection token. Spoofed or cross-workspace headers fail even if a
+   * misconfigured gateway ever forwarded them. Returns null when the check
+   * passes (or does not apply: cookie-authenticated callers carry no token).
+   */
+  private async assertConnectionBinding(request: Request): Promise<Response | null> {
+    const connToken = request.headers.get("x-agent-connection-token")?.trim();
+    const secret = this.env?.AGENT_CONNECTION_TOKEN_SECRET;
+    if (!connToken || !secret) return null;
+    let claims: { sub: string; workspace: string };
+    try {
+      claims = await verifyAgentConnectionToken(connToken, secret);
+    } catch {
+      return Response.json({ code: "agent.workspace_forbidden", message: "Invalid connection token" }, { status: 403 });
+    }
+    const actorId = request.headers.get("x-agent-actor") ?? "";
+    const workspaceId = request.headers.get("x-agent-workspace") ?? "";
+    if (!actorId || !workspaceId || claims.sub !== actorId || claims.workspace !== workspaceId) {
+      return Response.json(
+        { code: "agent.identity_mismatch", message: "Authenticated identity does not match request context" },
+        { status: 403 },
+      );
+    }
+    return null;
+  }
+
   private async enqueueChat<T>(task: () => Promise<T>): Promise<T> {
     const prev = this.chatQueue ?? Promise.resolve();
     const next = prev.then(() => task(), () => task());
@@ -622,6 +655,16 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // H-07 defense in depth: the gateway authenticates and stamps
+    // x-agent-actor/workspace, but the DO never trusts those headers alone
+    // when the connection token is present — the token signature is
+    // re-verified here and its claims must match the stamped identity.
+    // (Signature-only: single-use consumption already happened at the
+    // gateway, so this performs no network call.)
+    if (url.pathname.startsWith("/rpc/")) {
+      const bindingError = await this.assertConnectionBinding(request);
+      if (bindingError) return bindingError;
+    }
     if (url.pathname === "/rpc/chat" && request.method === "POST") {
       const actorId = request.headers.get("x-agent-actor");
       const workspaceId = request.headers.get("x-agent-workspace");
@@ -647,6 +690,23 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       return this.enqueueChat(async () => {
         const snapshot = await this.resolveIntentionSnapshot(intentionId);
         if (!snapshot) {
+          return Response.json({ code: "agent.provider_not_configured", message: "Nenhum provedor de IA ativo configurado." }, { status: 503 });
+        }
+
+        // H-03: epoch + rollout/canary re-verified per turn before any
+        // attempt — a bumped epoch aborts (stream cancel), `disabled`
+        // blocks, canary non-cohort promotes the fallback pair.
+        let activeSnapshot: IntentionSnapshotRow;
+        try {
+          activeSnapshot = await this.authorizeTurn(snapshot, { workspaceId, actorId, intentionId });
+        } catch (turnErr) {
+          const turnCode = (turnErr as { code?: string })?.code;
+          if (turnCode === 'agent.security_epoch_changed') {
+            return Response.json(
+              { code: 'agent.security_epoch_changed', message: 'Configuração de IA revogada durante o turno. Tente de novo.' },
+              { status: 409 },
+            );
+          }
           return Response.json({ code: "agent.provider_not_configured", message: "Nenhum provedor de IA ativo configurado." }, { status: 503 });
         }
 
@@ -689,13 +749,17 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             const delegationSecret = this.env?.AGENT_DELEGATION_SECRET;
             if (delegationSecret) {
               const roleHeader = (this as unknown as { env: Env }).env ? "member" : "member";
-              // Criar token delegado workspace-isolado para chamadas de ferramentas
+              // Criar token delegado workspace-isolado para chamadas de ferramentas.
+              // C-03 least-privilege: o enriquecimento do relay executa
+              // SOMENTE leituras (get_balance, extratos, metas, orçamentos,
+              // faturas); sem financial.write a API nega qualquer escrita
+              // (fail-closed via auth.delegation_scope_forbidden).
               const delegatedToken = await createDelegatedTurnToken(
                 {
                   actorId,
                   workspaceId,
                   role: "member",
-                  capabilities: ["financial.read", "financial.write"],
+                  capabilities: ["financial.read"],
                   requestId: intentionId,
                 },
                 delegationSecret,
@@ -733,14 +797,11 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             // fail-open para enriquecimento
           }
 
-          let relayRaw: string;
-          let relayBody: { text?: string; code?: string; message?: string };
-          let relayRes: Response;
-          let effectiveProvider = snapshot.provider_id;
-          let effectiveModel = snapshot.model_id;
-          let usedFallback = false;
-          let failoverReason: string | null = null;
-
+          // H-02: buffered leg runs inside the SAME attempts executor as the
+          // direct leg — concrete upstream pairs (bare names, never row ids),
+          // one primary + one distinct fallback, retryable-only failover and
+          // a sanitized composite error when both legs fail.
+          //
           // Cognitive layer for the relay leg too: persona + skills +
           // playbook + workspace memory travel as the system prompt (the
           // relay has no tool loop, so the enriched prompt keeps carrying
@@ -751,153 +812,105 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             webEnv: (this.env ?? {}) as Record<string, string | undefined>,
             ...(relayMemoryContext ? { hooks: { memoryContext: relayMemoryContext } } : {}),
           });
-
-          // Refactor item 6: Codex (plano Coding) executa via broker privado
-          // (sessão de browser), nunca via relay HTTP (o relay só permite
-          // zen/go). O resultado é sintetizado no mesmo formato relay para
-          // reaproveitar fallback, persistência e contrato de erro abaixo.
-          if (isCodexProviderId(snapshot.provider_id)) {
-            const codexModel =
-              resolveBareModelName(snapshot.provider_id, snapshot.model_id, snapshot.model_name) ??
-              snapshot.model_id;
-            try {
-              const brokerText = await runCodexBrokerText((this.env ?? {}) as CodexBrokerEnv, {
-                model: codexModel,
+          const runBufferedLeg = async (
+            target: { providerId: string; modelName: string },
+            attempt: 'primary' | 'fallback',
+          ): Promise<string> => {
+            if (isCodexProviderId(target.providerId)) {
+              // Codex executes via the private broker (browser-session
+              // auth), never via relay HTTP. Broker errors already carry
+              // { code, status } for the shared classification below.
+              return runCodexBrokerText((this.env ?? {}) as CodexBrokerEnv, {
+                model: target.modelName,
                 prompt: enrichedPrompt,
                 system: cognition.system,
-                requestId: intentionId,
+                requestId: attempt === 'primary' ? intentionId : `${intentionId}:fallback`,
                 intentionId,
                 workspaceId,
                 actorId,
               });
-              relayBody = { text: brokerText };
-              relayRaw = JSON.stringify(relayBody);
-              relayRes = new Response(relayRaw, { status: 200 });
-            } catch (brokerErr) {
-              failoverReason = failoverReasonOf(brokerErr);
-              relayBody = {
-                code: (brokerErr as { code?: string })?.code ?? 'agent.inference_error',
-                message: (brokerErr as Error)?.message ?? 'Falha ao processar a inferência.',
-              };
-              relayRaw = JSON.stringify(relayBody);
-              relayRes = new Response(relayRaw, {
-                status:
-                  typeof (brokerErr as { status?: number })?.status === 'number'
-                    ? (brokerErr as { status: number }).status
-                    : 502,
-              });
             }
-          } else {
-            const primaryRes = await fetch(`${relayOrigin.replace(/\/$/, "")}/internal/agent/llm-relay`, {
+            const relayRes = await fetch(`${relayOrigin.replace(/\/$/, "")}/internal/agent/llm-relay`, {
               method: "POST",
               headers: {
                 "content-type": "application/json",
                 "x-agent-runtime-admin-token": adminToken,
               },
               body: JSON.stringify({
-                provider: snapshot.provider_id,
-                model: snapshot.model_id,
+                provider: target.providerId,
+                model: target.modelName,
                 prompt: enrichedPrompt,
                 system: cognition.system,
               }),
             });
-            relayRaw = await primaryRes.text().catch(() => "");
+            const relayRaw = await relayRes.text().catch(() => "");
+            let relayBody: { text?: string; code?: string; message?: string };
             try { relayBody = JSON.parse(relayRaw || "{}") as { text?: string; code?: string; message?: string }; } catch { relayBody = {}; }
-            relayRes = primaryRes;
             if (!relayRes.ok || typeof relayBody.text !== "string" || !relayBody.text) {
-              failoverReason = relayBody.code ?? `http_${relayRes.status}`;
+              throw Object.assign(
+                new Error(redactTranscript(relayBody.message ?? `HTTP ${relayRes.status}`).slice(0, 200)),
+                { status: relayRes.status, code: relayBody.code ?? `http_${relayRes.status}` },
+              );
             }
+            return relayBody.text;
+          };
+
+          let attemptOutcome: Awaited<ReturnType<typeof executeLlmAttempts<string>>>;
+          try {
+            attemptOutcome = await executeLlmAttempts<string>({
+              snapshot: activeSnapshot,
+              intentionId,
+              runLeg: (target, attempt) => runBufferedLeg(target, attempt),
+            });
+          } catch (attemptErr) {
+            const attemptCode = (attemptErr as { code?: string })?.code;
+            if (attemptCode === 'agent.provider_not_configured') {
+              return Response.json(
+                { code: 'agent.provider_not_configured', message: 'Nenhum provedor de IA ativo configurado.' },
+                { status: 503 },
+              );
+            }
+            const rawStatus = (attemptErr as { status?: number })?.status;
+            const status = typeof rawStatus === 'number' && rawStatus >= 400 && rawStatus < 600 ? rawStatus : 502;
+            const safeMessage = redactTranscript((attemptErr as Error)?.message ?? 'Falha ao processar a inferência.');
+            return Response.json(
+              {
+                code: attemptCode ?? 'agent.inference_error',
+                message: safeMessage,
+                provider: activeSnapshot.provider_id,
+                model: activeSnapshot.model_id,
+                ...((attemptErr as { primaryReason?: string })?.primaryReason
+                  ? { primaryReason: (attemptErr as { primaryReason?: string }).primaryReason }
+                  : {}),
+                ...((attemptErr as { fallbackReason?: string })?.fallbackReason
+                  ? { fallbackReason: (attemptErr as { fallbackReason?: string }).fallbackReason }
+                  : {}),
+              },
+              { status },
+            );
           }
 
-          // Se a inferência primária falhar e houver fallback configurado, tenta o fallback
-          if ((!relayRes.ok || typeof relayBody!.text !== "string" || !relayBody!.text) && snapshot.fallback_provider_id && snapshot.fallback_model_id) {
-            // Fallback Codex também sai pelo broker; demais provedores pelo relay.
-            if (isCodexProviderId(snapshot.fallback_provider_id)) {
-              try {
-                const fbModel =
-                  resolveBareModelName(
-                    snapshot.fallback_provider_id,
-                    snapshot.fallback_model_id,
-                    snapshot.fallback_model_name,
-                  ) ?? snapshot.fallback_model_id;
-                const fbText = await runCodexBrokerText((this.env ?? {}) as CodexBrokerEnv, {
-                  model: fbModel,
-                  prompt: enrichedPrompt,
-                  system: cognition.system,
-                  requestId: `${intentionId}:fallback`,
-                  intentionId,
-                  workspaceId,
-                  actorId,
-                });
-                relayBody = { text: fbText };
-                relayRaw = JSON.stringify(relayBody);
-                relayRes = new Response(relayRaw, { status: 200 });
-                effectiveProvider = snapshot.fallback_provider_id;
-                effectiveModel = snapshot.fallback_model_id;
-                usedFallback = true;
-              } catch {
-                // Silenciosamente segue para retorno de erro primário caso fallback também falhe
-              }
-            } else {
-            try {
-              const fallbackRes = await fetch(`${relayOrigin.replace(/\/$/, "")}/internal/agent/llm-relay`, {
-                method: "POST",
-                headers: {
-                  "content-type": "application/json",
-                  "x-agent-runtime-admin-token": adminToken,
-                },
-                body: JSON.stringify({
-                  provider: snapshot.fallback_provider_id,
-                  model: snapshot.fallback_model_id,
-                  prompt: enrichedPrompt,
-                  system: cognition.system,
-                }),
-              });
-              if (fallbackRes.ok) {
-                const fbRaw = await fallbackRes.text().catch(() => "");
-                const fbBody = JSON.parse(fbRaw || "{}") as { text?: string };
-                if (typeof fbBody.text === "string" && fbBody.text) {
-                  relayBody = fbBody;
-                  relayRes = fallbackRes;
-                  effectiveProvider = snapshot.fallback_provider_id;
-                  effectiveModel = snapshot.fallback_model_id;
-                  usedFallback = true;
-                }
-              }
-            } catch {
-              // Silenciosamente segue para retorno de erro primário caso fallback também falhe
-            }
-            }
-          }
+          const usedFallback = attemptOutcome.usedFallback;
+          const effectiveProvider = usedFallback
+            ? (activeSnapshot.fallback_provider_id ?? activeSnapshot.provider_id)
+            : snapshot.provider_id;
+          const effectiveModel = usedFallback
+            ? (activeSnapshot.fallback_model_id ?? activeSnapshot.model_id)
+            : snapshot.model_id;
 
-          // Refactor item 5: métrica/log estruturado do failover (sem segredos).
+          // Structured failover metric (no secrets).
           logFailoverEvent(
             {
               intentionId,
-              primaryProviderId: snapshot.provider_id,
-              primaryModelId: snapshot.model_id,
-              fallbackProviderId: snapshot.fallback_provider_id,
-              fallbackModelId: snapshot.fallback_model_id,
+              primaryProviderId: attemptOutcome.primary.providerId,
+              primaryModelId: attemptOutcome.primary.modelName,
+              fallbackProviderId: attemptOutcome.fallback?.providerId ?? activeSnapshot.fallback_provider_id,
+              fallbackModelId: attemptOutcome.fallback?.modelName ?? activeSnapshot.fallback_model_id,
             },
-            { usedFallback, failoverReason: usedFallback ? null : failoverReason },
+            attemptOutcome,
           );
 
-          if (!relayRes.ok || typeof relayBody.text !== "string" || !relayBody.text) {
-            const safeRelayRaw = redactTranscript(String(relayRaw)).slice(0, 200);
-            const safeErrorMessage = redactTranscript(relayBody.message ?? "Falha ao processar a inferência.");
-            return Response.json(
-              {
-                code: relayBody.code ?? "agent.inference_error",
-                message: safeErrorMessage,
-                provider: snapshot.provider_id,
-                model: snapshot.model_id,
-                relayStatus: relayRes.status,
-                relayRaw: safeRelayRaw,
-              },
-              { status: relayRes.status >= 400 && relayRes.status < 600 ? relayRes.status : 502 },
-            );
-          }
-          const output = redactTranscript(relayBody.text);
+          const output = redactTranscript(attemptOutcome.result);
 
           if (this.state?.storage?.sql) {
             recordUsage(this.state.storage.sql, actorId, intentionId, estimateTokens(text), estimateTokens(output));
@@ -953,8 +966,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             status: "completed",
             output,
             workspaceId,
-            provider: snapshot.provider_id,
-            model: snapshot.model_id,
+            provider: activeSnapshot.provider_id,
+            model: activeSnapshot.model_id,
             memorized,
           });
         } catch (err) {
@@ -1123,7 +1136,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         success: true,
         importedCount: transformed.length,
         skipped: false,
-        migrationHash: computeHistoryHash(exportData.messages),
+        migrationHash: computeHistoryHash(exportData.messages, exportData.workspaceId),
       };
     });
   }

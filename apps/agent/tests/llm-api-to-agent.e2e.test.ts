@@ -89,6 +89,9 @@ describe("E2E API -> Agent (Fase 3 item 5)", () => {
     await llmStore.updateRuntime({
       providerId: "openai-api",
       modelId: model.id,
+      // H-03: activation alone leaves rollout `disabled` (fail-closed by
+      // default) — the real admin flow rolls out explicitly before serving.
+      rolloutMode: "all",
       expectedVersion: rt.version,
       updatedBy: "e2e@test.com",
     });

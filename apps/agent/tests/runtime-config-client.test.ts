@@ -40,6 +40,9 @@ describe('Runtime Config Client (Task 5)', () => {
       fallbackModelId: null,
       activeProtocol: 'chat-completions',
       activeRolloutPercentage: 100,
+      // H-03: mode + allowlist travel to the executor.
+      activeRolloutMode: 'all',
+      canaryAllowlist: [],
       securityEpoch: 2,
       // Fase 3 item 5: no model slots in this payload -> bare names are null.
       activeModelName: null,

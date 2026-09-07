@@ -4,7 +4,7 @@ import { safeCompareTokens as safeCompare } from '../auth/safe-compare.js';
 import { isKindExecutable } from '../agent/llm-config.js';
 
 const relayBody = z.object({
-  provider: z.literal('opencode-zen').or(z.literal('opencode-go')),
+  provider: z.literal('opencode-zen').or(z.literal('opencode-go')).or(z.literal('openai-api')),
   model: z.string().trim().min(1).max(120),
   prompt: z.string().trim().min(1).max(16000),
   system: z.string().trim().max(8000).optional(),
@@ -91,6 +91,8 @@ export const registerAgentLlmRelayRoutes = (
   deps: {
     adminToken: string;
     zenApiKey?: string;
+    /** H-02: real OpenAI parity — relay executes openai-api upstream instead of only allowlisting it. */
+    openaiApiKey?: string;
     llmConfigStore?: RelayModelSource;
     cacheTtlMs?: number;
     now?: () => number;
@@ -109,15 +111,23 @@ export const registerAgentLlmRelayRoutes = (
     if (!token || !deps.adminToken || !safeCompare(token, deps.adminToken)) {
       return reply.code(401).send({ code: 'auth.invalid_token', message: 'Token administrativo inválido.' });
     }
-    if (!deps.zenApiKey) {
-      return reply.code(503).send({ code: 'agent.provider_not_configured', message: 'OPENCODE_ZEN_API_KEY não configurada na API.' });
-    }
 
     const parsed = relayBody.safeParse(req.body ?? {});
     if (!parsed.success) {
       return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     }
     const { provider, model, prompt, system } = parsed.data;
+
+    // H-02: each relayable provider needs its own key — a missing key fails
+    // closed before any upstream call.
+    const isOpenAi = provider === 'openai-api';
+    const providerApiKey = isOpenAi ? deps.openaiApiKey : deps.zenApiKey;
+    if (!providerApiKey) {
+      return reply.code(503).send({
+        code: 'agent.provider_not_configured',
+        message: isOpenAi ? 'OPENAI_API_KEY não configurada na API.' : 'OPENCODE_ZEN_API_KEY não configurada na API.',
+      });
+    }
 
     // Fase 3 D3: a configured store that fails resolves fail-closed with an
     // explicit operational code — never a silent fallback to the built-in set.
@@ -138,7 +148,30 @@ export const registerAgentLlmRelayRoutes = (
       return reply.code(403).send({ code: 'agent.model_not_allowlisted', message: 'Modelo não permitido no relay.' });
     }
 
-    const baseUrl = provider === 'opencode-zen' ? 'https://opencode.ai/zen/v1' : 'https://opencode.ai/zen/go/v1';
+    const baseUrl = provider === 'opencode-zen'
+      ? 'https://opencode.ai/zen/v1'
+      : provider === 'opencode-go'
+        ? 'https://opencode.ai/zen/go/v1'
+        : 'https://api.openai.com/v1';
+    // H-02: allowlisted upstream origins only (H-06) — never a caller-supplied URL.
+    const upstreamUrl = isOpenAi ? `${baseUrl}/chat/completions` : `${baseUrl}/responses`;
+    const upstreamHeaders = {
+      authorization: `Bearer ${providerApiKey}`,
+      'content-type': 'application/json',
+    };
+    const upstreamBody = isOpenAi
+      ? {
+        model,
+        messages: [
+          ...(system ? [{ role: 'system', content: system }] : []),
+          { role: 'user', content: prompt },
+        ],
+      }
+      : {
+        model,
+        input: prompt,
+        ...(system ? { instructions: system } : {}),
+      };
     const requestTimeoutMs = deps.requestTimeoutMs ?? 60_000;
     const timeoutError = () => Object.assign(new Error('Timeout aguardando provider.'), { name: 'AbortError' });
 
@@ -151,17 +184,10 @@ export const registerAgentLlmRelayRoutes = (
       const controller = new AbortController();
       const deadline = setTimeout(() => controller.abort(), requestTimeoutMs);
       try {
-        const res = await fetch(`${baseUrl}/responses`, {
+        const res = await fetch(upstreamUrl, {
           method: 'POST',
-          headers: {
-            authorization: `Bearer ${deps.zenApiKey}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model,
-            input: prompt,
-            ...(system ? { instructions: system } : {}),
-          }),
+          headers: upstreamHeaders,
+          body: JSON.stringify(upstreamBody),
           signal: controller.signal,
         });
 
@@ -175,6 +201,7 @@ export const registerAgentLlmRelayRoutes = (
         let body: {
           error?: { type?: string; message?: string };
           output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
+          choices?: Array<{ message?: { content?: string } }>;
           cost?: string | number;
         } | null;
         try {
@@ -190,6 +217,7 @@ export const registerAgentLlmRelayRoutes = (
           ])) as {
             error?: { type?: string; message?: string };
             output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
+            choices?: Array<{ message?: { content?: string } }>;
             cost?: string | number;
           } | null;
         } finally {
@@ -207,12 +235,14 @@ export const registerAgentLlmRelayRoutes = (
         return reply.code(res.status === 429 ? 429 : 502).send({ code, message });
       }
 
-      const text = body?.output
-        ?.filter((o) => o.type === 'message')
-        .flatMap((o) => o.content ?? [])
-        .filter((c) => c.type === 'output_text')
-        .map((c) => c.text ?? '')
-        .join('') ?? '';
+      const text = isOpenAi
+        ? (body?.choices?.[0]?.message?.content ?? '')
+        : (body?.output
+          ?.filter((o) => o.type === 'message')
+          .flatMap((o) => o.content ?? [])
+          .filter((c) => c.type === 'output_text')
+          .map((c) => c.text ?? '')
+          .join('') ?? '');
 
       if (!text) {
         return reply.code(502).send({ code: 'agent.inference_error', message: 'No output generated by provider.' });

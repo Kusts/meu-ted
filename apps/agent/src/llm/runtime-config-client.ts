@@ -84,6 +84,10 @@ export const fetchRuntimeConfig = async (
     activeModelId: snapshot.activeDisabled ? null : runtime.activeModelId,
     activeProtocol: snapshot.activeDisabled ? null : runtime.activeProtocol,
     activeRolloutPercentage: runtime.activeRolloutPercentage,
+    // H-03: mode + allowlist travel to the executor — rollout is enforced
+    // per turn, never serialized-only.
+    activeRolloutMode: runtime.activeRolloutMode,
+    canaryAllowlist: runtime.canaryAllowlist ?? [],
     fallbackProviderId: snapshot.fallbackDisabled ? null : runtime.fallbackProviderId,
     fallbackModelId: snapshot.fallbackDisabled ? null : runtime.fallbackModelId,
     // Fase 3 item 5: bare upstream names come from the validated slots, never

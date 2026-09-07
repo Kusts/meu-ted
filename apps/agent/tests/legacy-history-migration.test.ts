@@ -17,8 +17,7 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
     vi.restoreAllMocks();
   });
 
-  const sampleExport: LegacyFullExport = {
-    version: 1,
+  const sampleExport: LegacyFullExport = {    version: 1,
     workspaceId: 'ws-test-123',
     turns: [
       { id: 'turn-1', actor_id: 'user-a', status: 'completed', attempts: 1, tokens_used: 10 },
@@ -48,6 +47,28 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
       },
     ],
     hasInFlightTurns: false,
+  };
+
+  // C-01/C-02: Worker auth resolves the canonical workspace and consumes
+  // the single-use token before routing — mock both internal endpoints
+  // (always-200 consumption: each case mints/uses its own token).
+  const mockWorkerAuth = (workspaceId: string) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes('/internal/workspace-alias/')) {
+        return new Response(JSON.stringify({ canonicalHouseholdId: workspaceId }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.includes('/internal/agent/consume-token')) {
+        return new Response(JSON.stringify({ ok: true, consumed: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('unexpected upstream', { status: 500 });
+    });
   };
 
   const createMockSql = () => {
@@ -136,6 +157,7 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
   it('(2) Worker fails closed with 503 if legacy stub or Finance stub lacks required export/import methods, without calling fetch or leaking sentinel error', async () => {
     const SECRET = 'secret-for-testing-purposes-at-least-32-chars!';
     const WORKSPACE_ID = '00000000-0000-4000-8000-000000000001';
+    mockWorkerAuth(WORKSPACE_ID);
     const GENUINE_USER = 'user-authenticated-uuid';
 
     const token = await createAgentConnectionToken(
@@ -180,8 +202,7 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
       },
     );
 
-    const res1 = await worker.fetch(req1, mockEnvNoLegacyExport);
-    expect(res1.status).toBe(503);
+    const res1 = await worker.fetch(req1, mockEnvNoLegacyExport);    expect(res1.status).toBe(503);
     const body1 = (await res1.json()) as { code: string };
     expect(body1.code).toBe('agent.history_migration_failed');
     expect(financeFetchSpy).not.toHaveBeenCalled();
@@ -321,9 +342,21 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
       SECRET,
     );
 
-    // Mock runtime config as configured
+    // Mock runtime config as configured (plus C-01/C-02 worker auth endpoints)
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (info) => {
       const url = String(info);
+      if (url.includes('/internal/workspace-alias/')) {
+        return new Response(JSON.stringify({ canonicalHouseholdId: WORKSPACE_ID }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.includes('/internal/agent/consume-token')) {
+        return new Response(JSON.stringify({ ok: true, consumed: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       if (url.includes('/internal/agent/llm-config')) {
         return new Response(JSON.stringify({
           runtime: {

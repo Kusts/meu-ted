@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { KIND_SECRET_ALIASES } from '@pi-finance/llm-contracts/types';
+import { KIND_SECRET_ALIASES, normalizeProviderId } from '@pi-finance/llm-contracts/types';
 import {
   FIXED_ENDPOINTS,
   REGISTRY_UNSUPPORTED_KINDS,
@@ -68,7 +68,8 @@ describe('Provider kind matrix — executable end to end (Fase 1b RED)', () => {
       const aliases = KIND_SECRET_ALIASES[kind as keyof typeof KIND_SECRET_ALIASES];
       const env = { [aliases[0] as string]: `test-key-for-${kind}` };
       const instance = createLanguageModel(kind, modelId, 'chat-completions', env);
-      expect(instance.provider).toBe(kind);
+      // H-08: the legacy `openai` alias resolves to the canonical id.
+      expect(instance.provider).toBe(normalizeProviderId(kind));
       expect(instance.modelId).toBe(modelId);
       expect(instance.model).toBeDefined();
     }

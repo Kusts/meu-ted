@@ -89,6 +89,18 @@ export type RuntimeStatus = (typeof RUNTIME_STATUSES)[number];
 export const isProviderKind = (value: string): value is ProviderKind =>
   (PROVIDER_KINDS as readonly string[]).includes(value);
 
+/**
+ * H-08: single compatibility layer for provider id aliases. `openai-api`
+ * is the canonical id; the legacy `openai` id resolves to it. Normalize
+ * BEFORE persisting or activating (stores do this); never branch behavior
+ * on the alias downstream.
+ */
+export const PROVIDER_ID_ALIASES: Record<string, ProviderKind> = {
+  openai: 'openai-api',
+};
+
+export const normalizeProviderId = (id: string): string => PROVIDER_ID_ALIASES[id] ?? id;
+
 export const isProtocol = (value: string): value is Protocol =>
   (PROTOCOLS as readonly string[]).includes(value);
 
@@ -181,6 +193,10 @@ export interface RuntimeSnapshot {
   activeModelId: string | null;
   activeProtocol: Protocol | null;
   activeRolloutPercentage: number;
+  /** H-03: rollout mode travels to the agent so the executor enforces it (never serializes-only). */
+  activeRolloutMode: RolloutMode;
+  /** H-03: canary cohort (workspace or actor ids) enforced by the executor. */
+  canaryAllowlist: string[];
   fallbackProviderId: string | null;
   fallbackModelId: string | null;
   /**
@@ -222,7 +238,8 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
   { id: 'glm', kind: 'glm', displayName: 'GLM (Zhipu)', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'GLM_API_KEY', supportsDynamicModels: true },
   { id: 'opencode-zen', kind: 'opencode-zen', displayName: 'OpenCode Zen', baseUrl: 'https://opencode.ai/zen/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'OPENCODE_ZEN_API_KEY', supportsDynamicModels: true },
   { id: 'opencode-go', kind: 'opencode-go', displayName: 'OpenCode Go', baseUrl: 'https://opencode.ai/zen/go/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'OPENCODE_GO_API_KEY', supportsDynamicModels: true },
-  { id: 'openai', kind: 'openai', displayName: 'OpenAI', baseUrl: 'https://api.openai.com/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'OPENAI_API_KEY', supportsDynamicModels: true },
+  { id: 'openai', kind: 'openai', displayName: 'OpenAI (alias legado — resolve para openai-api)', baseUrl: 'https://api.openai.com/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'OPENAI_API_KEY', supportsDynamicModels: true },
+  { id: 'openai-api', kind: 'openai-api', displayName: 'OpenAI', baseUrl: 'https://api.openai.com/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'OPENAI_API_KEY', supportsDynamicModels: true },
   { id: 'openrouter', kind: 'openrouter', displayName: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'OPENROUTER_API_KEY', supportsDynamicModels: true },
   { id: 'deepseek', kind: 'deepseek', displayName: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'DEEPSEEK_API_KEY', supportsDynamicModels: true },
   { id: 'kimi', kind: 'kimi', displayName: 'Kimi (Moonshot)', baseUrl: 'https://api.moonshot.ai/v1', modelsPath: '/models', authFormat: 'bearer-key', secretAlias: 'KIMI_API_KEY', supportsDynamicModels: true },

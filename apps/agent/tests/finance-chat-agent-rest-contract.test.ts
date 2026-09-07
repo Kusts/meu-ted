@@ -40,10 +40,14 @@ const createTestAgent = () => {
     intention_id: "intent-test-1",
     version: 1,
     provider_id: "opencode-zen",
-    model_id: "zen-free",
+    model_id: "opencode-zen:zen-free-model",
     protocol: "chat-completions",
     rollout_percentage: 100,
     security_epoch: 1,
+    fallback_provider_id: null,
+    fallback_model_id: null,
+    model_name: "zen-free-model",
+    fallback_model_name: null,
     created_at: new Date().toISOString(),
   });
 
@@ -97,7 +101,9 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
 
   it("(2) POST /rpc/chat with trusted headers and forged body actorId persists user message with header actor metadata, followed by relay assistant message", async () => {
     const { agent, persisted } = createTestAgent();
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    // Fresh Response per call: a Response body can only be consumed once,
+    // and each turn performs 2+ fetches (H-03 authority re-verify + relay).
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(JSON.stringify({ text: "Seu saldo atual é R$ 1.500,00." }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -294,6 +300,24 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     };
 
     // Client sends request with valid signed token, but also tries to inject forged header x-agent-actor
+    // C-01/C-02: Worker resolves the canonical workspace and consumes the
+    // single-use token before routing — mock both internal endpoints.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/internal/workspace-alias/")) {
+        return new Response(JSON.stringify({ canonicalHouseholdId: WORKSPACE_ID }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/internal/agent/consume-token")) {
+        return new Response(JSON.stringify({ ok: true, consumed: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("unexpected upstream", { status: 500 });
+    });
     const req = new Request(
       `https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/history`,
       {
@@ -416,6 +440,24 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     };
 
     // Non-RPC subpath, e.g. /other-action or /websocket
+    // C-01/C-02: auth (alias resolution + single-use consumption) runs
+    // before the 404 — mock both internal endpoints.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/internal/workspace-alias/")) {
+        return new Response(JSON.stringify({ canonicalHouseholdId: WORKSPACE_ID }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/internal/agent/consume-token")) {
+        return new Response(JSON.stringify({ ok: true, consumed: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("unexpected upstream", { status: 500 });
+    });
     const req = new Request(
       `https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/other-action`,
       {

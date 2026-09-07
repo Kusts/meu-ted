@@ -36,6 +36,27 @@ describe("Gateway history_migration_failed/idempotency (RED for live block)", ()
     hasInFlightTurns: true,
   };
 
+  // C-01/C-02: Worker auth resolves the canonical workspace and consumes
+  // the single-use token before routing — mock both internal endpoints.
+  const mockAuthEndpoints = () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (info) => {
+      const url = String(info);
+      if (url.includes("/internal/workspace-alias/")) {
+        return new Response(JSON.stringify({ canonicalHouseholdId: WORKSPACE_ID }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/internal/agent/consume-token")) {
+        return new Response(JSON.stringify({ ok: true, consumed: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("unexpected upstream", { status: 500 });
+    });
+  };
+
   it("RED: GET /rpc/history should NOT be blocked by migration_blocked_turns_in_flight (history is read-only, must remain available)", async () => {
     const token = await createAgentConnectionToken({ sub: GENUINE_USER, workspace: WORKSPACE_ID, role: "owner" }, SECRET);
     const legacyExportSpy = vi.fn(async () => pendingExport);
@@ -66,6 +87,7 @@ describe("Gateway history_migration_failed/idempotency (RED for live block)", ()
       headers: { "x-agent-connection-token": token, origin: "https://pi-finance-pwa.walissonead.workers.dev" },
     });
 
+    mockAuthEndpoints();
     const res = await worker.fetch(req, env);
     // After fix, history should be allowed (200) even when migration is pending; before fix it was 409
     expect(res.status).toBe(200);
@@ -103,6 +125,7 @@ describe("Gateway history_migration_failed/idempotency (RED for live block)", ()
       body: JSON.stringify({ text: "hello" }),
     });
 
+    mockAuthEndpoints();
     const res = await worker.fetch(req, env);
     expect(res.status).toBe(409);
     const body = (await res.json()) as { code: string };
@@ -135,6 +158,7 @@ describe("Gateway history_migration_failed/idempotency (RED for live block)", ()
       headers: { "x-agent-connection-token": token, origin: "https://pi-finance-pwa.walissonead.workers.dev" },
     });
 
+    mockAuthEndpoints();
     const res = await worker.fetch(req, env);
     expect(res.status).toBe(200);
     expect(legacyExportSpy).toHaveBeenCalled();

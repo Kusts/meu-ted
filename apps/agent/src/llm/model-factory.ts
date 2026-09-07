@@ -10,6 +10,7 @@ import {
   validateModelId,
   type Protocol,
 } from './provider-registry.js';
+import { normalizeProviderId } from '@pi-finance/llm-contracts/types';
 
 export type ModelInstance = {
   provider: string;
@@ -44,6 +45,9 @@ export const createLanguageModel = (
   env: Record<string, string | undefined>,
   customFetch = fetch,
 ): ModelInstance => {
+  // H-08: the legacy `openai` alias resolves to the canonical `openai-api`
+  // before endpoint/secret resolution — one compat point, no downstream split.
+  providerKind = normalizeProviderId(providerKind);
   const modelId = validateModelId(rawModelId);
   const baseUrl = FIXED_ENDPOINTS[providerKind];
   if (!baseUrl) {
