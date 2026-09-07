@@ -276,6 +276,33 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
         return reply.code(403).send({ code: "auth.delegation_scope_forbidden", message: "Permissão insuficiente no token delegado." });
       }
 
+      // H-12: device binding end-to-end. The deviceId claim is signature-bound
+      // (same contract the Agent emits). Identity is derived from claims —
+      // never from free headers — but when the caller ALSO presents device
+      // proof (x-device-token), it must resolve to the SAME device, otherwise
+      // a token minted for device A cannot be used from device B. A revoked
+      // device fails here (401). Tokens without any device are explicitly
+      // read-only: sensitive mutations are rejected (403).
+      const rawDeviceHeader = request.headers[DEVICE_TOKEN_HEADER];
+      const deviceToken = Array.isArray(rawDeviceHeader) ? rawDeviceHeader[0] : rawDeviceHeader;
+      let presentedDeviceId: string | undefined;
+      if (typeof deviceToken === "string" && deviceToken.trim() !== "") {
+        try {
+          presentedDeviceId = (await resolveToken(deviceToken)).deviceId;
+        } catch {
+          return reply.code(401).send({ code: "auth.session_required", message: "Token de autenticação inválido ou expirado." });
+        }
+      }
+      const boundDeviceId = claims.deviceId;
+      if (presentedDeviceId !== undefined || boundDeviceId !== undefined) {
+        if (!presentedDeviceId || !boundDeviceId || presentedDeviceId !== boundDeviceId) {
+          return reply.code(403).send({ code: "auth.device_mismatch", message: "Token vinculado a outro dispositivo." });
+        }
+      }
+      if (!boundDeviceId && !isRead) {
+        return reply.code(403).send({ code: "auth.device_binding_required", message: "Operação sensível exige token vinculado a um dispositivo." });
+      }
+
       if (deps.workspaceAccess) {
         const access = await deps.workspaceAccess.resolve(claims.sub, claims.workspace);
         if (!access) {
@@ -288,7 +315,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
         actorId: claims.sub,
         authUserId: claims.sub,
         actorType: "user",
-        deviceId: "",
+        deviceId: claims.deviceId ?? "",
         role: claims.role,
       };
     });
@@ -518,6 +545,8 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     agentAuthServiceToken: agentServiceToken,
     replayStore,
     pool: deps.pool ?? null,
+    // H-12: device binding at mint time (server-side resolution).
+    resolveDeviceToken: resolveToken,
   });
 
   registerWorkspaceAliasRoutes(app, {

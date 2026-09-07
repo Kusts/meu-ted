@@ -1,8 +1,11 @@
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { createDelegatedTurnToken, decodeDelegatedTurnToken } from '../src/delegated-token.js';
 import { createAgentConnectionToken } from '../../api/src/auth/agent-connection-token.js';
 import { FinanceChatAgent } from '../src/finance-chat-agent.js';
 import type { FinanceChatAgent as FinanceChatAgentType } from '../src/finance-chat-agent.js';
+import worker from '../src/worker.js';
+
+type WorkerEnv = Parameters<typeof worker.fetch>[1];
 
 const SECRET = 'h07-delegation-secret-32-chars-minimum!';
 const CONN_SECRET = 'h07-connection-secret-32-chars-minimum!';
@@ -139,5 +142,130 @@ describe('H-07: DO amarra identidade ao token (spoof de headers falha)', () => {
       }),
     );
     expect(res.status).toBe(200);
+  });
+});
+
+describe('H-12: deviceId end-to-end (conexão → worker → DO → delegado)', () => {
+  const realFetch = globalThis.fetch;
+  beforeEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const setupAgent = async () => {
+    const agent = Object.create(FinanceChatAgent.prototype) as FinanceChatAgentType & {
+      messages: unknown[];
+      persistMessages: (msgs: unknown[]) => Promise<void>;
+    };
+    agent.messages = [];
+    agent.persistMessages = vi.fn(async () => {});
+    Object.defineProperty(agent, 'state', { value: { storage: {} }, writable: true, configurable: true });
+    Object.defineProperty(agent, 'env', {
+      value: { API_ORIGIN: 'https://api.test.local', AGENT_CONNECTION_TOKEN_SECRET: CONN_SECRET },
+      writable: true,
+      configurable: true,
+    });
+    return agent;
+  };
+
+  it('DO: token do dispositivo A com header de dispositivo B → 403', async () => {
+    const agent = await setupAgent();
+    const token = await createAgentConnectionToken(
+      { sub: 'user-real', workspace: 'ws-real', role: 'owner', deviceId: 'device-A' },
+      CONN_SECRET,
+    );
+    const res = await agent.fetch(
+      new Request('https://agent.test.local/rpc/history', {
+        headers: {
+          'x-agent-connection-token': token,
+          'x-agent-actor': 'user-real',
+          'x-agent-workspace': 'ws-real',
+          'x-agent-device': 'device-B',
+        },
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { code?: string }).code).toBe('agent.identity_mismatch');
+  });
+
+  it('DO: dispositivo coincidente passa; token sem device + sem header passa (compat)', async () => {
+    const agent = await setupAgent();
+    const bound = await createAgentConnectionToken(
+      { sub: 'user-real', workspace: 'ws-real', role: 'owner', deviceId: 'device-A' },
+      CONN_SECRET,
+    );
+    const ok = await agent.fetch(
+      new Request('https://agent.test.local/rpc/history', {
+        headers: {
+          'x-agent-connection-token': bound,
+          'x-agent-actor': 'user-real',
+          'x-agent-workspace': 'ws-real',
+          'x-agent-device': 'device-A',
+        },
+      }),
+    );
+    expect(ok.status).toBe(200);
+
+    const legacy = await createAgentConnectionToken(
+      { sub: 'user-real', workspace: 'ws-real', role: 'owner' },
+      CONN_SECRET,
+    );
+    const compat = await agent.fetch(
+      new Request('https://agent.test.local/rpc/history', {
+        headers: {
+          'x-agent-connection-token': legacy,
+          'x-agent-actor': 'user-real',
+          'x-agent-workspace': 'ws-real',
+        },
+      }),
+    );
+    expect(compat.status).toBe(200);
+  });
+
+  it('Worker sobrescreve x-agent-device livre do cliente pelo device do token', async () => {
+    const WS = 'ws-h12-worker';
+    const token = await createAgentConnectionToken(
+      { sub: 'user-real', workspace: WS, role: 'owner', deviceId: 'device-A' },
+      CONN_SECRET,
+    );
+    globalThis.fetch = (async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/internal/workspace-alias/')) {
+        return new Response(JSON.stringify({ canonicalHouseholdId: WS }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true, consumed: true }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const seen: Array<Record<string, string>> = [];
+    const doFetch = vi.fn(async (req: Request) => {
+      const headers: Record<string, string> = {};
+      req.headers.forEach((v, k) => {
+        headers[k] = v;
+      });
+      seen.push(headers);
+      return new Response('do');
+    });
+    const env = {
+      API_ORIGIN: 'https://api.example.test',
+      AGENT_CONNECTION_TOKEN_SECRET: CONN_SECRET,
+      AGENT_AUTH_SERVICE_TOKEN: 'h12-service-token-32-chars-minimum!',
+      AGENT: { idFromName: vi.fn((n: string) => ({ n })), get: vi.fn(() => ({ fetch: doFetch, exportFullWorkspaceHistory: async () => ({ turns: [], messages: [] }) })) },
+      FINANCE_CHAT_AGENT: {
+        idFromName: vi.fn((n: string) => ({ n })),
+        get: vi.fn(() => ({
+          fetch: doFetch,
+          exportFullWorkspaceHistory: async () => ({ turns: [], messages: [] }),
+          importLegacyHistory: async () => ({ success: true, importedCount: 0, skipped: true }),
+        })),
+      },
+    } as unknown as WorkerEnv;
+
+    const res = await worker.fetch(
+      new Request(`https://worker.test/agents/finance-chat-agent/${WS}/rpc/history`, {
+        headers: { 'x-agent-connection-token': token, 'x-agent-device': 'device-FORGED' },
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(seen[0]!['x-agent-device']).toBe('device-A');
   });
 });

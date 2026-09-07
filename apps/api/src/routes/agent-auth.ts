@@ -7,6 +7,8 @@ import { createAgentConnectionToken } from '../auth/agent-connection-token.js';
 import type { AgentReplayStore } from '../auth/agent-connection-token-replay.js';
 import { hashJti } from '../auth/agent-connection-token-replay-postgres.js';
 import { resolveCanonicalHouseholdId } from '../auth/workspace-alias.js';
+import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
+import type { DeviceContext } from '../auth/device-token.js';
 
 export type AgentAuthDeps = {
   auth?: BetterAuth | undefined;
@@ -15,6 +17,13 @@ export type AgentAuthDeps = {
   agentAuthServiceToken: string;
   replayStore: AgentReplayStore;
   pool?: { query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }> } | null;
+  /**
+   * H-12: resolves the presented device token to its device. Injected so the
+   * mint can bind the connection token to the calling device server-side.
+   * Absent → mint stays deviceless (session-only client, read-only
+   * downstream for sensitive mutations).
+   */
+  resolveDeviceToken?: ((token: string | undefined) => Promise<DeviceContext>) | undefined;
 };
 
 const verifyServiceToken = (req: FastifyRequest, serviceToken: string): boolean => {
@@ -75,8 +84,23 @@ export const registerAgentAuthRoutes = (app: FastifyInstance, deps: AgentAuthDep
       return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Access to workspace forbidden' });
     }
 
+    // H-12: bind the connection token to the calling device, resolved
+    // server-side from the presented device token (never a free client
+    // claim). A presented-but-invalid/revoked device denies the mint: a
+    // revoked device must not receive new agent bearers.
+    let deviceId: string | undefined;
+    const rawDeviceHeader = req.headers[DEVICE_TOKEN_HEADER] ?? req.headers[DEVICE_TOKEN_HEADER.toLowerCase()];
+    const presentedDeviceToken = (Array.isArray(rawDeviceHeader) ? rawDeviceHeader[0] : rawDeviceHeader)?.trim();
+    if (presentedDeviceToken && deps.resolveDeviceToken) {
+      try {
+        deviceId = (await deps.resolveDeviceToken(presentedDeviceToken)).deviceId;
+      } catch {
+        return reply.code(401).send({ code: 'auth.session_required', message: 'Token de autenticação inválido ou expirado.' });
+      }
+    }
+
     const token = await createAgentConnectionToken(
-      { sub: access.userId, workspace: access.householdId, role: access.role },
+      { sub: access.userId, workspace: access.householdId, role: access.role, ...(deviceId ? { deviceId } : {}) },
       deps.connectionSecret,
     );
 

@@ -225,6 +225,11 @@ export default {
         headers.set("x-agent-actor", auth.actorId);
         headers.set("x-agent-role", auth.role);
         headers.set("x-agent-workspace", auth.workspaceId);
+        // H-12: stamp (OVERWRITE) the device binding from the verified
+        // authorization. A free client x-agent-device header is never
+        // trusted; deviceless authorizations delete any presented value.
+        if (auth.deviceId) headers.set("x-agent-device", auth.deviceId);
+        else headers.delete("x-agent-device");
         const rpcUrl = new URL(request.url);
         rpcUrl.pathname = subPath;
         return financeAgent.fetch(
@@ -286,6 +291,9 @@ export default {
           headers.set("x-agent-actor", auth.actorId);
           headers.set("x-agent-role", auth.role);
           headers.set("x-agent-workspace", auth.workspaceId);
+          // H-12: same overwrite rule as the finance route above.
+          if (auth.deviceId) headers.set("x-agent-device", auth.deviceId);
+          else headers.delete("x-agent-device");
           const rpcUrl = new URL(request.url);
           rpcUrl.pathname = "/rpc/chat";
           let rpcBody = await request.text();
@@ -303,6 +311,9 @@ export default {
       headers.set("x-agent-actor", auth.actorId);
       headers.set("x-agent-role", auth.role);
       headers.set("x-agent-workspace", auth.workspaceId);
+      // H-12: same overwrite rule as the finance route above.
+      if (auth.deviceId) headers.set("x-agent-device", auth.deviceId);
+      else headers.delete("x-agent-device");
       // C-05: legacy namespace also follows the canonical id.
       return env.AGENT.get(env.AGENT.idFromName(canonicalId)).fetch(new Request(request, { headers }));
     }

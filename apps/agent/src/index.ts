@@ -477,7 +477,7 @@ export function getAgentByName(namespace: DurableObjectNamespace, workspaceId: s
   return namespace.get(namespace.idFromName(workspaceId));
 }
 
-export type WorkspaceAuthorization = { actorId: string; role: DelegatedRole; workspaceId: string };
+export type WorkspaceAuthorization = { actorId: string; role: DelegatedRole; workspaceId: string; deviceId?: string };
 
 export async function authorizeWorkspaceMembership(
   request: Request,
@@ -529,7 +529,14 @@ export async function authorizeWorkspaceMembership(
         return Response.json({ code: "agent.token_replayed", message: "Connection token already consumed" }, { status: 401 });
       }
       const role = claims.role === "owner" ? "owner" as DelegatedRole : "member" as DelegatedRole;
-      return { actorId: claims.sub, role, workspaceId: canonicalWorkspaceId };
+      // H-12: the device binding travels with the authorization so the
+      // Worker can stamp x-agent-device (never a free client header).
+      return {
+        actorId: claims.sub,
+        role,
+        workspaceId: canonicalWorkspaceId,
+        ...(typeof claims.deviceId === "string" && claims.deviceId ? { deviceId: claims.deviceId } : {}),
+      };
     } catch (err) {
       // Preserve the explicit replay signal when it surfaces as an error.
       if ((err as Error)?.message?.includes("token_replayed")) {

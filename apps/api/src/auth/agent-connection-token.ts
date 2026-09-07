@@ -13,18 +13,30 @@ export type AgentConnectionClaims = {
   role: 'owner' | 'member';
   capabilities: string[];
   jti: string;
+  /**
+   * H-12: device this token was minted for (resolved server-side from the
+   * presented device token at mint time — never a free client claim). The
+   * Worker re-stamps it as x-agent-device and the DO + delegation boundary
+   * verify the SAME value. Absent for session-only clients (read-only
+   * downstream for sensitive mutations).
+   */
+  deviceId?: string;
   iat: number;
   exp: number;
 };
 
+const isValidDeviceId = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0 && value.trim().length <= 128 && !/[\s\x00-\x1f\x7f]/.test(value);
+
 export const createAgentConnectionToken = async (
-  input: { sub: string; workspace: string; role: 'owner' | 'member'; capabilities?: string[]; jti?: string },
+  input: { sub: string; workspace: string; role: 'owner' | 'member'; capabilities?: string[]; jti?: string; deviceId?: string },
   secret: string,
   nowMs = Date.now(),
 ): Promise<string> => {
   if (!secret) throw new Error('secret required');
   if (!input.sub || !input.workspace) throw new Error('sub and workspace are required');
   if (input.role !== 'owner' && input.role !== 'member') throw new Error('role must be owner or member');
+  if (input.deviceId !== undefined && !isValidDeviceId(input.deviceId)) throw new Error('deviceId is invalid');
 
   const iat = Math.floor(nowMs / 1000);
   const claims: AgentConnectionClaims = {
@@ -35,6 +47,7 @@ export const createAgentConnectionToken = async (
     role: input.role,
     capabilities: input.capabilities ?? ['financial.read', 'financial.write'],
     jti: input.jti ?? randomUUID(),
+    ...(input.deviceId !== undefined ? { deviceId: input.deviceId.trim() } : {}),
     iat,
     exp: iat + 120,
   };
@@ -84,6 +97,7 @@ export const verifyAgentConnectionToken = async (
   if (!claims.sub || typeof claims.sub !== 'string') throw new Error('invalid agent token: missing sub');
   if (!claims.workspace || typeof claims.workspace !== 'string') throw new Error('invalid agent token: missing workspace');
   if (claims.role !== 'owner' && claims.role !== 'member') throw new Error('invalid agent token: invalid role');
+  if (claims.deviceId !== undefined && !isValidDeviceId(claims.deviceId)) throw new Error('invalid agent token: invalid device binding');
 
   if (claims.exp <= now) throw new Error('expired agent token');
   if (claims.iat > now + 30) throw new Error('invalid agent token: future iat exceeds clock skew tolerance');

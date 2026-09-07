@@ -635,7 +635,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     const connToken = request.headers.get("x-agent-connection-token")?.trim();
     const secret = this.env?.AGENT_CONNECTION_TOKEN_SECRET;
     if (!connToken || !secret) return null;
-    let claims: { sub: string; workspace: string };
+    let claims: { sub: string; workspace: string; deviceId?: unknown };
     try {
       claims = await verifyAgentConnectionToken(connToken, secret);
     } catch {
@@ -648,6 +648,19 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         { code: "agent.identity_mismatch", message: "Authenticated identity does not match request context" },
         { status: 403 },
       );
+    }
+    // H-12: the stamped device must equal the token-bound device. The Worker
+    // overwrites any client-sent x-agent-device, so a mismatch here means a
+    // forged direct-DO call (token of device A presented as device B).
+    const stampedDevice = request.headers.get("x-agent-device")?.trim() || undefined;
+    const boundDevice = typeof claims.deviceId === "string" && claims.deviceId ? claims.deviceId : undefined;
+    if (boundDevice !== undefined || stampedDevice !== undefined) {
+      if (boundDevice === undefined || stampedDevice === undefined || boundDevice !== stampedDevice) {
+        return Response.json(
+          { code: "agent.identity_mismatch", message: "Device binding does not match request context" },
+          { status: 403 },
+        );
+      }
     }
     return null;
   }

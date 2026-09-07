@@ -6,6 +6,8 @@ export type AgentConnectionClaims = {
   role: 'owner' | 'member';
   capabilities: string[];
   jti: string;
+  /** H-12: device this token was minted for (same contract as the API). */
+  deviceId?: string;
   iat: number;
   exp: number;
 };
@@ -91,6 +93,15 @@ export const verifyAgentConnectionToken = async (
   if (!claims.sub || typeof claims.sub !== 'string') throw new Error('invalid agent token: missing sub');
   if (!claims.workspace || typeof claims.workspace !== 'string') throw new Error('invalid agent token: missing workspace');
   if (claims.role !== 'owner' && claims.role !== 'member') throw new Error('invalid agent token: invalid role');
+  if (
+    claims.deviceId !== undefined &&
+    (typeof claims.deviceId !== 'string' ||
+      claims.deviceId.trim().length === 0 ||
+      claims.deviceId.trim().length > 128 ||
+      /[\s\x00-\x1f\x7f]/.test(claims.deviceId))
+  ) {
+    throw new Error('invalid agent token: invalid device binding');
+  }
 
   if (claims.exp <= now) throw new Error('expired agent token');
   if (claims.iat > now + 30) throw new Error('invalid agent token: future iat exceeds clock skew tolerance');

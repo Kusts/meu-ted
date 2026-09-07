@@ -23,6 +23,7 @@ describe('Agent Auth Routes (Task 3)', () => {
 
   let memberCookie = '';
   let userId = '';
+  let tokenStore: ReturnType<typeof createInMemoryDeviceTokenStore>;
 
   beforeEach(async () => {
     const memoryDb = { user: [], session: [], account: [], verification: [] };
@@ -55,7 +56,7 @@ describe('Agent Auth Routes (Task 3)', () => {
 
     const { state, writes } = createInMemoryStores();
     const store = createInMemoryReadModelStoreFromState(state);
-    const tokenStore = createInMemoryDeviceTokenStore();
+    tokenStore = createInMemoryDeviceTokenStore();
     replayStore = createInMemoryAgentReplayStore();
 
     const workspaceAccess = {
@@ -247,8 +248,7 @@ describe('Agent Auth Routes (Task 3)', () => {
       expect(res2.json().code).toBe('auth.workspace_forbidden');
     });
 
-    it('M-09: revoked membership is rejected at consumption WITHOUT burning the token', async () => {
-      const jti = 'jti-revoked-member';
+    it('M-09: revoked membership is rejected at consumption WITHOUT burning the token', async () => {      const jti = 'jti-revoked-member';
       // Non-member (revoked) attempt: 403, store untouched.
       const denied = await app.inject({
         method: 'POST',
@@ -267,6 +267,55 @@ describe('Agent Auth Routes (Task 3)', () => {
         payload: { jti: 'jti-stranger', workspaceId: HOUSEHOLD_A, actorId: 'ghost-user' },
       });
       expect(stranger.statusCode).toBe(403);
+    });
+  });
+
+  describe('H-12: device binding at mint (POST /auth/agent-token)', () => {
+    it('embeds the server-resolved deviceId when a device token is presented', async () => {
+      const deviceToken = (await tokenStore.register('mint-device', HOUSEHOLD_A)).token;
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/agent-token',
+        headers: {
+          cookie: memberCookie,
+          'x-workspace-id': HOUSEHOLD_A,
+          'x-device-token': deviceToken,
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const claims = await verifyAgentConnectionToken(res.json().token, CONNECTION_SECRET, HOUSEHOLD_A);
+      // The bound device is the one resolved server-side (never a client claim).
+      const expected = await tokenStore.resolve(deviceToken);
+      expect(claims.deviceId).toBe(expected.deviceId);
+    });
+
+    it('denies the mint when the presented device was revoked', async () => {
+      const { token } = await tokenStore.register('revoked-device', HOUSEHOLD_A);
+      await tokenStore.revoke(token, HOUSEHOLD_A);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/agent-token',
+        headers: {
+          cookie: memberCookie,
+          'x-workspace-id': HOUSEHOLD_A,
+          'x-device-token': token,
+        },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('mints deviceless when no device token is presented (session-only compat)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/agent-token',
+        headers: {
+          cookie: memberCookie,
+          'x-workspace-id': HOUSEHOLD_A,
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const claims = await verifyAgentConnectionToken(res.json().token, CONNECTION_SECRET, HOUSEHOLD_A);
+      expect(claims.deviceId).toBeUndefined();
     });
   });
 });
