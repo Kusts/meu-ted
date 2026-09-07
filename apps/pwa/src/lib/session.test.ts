@@ -291,4 +291,34 @@ describe("clearSensitiveSession", () => {
     const { result } = renderHook(() => useSession());
     expect(() => result.current.expireSession("test")).not.toThrow();
   });
+
+  it("H-05: invalidates the cached agent connection bearer on logout and workspace switch", async () => {
+    const client = await import("@/lib/api/client");
+    const agentAuth = await import("@/lib/api/agent-auth");
+    const apiSpy = vi
+      .spyOn(client, "apiFetch")
+      .mockResolvedValue({ token: "agent-token-h05", expiresIn: 120 });
+    const ws = "ws-h05-session";
+    agentAuth.clearAgentConnectionTokenCache();
+
+    await agentAuth.fetchAgentConnectionToken(ws);
+    await agentAuth.fetchAgentConnectionToken(ws);
+    expect(apiSpy).toHaveBeenCalledTimes(1);
+
+    // Logout / 401 path.
+    await clearSensitiveSession({ clearToken: true });
+    await agentAuth.fetchAgentConnectionToken(ws);
+    expect(apiSpy).toHaveBeenCalledTimes(2);
+
+    // Workspace-switch path.
+    await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true });
+    await agentAuth.fetchAgentConnectionToken(ws);
+    expect(apiSpy).toHaveBeenCalledTimes(3);
+
+    // No-op call preserves the cache.
+    await agentAuth.fetchAgentConnectionToken(ws);
+    await clearSensitiveSession({});
+    await agentAuth.fetchAgentConnectionToken(ws);
+    expect(apiSpy).toHaveBeenCalledTimes(3);
+  });
 });

@@ -19,6 +19,7 @@
 import { clearToken, clearSessionToken } from "@/lib/auth/token-store";
 import { deleteV2Snapshot } from "@/lib/state/snapshot-db";
 import { clearActiveWorkspaceId } from "@/lib/api/client";
+import { clearAgentConnectionTokenCache } from "@/lib/api/agent-auth";
 
 const SNAPSHOT_KEY = "pi-finance:snapshot:v1";
 const PROFILE_KEY = "pi-finance:profile";
@@ -86,6 +87,15 @@ export async function clearSensitiveSession(
   if (doSnapshot) {
     // v2 IndexedDB snapshot — independent of the v1 localStorage delete above.
     tasks.push(deleteV2Snapshot().catch(() => { /* noop */ }));
+  }
+
+  if (doToken || doSnapshot) {
+    // H-05: the in-memory agent connection bearer must die with the session
+    // (logout/401) and on workspace switch — otherwise the client reuses a
+    // token issued for the previous user/workspace until it expires.
+    tasks.push(
+      Promise.resolve().then(() => { try { clearAgentConnectionTokenCache(); } catch { /* noop */ } }),
+    );
   }
 
   // Await every attempt. allSettled guarantees no rejection escapes even if a

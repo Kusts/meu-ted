@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { apiFetch, isApiConfigured } from "./client";
-import { fetchAgentConnectionToken } from "./agent-auth";
+import { fetchAgentConnectionToken, clearAgentConnectionTokenCache } from "./agent-auth";
 
 export const attachmentSchema = z.object({
   type: z.enum(["image", "pdf", "audio"]),
@@ -97,9 +97,44 @@ async function parseJson<T>(response: Response): Promise<T> {
   return await response.json() as T;
 }
 
-async function agentAuthHeaders(workspaceId: string): Promise<Record<string, string>> {
-  const token = await fetchAgentConnectionToken(workspaceId);
+async function agentAuthHeaders(workspaceId: string, forceFresh = false): Promise<Record<string, string>> {
+  // C-01: connection tokens are single-use — every call mints fresh.
+  const token = await fetchAgentConnectionToken(workspaceId, forceFresh);
   return { "x-agent-connection-token": token };
+}
+
+const peekErrorCode = async (response: Response): Promise<string | undefined> => {
+  try {
+    return ((await response.clone().json()) as { code?: string })?.code;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Authenticated agent fetch (H-05/C-01): fresh single-use token per call;
+ * exactly ONE retry on `agent.token_replayed` (stale bearer raced with the
+ * single-use consumption); cache invalidated on any 401/403 so logout,
+ * user switch and workspace switch never reuse a previous bearer.
+ */
+async function fetchWithAgentAuth(workspaceId: string, url: string, init: RequestInit): Promise<Response> {
+  const attempt = async (): Promise<Response> => {
+    const authHeaders = await agentAuthHeaders(workspaceId, true);
+    return fetch(url, {
+      ...init,
+      headers: { ...((init.headers as Record<string, string> | undefined) ?? {}), ...authHeaders },
+    });
+  };
+  let res = await attempt();
+  if (res.ok) return res;
+  if ((await peekErrorCode(res)) === "agent.token_replayed") {
+    clearAgentConnectionTokenCache();
+    res = await attempt();
+    if (res.ok) return res;
+  } else if (res.status === 401 || res.status === 403) {
+    clearAgentConnectionTokenCache();
+  }
+  return res;
 }
 
 export async function sendAgentMessage(
@@ -108,8 +143,8 @@ export async function sendAgentMessage(
   opts?: { attachments?: Array<{ type: string; url: string; name: string }> },
 ): Promise<AgentTurn> {
   const baseUrl = agentBaseUrl();
-  const authHeaders = await agentAuthHeaders(workspaceId);
-  const response = await fetch(
+  const response = await fetchWithAgentAuth(
+    workspaceId,
     `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/chat`,
     {
       method: "POST",
@@ -117,7 +152,6 @@ export async function sendAgentMessage(
       headers: {
         "content-type": "application/json",
         "X-Workspace-Id": workspaceId,
-        ...authHeaders,
       },
       body: JSON.stringify({ text: content, attachments: opts?.attachments }),
     },
@@ -165,8 +199,8 @@ export type AgentSessionRenewal = {
  */
 export async function renewAgentSession(workspaceId: string): Promise<AgentSessionRenewal> {
   const baseUrl = agentBaseUrl();
-  const authHeaders = await agentAuthHeaders(workspaceId);
-  const response = await fetch(
+  const response = await fetchWithAgentAuth(
+    workspaceId,
     `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/session/new`,
     {
       method: "POST",
@@ -174,7 +208,6 @@ export async function renewAgentSession(workspaceId: string): Promise<AgentSessi
       headers: {
         "content-type": "application/json",
         "X-Workspace-Id": workspaceId,
-        ...authHeaders,
       },
       body: JSON.stringify({}),
     },
@@ -300,14 +333,13 @@ export async function rejectPendingOperation(workspaceId: string, pendingOperati
 
 export async function fetchAgentHistory(workspaceId: string): Promise<AgentMessage[]> {
   const baseUrl = agentBaseUrl();
-  const authHeaders = await agentAuthHeaders(workspaceId);
-  const response = await fetch(
+  const response = await fetchWithAgentAuth(
+    workspaceId,
     `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/history`,
     {
       credentials: "include",
       headers: {
         "X-Workspace-Id": workspaceId,
-        ...authHeaders,
       },
     },
   );
