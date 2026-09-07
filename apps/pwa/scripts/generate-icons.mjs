@@ -1,12 +1,17 @@
 /**
- * Gera os PNGs da identidade "Meu Ted" a partir de public/logo.svg.
+ * Gera os PNGs da identidade "Meu Ted" a partir do recorte oficial
+ * `public/brand/app-icon-source.png` (região "ÍCONE DO APP" do sheet de
+ * identidade — mascote urso M+check sobre quadrado verde arredondado).
  *
- * - icon-192.png / icon-512.png: fundo full-bleed em gradiente esmeralda
- *   escuro + marca branca centralizada na safe-zone do maskable (~62% do
- *   canvas). Os mesmos arquivos servem aos propósitos "any" e "maskable"
- *   declarados no manifest (fundo opaco = crop seguro em qualquer máscara).
- * - apple-icon.png (180): mesma composição (iOS não aceita transparência).
- * - favicon.png (32): logo.svg direto sobre transparente.
+ * - icon-192.png / icon-512.png: recorte redimensionado (propósito "any").
+ * - icon-maskable-192.png / icon-maskable-512.png: mesma arte a 80%,
+ *   centralizada sobre fundo #0B7A5B (zona de segurança ~10% para máscaras).
+ * - apple-touch-icon.png + apple-icon.png (180): mesma composição
+ *   (iOS não aceita transparência; o recorte já é opaco).
+ * - favicon.png (32): recorte direto.
+ *
+ * NÃO regenerar a partir de public/logo.svg: o SVG é a marca vetorial do
+ * cabeçalho/login, não a arte do ícone do app.
  *
  * Uso: `pnpm --filter pwa icons` (requer sharp como devDependency).
  */
@@ -15,46 +20,35 @@ import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
+const source = join(root, "brand", "app-icon-source.png");
 
-// Marca branca = balão branco + faísca esmeralda (contraste sem depender
-// do fundo). A geometria replica public/logo.svg de propósito: o script é
-// a fonte do raster, o SVG é a fonte do vetor.
+const BRAND_GREEN = "#0B7A5B";
 
-function sparkEmerald() {
-  // Faísca em esmeralda sobre o balão branco = contraste sem depender de fundo.
-  return `<path d="M32 14 C33.6 20.6 36.4 23.4 43 25 C36.4 26.6 33.6 29.4 32 36 C30.4 29.4 27.6 26.6 21 25 C27.6 23.4 30.4 20.6 32 14 Z" fill="#0E8C5A"/>
-  <path d="M45.5 35.5 C46.1 37.7 47.3 38.9 49.5 39.5 C47.3 40.1 46.1 41.3 45.5 43.5 C44.9 41.3 43.7 40.1 41.5 39.5 C43.7 38.9 44.9 37.7 45.5 35.5 Z" fill="#0E8C5A" opacity="0.85"/>`;
-}
-
-function appIconSvg(size, markScale = 0.62) {
-  const s = 64 * markScale;
-  const offset = (64 - s) / 2;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="${size}" height="${size}">
-  <defs>
-    <linearGradient id="meuted-bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0E8C5A"/>
-      <stop offset="1" stop-color="#0A3A28"/>
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" fill="url(#meuted-bg)"/>
-  <g transform="translate(${offset} ${offset}) scale(${s / 64})">
-    <rect x="6" y="7" width="52" height="42" rx="14" fill="#FFFFFF"/>
-    <path d="M21 46 L19 57 Q18.7 59 20.7 58 L33 50.5 Z" fill="#FFFFFF"/>
-    ${sparkEmerald()}
-  </g>
-</svg>`;
+async function maskable(size, file) {
+  const bg = await sharp({
+    create: { width: size, height: size, channels: 3, background: BRAND_GREEN },
+  })
+    .png()
+    .toBuffer();
+  const inner = Math.round(size * 0.8);
+  const fg = await sharp(source).resize(inner, inner, { fit: "cover" }).png().toBuffer();
+  const offset = Math.round((size - inner) / 2);
+  await sharp(bg).composite([{ input: fg, left: offset, top: offset }]).png().toFile(join(root, file));
+  console.log(`ok ${file} (${size}x${size}, maskable)`);
 }
 
 const jobs = [
-  { file: "icon-192.png", size: 192, svg: appIconSvg(192) },
-  { file: "icon-512.png", size: 512, svg: appIconSvg(512) },
-  { file: "apple-icon.png", size: 180, svg: appIconSvg(180) },
+  { file: "icon-192.png", size: 192 },
+  { file: "icon-512.png", size: 512 },
+  { file: "apple-touch-icon.png", size: 180 },
+  { file: "apple-icon.png", size: 180 },
+  { file: "favicon.png", size: 32 },
 ];
 
-for (const { file, size, svg } of jobs) {
-  await sharp(Buffer.from(svg)).resize(size, size).png().toFile(join(root, file));
+for (const { file, size } of jobs) {
+  await sharp(source).resize(size, size, { fit: "cover" }).png().toFile(join(root, file));
   console.log(`ok ${file} (${size}x${size})`);
 }
 
-await sharp(join(root, "logo.svg")).resize(32, 32).png().toFile(join(root, "favicon.png"));
-console.log("ok favicon.png (32x32)");
+await maskable(192, "icon-maskable-192.png");
+await maskable(512, "icon-maskable-512.png");

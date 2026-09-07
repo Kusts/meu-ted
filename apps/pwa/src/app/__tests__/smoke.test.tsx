@@ -29,8 +29,8 @@ describe("manifest", () => {
   it("sets theme_color and background_color", async () => {
     const { default: manifest } = await import("@/app/manifest");
     const result = manifest();
-    expect(result.theme_color).toBe("#0E8C5A");
-    expect(result.background_color).toBe("#F8F9FA");
+    expect(result.theme_color).toBe("#0B7A5B");
+    expect(result.background_color).toBe("#1F2A27");
   });
 
   it("references at least two icon sizes", async () => {

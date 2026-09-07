@@ -110,7 +110,7 @@ describe("ProfilePage", () => {
     render(<ProfilePage />);
     await user.click(screen.getByRole("button", { name: /Notificações/ }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByText(/Alertas do Pi/i)).toBeInTheDocument();
+    expect(screen.getByText(/Alertas do Meu Ted/i)).toBeInTheDocument();
   });
 
   it("edit profile: save call carries the new name + email + phone + avatar", async () => {

@@ -53,18 +53,18 @@ export default function PushNotificationsCard({ workspaceId }: { workspaceId?: s
     <section className="rounded-[16px] border border-border bg-fill-light p-4" aria-labelledby="push-title">
       <div className="mb-1 text-[15px] font-bold text-text-primary" id="push-title">Notificações no dispositivo</div>
       <p className="mb-3 text-[13px] leading-relaxed text-text-secondary">
-        Receba lembretes importantes mesmo quando o Pi estiver fechado.
+        Receba lembretes importantes mesmo quando o Meu Ted estiver fechado.
       </p>
 
       {state === "loading" && <p role="status" className="text-[13px] text-text-muted">Verificando suporte…</p>}
       {state === "unsupported" && <p role="status" className="text-[13px] text-text-muted">Este navegador não oferece notificações push.</p>}
       {state === "install-required" && (
         <div className="space-y-2 text-[13px] text-text-secondary">
-          <p className="font-semibold text-text-primary">No iPhone, instale o Pi primeiro:</p>
+          <p className="font-semibold text-text-primary">No iPhone, instale o Meu Ted primeiro:</p>
           <ol className="list-decimal space-y-1 pl-5">
             <li>Abra o menu Compartilhar no Safari.</li>
             <li>Toque em <strong>Adicionar à Tela de Início</strong>.</li>
-            <li>Abra o Pi pelo novo ícone e volte aqui.</li>
+            <li>Abra o Meu Ted pelo novo ícone e volte aqui.</li>
           </ol>
         </div>
       )}

@@ -20,13 +20,20 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "Meu Ted",
-  description: "Seu dinheiro em conversa. Tudo em dia.",
+  title: "Meu Ted — Tudo em dia.",
+  description: "Finanças mais simples. Uma vida mais sua.",
   applicationName: "Meu Ted",
   appleWebApp: {
     capable: true,
     title: "Meu Ted",
     statusBarStyle: "default",
+  },
+  openGraph: {
+    title: "Meu Ted — Tudo em dia.",
+    description: "Finanças mais simples. Uma vida mais sua.",
+    type: "website",
+    locale: "pt_BR",
+    siteName: "Meu Ted",
   },
   icons: {
     icon: [
@@ -35,7 +42,7 @@ export const metadata: Metadata = {
       { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
     ],
     apple: [
-      { url: "/apple-icon.png", sizes: "180x180", type: "image/png" },
+      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
     ],
   },
   manifest: "/manifest.webmanifest",
@@ -48,8 +55,8 @@ export const viewport: Viewport = {
   // com font-size >= 16px; ver AuthGate (16px) e NewTransactionSheet/Input.
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0B0F0E" },
-    { media: "(prefers-color-scheme: light)", color: "#F8F9FA" },
+    { media: "(prefers-color-scheme: dark)", color: "#1F2A27" },
+    { media: "(prefers-color-scheme: light)", color: "#0B7A5B" },
   ],
 };
 

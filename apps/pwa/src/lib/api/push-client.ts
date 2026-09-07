@@ -58,7 +58,7 @@ export async function enablePush(workspaceId: string): Promise<PushSubscriptionR
   if (typeof Notification === "undefined" || typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
     throw new Error("Este navegador não oferece notificações push.");
   }
-  if (isIosDevice() && !isStandalonePwa()) throw new Error("Instale o Pi na Tela de Início antes de ativar notificações.");
+  if (isIosDevice() && !isStandalonePwa()) throw new Error("Instale o Meu Ted na Tela de Início antes de ativar notificações.");
   if (Notification.permission === "denied") throw new Error("Notificações bloqueadas. Reative-as nos ajustes do navegador.");
 
   // Must be invoked before the first await: iOS ties the permission prompt to this click activation.

@@ -77,7 +77,7 @@ describe("HomePage", () => {
     // Slice B: sheet now derives items from real data; empty state shows
     // this friendly copy when there's nothing actionable.
     expect(
-      screen.getByText(/Nada urgente agora|Alertas do Pi/i),
+      screen.getByText(/Nada urgente agora|Alertas do Meu Ted/i),
     ).toBeInTheDocument();
   });
 

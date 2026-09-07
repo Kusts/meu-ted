@@ -227,7 +227,7 @@ export default function NotificationsSheet({
       <PushNotificationsCard workspaceId={workspaceId ?? workspace?.activeWorkspace?.id} />
       <div className="mb-4 rounded-[18px] bg-fill-light p-4">
         <div className="mb-1 text-[15px] font-bold text-text-primary">
-          Alertas do Pi
+          Alertas do Meu Ted
         </div>
         <p className="text-[13px] leading-relaxed text-text-secondary">
           Priorizados por urgência com base nos seus dados reais.
