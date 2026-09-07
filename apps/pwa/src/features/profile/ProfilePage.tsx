@@ -73,7 +73,7 @@ export default function ProfilePage() {
       ? [
           {
             key: "llm-admin" as const,
-            label: "Configuração LLM (Admin)",
+            label: "Gerenciador de IA",
             icon: <Shield size={18} className="text-warning" />,
           },
         ]

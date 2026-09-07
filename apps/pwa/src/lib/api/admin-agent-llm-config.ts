@@ -141,7 +141,6 @@ export const setFallbackModel = async (input: {
     body: JSON.stringify(input),
   });
 };
-
 export const syncCatalog = async (
   items: Array<{
     providerId: string;
@@ -156,4 +155,78 @@ export const syncCatalog = async (
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ items }),
   });
+};
+
+/** Masked credential status — the full key is NEVER returned by the API. */
+export type LlmCredentialStatus = {
+  providerId: string;
+  configured: boolean;
+  masked: string | null;
+  updatedAt: string | null;
+};
+
+export type LlmConnectionTest = {
+  ready: boolean;
+  code: string;
+  latencyMs: number;
+  providerId?: string;
+};
+
+export type LlmRemoteModel = {
+  id: string;
+  ownedBy?: string | null;
+};
+
+export type LlmRemoteModels = {
+  providerId: string;
+  models: LlmRemoteModel[];
+  cached: boolean;
+  manualEntryAllowed: boolean;
+};
+
+const credentialPath = (providerId: string) =>
+  `/admin/agent/llm-config/providers/${encodeURIComponent(providerId)}/credential`;
+
+export const fetchProviderCredential = async (providerId: string): Promise<{ credential: LlmCredentialStatus }> => {
+  return apiFetch<{ credential: LlmCredentialStatus }>(credentialPath(providerId));
+};
+
+export const saveProviderCredential = async (
+  providerId: string,
+  apiKey: string,
+  opts?: { dryRun?: boolean },
+): Promise<{ credential: LlmCredentialStatus }> => {
+  return apiFetch<{ credential: LlmCredentialStatus }>(credentialPath(providerId), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ apiKey, ...(opts?.dryRun !== undefined ? { dryRun: opts.dryRun } : {}) }),
+  });
+};
+
+export const deleteProviderCredential = async (
+  providerId: string,
+): Promise<{ ok: boolean; credential: LlmCredentialStatus }> => {
+  return apiFetch<{ ok: boolean; credential: LlmCredentialStatus }>(credentialPath(providerId), {
+    method: "DELETE",
+  });
+};
+
+export const testProviderConnection = async (
+  providerId: string,
+  opts?: { dryRun?: boolean },
+): Promise<LlmConnectionTest> => {
+  return apiFetch<LlmConnectionTest>(
+    `/admin/agent/llm-config/providers/${encodeURIComponent(providerId)}/test-connection`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...(opts?.dryRun !== undefined ? { dryRun: opts.dryRun } : {}) }),
+    },
+  );
+};
+
+export const fetchRemoteModels = async (providerId: string): Promise<LlmRemoteModels> => {
+  return apiFetch<LlmRemoteModels>(
+    `/admin/agent/llm-config/providers/${encodeURIComponent(providerId)}/remote-models`,
+  );
 };

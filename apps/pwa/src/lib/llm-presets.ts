@@ -144,6 +144,31 @@ export const LLM_PROVIDER_PRESETS: LlmProviderPreset[] = [
       { modelId: "codex-mini", protocol: "responses", privacyClass: "training_prohibited", displayName: "Codex Mini" },
     ],
   },
+  {
+    id: "kimi",
+    name: "Kimi (Moonshot)",
+    kind: "kimi",
+    secretAlias: "KIMI_API_KEY",
+    transport: "direct",
+    authMode: "api-key",
+    description: "Kimi K2, Moonshot",
+    autoModels: [
+      { modelId: "kimi-k2", protocol: "chat-completions", privacyClass: "training_prohibited", displayName: "Kimi K2" },
+      { modelId: "moonshot-v1-8k", protocol: "chat-completions", privacyClass: "training_prohibited", displayName: "Moonshot V1 8K" },
+    ],
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    kind: "openrouter",
+    secretAlias: "OPENROUTER_API_KEY",
+    transport: "direct",
+    authMode: "api-key",
+    description: "Roteador multi-modelos",
+    autoModels: [
+      { modelId: "meta-llama/llama-3-8b", protocol: "chat-completions", privacyClass: "training_prohibited", displayName: "Llama 3 8B" },
+    ],
+  },
 ];
 
 /** Single source: provider kinds come from the shared contract. */

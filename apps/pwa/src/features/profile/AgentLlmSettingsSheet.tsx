@@ -4,9 +4,9 @@ import { useState, useEffect } from "react";
 import BottomSheet from "@/components/BottomSheet";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import type { Protocol } from "@pi-finance/llm-contracts/types";
-import { Cpu, CheckCircle2, AlertCircle, Plus, Trash2, Sparkles } from "lucide-react";
+import { Cpu, CheckCircle2, AlertCircle, Plus, Trash2, Sparkles, KeyRound, RefreshCw } from "lucide-react";
 import { LLM_PROVIDER_PRESETS } from "@/lib/llm-presets";
-import { isProtocol } from "@pi-finance/llm-contracts/types";
+import { isProtocol, getCatalogEntry, resolveProviderDisplayStatus } from "@pi-finance/llm-contracts/types";
 import { useAdminLlmConfig } from "./useAdminLlmConfig";
 
 interface AgentLlmSettingsSheetProps {
@@ -42,6 +42,10 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
     activeModelChoice,
     fallbackModelChoice,
     providerModels,
+    credentials,
+    connectionTests,
+    remoteModels,
+    remoteModelsLoading,
   } = llm;
 
   const [newProviderId, setNewProviderId] = useState("");
@@ -49,6 +53,8 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
   const [newModelIdInput, setNewModelIdInput] = useState("");
   const [newModelProtocol, setNewModelProtocol] = useState<Protocol>("chat-completions");
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
+  const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
+  const [remoteProviderId, setRemoteProviderId] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -58,6 +64,22 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open ]);
+
+  // Credential status per provider (silent: the sheet works without it and
+  // tests mock only the legacy config fetch).
+  useEffect(() => {
+    if (!open || providers.length === 0) return;
+    for (const p of providers) {
+      void llm.loadCredential(p.id, { silent: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, providers.map((p) => p.id).join(",") ]);
+
+  useEffect(() => {
+    if (!remoteProviderId && providers.length > 0 && providers[0]) {
+      setRemoteProviderId(providers[0].id);
+    }
+  }, [providers, remoteProviderId]);
 
   const closeConfirm = () => setPendingConfirm(null);
 
@@ -102,7 +124,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
   };
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Governança TED · LLM">
+    <BottomSheet open={open} onClose={onClose} title="Gerenciador de IA · Meu Ted">
       <div className="flex flex-col gap-5 pb-8">
         <div className="relative overflow-hidden rounded-[20px] border border-border-subtle bg-surface-2 p-4 shadow-card">
           <div className="flex items-center justify-between">
@@ -132,6 +154,181 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
               <div className="mt-1 font-mono text-[12px] text-text-primary">{runtime.fallbackModelId}</div>
             </div>
           )}
+        </div>
+
+        <div className="rounded-[16px] border border-border-subtle bg-surface-1 p-4 shadow-card">
+          <h3 className="mb-1 text-[11px] font-bold uppercase tracking-wider text-text-muted">Credenciais por provider</h3>
+          <p className="mb-3 text-[12px] font-medium text-text-secondary">
+            A chave é armazenada no servidor e nunca exibida — apenas o final mascarado.
+          </p>
+          <div className="flex flex-col gap-2.5">
+            {providers.map((p) => {
+              const catalog = getCatalogEntry(p.id);
+              const displayName = catalog?.displayName ?? p.name ?? p.id;
+              const isActive = runtime?.activeProviderId === p.id;
+              const isFallback = !isActive && runtime?.fallbackProviderId === p.id;
+              const status = resolveProviderDisplayStatus({
+                configured: credentials[p.id]?.configured ?? false,
+                isActive,
+                isFallback,
+              });
+              const statusLabel =
+                status === "ativo"
+                  ? "ATIVO"
+                  : status === "fallback"
+                    ? "FALLBACK"
+                    : status === "configurado"
+                      ? "configurado"
+                      : "não configurado";
+              const test = connectionTests[p.id] ?? null;
+              const isBrowserSession = (catalog?.authFormat ?? (p.secretAlias ? "bearer-key" : "browser-session")) === "browser-session";
+              return (
+                <div key={p.id} className="rounded-[14px] border border-border-subtle bg-surface-2 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-[13px] font-bold text-text-primary">{displayName}</span>
+                    <span
+                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                        status === "ativo"
+                          ? "bg-primary text-white"
+                          : status === "fallback"
+                            ? "bg-primary-tint text-primary"
+                            : status === "configurado"
+                              ? "bg-surface-3 text-text-secondary border border-border-subtle"
+                              : "bg-surface-3 text-text-muted border border-border-subtle"
+                      }`}
+                    >
+                      {statusLabel}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 font-mono text-[11px] text-text-secondary">
+                    {credentials[p.id]?.masked ?? "chave não verificada"}
+                  </div>
+                  {isBrowserSession ? (
+                    <div className="mt-2 text-[12px] font-medium text-text-secondary">
+                      Sessão via browser (plano Coding) — sem API key. Consulte o runbook de login do Codex.
+                    </div>
+                  ) : (
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        type="password"
+                        aria-label={`API key de ${p.id}`}
+                        autoComplete="off"
+                        value={keyInputs[p.id] ?? ""}
+                        onChange={(e) => setKeyInputs((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                        placeholder="Cole a API key"
+                        className="h-9 min-w-0 flex-1 rounded-[10px] border border-border-subtle bg-surface-1 px-3 text-[12px] text-text-primary outline-none focus:border-primary"
+                      />
+                      <button
+                        type="button"
+                        disabled={isMutating}
+                        onClick={() => {
+                          const value = keyInputs[p.id] ?? "";
+                          void llm.saveCredential(p.id, value).then((ok) => {
+                            if (ok) setKeyInputs((prev) => ({ ...prev, [p.id]: "" }));
+                          });
+                        }}
+                        className="inline-flex items-center gap-1 rounded-[10px] bg-primary px-3 py-2 text-[12px] font-bold text-white hover:bg-primary-hover disabled:opacity-60"
+                      >
+                        <KeyRound size={13} /> Salvar chave
+                      </button>
+                    </div>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isMutating}
+                      onClick={() => void llm.testConnection(p.id)}
+                      className="rounded-full border border-border-subtle bg-surface-1 px-3 py-1 text-[11px] font-bold text-text-secondary hover:bg-surface-3 disabled:opacity-60"
+                    >
+                      Testar conexão
+                    </button>
+                    {!isBrowserSession && credentials[p.id]?.configured && (
+                      <button
+                        type="button"
+                        disabled={isMutating}
+                        onClick={() =>
+                          setPendingConfirm({
+                            title: "Remover credencial",
+                            message: `Remover a API key salva de ${displayName}? O provider permanece cadastrado.`,
+                            confirmLabel: "Remover",
+                            danger: true,
+                            run: () => void llm.removeCredential(p.id),
+                          })
+                        }
+                        className="rounded-full border border-border-subtle bg-surface-1 px-3 py-1 text-[11px] font-bold text-text-secondary hover:bg-surface-3 disabled:opacity-60"
+                      >
+                        Remover chave
+                      </button>
+                    )}
+                    {test && (
+                      <span className="text-[11px] font-semibold text-text-secondary">
+                        {test.ready ? "conexão OK" : `falha (${test.code})`}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-[16px] border border-border-subtle bg-surface-1 p-4 shadow-card">
+          <h3 className="mb-1 text-[11px] font-bold uppercase tracking-wider text-text-muted">Modelos em tempo real</h3>
+          <p className="mb-3 text-[12px] font-medium text-text-secondary">
+            Lista puxada da API do provider com a chave salva. Providers sem listagem usam o id manual abaixo.
+          </p>
+          <div className="flex gap-2">
+            <select
+              aria-label="Provider da lista remota"
+              value={remoteProviderId}
+              onChange={(e) => setRemoteProviderId(e.target.value)}
+              className="h-10 min-w-0 flex-1 rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] font-medium text-text-primary outline-none focus:border-primary"
+            >
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {(getCatalogEntry(p.id)?.displayName ?? p.name ?? p.id)} ({p.id})
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={isMutating || remoteModelsLoading || !remoteProviderId}
+              onClick={() => void llm.loadRemoteModels(remoteProviderId, { force: true })}
+              className="inline-flex items-center gap-1.5 rounded-[12px] border border-border-subtle bg-surface-2 px-4 py-2 text-[13px] font-bold text-text-primary hover:bg-surface-3 disabled:opacity-60"
+            >
+              <RefreshCw size={14} /> Atualizar lista
+            </button>
+          </div>
+          <div className="mt-3 flex flex-col gap-2">
+            {remoteModelsLoading ? (
+              <div className="py-3 text-center text-[12px] font-medium text-text-muted">Consultando provider…</div>
+            ) : (remoteModels[remoteProviderId] ?? []).length === 0 ? (
+              <div className="py-2 text-[12px] font-medium text-text-muted">
+                Nenhum modelo remoto — cadastre o id manualmente abaixo.
+              </div>
+            ) : (
+              (remoteModels[remoteProviderId] ?? []).slice(0, 20).map((m) => (
+                <div key={m.id} className="flex items-center justify-between gap-2 rounded-[12px] border border-border-subtle bg-surface-2 px-3 py-2">
+                  <span className="min-w-0 truncate font-mono text-[12px] font-semibold text-text-primary">{m.id}</span>
+                  <button
+                    type="button"
+                    aria-label={`Cadastrar modelo remoto ${m.id}`}
+                    disabled={isMutating}
+                    onClick={() => {
+                      const provider = providers.find((p) => p.id === remoteProviderId);
+                      const kind = provider?.kind ?? remoteProviderId;
+                      const protocol: Protocol =
+                        kind === "anthropic" ? "messages" : kind === "google" ? "google-generative-ai" : "chat-completions";
+                      void llm.createModel(remoteProviderId, m.id, protocol);
+                    }}
+                    className="shrink-0 rounded-full bg-primary px-3 py-1 text-[11px] font-bold text-white hover:bg-primary-hover disabled:opacity-60"
+                  >
+                    Cadastrar
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         {error && (

@@ -9,10 +9,18 @@ import {
   deleteProvider as apiDeleteProvider,
   deleteModel as apiDeleteModel,
   setFallbackModel as apiSetFallbackModel,
+  fetchProviderCredential as apiFetchCredential,
+  saveProviderCredential as apiSaveCredential,
+  deleteProviderCredential as apiDeleteCredential,
+  testProviderConnection as apiTestConnection,
+  fetchRemoteModels as apiFetchRemoteModels,
   type AdminLlmConfigResponse,
   type LlmProvider,
   type LlmModel,
   type LlmRuntime,
+  type LlmCredentialStatus,
+  type LlmConnectionTest,
+  type LlmRemoteModel,
 } from "@/lib/api/admin-agent-llm-config";
 import { LLM_PROVIDER_PRESETS } from "@/lib/llm-presets";
 import { isProviderKind } from "@pi-finance/llm-contracts/types";
@@ -53,6 +61,18 @@ export interface UseAdminLlmConfig {
   createModel: (providerId: string, modelId: string, protocol: LlmModel["protocol"]) => Promise<boolean>;
   deleteProvider: (providerId: string) => Promise<boolean>;
   deleteModel: (modelId: string) => Promise<boolean>;
+  /** Masked credential status per provider id (full key never reaches the front). */
+  credentials: Record<string, LlmCredentialStatus>;
+  /** Last connection test per provider id (sanitized {ready, code}). */
+  connectionTests: Record<string, LlmConnectionTest | null>;
+  /** Remote (real-time upstream) models per provider id, 60s client cache. */
+  remoteModels: Record<string, LlmRemoteModel[]>;
+  remoteModelsLoading: boolean;
+  loadCredential: (providerId: string, opts?: { silent?: boolean }) => Promise<LlmCredentialStatus | null>;
+  saveCredential: (providerId: string, apiKey: string) => Promise<boolean>;
+  removeCredential: (providerId: string) => Promise<boolean>;
+  testConnection: (providerId: string, opts?: { dryRun?: boolean }) => Promise<LlmConnectionTest | null>;
+  loadRemoteModels: (providerId: string, opts?: { force?: boolean }) => Promise<LlmRemoteModel[]>;
 }
 
 /**
@@ -76,6 +96,15 @@ export function useAdminLlmConfig(): UseAdminLlmConfig {
   const [selectedProviderModelId, setSelectedProviderModelId] = useState<string>("");
   const [activeModelChoice, setActiveModelChoice] = useState<string>("");
   const [fallbackModelChoice, setFallbackModelChoice] = useState<string>("");
+
+  // Refactor: credential + remote-model state. Keys never live here — only
+  // the masked status returned by the API.
+  const [credentials, setCredentials] = useState<Record<string, LlmCredentialStatus>>({});
+  const [connectionTests, setConnectionTests] = useState<Record<string, LlmConnectionTest | null>>({});
+  const [remoteModels, setRemoteModels] = useState<Record<string, LlmRemoteModel[]>>({});
+  const [remoteModelsLoading, setRemoteModelsLoading] = useState(false);
+  const remoteCacheRef = useRef(new Map<string, { at: number; models: LlmRemoteModel[] }>());
+  const REMOTE_TTL_MS = 60_000;
 
   const abortRef = useRef<AbortController | null>(null);
   const providersRef = useRef(providers);
@@ -387,6 +416,84 @@ export function useAdminLlmConfig(): UseAdminLlmConfig {
     setSelectedProviderModelId(firstModel ? firstModel.id : "");
   }, []);
 
+  const loadCredential = useCallback(async (providerId: string, opts?: { silent?: boolean }): Promise<LlmCredentialStatus | null> => {
+    try {
+      const { credential } = await apiFetchCredential(providerId);
+      setCredentials((prev) => ({ ...prev, [providerId]: credential }));
+      return credential;
+    } catch (e) {
+      if (!opts?.silent && !isAbortError(e)) setError(formatApiError(e));
+      return null;
+    }
+  }, []);
+
+  const saveCredential = useCallback(
+    async (providerId: string, apiKey: string): Promise<boolean> => {
+      const key = apiKey.trim();
+      if (!key) {
+        setError("Informe a API key");
+        return false;
+      }
+      return mutate(async () => {
+        const { credential } = await apiSaveCredential(providerId, key);
+        setCredentials((prev) => ({ ...prev, [providerId]: credential }));
+        return `Credencial de ${providerId} salva (${credential.masked ?? "configurada"}).`;
+      });
+    },
+    [mutate],
+  );
+
+  const removeCredential = useCallback(
+    async (providerId: string): Promise<boolean> =>
+      mutate(async () => {
+        const { credential } = await apiDeleteCredential(providerId);
+        setCredentials((prev) => ({ ...prev, [providerId]: credential }));
+        return `Credencial de ${providerId} removida.`;
+      }),
+    [mutate],
+  );
+
+  const testConnection = useCallback(
+    async (providerId: string, opts?: { dryRun?: boolean }): Promise<LlmConnectionTest | null> => {
+      setError(null);
+      try {
+        const result = await apiTestConnection(
+          providerId,
+          opts?.dryRun !== undefined ? { dryRun: opts.dryRun } : undefined,
+        );
+        setConnectionTests((prev) => ({ ...prev, [providerId]: result }));
+        setActionSuccess(
+          result.ready ? `Conexão com ${providerId} OK.` : `Conexão com ${providerId} falhou (${result.code}).`,
+        );
+        return result;
+      } catch (e) {
+        if (!isAbortError(e)) setError(formatApiError(e));
+        return null;
+      }
+    },
+    [],
+  );
+
+  const loadRemoteModels = useCallback(async (providerId: string, opts?: { force?: boolean }): Promise<LlmRemoteModel[]> => {
+    if (!providerId) return [];
+    const hit = remoteCacheRef.current.get(providerId);
+    if (!opts?.force && hit && Date.now() - hit.at < REMOTE_TTL_MS) {
+      return hit.models;
+    }
+    setRemoteModelsLoading(true);
+    try {
+      const data = await apiFetchRemoteModels(providerId);
+      remoteCacheRef.current.set(providerId, { at: Date.now(), models: data.models });
+      setRemoteModels((prev) => ({ ...prev, [providerId]: data.models }));
+      return data.models;
+    } catch (e) {
+      if (!isAbortError(e)) setError(formatApiError(e));
+      return [];
+    } finally {
+      setRemoteModelsLoading(false);
+    }
+  }, []);
+
   const providerModels = useMemo(
     () => models.filter((m) => m.providerId === selectedProviderId),
     [models, selectedProviderId],
@@ -420,5 +527,14 @@ export function useAdminLlmConfig(): UseAdminLlmConfig {
     createModel,
     deleteProvider,
     deleteModel,
+    credentials,
+    connectionTests,
+    remoteModels,
+    remoteModelsLoading,
+    loadCredential,
+    saveCredential,
+    removeCredential,
+    testConnection,
+    loadRemoteModels,
   };
 }
