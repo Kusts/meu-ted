@@ -53,6 +53,7 @@ const LEGACY_SAFE_PREFIXES = [
   "V044",
   "V045",
   "V046",
+  "V047",
 ];
 
 export const migrationChecksum = (sql: string): string =>
@@ -98,11 +99,67 @@ const ensureMigrationsTable = async (pool: DbPool): Promise<void> => {
   );
 };
 
-const appliedVersions = async (pool: DbPool): Promise<Set<number>> => {
-  const res = await pool.query<{ version: number }>(
-    "SELECT version FROM _migrations",
+const appliedVersions = async (pool: DbPool): Promise<AppliedMigrationRow[]> => {
+  const res = await pool.query<AppliedMigrationRow>(
+    "SELECT version, name, checksum FROM _migrations",
   );
-  return new Set(res.rows.map((row) => row.version));
+  return res.rows.map((row) => ({
+    version: row.version,
+    name: row.name,
+    checksum: row.checksum ?? '',
+  }));
+};
+
+export type AppliedMigrationRow = {
+  version: number;
+  name: string;
+  checksum: string;
+};
+
+export type MigrationDrift = {
+  version: number;
+  kind: 'checksum' | 'name';
+  expected: string;
+  applied: string;
+};
+
+export type MigrationPlan = {
+  drift: MigrationDrift[];
+  backfill: Array<{ version: number; checksum: string }>;
+  pending: MigrationManifestEntry[];
+};
+
+/**
+ * M-06: pure drift planner. Every applied version that also exists in the
+ * manifest must match on file name AND checksum — an edited migration
+ * aborts startup instead of running history silently diverged. Empty stored
+ * checksums (pre-checksum rows) are adopted as baseline via backfill, never
+ * treated as drift. Applied versions absent from the manifest (downgraded
+ * code, legacy-only subset runs) are ignored, not drift.
+ */
+export const planMigrations = (
+  manifest: MigrationManifestEntry[],
+  applied: AppliedMigrationRow[],
+): MigrationPlan => {
+  const expected = new Map(manifest.map((m) => [m.version, m]));
+  const appliedVersions = new Set(applied.map((r) => r.version));
+  const drift: MigrationDrift[] = [];
+  const backfill: Array<{ version: number; checksum: string }> = [];
+  for (const row of applied) {
+    const entry = expected.get(row.version);
+    if (!entry) continue;
+    if (!row.checksum) {
+      backfill.push({ version: row.version, checksum: entry.checksum });
+      continue;
+    }
+    if (row.name !== entry.name) {
+      drift.push({ version: row.version, kind: 'name', expected: entry.name, applied: row.name });
+    } else if (row.checksum !== entry.checksum) {
+      drift.push({ version: row.version, kind: 'checksum', expected: entry.checksum, applied: row.checksum });
+    }
+  }
+  const pending = manifest.filter((m) => !appliedVersions.has(m.version));
+  return { drift, backfill, pending };
 };
 
 export const runMigrations = async (
@@ -110,14 +167,25 @@ export const runMigrations = async (
   legacyOnly = false,
 ): Promise<{ applied: number[] }> => {
   await ensureMigrationsTable(pool);
-  const applied = await appliedVersions(pool);
+  const manifest = expectedMigrationManifest(legacyOnly);
+  const appliedRows = await appliedVersions(pool);
+  const plan = planMigrations(manifest, appliedRows);
+  if (plan.drift.length > 0) {
+    const details = plan.drift
+      .map((d) => `V${String(d.version).padStart(3, '0')} (${d.kind} drift: applied=${JSON.stringify(d.applied)} manifest=${JSON.stringify(d.expected)})`)
+      .join('; ');
+    throw new Error(
+      `migration drift detected: applied migration files differ from the manifest — refusing to boot. ${details}`,
+    );
+  }
+  for (const entry of plan.backfill) {
+    await pool.query('UPDATE _migrations SET checksum = $1 WHERE version = $2', [entry.checksum, entry.version]);
+  }
   const newlyApplied: number[] = [];
 
-  for (const file of migrationFiles(legacyOnly)) {
-    const match = MIGRATION_RE.exec(file);
-    if (!match) continue;
-    const version = Number(match[1]);
-    if (applied.has(version)) continue;
+  for (const entry of plan.pending) {
+    const file = entry.name;
+    const version = entry.version;
     const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
     const client = await pool.connect();
     try {

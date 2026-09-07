@@ -115,13 +115,48 @@ const findCategoryInHousehold = async (
   return mapCategory(res.rows[0]!);
 };
 
-/** Validates an optional subcategoryId for an expense/income write. */
-const resolveSubcategoryInTx = async (
+/**
+ * Guards the V048 uniqueness scope (household/kind/parent/name) so a
+ * duplicate insert/rename surfaces as 409 in_use instead of a 500 from the
+ * unique index. `excludeId` skips the row being renamed.
+ */
+const assertCategoryNameFree = async (
+  client: import('pg').PoolClient,
+  householdId: string,
+  input: { name: string; kind: 'expense' | 'income'; parentId?: string },
+  excludeId?: string,
+): Promise<void> => {
+  const res = await client.query<Row>(
+    `SELECT id FROM categories
+      WHERE household_id = $1 AND kind = $2
+        AND COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid) =
+            COALESCE($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+        AND lower(name) = lower($4)
+        AND status = 'active' AND deleted_at IS NULL
+        ${excludeId ? 'AND id <> $5' : ''}
+      LIMIT 1`,
+    excludeId
+      ? [householdId, input.kind, input.parentId ?? null, input.name, excludeId]
+      : [householdId, input.kind, input.parentId ?? null, input.name],
+  );
+  if ((res.rowCount ?? 0) > 0) throw domainErrors.inUse('Categoria', 'nome duplicado');
+};
+
+/**
+ * Centralized subcategory validation for expense/income writes (M-03).
+ *
+ * Enforces, inside the caller's transaction: same household, active status,
+ * real subcategory (has a parent), kind compatible with the entry, and —
+ * when the entry names a distinct parent category — that the subcategory
+ * actually belongs to it. Returns the resolved subcategory row.
+ */
+export const resolveSubcategoryInTx = async (
   client: import('pg').PoolClient,
   householdId: string,
   subcategoryId: string,
   txKind: 'expense' | 'income',
-): Promise<void> => {
+  parentCategoryId?: string,
+): Promise<Category> => {
   const sub = await findCategoryInHousehold(client, subcategoryId, householdId).catch(() => {
     throw domainErrors.notFound('Subcategoria');
   });
@@ -130,6 +165,27 @@ const resolveSubcategoryInTx = async (
   if (sub.kind !== txKind) {
     throw domainErrors.invalid('subcategoryId', 'subcategoria deve ter o mesmo kind do lançamento');
   }
+  if (parentCategoryId !== undefined && parentCategoryId !== subcategoryId && sub.parentId !== parentCategoryId) {
+    throw domainErrors.invalid('subcategoryId', 'subcategoria não pertence à categoria informada');
+  }
+  return sub;
+};
+
+/**
+ * Category check shared with the CardStore (M-05): a card purchase needs an
+ * existing, active, expense-kind category — the same rule as plain entries.
+ */
+export const resolveExpenseCategoryInTx = async (
+  client: import('pg').PoolClient,
+  householdId: string,
+  categoryId: string,
+): Promise<Category> => {
+  const cat = await findCategoryInHousehold(client, categoryId, householdId);
+  if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
+  if (cat.kind !== 'expense') {
+    throw domainErrors.invalid('categoryId', 'compra no cartão exige categoria de despesa');
+  }
+  return cat;
 };
 
 const findActiveTransaction = async (
@@ -148,56 +204,92 @@ const findActiveTransaction = async (
 };
 
 /**
- * Idempotent catalog application inside an existing tx. Returns
- * {created, skipped} with the same matching rule as the in-memory store:
- * same-kind macro with equal case-insensitive name is reused.
+ * Reverses the balance effect of a transaction being soft-deleted (C-04).
+ * Shared by softDeleteTransaction and category-cascade so both paths keep
+ * balances consistent inside the same database transaction.
  */
-const applyDefaultsInTx = async (
+const reverseBalanceForDelete = async (
+  client: import('pg').PoolClient,
+  householdId: string,
+  tx: Pick<Transaction, 'kind' | 'accountId' | 'amountCents'> & { transferToAccountId?: string },
+): Promise<void> => {
+  if (tx.kind === 'expense') {
+    await client.query(
+      `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
+      [tx.accountId, tx.amountCents, householdId],
+    );
+  } else if (tx.kind === 'income') {
+    await client.query(
+      `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1 AND household_id = $3`,
+      [tx.accountId, tx.amountCents, householdId],
+    );
+  } else if (tx.kind === 'transfer') {
+    await client.query(
+      `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
+      [tx.accountId, tx.amountCents, householdId],
+    );
+    if (tx.transferToAccountId) {
+      await client.query(
+        `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1 AND household_id = $3`,
+        [tx.transferToAccountId, tx.amountCents, householdId],
+      );
+    }
+  }
+};
+
+/**
+ * Idempotent catalog application inside an existing tx (M-02).
+ *
+ * Race-safe: INSERT ... ON CONFLICT DO NOTHING (functional unique index
+ * from V048) + SELECT, with the same matching rule as the in-memory store:
+ * same-kind macro with equal case-insensitive name is reused. Two
+ * concurrent applications converge on the same rows; counts stay exact.
+ *
+ * Exported for unit tests (fake-client concurrency); production callers
+ * use applyCategoryDefaults / the createAccount bootstrap.
+ */
+export const applyDefaultsInTx = async (
   client: import('pg').PoolClient,
   householdId: string,
 ): Promise<{ created: number; skipped: number }> => {
   let created = 0;
   let skipped = 0;
   for (const [macroIdx, macro] of DEFAULT_CATEGORY_CATALOG.entries()) {
-    const found = await client.query<Row>(
-      `SELECT id FROM categories
-        WHERE household_id = $1 AND parent_id IS NULL AND kind = $2
-          AND lower(name) = lower($3) AND status = 'active' AND deleted_at IS NULL
-        LIMIT 1`,
-      [householdId, macro.kind, macro.name],
+    const ins = await client.query<Row>(
+      `INSERT INTO categories (id, household_id, name, kind, status, parent_id, icon, color, sort_order, is_default, is_system)
+       VALUES (gen_random_uuid(), $1, $2, $3, 'active', NULL, $4, $5, $6, true, false)
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [householdId, macro.name, macro.kind, macro.icon, macro.color, macroIdx],
     );
     let macroId: string;
-    if (found.rowCount === 0) {
-      const ins = await client.query<Row>(
-        `INSERT INTO categories (id, household_id, name, kind, status, parent_id, icon, color, sort_order, is_default, is_system)
-         VALUES (gen_random_uuid(), $1, $2, $3, 'active', NULL, $4, $5, $6, true, false)
-         RETURNING id`,
-        [householdId, macro.name, macro.kind, macro.icon, macro.color, macroIdx],
-      );
+    if ((ins.rowCount ?? 0) === 1) {
       macroId = ins.rows[0]!['id'] as string;
       created += 1;
     } else {
+      const found = await client.query<Row>(
+        `SELECT id FROM categories
+          WHERE household_id = $1 AND parent_id IS NULL AND kind = $2
+            AND lower(name) = lower($3) AND status = 'active' AND deleted_at IS NULL
+          LIMIT 1`,
+        [householdId, macro.kind, macro.name],
+      );
       macroId = found.rows[0]!['id'] as string;
       skipped += 1;
     }
     for (const sub of macro.subs) {
-      const subFound = await client.query(
-        `SELECT 1 FROM categories
-          WHERE household_id = $1 AND parent_id = $2 AND lower(name) = lower($3)
-            AND status = 'active' AND deleted_at IS NULL
-          LIMIT 1`,
-        [householdId, macroId, sub.name],
-      );
-      if ((subFound.rowCount ?? 0) > 0) {
-        skipped += 1;
-        continue;
-      }
-      await client.query(
+      const subIns = await client.query(
         `INSERT INTO categories (id, household_id, name, kind, status, parent_id, icon, color, sort_order, is_default, is_system)
-         VALUES (gen_random_uuid(), $1, $2, $3, 'active', $4, $5, NULL, 0, true, false)`,
+         VALUES (gen_random_uuid(), $1, $2, $3, 'active', $4, $5, NULL, 0, true, false)
+         ON CONFLICT DO NOTHING
+         RETURNING id`,
         [householdId, sub.name, macro.kind, macroId, sub.icon],
       );
-      created += 1;
+      if ((subIns.rowCount ?? 0) === 1) {
+        created += 1;
+      } else {
+        skipped += 1;
+      }
     }
   }
   return { created, skipped };
@@ -278,6 +370,11 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
             throw domainErrors.invalid('parentId', 'categoria pai deve ter o mesmo kind');
           }
         }
+        await assertCategoryNameFree(client, householdId, {
+          name: input.name,
+          kind: input.kind,
+          ...(input.parentId ? { parentId: input.parentId } : {}),
+        });
         const res = await client.query<Row>(
           `INSERT INTO categories (id, household_id, name, kind, status, parent_id, icon, color, sort_order, is_default, is_system)
            VALUES (gen_random_uuid(), $1, $2, $3, 'active', $4, $5, $6, $7, $8, false)
@@ -301,6 +398,14 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
       return withTransaction(pool, async (client) => {
         const existing = await findCategoryInHousehold(client, id, householdId);
         if (existing.status !== 'active') throw domainErrors.notFound('Categoria');
+        if (patch.name !== undefined) {
+          await assertCategoryNameFree(
+            client,
+            householdId,
+            { name: patch.name, kind: existing.kind, ...(existing.parentId ? { parentId: existing.parentId } : {}) },
+            id,
+          );
+        }
         const res = await client.query<Row>(
           `UPDATE categories
               SET name = COALESCE($3, name),
@@ -395,6 +500,24 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
           if (input.confirm !== true) {
             throw domainErrors.invalid('confirm', 'exclusão em cascata exige confirm:true');
           }
+          // C-04: every cascaded record goes through the same balance
+          // reversal as softDeleteTransaction, inside this transaction.
+          const doomed = await client.query<Row>(
+            `SELECT kind, account_id, amount_cents, transfer_to_account_id FROM transactions
+              WHERE household_id = $1 AND deleted_at IS NULL
+                AND (category_id = ANY($2) OR subcategory_id = ANY($2))`,
+            [householdId, scopeIds],
+          );
+          for (const row of doomed.rows) {
+            await reverseBalanceForDelete(client, householdId, {
+              kind: row['kind'] as Transaction['kind'],
+              accountId: row['account_id'] as string,
+              amountCents: Number(row['amount_cents']),
+              ...(row['transfer_to_account_id'] != null
+                ? { transferToAccountId: row['transfer_to_account_id'] as string }
+                : {}),
+            });
+          }
           await client.query(
             `UPDATE transactions SET deleted_at = NOW()
               WHERE household_id = $1 AND deleted_at IS NULL
@@ -421,10 +544,15 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
       return withTransaction(pool, async (client) => {
         const acc = await findAccountInHousehold(client, input.accountId, householdId);
         if (acc.status !== 'active') throw domainErrors.notFound('Conta');
+        // H-01: card purchases must flow through the CardStore (statements,
+        // limits, invoice semantics) — never as plain balance expenses.
+        if (acc.kind === 'credit_card') {
+          throw new DomainError('validation.invalid', 'compra no cartão deve usar /cards/purchases.', 422);
+        }
         const cat = await findCategoryInHousehold(client, input.categoryId, householdId);
         if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
         if (input.subcategoryId !== undefined) {
-          await resolveSubcategoryInTx(client, householdId, input.subcategoryId, 'expense');
+          await resolveSubcategoryInTx(client, householdId, input.subcategoryId, 'expense', input.categoryId);
         }
         const txRes = await client.query<Row>(
           `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id, subcategory_id, notes)
@@ -457,10 +585,14 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
       return withTransaction(pool, async (client) => {
         const acc = await findAccountInHousehold(client, input.accountId, householdId);
         if (acc.status !== 'active') throw domainErrors.notFound('Conta');
+        // H-01: income on a credit card is rejected (422), not silently booked.
+        if (acc.kind === 'credit_card') {
+          throw new DomainError('validation.invalid', 'receita não pode usar cartão de crédito.', 422);
+        }
         const cat = await findCategoryInHousehold(client, input.categoryId, householdId);
         if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
         if (input.subcategoryId !== undefined) {
-          await resolveSubcategoryInTx(client, householdId, input.subcategoryId, 'income');
+          await resolveSubcategoryInTx(client, householdId, input.subcategoryId, 'income', input.categoryId);
         }
         const txRes = await client.query<Row>(
           `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id, subcategory_id, notes)
@@ -495,6 +627,10 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
         if (from.status !== 'active') throw domainErrors.notFound('Conta');
         const to = await findAccountInHousehold(client, input.toAccountId, householdId);
         if (to.status !== 'active') throw domainErrors.notFound('Conta');
+        // H-01: transfers cannot touch credit cards (pay the invoice instead).
+        if (from.kind === 'credit_card' || to.kind === 'credit_card') {
+          throw new DomainError('validation.invalid', 'transferência não pode usar cartão de crédito.', 422);
+        }
         const txRes = await client.query<Row>(
           `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, transfer_to_account_id)
            VALUES (gen_random_uuid(), $1, 'transfer', $2, $3, $4, $5, $6)
@@ -523,7 +659,8 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
             patch.amountCents !== undefined ||
             patch.accountId !== undefined ||
             patch.categoryId !== undefined ||
-            patch.subcategoryId !== undefined
+            patch.subcategoryId !== undefined ||
+            patch.notes !== undefined
           ) {
             throw domainErrors.unsupported(
               'transferências só podem ter descrição e data alteradas',
@@ -541,7 +678,7 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
           return mapTransaction(res.rows[0]!);
         }
         // expense / income
-        if (patch.description === undefined && patch.date === undefined && patch.amountCents === undefined && patch.accountId === undefined && patch.categoryId === undefined && patch.notes === undefined) {
+        if (patch.description === undefined && patch.date === undefined && patch.amountCents === undefined && patch.accountId === undefined && patch.categoryId === undefined && patch.subcategoryId === undefined && patch.notes === undefined) {
           return tx;
         }
         if (patch.amountCents !== undefined && patch.amountCents <= 0) {
@@ -555,8 +692,22 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
           const next = await findCategoryInHousehold(client, patch.categoryId, householdId);
           if (next.status !== 'active') throw domainErrors.notFound('Categoria');
         }
-        if (patch.subcategoryId !== undefined) {
-          await resolveSubcategoryInTx(client, householdId, patch.subcategoryId, tx.kind);
+        // Effective parent for subcategory coherence (M-03): an explicit
+        // subcategory is validated against the effective parent; when only
+        // the parent changes, a retained subcategory from another macro is
+        // cleared instead of persisting an incoherent tree.
+        const effectiveCategoryId = patch.categoryId ?? tx.categoryId;
+        let effectiveSubcategoryId: string | null | undefined = patch.subcategoryId;
+        if (
+          effectiveSubcategoryId === undefined &&
+          patch.categoryId !== undefined &&
+          tx.subcategoryId !== undefined &&
+          patch.categoryId !== tx.categoryId
+        ) {
+          effectiveSubcategoryId = null;
+        }
+        if (effectiveSubcategoryId !== undefined && effectiveSubcategoryId !== null) {
+          await resolveSubcategoryInTx(client, householdId, effectiveSubcategoryId, tx.kind === 'income' ? 'income' : 'expense', effectiveCategoryId);
         }
         // Apply amount: restore old, then apply new.
         if (patch.amountCents !== undefined) {
@@ -591,7 +742,7 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
                   amount_cents = COALESCE($5, amount_cents),
                   account_id  = COALESCE($6, account_id),
                   category_id = COALESCE($7, category_id),
-                  subcategory_id = COALESCE($8, subcategory_id),
+                  subcategory_id = CASE WHEN $10 THEN NULL ELSE COALESCE($8, subcategory_id) END,
                   notes = COALESCE($9, notes)
             WHERE id = $1 AND household_id = $2
             RETURNING ${TRANSACTION_COLUMNS}`,
@@ -604,6 +755,7 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
             patch.categoryId ?? null,
             patch.subcategoryId ?? null,
             patch.notes ?? null,
+            effectiveSubcategoryId === null,
           ],
         );
         return mapTransaction(res.rows[0]!);
@@ -613,29 +765,8 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
     async softDeleteTransaction(householdId, id) {
       return withTransaction(pool, async (client) => {
         const tx = await findActiveTransaction(client, id, householdId);
-        // Restore balance effect.
-        if (tx.kind === 'expense') {
-          await client.query(
-            `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
-            [tx.accountId, tx.amountCents, householdId],
-          );
-        } else if (tx.kind === 'income') {
-          await client.query(
-            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1 AND household_id = $3`,
-            [tx.accountId, tx.amountCents, householdId],
-          );
-        } else if (tx.kind === 'transfer') {
-          await client.query(
-            `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
-            [tx.accountId, tx.amountCents, householdId],
-          );
-          if (tx.transferToAccountId) {
-            await client.query(
-              `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1 AND household_id = $3`,
-              [tx.transferToAccountId, tx.amountCents, householdId],
-            );
-          }
-        }
+        // Restore balance effect (shared with category cascade, C-04).
+        await reverseBalanceForDelete(client, householdId, tx);
         const res = await client.query<Row>(
           `UPDATE transactions
               SET deleted_at = NOW()

@@ -33,6 +33,8 @@ export type CardStore = {
     amountCents: number;
     date: string;
     categoryId?: string;
+    subcategoryId?: string;
+    notes?: string;
     installmentNumber?: number;
     installmentsTotal?: number;
   }): Promise<import('../types/domain.js').Transaction[]>;
@@ -45,6 +47,8 @@ export type CardStore = {
     purchaseDate: string;
     installmentsTotal: number;
     categoryId?: string;
+    subcategoryId?: string;
+    notes?: string;
   }): Promise<import('../types/domain.js').Transaction[]>;
 
   /** Create a recurring purchase on a credit card. */

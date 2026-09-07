@@ -188,6 +188,101 @@ describe('subcategoryId on records', () => {
     });
     expect(crossKind.statusCode).toBe(400);
   });
+
+  it('rejects a subcategory from another macro as subcategoryId (M-03 parent check)', async () => {
+    const { app } = buildTestApp();
+    const acc = await app.inject({
+      method: 'POST',
+      url: '/accounts',
+      headers: H,
+      payload: { name: 'X', kind: 'bank', initialBalanceCents: 10000 },
+    });
+    const macroA = await createCategory(app, { name: 'Comida', kind: 'expense' });
+    const macroB = await createCategory(app, { name: 'Bricolagem', kind: 'expense' });
+    const subA = await createCategory(app, { name: 'Feira', kind: 'expense', parentId: macroA.json().id });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: H,
+      payload: {
+        description: 'Y',
+        amountCents: 100,
+        date: '2026-06-10',
+        accountId: acc.json().id,
+        categoryId: macroB.json().id,
+        subcategoryId: subA.json().id,
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('validation.invalid');
+  });
+
+  it('rejects a cross-household subcategoryId (M-03 household check)', async () => {
+    const { app } = buildTestApp();
+    const acc = await app.inject({
+      method: 'POST',
+      url: '/accounts',
+      headers: H,
+      payload: { name: 'X', kind: 'bank', initialBalanceCents: 10000 },
+    });
+    const macro = await createCategory(app, { name: 'Comida', kind: 'expense' });
+    // Same tree shape in household B; its sub id must not resolve in A.
+    const macroB = await createCategory(app, { name: 'Comida', kind: 'expense' }, HB);
+    expect(macroB.statusCode).toBe(201);
+    const subB = await createCategory(app, { name: 'Mercado', kind: 'expense', parentId: macroB.json().id }, HB);
+    expect(subB.statusCode).toBe(201);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: H,
+      payload: {
+        description: 'Y',
+        amountCents: 100,
+        date: '2026-06-10',
+        accountId: acc.json().id,
+        categoryId: macro.json().id,
+        subcategoryId: subB.json().id,
+      },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe('not_found');
+  });
+
+  it('changing only the parent category clears a retained foreign subcategory (M-03 coherence)', async () => {
+    const { app } = buildTestApp();
+    const acc = await app.inject({
+      method: 'POST',
+      url: '/accounts',
+      headers: H,
+      payload: { name: 'X', kind: 'bank', initialBalanceCents: 10000 },
+    });
+    const macroA = await createCategory(app, { name: 'Comida', kind: 'expense' });
+    const macroB = await createCategory(app, { name: 'Bricolagem', kind: 'expense' });
+    const subA = await createCategory(app, { name: 'Feira', kind: 'expense', parentId: macroA.json().id });
+    const tx = await app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: H,
+      payload: {
+        description: 'Feira',
+        amountCents: 1000,
+        date: '2026-06-10',
+        accountId: acc.json().id,
+        categoryId: macroA.json().id,
+        subcategoryId: subA.json().id,
+      },
+    });
+    expect(tx.statusCode).toBe(201);
+    const upd = await app.inject({
+      method: 'PATCH',
+      url: `/transactions/${tx.json().id}`,
+      headers: H,
+      payload: { categoryId: macroB.json().id },
+    });
+    expect(upd.statusCode).toBe(200);
+    expect(upd.json().categoryId).toBe(macroB.json().id);
+    expect(upd.json().subcategoryId).toBeUndefined();
+  });
 });
 
 describe('POST /categories/:id/delete — move or cascade', () => {

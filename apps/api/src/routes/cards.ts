@@ -18,12 +18,20 @@ import type { AuthResolver } from './auth.js';
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
 
+// M-04: card purchases/installments preserve the same metadata as plain
+// entries (subcategory + notes), applied to every parcel.
+const cardMetadataExtension = {
+  subcategoryId: z.string().uuid().optional(),
+  notes: z.string().trim().max(2000).optional(),
+};
+
 const purchaseSchema = z.object({
   accountId: z.string().uuid(),
   description: z.string().trim().min(1).max(240),
   amountCents: z.number().int().positive(),
   date: isoDate,
   categoryId: z.string().uuid().optional(),
+  ...cardMetadataExtension,
   installmentsTotal: z.number().int().min(1).max(48).optional(),
   installmentNumber: z.number().int().min(1).max(48).optional(),
 });
@@ -35,6 +43,7 @@ const installmentsSchema = z.object({
   purchaseDate: isoDate,
   installmentsTotal: z.number().int().min(1).max(48),
   categoryId: z.string().uuid().optional(),
+  ...cardMetadataExtension,
 });
 
 const recurringSchema = z.object({
@@ -183,6 +192,8 @@ export const registerCardRoutes = (
         amountCents: parsed.data.amountCents,
         date: parsed.data.date,
         ...(parsed.data.categoryId ? { categoryId: parsed.data.categoryId } : {}),
+        ...(parsed.data.subcategoryId ? { subcategoryId: parsed.data.subcategoryId } : {}),
+        ...(parsed.data.notes ? { notes: parsed.data.notes } : {}),
         ...(parsed.data.installmentsTotal != null ? { installmentsTotal: parsed.data.installmentsTotal } : {}),
         ...(parsed.data.installmentNumber != null ? { installmentNumber: parsed.data.installmentNumber } : {}),
       });
@@ -210,6 +221,8 @@ export const registerCardRoutes = (
         purchaseDate: parsed.data.purchaseDate,
         installmentsTotal: parsed.data.installmentsTotal,
         ...(parsed.data.categoryId ? { categoryId: parsed.data.categoryId } : {}),
+        ...(parsed.data.subcategoryId ? { subcategoryId: parsed.data.subcategoryId } : {}),
+        ...(parsed.data.notes ? { notes: parsed.data.notes } : {}),
       });
       return { status: 201 as const, body: { items: txs } };
     };

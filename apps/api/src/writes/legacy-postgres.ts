@@ -14,7 +14,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { Account, Category, Transaction } from '../types/domain.js';
 import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';
 import { withTransaction } from '../db/pool.js';
-import { domainErrors } from './errors.js';
+import { domainErrors, DomainError } from './errors.js';
 import type { WriteStore } from './store.js';
 import type {
   CreateAccountInput, CreateCategoryInput, CreateExpenseInput, CreateIncomeInput,
@@ -59,13 +59,19 @@ const mapTransaction = (r: Row): Transaction => {
   return base;
 };
 
-/** Validates an optional subcategoryId for an expense/income write (legacy schema). */
-const resolveSubcategoryLegacy = async (
+/**
+ * Centralized subcategory validation for expense/income writes (M-03,
+ * legacy schema). Same-household, active, real subcategory with matching
+ * kind; when the entry names a distinct parent category, the subcategory
+ * must belong to it.
+ */
+export const resolveSubcategoryLegacy = async (
   client: PoolClient,
   householdId: string,
   subcategoryId: string,
   txKind: 'expense' | 'income',
-): Promise<void> => {
+  parentCategoryId?: string,
+): Promise<Category> => {
   const res = await client.query<Row>(
     `SELECT ${LEGACY_CATEGORY_COLUMNS} FROM categories WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL`,
     [subcategoryId, householdId],
@@ -75,6 +81,48 @@ const resolveSubcategoryLegacy = async (
   if (!sub.parentId) throw domainErrors.invalid('subcategoryId', 'deve ser uma subcategoria');
   if (sub.kind !== txKind) {
     throw domainErrors.invalid('subcategoryId', 'subcategoria deve ter o mesmo kind do lançamento');
+  }
+  if (parentCategoryId !== undefined && parentCategoryId !== subcategoryId && sub.parentId !== parentCategoryId) {
+    throw domainErrors.invalid('subcategoryId', 'subcategoria não pertence à categoria informada');
+  }
+  return sub;
+};
+
+/**
+ * Category check shared with the legacy CardStore (M-05): existing, active,
+ * expense-kind category — the same rule as plain entries.
+ */
+export const resolveExpenseCategoryLegacy = async (
+  client: PoolClient,
+  householdId: string,
+  categoryId: string,
+): Promise<Category> => {
+  const res = await client.query<Row>(
+    `SELECT ${LEGACY_CATEGORY_COLUMNS} FROM categories WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL`,
+    [categoryId, householdId],
+  );
+  if (res.rowCount === 0) throw domainErrors.notFound('Categoria');
+  const cat = mapCategory(res.rows[0]!);
+  if (cat.kind !== 'expense') {
+    throw domainErrors.invalid('categoryId', 'compra no cartão exige categoria de despesa');
+  }
+  return cat;
+};
+
+/** H-01: legacy accounts flag cards via is_credit_card (no kind column). */
+const assertNotCreditCardLegacy = async (
+  client: PoolClient,
+  householdId: string,
+  accountId: string,
+  operation: 'compra no cartão deve usar /cards/purchases.' | 'receita não pode usar cartão de crédito.' | 'transferência não pode usar cartão de crédito.',
+): Promise<void> => {
+  const res = await client.query<Row>(
+    `SELECT is_credit_card FROM accounts WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL`,
+    [accountId, householdId],
+  );
+  if (res.rowCount === 0) throw domainErrors.notFound('Conta');
+  if (res.rows[0]!['is_credit_card'] === true) {
+    throw new DomainError('validation.invalid', operation, 422);
   }
 };
 
@@ -298,8 +346,9 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
     async createExpense(householdId: string, input: CreateExpenseInput) {
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
       return withTransaction(pool, async (client: PoolClient) => {
+        await assertNotCreditCardLegacy(client, householdId, input.accountId, 'compra no cartão deve usar /cards/purchases.');
         if (input.subcategoryId !== undefined) {
-          await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'expense');
+          await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'expense', input.categoryId);
         }
         const res = await client.query<Row>(
           `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, subcategory_id, notes)
@@ -312,8 +361,9 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
     async createIncome(householdId: string, input: CreateIncomeInput) {
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
       return withTransaction(pool, async (client: PoolClient) => {
+        await assertNotCreditCardLegacy(client, householdId, input.accountId, 'receita não pode usar cartão de crédito.');
         if (input.subcategoryId !== undefined) {
-          await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'income');
+          await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'income', input.categoryId);
         }
         const res = await client.query<Row>(
           `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, to_account_id, category_id, subcategory_id, notes)
@@ -327,6 +377,8 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
       if (input.fromAccountId === input.toAccountId) throw domainErrors.invalid('toAccountId', 'deve ser diferente');
       return withTransaction(pool, async (client: PoolClient) => {
+        await assertNotCreditCardLegacy(client, householdId, input.fromAccountId, 'transferência não pode usar cartão de crédito.');
+        await assertNotCreditCardLegacy(client, householdId, input.toAccountId, 'transferência não pode usar cartão de crédito.');
         const res = await client.query<Row>(
           `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id)
            VALUES (gen_random_uuid(), $1, 'transfer', $2, $3, $4, $5, $6)
@@ -338,7 +390,7 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
     async updateTransaction(householdId: string, id: string, patch: UpdateTransactionInput) {
       return withTransaction(pool, async (client: PoolClient) => {
         const existing = await client.query<Row>(
-          `SELECT kind FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [id, householdId]);
+          `SELECT kind, category_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [id, householdId]);
         if (existing.rowCount === 0) throw domainErrors.notFound('Lançamento');
         if (patch.description === undefined && patch.date === undefined && patch.amountCents === undefined && patch.subcategoryId === undefined && patch.notes === undefined) return mapTransaction(existing.rows[0]!);
         if (patch.subcategoryId !== undefined) {
@@ -346,7 +398,8 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
           if (txKind === 'transfer') {
             throw domainErrors.unsupported('transferências só podem ter descrição e data alteradas');
           }
-          await resolveSubcategoryLegacy(client, householdId, patch.subcategoryId, txKind);
+          const parentId = patch.categoryId ?? (existing.rows[0]!['category_id'] as string | undefined);
+          await resolveSubcategoryLegacy(client, householdId, patch.subcategoryId, txKind, parentId);
         }
         const res = await client.query<Row>(
           `UPDATE transactions SET description = COALESCE($3, description), date = COALESCE($4, date), amount_cents = COALESCE($5, amount_cents), subcategory_id = COALESCE($6, subcategory_id), notes = COALESCE($7, notes)

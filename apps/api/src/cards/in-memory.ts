@@ -17,13 +17,18 @@ interface CardPurchase {
   date: string;
   categoryId?: string;
   categoryName?: string;
+  subcategoryId?: string;
+  notes?: string;
   installmentsTotal?: number;
   installmentNumber?: number;
   isRecurring?: boolean;
+  transactionId?: string;
 }
 import type { CardStore } from './store.js';
 import type { InMemoryState } from '../writes/in-memory.js';
+import { resolveSubcategory } from '../writes/in-memory.js';
 import { domainErrors } from '../writes/errors.js';
+import { splitInstallmentAmounts } from './installments.js';
 
 function stableId(prefix: string, accountId: string, cycle: string): string {
   const h = createHash('sha256').update(`${prefix}:${accountId}:${cycle}`).digest('hex');
@@ -136,6 +141,22 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
     return a;
   };
 
+  /** M-05: same active/expense-kind category rule as plain entries. */
+  const resolveCardCategory = (householdId: string, categoryId: string): void => {
+    const cat = state.categories.find(c => c.id === categoryId && c.householdId === householdId);
+    if (!cat || cat.status !== 'active') throw domainErrors.notFound('Categoria');
+    if (cat.kind !== 'expense') throw domainErrors.invalid('categoryId', 'compra no cartão exige categoria de despesa');
+  };
+
+  /** M-04: audit link row mirroring the card_purchases table. */
+  const linkCardPurchase = (input: {
+    householdId: string; accountId: string; statementId: string; description: string;
+    amountCents: number; date: string; categoryId?: string; subcategoryId?: string;
+    notes?: string; installmentsTotal?: number; installmentNumber?: number; transactionId: string;
+  }): void => {
+    cardPurchases.push({ id: randomUUID(), ...input });
+  };
+
   return {
     async listCreditCardAccounts(householdId) {
       return state.accounts.filter(a => a.householdId === householdId && a.kind === 'credit_card' && a.status === 'active');
@@ -227,8 +248,10 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
     async createCardPurchase(householdId, input) {
       const card = findAccount(input.accountId, householdId);
       if (input.categoryId) {
-        const cat = state.categories.find(c => c.id === input.categoryId && c.householdId === householdId);
-        if (!cat) throw domainErrors.notFound('Categoria');
+        resolveCardCategory(householdId, input.categoryId);
+      }
+      if (input.subcategoryId) {
+        resolveSubcategory(state, householdId, input.subcategoryId, 'expense', input.categoryId);
       }
       const stmt = findOrCreateStatement(input.accountId, householdId, input.date, card);
 
@@ -241,11 +264,25 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
         },
         {
           categoryId: input.categoryId,
+          subcategoryId: input.subcategoryId,
+          notes: input.notes,
           ...(input.installmentsTotal != null ? { installmentsTotal: input.installmentsTotal } as any : {}),
           ...(input.installmentNumber != null ? { installmentNumber: input.installmentNumber } as any : {}),
         } as any,
       );
       state.transactions.push(tx);
+      // M-04: mandatory audit link (in-memory cannot fail, but the link row
+      // must exist for parity with the postgres stores).
+      linkCardPurchase({
+        householdId, accountId: input.accountId, statementId: stmt.id,
+        description: input.description, amountCents: input.amountCents, date: input.date,
+        transactionId: tx.id,
+        ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+        ...(input.subcategoryId ? { subcategoryId: input.subcategoryId } : {}),
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
+        ...(input.installmentsTotal != null ? { installmentsTotal: input.installmentsTotal } : {}),
+        ...(input.installmentNumber != null ? { installmentNumber: input.installmentNumber } : {}),
+      });
       recalcTotal(stmt.id, householdId);
       return [tx];
     },
@@ -253,12 +290,13 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
     async createCardInstallments(householdId, input) {
       const card = findAccount(input.accountId, householdId);
       if (input.categoryId) {
-        const cat = state.categories.find(c => c.id === input.categoryId && c.householdId === householdId);
-        if (!cat) throw domainErrors.notFound('Categoria');
+        resolveCardCategory(householdId, input.categoryId);
       }
-      const baseValue = Math.floor(input.totalAmountCents / input.installmentsTotal);
-
-      const remainder = input.totalAmountCents - baseValue * input.installmentsTotal;
+      if (input.subcategoryId) {
+        resolveSubcategory(state, householdId, input.subcategoryId, 'expense', input.categoryId);
+      }
+      // L-01: single distribution rule (remainder absorbed by the last parcel).
+      const amounts = splitInstallmentAmounts(input.totalAmountCents, input.installmentsTotal);
       const txs: Transaction[] = [];
       const date = new Date(input.purchaseDate + 'T00:00:00.000Z');
 
@@ -266,7 +304,7 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
         const instDate = new Date(date);
         instDate.setUTCMonth(instDate.getUTCMonth() + i);
         const dateStr = instDate.toISOString().slice(0, 10);
-        const amount = i === input.installmentsTotal - 1 ? baseValue + remainder : baseValue;
+        const amount = amounts[i]!;
 
         const stmt = findOrCreateStatement(input.accountId, householdId, dateStr, card);
         const tx = opt<Transaction & { statementId: string; installmentsTotal: number; installmentNumber: number }>(
@@ -278,9 +316,23 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
             installmentsTotal: input.installmentsTotal,
             installmentNumber: i + 1,
           },
-          { categoryId: input.categoryId } as any,
+          {
+            categoryId: input.categoryId,
+            subcategoryId: input.subcategoryId,
+            notes: input.notes,
+          } as any,
         );
         state.transactions.push(tx);
+        // M-04: mandatory audit link on every parcel.
+        linkCardPurchase({
+          householdId, accountId: input.accountId, statementId: stmt.id,
+          description: input.description, amountCents: amount, date: dateStr,
+          installmentsTotal: input.installmentsTotal, installmentNumber: i + 1,
+          transactionId: tx.id,
+          ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+          ...(input.subcategoryId ? { subcategoryId: input.subcategoryId } : {}),
+          ...(input.notes !== undefined ? { notes: input.notes } : {}),
+        });
         txs.push(tx);
         recalcTotal(stmt.id, householdId);
       }
@@ -411,8 +463,10 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
         if (!stmt) throw domainErrors.notFound('Compra');
         if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
         state.deletedTransactions.add(tx.id);
-        // Também remover de cardPurchases legado se existir duplicata
-        const idx = cardPurchases.findIndex(cp => cp.id === purchaseId);
+        // M-04: the audit link lives in cardPurchases keyed by its own id —
+        // also drop the row linked by transaction_id so the canceled
+        // purchase disappears from statement detail.
+        const idx = cardPurchases.findIndex(cp => cp.id === purchaseId || cp.transactionId === purchaseId);
         if (idx >= 0) cardPurchases.splice(idx, 1);
         recalcTotal(stmt.id, householdId);
         return;

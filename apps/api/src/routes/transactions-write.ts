@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
 import type { ReadModelStore } from '../read-models/store.js';
 import type { WriteStore } from '../writes/store.js';
+import type { CardStore } from '../cards/store.js';
 import type { IdempotencyStore } from '../writes/idempotency.js';
 import { createExpenseInputSchema, createIncomeInputSchema, createTransferInputSchema, updateTransactionInputSchema } from '../writes/types.js';
 import { DomainError } from '../writes/errors.js';
@@ -31,7 +32,7 @@ const incomeOriginSchema = createIncomeInputSchema.extend(originBodyExtension).e
 });
 
 type OriginResolution =
-  | { ok: true; accountId: string }
+  | { ok: true; accountId: string; fromCard: boolean }
   | { ok: false; code: 'validation.origin_conflict' | 'validation.origin_required'; message: string };
 
 const resolveOrigin = (body: { accountId?: string | undefined; cardId?: string | undefined }): OriginResolution => {
@@ -43,12 +44,12 @@ const resolveOrigin = (body: { accountId?: string | undefined; cardId?: string |
   if (!hasAccount && !hasCard) {
     return { ok: false, code: 'validation.origin_required', message: 'informe a conta ou o cartão de origem' };
   }
-  return { ok: true, accountId: (body.accountId ?? body.cardId) as string };
+  return { ok: true, accountId: (body.accountId ?? body.cardId) as string, fromCard: hasCard };
 };
 
 export const registerTransactionWriteRoutes = (
   app: FastifyInstance,
-  opts: { store: ReadModelStore; writes: WriteStore; resolveToken: AuthResolver; idempotency: IdempotencyStore },
+  opts: { store: ReadModelStore; writes: WriteStore; resolveToken: AuthResolver; idempotency: IdempotencyStore; cardStore?: CardStore },
 ): void => {
   const resolve = async (req: import('fastify').FastifyRequest) => {
     if (req.authenticatedContext) return req.authenticatedContext;
@@ -96,7 +97,7 @@ export const registerTransactionWriteRoutes = (
     path: string,
     schema: typeof expenseOriginSchema | typeof incomeOriginSchema,
     strict: typeof createExpenseInputSchema | typeof createIncomeInputSchema,
-    producer: (ctx: { householdId: string }, input: { accountId: string } & Record<string, unknown>) => Promise<{ status: number; body: unknown }>,
+    producer: (ctx: { householdId: string }, input: { accountId: string } & Record<string, unknown>, origin: Extract<OriginResolution, { ok: true }>) => Promise<{ status: number; body: unknown }>,
   ) => {
     app.post(path, async (req, reply) => {
       let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
@@ -108,7 +109,7 @@ export const registerTransactionWriteRoutes = (
       const normalized = strict.safeParse({ ...rest, accountId: origin.accountId });
       if (!normalized.success) return reply.code(400).send({ code: 'validation.error', issues: normalized.error.issues });
       const key = idemKey(req);
-      const fn = async () => producer(ctx, normalized.data as { accountId: string } & Record<string, unknown>);
+      const fn = async () => producer(ctx, normalized.data as { accountId: string } & Record<string, unknown>, origin);
       try {
         const result = key && opts.idempotency ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, normalized.data, fn) : { response: await fn(), replayed: false };
         if (result.replayed) reply.header('Idempotent-Replayed', 'true');
@@ -117,12 +118,39 @@ export const registerTransactionWriteRoutes = (
     });
   };
 
-  originPostHandler('/transactions/expense', expenseOriginSchema, createExpenseInputSchema, async (ctx, input) => {
+  originPostHandler('/transactions/expense', expenseOriginSchema, createExpenseInputSchema, async (ctx, input, origin) => {
+    // H-01: a card origin preserves the invoice path — a 1x purchase goes
+    // through the CardStore (statement + card_purchases link), never through
+    // the plain balance expense. Single-tx response shape is preserved.
+    if (origin.fromCard) {
+      if (!opts.cardStore) {
+        throw new DomainError('unsupported', 'compras no cartão indisponíveis neste ambiente.', 503);
+      }
+      const txs = await opts.cardStore.createCardPurchase(ctx.householdId, {
+        accountId: origin.accountId,
+        description: String(input['description'] ?? ''),
+        amountCents: Number(input['amountCents']),
+        date: String(input['date'] ?? ''),
+        ...(input['categoryId'] ? { categoryId: String(input['categoryId']) } : {}),
+        ...(input['subcategoryId'] ? { subcategoryId: String(input['subcategoryId']) } : {}),
+        ...(input['notes'] ? { notes: String(input['notes']) } : {}),
+      });
+      const first = txs[0];
+      if (!first) throw new DomainError('unsupported', 'compra no cartão não retornou lançamento.', 500);
+      return { status: 201, body: first };
+    }
     const tx = await opts.writes.createExpense(ctx.householdId, input as unknown as Parameters<WriteStore['createExpense']>[1]);
     return { status: 201, body: tx };
   });
 
-  originPostHandler('/transactions/income', incomeOriginSchema, createIncomeInputSchema, async (ctx, input) => {
+  originPostHandler('/transactions/income', incomeOriginSchema, createIncomeInputSchema, async (ctx, input, origin) => {
+    // H-01: income on a card is rejected at the boundary (422).
+    if (origin.fromCard) {
+      return {
+        status: 422,
+        body: { code: 'validation.origin_card_income', message: 'receita não pode usar cartão de crédito.' },
+      };
+    }
     const tx = await opts.writes.createIncome(ctx.householdId, input as unknown as Parameters<WriteStore['createIncome']>[1]);
     return { status: 201, body: tx };
   });

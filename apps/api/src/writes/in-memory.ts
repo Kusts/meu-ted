@@ -13,7 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Account, Category, Transaction } from '../types/domain.js';
 import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';
-import { domainErrors } from './errors.js';
+import { domainErrors, DomainError } from './errors.js';
 import type { ApplyDefaultsResult, DeleteCategoryResult, WriteStore } from './store.js';
 import type {
   CreateAccountInput,
@@ -93,18 +93,26 @@ export const applyDefaultsToState = (state: InMemoryState, householdId: string):
   return { created, skipped };
 };
 
-/** Validates an optional subcategoryId for an expense/income write. */
-const resolveSubcategory = (
+/**
+ * Centralized subcategory validation for expense/income writes (M-03).
+ * Same-household, active, real subcategory with matching kind; when the
+ * entry names a distinct parent category, the subcategory must belong to it.
+ */
+export const resolveSubcategory = (
   state: InMemoryState,
   householdId: string,
   subcategoryId: string,
   txKind: 'expense' | 'income',
+  parentCategoryId?: string,
 ): Category => {
   const sub = state.categories.find((c) => c.id === subcategoryId && c.householdId === householdId);
   if (!sub || sub.status !== 'active') throw domainErrors.notFound('Subcategoria');
   if (!sub.parentId) throw domainErrors.invalid('subcategoryId', 'deve ser uma subcategoria');
   if (sub.kind !== txKind) {
     throw domainErrors.invalid('subcategoryId', 'subcategoria deve ter o mesmo kind do lançamento');
+  }
+  if (parentCategoryId !== undefined && parentCategoryId !== subcategoryId && sub.parentId !== parentCategoryId) {
+    throw domainErrors.invalid('subcategoryId', 'subcategoria não pertence à categoria informada');
   }
   return sub;
 };
@@ -116,6 +124,14 @@ const softDeleteTxInState = (state: InMemoryState, tx: Transaction): void => {
   } else if (tx.kind === 'income') {
     const acc = state.accounts.find((a) => a.id === tx.accountId && a.householdId === tx.householdId);
     if (acc) acc.balanceCents = Math.max(0, acc.balanceCents - tx.amountCents);
+  } else if (tx.kind === 'transfer') {
+    // C-04 parity with softDeleteTransaction: reverse both legs.
+    const from = state.accounts.find((a) => a.id === tx.accountId && a.householdId === tx.householdId);
+    if (from) from.balanceCents = Math.min(from.balanceCents + tx.amountCents, Number.MAX_SAFE_INTEGER);
+    if (tx.transferToAccountId) {
+      const to = state.accounts.find((a) => a.id === tx.transferToAccountId && a.householdId === tx.householdId);
+      if (to) to.balanceCents = Math.max(0, to.balanceCents - tx.amountCents);
+    }
   }
   state.deletedTransactions.add(tx.id);
 };
@@ -306,10 +322,15 @@ async createAccount(householdId, input) {
     async createExpense(householdId, input) {
       const acc = findAccount(input.accountId, householdId);
       assertNotDeleted(acc);
+      // H-01: card purchases must flow through the CardStore (statements,
+      // limits, invoice semantics) — never as plain balance expenses.
+      if (acc.kind === 'credit_card') {
+        throw new DomainError('validation.invalid', 'compra no cartão deve usar /cards/purchases.', 422);
+      }
       const cat = findCategory(input.categoryId, householdId);
       assertNotDeleted(cat);
       if (input.subcategoryId !== undefined) {
-        resolveSubcategory(state, householdId, input.subcategoryId, 'expense');
+        resolveSubcategory(state, householdId, input.subcategoryId, 'expense', input.categoryId);
       }
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
       const tx: Transaction = {
@@ -332,10 +353,14 @@ async createAccount(householdId, input) {
     async createIncome(householdId, input) {
       const acc = findAccount(input.accountId, householdId);
       assertNotDeleted(acc);
+      // H-01: income on a credit card is rejected (422), not silently booked.
+      if (acc.kind === 'credit_card') {
+        throw new DomainError('validation.invalid', 'receita não pode usar cartão de crédito.', 422);
+      }
       const cat = findCategory(input.categoryId, householdId);
       assertNotDeleted(cat);
       if (input.subcategoryId !== undefined) {
-        resolveSubcategory(state, householdId, input.subcategoryId, 'income');
+        resolveSubcategory(state, householdId, input.subcategoryId, 'income', input.categoryId);
       }
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
       const tx: Transaction = {
@@ -363,6 +388,10 @@ async createAccount(householdId, input) {
       assertNotDeleted(from);
       const to = findAccount(input.toAccountId, householdId);
       assertNotDeleted(to);
+      // H-01: transfers cannot touch credit cards (pay the invoice instead).
+      if (from.kind === 'credit_card' || to.kind === 'credit_card') {
+        throw new DomainError('validation.invalid', 'transferência não pode usar cartão de crédito.', 422);
+      }
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
       const tx: Transaction = {
         id: randomUUID(),
@@ -390,7 +419,8 @@ async createAccount(householdId, input) {
           patch.amountCents !== undefined ||
           patch.accountId !== undefined ||
           patch.categoryId !== undefined ||
-          patch.subcategoryId !== undefined
+          patch.subcategoryId !== undefined ||
+          patch.notes !== undefined
         ) {
           throw domainErrors.unsupported(
             'transferências só podem ter descrição e data alteradas',
@@ -433,11 +463,22 @@ async createAccount(householdId, input) {
       if (patch.categoryId !== undefined) {
         const cat = findCategory(patch.categoryId, householdId);
         assertNotDeleted(cat);
-        tx.categoryId = patch.categoryId;
       }
       if (patch.subcategoryId !== undefined) {
-        resolveSubcategory(state, householdId, patch.subcategoryId, tx.kind);
+        const parentId = patch.categoryId ?? tx.categoryId;
+        resolveSubcategory(state, householdId, patch.subcategoryId, tx.kind, parentId);
         tx.subcategoryId = patch.subcategoryId;
+      } else if (
+        patch.categoryId !== undefined &&
+        patch.categoryId !== tx.categoryId &&
+        tx.subcategoryId !== undefined
+      ) {
+        // Parent changed without re-specifying the subcategory: drop the
+        // retained subcategory instead of persisting an incoherent tree.
+        delete tx.subcategoryId;
+      }
+      if (patch.categoryId !== undefined) {
+        tx.categoryId = patch.categoryId;
       }
       if (patch.notes !== undefined) tx.notes = patch.notes;
       return tx;

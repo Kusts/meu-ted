@@ -2669,6 +2669,14 @@
                     "type": "string",
                     "format": "uuid"
                   },
+                  "subcategoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
                   "installmentsTotal": {
                     "type": "integer",
                     "minimum": 1,
@@ -2758,6 +2766,14 @@
                   "categoryId": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "subcategoryId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000
                   }
                 },
                 "required": [

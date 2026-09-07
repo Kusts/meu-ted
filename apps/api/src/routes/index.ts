@@ -401,6 +401,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     writes: deps.writes,
     resolveToken,
     idempotency,
+    ...(deps.cardStore ? { cardStore: deps.cardStore } : {}),
   });
   registerDashboardRoutes(app, { store: deps.store, resolveToken, clock });
   registerAnalyticsRoutes(app, {
@@ -527,6 +528,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   registerAgentLlmRelayRoutes(app, {
     adminToken: deps.agentRuntimeAdminToken ?? process.env.AGENT_RUNTIME_ADMIN_TOKEN ?? 'dev-agent-runtime-admin-token-32-chars!',
     ...(process.env.OPENCODE_ZEN_API_KEY ? { zenApiKey: process.env.OPENCODE_ZEN_API_KEY } : {}),
+    ...(process.env.OPENAI_API_KEY ? { openaiApiKey: process.env.OPENAI_API_KEY } : {}),
     llmConfigStore: llmStore,
   });
 

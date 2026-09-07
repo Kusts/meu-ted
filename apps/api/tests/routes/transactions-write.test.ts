@@ -133,7 +133,15 @@ describe('POST /transactions/expense', () => {
     expect(res.json().code).toBe('validation.origin_required');
   });
 
-  it('accepts cardId as the card origin alias (item 10/B2)', async () => {
+  it('routes cardId to the CardStore: 1x purchase lands on the statement (H-01)', async () => {
+    const card = await s.app.inject({
+      method: 'POST',
+      url: '/cards',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'Nubank', creditLimitCents: 500_000, closingDay: 15, dueDay: 25 },
+    });
+    expect(card.statusCode).toBe(201);
+    const cardId = card.json().id as string;
     const res = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
@@ -142,12 +150,50 @@ describe('POST /transactions/expense', () => {
         description: 'Card lunch',
         amountCents: 1500,
         date: isoDate,
-        cardId: s.accountId,
+        cardId,
         categoryId: s.categoryId,
       },
     });
     expect(res.statusCode).toBe(201);
-    expect(res.json().accountId).toBe(s.accountId);
+    expect(res.json().accountId).toBe(cardId);
+    // The purchase followed the invoice path: exactly one statement exists
+    // for the cycle and it lists the purchase.
+    const stmts = await s.app.inject({
+      method: 'GET',
+      url: `/cards/statements?accountId=${cardId}`,
+      headers: { 'x-device-token': TOKEN_A },
+    });
+    expect(stmts.statusCode).toBe(200);
+    expect(stmts.json().items).toHaveLength(1);
+    const detail = await s.app.inject({
+      method: 'GET',
+      url: `/cards/statements/${stmts.json().items[0].id}`,
+      headers: { 'x-device-token': TOKEN_A },
+    });
+    expect(detail.json().purchases.map((p: { description: string }) => p.description)).toContain('Card lunch');
+  });
+
+  it('rejects 422 when accountId points at a card on expense (use /cards/purchases, H-01)', async () => {
+    const card = await s.app.inject({
+      method: 'POST',
+      url: '/cards',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'Nubank', creditLimitCents: 500_000, closingDay: 15, dueDay: 25 },
+    });
+    const res = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'X',
+        amountCents: 100,
+        date: isoDate,
+        accountId: card.json().id,
+        categoryId: s.categoryId,
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().code).toBe('validation.invalid');
   });
 
   it('persists notes from Mais detalhes and returns them (item 10/B4)', async () => {
@@ -199,6 +245,66 @@ describe('POST /transactions/income', () => {
     expect(res.statusCode).toBe(201);
     expect(res.json().kind).toBe('income');
   });
+
+  it('rejects 422 income with cardId (H-01)', async () => {
+    const { app } = buildTestApp();
+    const card = await app.inject({
+      method: 'POST',
+      url: '/cards',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'Nubank', creditLimitCents: 500_000, closingDay: 15, dueDay: 25 },
+    });
+    const cat = await app.inject({
+      method: 'POST',
+      url: '/categories',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'Salary', kind: 'income' },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/transactions/income',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'Refund?',
+        amountCents: 100,
+        date: isoDate,
+        cardId: card.json().id,
+        categoryId: cat.json().id,
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().code).toBe('validation.origin_card_income');
+  });
+
+  it('rejects 422 income with accountId pointing at a card (H-01)', async () => {
+    const { app } = buildTestApp();
+    const card = await app.inject({
+      method: 'POST',
+      url: '/cards',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'Nubank', creditLimitCents: 500_000, closingDay: 15, dueDay: 25 },
+    });
+    const cat = await app.inject({
+      method: 'POST',
+      url: '/categories',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'Salary', kind: 'income' },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/transactions/income',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'Refund?',
+        amountCents: 100,
+        date: isoDate,
+        accountId: card.json().id,
+        categoryId: cat.json().id,
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().code).toBe('validation.invalid');
+  });
 });
 
 describe('POST /transfers', () => {
@@ -231,6 +337,48 @@ describe('POST /transfers', () => {
     expect(res.statusCode).toBe(201);
     expect(res.json().kind).toBe('transfer');
     expect(res.json().transferToAccountId).toBe(b.json().id);
+  });
+
+  it('rejects 422 transfer touching a credit card (H-01)', async () => {
+    const { app } = buildTestApp();
+    const a = await app.inject({
+      method: 'POST',
+      url: '/accounts',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'A', kind: 'bank', initialBalanceCents: 10_000 },
+    });
+    const card = await app.inject({
+      method: 'POST',
+      url: '/cards',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: { name: 'Nubank', creditLimitCents: 500_000, closingDay: 15, dueDay: 25 },
+    });
+    const fromCard = await app.inject({
+      method: 'POST',
+      url: '/transfers',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'X',
+        amountCents: 500,
+        date: isoDate,
+        fromAccountId: card.json().id,
+        toAccountId: a.json().id,
+      },
+    });
+    expect(fromCard.statusCode).toBe(422);
+    const toCard = await app.inject({
+      method: 'POST',
+      url: '/transfers',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      payload: {
+        description: 'X',
+        amountCents: 500,
+        date: isoDate,
+        fromAccountId: a.json().id,
+        toAccountId: card.json().id,
+      },
+    });
+    expect(toCard.statusCode).toBe(422);
   });
 
   it('rejects fromAccount === toAccount', async () => {

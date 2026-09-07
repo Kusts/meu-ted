@@ -25,6 +25,8 @@ import type { Account, Transaction, Statement, StatementDetail, StatementPurchas
 import type { CardStore } from './store.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors } from '../writes/errors.js';
+import { resolveExpenseCategoryLegacy, resolveSubcategoryLegacy } from '../writes/legacy-postgres.js';
+import { splitInstallmentAmounts } from './installments.js';
 
 type Row = Record<string, unknown>;
 
@@ -129,7 +131,11 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
     return res.rows;
   };
 
-  /** Find-or-create the statement for a card cycle, returning its id. */
+  /** Find-or-create the statement for a card cycle, returning its id (H-04).
+   *
+   * Race-safe: INSERT ... ON CONFLICT DO NOTHING (unique index on
+   * household/account/cycle from V047) followed by SELECT, so two concurrent
+   * purchases in the same cycle converge on a single statement. */
   const findOrCreateStatement = async (
     householdId: string,
     accountId: string,
@@ -139,17 +145,18 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
     client?: PoolClient,
   ): Promise<string> => {
     const exec = client ? client.query.bind(client) : pool.query.bind(pool);
-    const existing = await exec(
-      `SELECT id FROM statements WHERE account_id = $1 AND household_id = $3 AND cycle_year_month = $2`,
-      [accountId, cycle, householdId],
-    );
-    if (existing.rows.length > 0) return existing.rows[0]!['id'] as string;
-    const id = randomUUID();
     await exec(
       `INSERT INTO statements (id, household_id, account_id, cycle_year_month, closing_date, due_date, total_cents, paid_cents, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 0, 0, 'open', NOW(), NOW())`,
-      [id, householdId, accountId, cycle, closing, due],
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 0, 0, 'open', NOW(), NOW())
+       ON CONFLICT (household_id, account_id, cycle_year_month) DO NOTHING`,
+      [householdId, accountId, cycle, closing, due],
     );
+    const found = await exec(
+      `SELECT id FROM statements WHERE account_id = $1 AND household_id = $2 AND cycle_year_month = $3`,
+      [accountId, householdId, cycle],
+    );
+    const id = found.rows[0]?.['id'] as string | undefined;
+    if (!id) throw new Error('statement upsert did not converge');
     return id;
   };
 
@@ -321,12 +328,12 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
 
     async createCardPurchase(householdId, input) {
       return withTransaction(pool, async (client) => {
+        // M-05: same active/expense-kind category rule as plain entries.
         if (input.categoryId) {
-          const catRows = await client.query<Row>(
-            `SELECT id FROM categories WHERE id = $1 AND household_id = $2`,
-            [input.categoryId, householdId],
-          );
-          if (catRows.rowCount === 0 || catRows.rows.length === 0) throw domainErrors.notFound('Categoria');
+          await resolveExpenseCategoryLegacy(client, householdId, input.categoryId);
+        }
+        if (input.subcategoryId) {
+          await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'expense', input.categoryId);
         }
 
         const card = await requireCard(householdId, input.accountId, client);
@@ -341,15 +348,15 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
         const purchaseId = randomUUID();
         const txId = randomUUID();
         await client.query(
-          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, is_credit_card_purchase, statement_id, installments_total, installment_number)
-           VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, true, $8, $9, $10)`,
-          [txId, householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId ?? null, statementId, input.installmentsTotal ?? null, input.installmentNumber ?? null],
+          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, subcategory_id, notes, is_credit_card_purchase, statement_id, installments_total, installment_number)
+           VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, $8, $9, true, $10, $11, $12)`,
+          [txId, householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, statementId, input.installmentsTotal ?? null, input.installmentNumber ?? null],
         );
 
         await client.query(
-          `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, installments_total, installment_number, is_recurring, transaction_id, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, NOW(), NOW())`,
-          [purchaseId, householdId, input.accountId, statementId, input.description, input.amountCents, input.date, input.categoryId ?? null, input.installmentsTotal ?? null, input.installmentNumber ?? null, txId],
+          `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, subcategory_id, notes, installments_total, installment_number, is_recurring, transaction_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, $13, NOW(), NOW())`,
+          [purchaseId, householdId, input.accountId, statementId, input.description, input.amountCents, input.date, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, input.installmentsTotal ?? null, input.installmentNumber ?? null, txId],
         );
 
         await recalcStatement(statementId, householdId, client);
@@ -357,7 +364,7 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
         return [
           opt<Transaction>(
             { id: txId, householdId, kind: 'expense', description: input.description, amountCents: input.amountCents, date: input.date, accountId: input.accountId },
-            { categoryId: input.categoryId } as Partial<Transaction>,
+            { categoryId: input.categoryId, subcategoryId: input.subcategoryId, notes: input.notes } as Partial<Transaction>,
           ),
         ];
       });
@@ -367,16 +374,16 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
       return withTransaction(pool, async (client) => {
         const card = await requireCard(householdId, input.accountId, client);
 
+        // M-05: same active/expense-kind category rule as plain entries.
         if (input.categoryId) {
-          const catRows = await client.query<Row>(
-            `SELECT id FROM categories WHERE id = $1 AND household_id = $2`,
-            [input.categoryId, householdId],
-          );
-          if (catRows.rowCount === 0 || catRows.rows.length === 0) throw domainErrors.notFound('Categoria');
+          await resolveExpenseCategoryLegacy(client, householdId, input.categoryId);
+        }
+        if (input.subcategoryId) {
+          await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'expense', input.categoryId);
         }
 
-        const baseValue = Math.floor(input.totalAmountCents / input.installmentsTotal);
-        const remainder = input.totalAmountCents - baseValue * input.installmentsTotal;
+        // L-01: single distribution rule (remainder absorbed by the last parcel).
+        const amounts = splitInstallmentAmounts(input.totalAmountCents, input.installmentsTotal);
         const txs: Transaction[] = [];
         const date = new Date(input.purchaseDate + 'T00:00:00.000Z');
         const touchedStatements = new Set<string>();
@@ -385,7 +392,7 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
           const instDate = new Date(date);
           instDate.setUTCMonth(instDate.getUTCMonth() + i);
           const dateStr = instDate.toISOString().slice(0, 10);
-          const amount = i === input.installmentsTotal - 1 ? baseValue + remainder : baseValue;
+          const amount = amounts[i]!;
 
           const closing = getClosingDate(dateStr, card.closingDay);
           const cycle = closing.slice(0, 7);
@@ -397,21 +404,21 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
           const purchaseId = randomUUID();
           const txId = randomUUID();
           await client.query(
-            `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, is_credit_card_purchase, statement_id, installments_total, installment_number)
-             VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, true, $8, $9, $10)`,
-            [txId, householdId, input.description, amount, dateStr, input.accountId, input.categoryId ?? null, statementId, input.installmentsTotal, i + 1],
+            `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, subcategory_id, notes, is_credit_card_purchase, statement_id, installments_total, installment_number)
+             VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, $8, $9, true, $10, $11, $12)`,
+            [txId, householdId, input.description, amount, dateStr, input.accountId, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, statementId, input.installmentsTotal, i + 1],
           );
 
           await client.query(
-            `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, installments_total, installment_number, is_recurring, transaction_id, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false, $11, NOW(), NOW())`,
-            [purchaseId, householdId, input.accountId, statementId, input.description, amount, dateStr, input.categoryId ?? null, input.installmentsTotal, i + 1, txId],
+            `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, subcategory_id, notes, installments_total, installment_number, is_recurring, transaction_id, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, $13, NOW(), NOW())`,
+            [purchaseId, householdId, input.accountId, statementId, input.description, amount, dateStr, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, input.installmentsTotal, i + 1, txId],
           );
 
           txs.push(
             opt<Transaction>(
               { id: txId, householdId, kind: 'expense', description: input.description, amountCents: amount, date: dateStr, accountId: input.accountId },
-              { categoryId: input.categoryId } as Partial<Transaction>,
+              { categoryId: input.categoryId, subcategoryId: input.subcategoryId, notes: input.notes } as Partial<Transaction>,
             ),
           );
         }
