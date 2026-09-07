@@ -6,6 +6,7 @@ import {
   AnalyticsFiltersProvider,
   useAnalyticsFilters,
 } from "@/components/filters/analytics-filters";
+import { useWorkspaceSafe } from "@/lib/auth/workspace-context";
 import { FilterPillBar, type FilterAccount } from "@/components/filters/FilterPillBar";
 import {
   BudgetBulletBars,
@@ -227,8 +228,10 @@ function ReportsAnalyticsBlocks({ accounts }: { accounts: FilterAccount[] }) {
 }
 
 export function ReportsAnalyticsZone({ accounts }: { accounts: FilterAccount[] }) {
+  // H-11: filters persist per canonical workspace, never globally.
+  const workspaceId = useWorkspaceSafe()?.activeWorkspace?.id ?? null;
   return (
-    <AnalyticsFiltersProvider>
+    <AnalyticsFiltersProvider workspaceId={workspaceId}>
       <ReportsAnalyticsBlocks accounts={accounts} />
     </AnalyticsFiltersProvider>
   );

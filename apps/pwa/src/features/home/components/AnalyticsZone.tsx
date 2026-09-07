@@ -5,6 +5,7 @@ import {
   AnalyticsFiltersProvider,
   useAnalyticsFilters,
 } from "@/components/filters/analytics-filters";
+import { useWorkspaceSafe } from "@/lib/auth/workspace-context";
 import { FilterPillBar, type FilterAccount } from "@/components/filters/FilterPillBar";
 import { CashflowAreaChart, KpiCard, WeeklyHeatmap } from "@/components/charts";
 import { formatBRL, formatPct } from "@/lib/format/brl";
@@ -167,8 +168,10 @@ function HomeAnalyticsBlocks({ accounts }: { accounts: FilterAccount[] }) {
 }
 
 export function HomeAnalyticsZone({ accounts }: { accounts: FilterAccount[] }) {
+  // H-11: filters persist per canonical workspace, never globally.
+  const workspaceId = useWorkspaceSafe()?.activeWorkspace?.id ?? null;
   return (
-    <AnalyticsFiltersProvider>
+    <AnalyticsFiltersProvider workspaceId={workspaceId}>
       <HomeAnalyticsBlocks accounts={accounts} />
     </AnalyticsFiltersProvider>
   );
