@@ -13,7 +13,7 @@ function asset(url: string): RequestInfo {
 
 describe("sw request matcher", () => {
   // ── Permitted: navigation to shell routes ─────────────────
-  it.each(["/","/registros","/contas","/categorias","/a-pagar","/orcamentos","/metas","/cartoes","/assinaturas","/patrimonio","/relatorios","/perfil"])("permits shell navigation to %s (network-first)", (route) => {
+  it.each(["/","/registros","/compromissos","/hub","/hub/patrimonio","/hub/planejamento","/hub/relatorios","/hub/alertas","/hub/categorias","/hub/configuracoes","/perfil","/workspaces","/convite","/audit","/capture"])("permits shell navigation to %s (network-first)", (route) => {
     const r = nav(`${ORIGIN}${route}`);
     expect(matchRequest(r).permit).toBe(true);
     expect(matchRequest(r).strategy).toBe("network-first");

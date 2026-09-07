@@ -12,8 +12,10 @@ import { RUM_MAX_BODY_BYTES, RUM_RATE_LIMIT } from "./constants";
 const ALLOWED_KEYS = new Set(["metric", "value", "route", "buildId"]);
 const KNOWN_METRICS = new Set(["LCP", "INP", "CLS", "FCP", "TTFB", "TBT", "FID"]);
 const KNOWN_ROUTES = new Set([
-  "/", "/registros", "/contas", "/categorias", "/a-pagar", "/orcamentos",
-  "/metas", "/cartoes", "/assinaturas", "/patrimonio", "/relatorios", "/perfil",
+  "/", "/registros", "/compromissos", "/hub",
+  "/hub/patrimonio", "/hub/planejamento", "/hub/relatorios", "/hub/alertas",
+  "/hub/categorias", "/hub/configuracoes",
+  "/perfil", "/workspaces", "/convite", "/audit", "/capture",
   "/_not-found", "/manifest.webmanifest",
 ]);
 

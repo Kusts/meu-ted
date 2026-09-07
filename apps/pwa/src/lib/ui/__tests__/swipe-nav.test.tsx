@@ -68,39 +68,42 @@ function renderSwipe(children?: React.ReactNode) {
 describe("targetRouteForSwipe (pure)", () => {
   it("moves left=next and right=previous along the root order", () => {
     expect(targetRouteForSwipe("/", -80)).toBe("/registros");
-    expect(targetRouteForSwipe("/registros", -80)).toBe("/a-pagar");
+    expect(targetRouteForSwipe("/registros", -80)).toBe("/compromissos");
     expect(targetRouteForSwipe("/registros", 80)).toBe("/");
-    expect(targetRouteForSwipe("/a-pagar", 80)).toBe("/registros");
+    expect(targetRouteForSwipe("/compromissos", 80)).toBe("/registros");
+    expect(targetRouteForSwipe("/compromissos", -80)).toBe("/hub");
+    expect(targetRouteForSwipe("/hub", 80)).toBe("/compromissos");
   });
 
   it("stays put at the ends of the order", () => {
     expect(targetRouteForSwipe("/", 80)).toBeNull();
-    expect(targetRouteForSwipe("/a-pagar", -80)).toBeNull();
+    expect(targetRouteForSwipe("/hub", -80)).toBeNull();
   });
 
   it("ignores non-root routes and missing pathnames", () => {
-    expect(targetRouteForSwipe("/contas", -200)).toBeNull();
+    expect(targetRouteForSwipe("/hub/patrimonio", -200)).toBeNull();
     expect(targetRouteForSwipe(null, -200)).toBeNull();
   });
 });
 
 describe("shouldSwipeBack (pure, Onda 5)", () => {
-  it("backs on right swipe in Mais subpages", () => {
-    expect(shouldSwipeBack("/contas", 80)).toBe(true);
-    expect(shouldSwipeBack("/cartoes", 80)).toBe(true);
-    expect(shouldSwipeBack("/patrimonio", 200)).toBe(true);
-    expect(shouldSwipeBack("/relatorios", 200)).toBe(true);
+  it("backs on right swipe in Hub subpages", () => {
+    expect(shouldSwipeBack("/hub/patrimonio", 80)).toBe(true);
+    expect(shouldSwipeBack("/hub/planejamento", 80)).toBe(true);
+    expect(shouldSwipeBack("/hub/alertas", 200)).toBe(true);
+    expect(shouldSwipeBack("/hub/relatorios", 200)).toBe(true);
   });
 
   it("never backs on root routes (cyclic swipe stays intact)", () => {
     expect(shouldSwipeBack("/", 80)).toBe(false);
     expect(shouldSwipeBack("/registros", 80)).toBe(false);
-    expect(shouldSwipeBack("/a-pagar", 200)).toBe(false);
+    expect(shouldSwipeBack("/compromissos", 200)).toBe(false);
+    expect(shouldSwipeBack("/hub", 200)).toBe(false);
   });
 
   it("ignores left swipes and missing pathnames", () => {
-    expect(shouldSwipeBack("/contas", -200)).toBe(false);
-    expect(shouldSwipeBack("/contas", 0)).toBe(false);
+    expect(shouldSwipeBack("/hub/patrimonio", -200)).toBe(false);
+    expect(shouldSwipeBack("/hub/patrimonio", 0)).toBe(false);
     expect(shouldSwipeBack(null, 200)).toBe(false);
   });
 });
@@ -136,11 +139,11 @@ describe("SwipeNav gestures (v2 F1)", () => {
     expect(pushMock).toHaveBeenCalledWith("/");
   });
 
-  it("swipe left on /registros navigates to /a-pagar", () => {
+  it("swipe left on /registros navigates to /compromissos", () => {
     mockPath = "/registros";
     renderSwipe();
     swipe(screen.getByTestId("page"), 300, 150);
-    expect(pushMock).toHaveBeenCalledWith("/a-pagar");
+    expect(pushMock).toHaveBeenCalledWith("/compromissos");
   });
 
   it("ignores swipes below the distance threshold", () => {
@@ -247,8 +250,8 @@ describe("SwipeNav gestures (v2 F1)", () => {
     expect(pushMock).not.toHaveBeenCalled();
   });
 
-  it("does not navigate off the three root routes", () => {
-    mockPath = "/contas";
+  it("does not navigate off the four root routes", () => {
+    mockPath = "/hub/patrimonio";
     renderSwipe();
     swipe(screen.getByTestId("page"), 300, 100);
     expect(pushMock).not.toHaveBeenCalled();
@@ -324,17 +327,17 @@ describe("SwipeNav gestures (v2 F1)", () => {
     expect(animateSpy).toHaveBeenCalledTimes(1);
   });
 
-  describe("swipe-back on Mais subpages (Onda 5)", () => {
-    it("swipe right on /contas goes back exactly once (no push)", () => {
-      mockPath = "/contas";
+  describe("swipe-back on Hub subpages (Onda 5)", () => {
+    it("swipe right on /hub/patrimonio goes back exactly once (no push)", () => {
+      mockPath = "/hub/patrimonio";
       renderSwipe();
       swipe(screen.getByTestId("page"), 100, 260);
       expect(backMock).toHaveBeenCalledTimes(1);
       expect(pushMock).not.toHaveBeenCalled();
     });
 
-    it("swipe right on another subpage (/assinaturas) goes back", () => {
-      mockPath = "/assinaturas";
+    it("swipe right on another subpage (/hub/planejamento) goes back", () => {
+      mockPath = "/hub/planejamento";
       renderSwipe();
       swipe(screen.getByTestId("page"), 80, 300);
       expect(backMock).toHaveBeenCalledTimes(1);
@@ -350,7 +353,7 @@ describe("SwipeNav gestures (v2 F1)", () => {
     });
 
     it("ignores short right swipes on subpages (threshold applies)", () => {
-      mockPath = "/metas";
+      mockPath = "/hub/planejamento";
       renderSwipe();
       swipe(screen.getByTestId("page"), 200, 160);
       expect(backMock).not.toHaveBeenCalled();
@@ -358,7 +361,7 @@ describe("SwipeNav gestures (v2 F1)", () => {
     });
 
     it("does not go back while an overlay is open", () => {
-      mockPath = "/cartoes";
+      mockPath = "/hub/patrimonio";
       renderSwipe();
       act(() => acquireBodyScrollLock());
       swipe(screen.getByTestId("page"), 100, 260);
@@ -366,7 +369,7 @@ describe("SwipeNav gestures (v2 F1)", () => {
     });
 
     it("does not go back from [data-no-swipe] zones", () => {
-      mockPath = "/orcamentos";
+      mockPath = "/hub/planejamento";
       render(
         <SwipeNav>
           <div data-testid="carousel" data-no-swipe>
@@ -379,7 +382,7 @@ describe("SwipeNav gestures (v2 F1)", () => {
     });
 
     it("does not go back on desktop viewports (>=860px)", () => {
-      mockPath = "/categorias";
+      mockPath = "/hub/categorias";
       setViewportWidth(1280);
       renderSwipe();
       swipe(screen.getByTestId("page"), 100, 260);
@@ -397,7 +400,7 @@ describe("SwipeNav gestures (v2 F1)", () => {
     it("plays no entry animation when arriving via swipe-back", () => {
       const animateSpy = vi.fn();
       window.HTMLElement.prototype.animate = animateSpy as unknown as typeof window.HTMLElement.prototype.animate;
-      mockPath = "/patrimonio";
+      mockPath = "/hub/relatorios";
       const view = renderSwipe();
       swipe(screen.getByTestId("page"), 100, 260);
       expect(backMock).toHaveBeenCalledTimes(1);
@@ -416,7 +419,7 @@ describe("SwipeNav gestures (v2 F1)", () => {
       reduceMotion = true;
       const animateSpy = vi.fn();
       window.HTMLElement.prototype.animate = animateSpy as unknown as typeof window.HTMLElement.prototype.animate;
-      mockPath = "/relatorios";
+      mockPath = "/hub/alertas";
       const view = renderSwipe();
       swipe(screen.getByTestId("page"), 100, 260);
       expect(backMock).toHaveBeenCalledTimes(1);

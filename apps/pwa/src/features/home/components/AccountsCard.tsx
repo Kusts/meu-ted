@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { formatBRL } from "@/lib/format/brl";
 import type { Account } from "@/lib/state/types";
+import { routePatrimonio } from "@/lib/routes";
 import { Wallet } from "lucide-react";
 
 function kindLabel(kind: Account["kind"]): string {
@@ -36,7 +37,7 @@ export function AccountsCard({ accounts, onOpenAccount, onAddAccount }: Accounts
       <div className="flex items-center justify-between pb-2">
         <span className="text-[14px] font-bold text-text-primary">Minhas contas</span>
         <Link
-          href="/contas"
+          href={routePatrimonio("contas")}
           className="text-[11px] font-bold text-primary hover:underline"
         >
           Ver tudo

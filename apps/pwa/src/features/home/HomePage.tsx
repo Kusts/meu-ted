@@ -11,6 +11,7 @@ import NotificationsSheet from "@/features/profile/NotificationsSheet";
 import { useEffectiveProfile } from "@/features/profile/hooks";
 import { dashboardSummaryGate } from "@/features/dashboard-summary-gate";
 import { fetchPendingOperations } from "@/lib/api/endpoints";
+import { routeCompromissos, routePatrimonio } from "@/lib/routes";
 import { isApiConfigured } from "@/lib/api/client";
 import { useMonthDeltas } from "./hooks/useMonthDeltas";
 import { useCategoryBreakdown } from "./hooks/useCategoryBreakdown";
@@ -175,7 +176,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
           {pendingCount !== null && pendingCount > 0 && (
             <button
               type="button"
-              onClick={() => router.push("/pending")}
+              onClick={() => router.push(routeCompromissos("pendencias"))}
               data-testid="pending-banner"
               className="mb-[14px] flex w-full items-center justify-between rounded-[16px] border border-warning/40 bg-warning-tint px-4 py-3 text-left shadow-card transition-all hover:bg-warning-tint/80"
             >
@@ -193,18 +194,18 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
 
           <AccountsCard
             accounts={checkingAccounts}
-            onOpenAccount={(id) => router.push(`/contas?accountId=${encodeURIComponent(id)}`)}
-            onAddAccount={() => router.push("/contas")}
+            onOpenAccount={(id) => router.push(routePatrimonio("contas", { accountId: id }))}
+            onAddAccount={() => router.push(routePatrimonio("contas"))}
           />
 
           <CreditCardsCard
             cards={creditCards}
             statements={cardStatements}
             transactions={transactions}
-            onOpenCard={(id) => router.push(`/cartoes?cardId=${encodeURIComponent(id)}`)}
+            onOpenCard={(id) => router.push(routePatrimonio("cartoes", { cardId: id }))}
           />
 
-          <PayablesCard payables={payables} onOpen={() => router.push("/a-pagar")} />
+          <PayablesCard payables={payables} onOpen={() => router.push(routeCompromissos("a-pagar"))} />
 
           <CategoryDonutCard
             macros={macros}

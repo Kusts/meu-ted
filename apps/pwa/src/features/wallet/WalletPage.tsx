@@ -8,6 +8,7 @@ import { StaleBanner } from "@/components/StaleBanner";
 import { useAppState } from "@/lib/state/app-state-context";
 import { Plus } from "lucide-react";
 import { resolveBankPreset } from "@/lib/bank-presets";
+import { routePatrimonio, routePlanejamento } from "@/lib/routes";
 
 function formatBRL(cents: number): string {
   return new Intl.NumberFormat("pt-BR", {
@@ -165,7 +166,7 @@ export default function WalletPage() {
               Contas
             </span>
             <Link
-              href="/contas"
+              href={routePatrimonio("contas")}
               className="text-[11px] font-bold text-primary hover:underline"
             >
               Gerenciar
@@ -178,7 +179,7 @@ export default function WalletPage() {
               return (
                 <Link
                   key={acc.id}
-                  href={`/contas?accountId=${acc.id}`}
+                  href={routePatrimonio("contas", { accountId: acc.id })}
                   data-bank={preset.id}
                   className="relative flex cursor-pointer items-center gap-3 overflow-hidden rounded-[16px] border bg-surface-1 px-3.5 py-3 shadow-card hover:bg-surface-2/60 transition-colors"
                   style={{ borderColor: `${preset.primaryColor}22`, background: `linear-gradient(90deg, ${preset.primaryColor}0F, transparent 50%), var(--surface-1)` }}
@@ -209,7 +210,7 @@ export default function WalletPage() {
             })}
 
             <Link
-              href="/contas"
+              href={routePatrimonio("contas")}
               className="flex items-center justify-center gap-2 rounded-[16px] border border-dashed border-border-subtle bg-surface-1/40 px-3 py-3 text-[13px] font-bold text-text-secondary hover:bg-surface-2 transition-colors"
             >
               <Plus size={16} strokeWidth={2.4} />
@@ -223,7 +224,7 @@ export default function WalletPage() {
               Cartões
             </span>
             <Link
-              href="/cartoes"
+              href={routePatrimonio("cartoes")}
               className="text-[11px] font-bold text-primary hover:underline"
             >
               Gerenciar
@@ -243,7 +244,7 @@ export default function WalletPage() {
               return (
                 <Link
                   key={card.id}
-                  href={`/cartoes?cardId=${card.id}`}
+                  href={routePatrimonio("cartoes", { cardId: card.id })}
                   data-bank={preset.id}
                   className="relative cursor-pointer overflow-hidden rounded-[16px] border bg-surface-1 px-3.5 py-3 shadow-card hover:bg-surface-2/60 transition-colors"
                   style={{ borderColor: `${preset.primaryColor}22` }}
@@ -291,7 +292,7 @@ export default function WalletPage() {
             })}
 
             <Link
-              href="/cartoes"
+              href={routePatrimonio("cartoes")}
               className="mt-1 flex w-full items-center justify-center gap-2 rounded-[16px] border border-dashed border-border-subtle bg-surface-1/40 px-3 py-3 text-[13px] font-bold text-text-secondary hover:bg-surface-2 transition-colors"
             >
               <Plus size={16} strokeWidth={2.4} />
@@ -307,7 +308,7 @@ export default function WalletPage() {
                   Reservas / Metas
                 </span>
                 <Link
-                  href="/metas"
+                  href={routePlanejamento("metas")}
                   className="text-[11px] font-bold text-primary hover:underline"
                 >
                   Ver metas
@@ -325,7 +326,7 @@ export default function WalletPage() {
                   return (
                     <Link
                       key={g.id}
-                      href="/metas"
+                      href={routePlanejamento("metas")}
                       className="flex items-center gap-3 rounded-[16px] border border-border-subtle bg-surface-1 px-3.5 py-3 shadow-card hover:bg-surface-2/60 transition-colors"
                     >
                       <div className="flex-1 min-w-0">
@@ -382,7 +383,7 @@ export default function WalletPage() {
                     return (
                       <Link
                         key={s.id}
-                        href={`/cartoes?cardId=${s.accountId}`}
+                        href={routePatrimonio("cartoes", { cardId: s.accountId })}
                         className="flex items-center gap-3 rounded-[16px] border border-border-subtle bg-surface-1 px-3.5 py-3 shadow-card hover:bg-surface-2/60 transition-colors"
                       >
                         <Badge

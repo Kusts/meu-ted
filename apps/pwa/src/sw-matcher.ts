@@ -13,7 +13,7 @@ export interface MatchResult {
   strategy?: "precache" | "network-first" | "cache-first" | "reject";
 }
 
-const SHELL = new Set(["/","/registros","/contas","/categorias","/a-pagar","/orcamentos","/metas","/cartoes","/assinaturas","/patrimonio","/relatorios","/perfil"]);
+const SHELL = new Set(["/","/registros","/compromissos","/hub","/hub/patrimonio","/hub/planejamento","/hub/relatorios","/hub/alertas","/hub/categorias","/hub/configuracoes","/perfil","/workspaces","/convite","/audit","/capture"]);
 
 export function matchRequest(req: RequestInfo): MatchResult {
   if (req.method !== "GET") return { permit: false, reason: "non-GET method", strategy: "reject" };

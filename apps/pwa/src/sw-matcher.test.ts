@@ -10,14 +10,20 @@ const nav = (url: string, o: Partial<RequestInfo> = {}): RequestInfo => ({
 });
 
 describe("isShellRoute", () => {
-  it("returns true for shell routes", () => {
+  it("returns true for canonical shell routes (item 13)", () => {
     expect(isShellRoute("/registros")).toBe(true);
     expect(isShellRoute("/")).toBe(true);
-    expect(isShellRoute("/cartoes")).toBe(true);
+    expect(isShellRoute("/compromissos")).toBe(true);
+    expect(isShellRoute("/hub")).toBe(true);
+    expect(isShellRoute("/hub/patrimonio")).toBe(true);
+    expect(isShellRoute("/perfil")).toBe(true);
   });
   it("returns false for non-shell routes", () => {
     expect(isShellRoute("/foo")).toBe(false);
     expect(isShellRoute("/api/x")).toBe(false);
+    // Absorbed legacy routes redirect instead of serving shell directly.
+    expect(isShellRoute("/contas")).toBe(false);
+    expect(isShellRoute("/a-pagar")).toBe(false);
   });
 });
 

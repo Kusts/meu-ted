@@ -395,12 +395,12 @@ describe("HomePage", () => {
      *
      * Fix: turn those rows into buttons that push the destination route
      * with a query string identifying the item:
-     *   /contas?accountId=acc1
-     *   /cartoes?cardId=acc4
+     *   /hub/patrimonio?aba=contas&accountId=acc1
+     *   /hub/patrimonio?aba=cartoes&cardId=acc4
      *   /registros?type=expense&categoryId=cat1
      */
 
-    it("navigates to /contas?accountId=<id> when an account row is clicked", async () => {
+    it("navigates to patrimonio contas with ?accountId=<id> when an account row is clicked", async () => {
       const user = userEvent.setup();
       render(<HomePage />);
       // The first checking account is "Nubank" (acc1) in mock-data.
@@ -411,10 +411,10 @@ describe("HomePage", () => {
       const accRow = nubankRow ?? screen.getByText("Nubank", { selector: "div" }).closest('[data-testid="account-row"]');
       expect(accRow).toBeTruthy();
       await user.click(accRow!);
-      expect(mockRouter.push).toHaveBeenCalledWith("/contas?accountId=acc1");
+      expect(mockRouter.push).toHaveBeenCalledWith("/hub/patrimonio?aba=contas&accountId=acc1");
     });
 
-    it("navigates to /cartoes?cardId=<id> when a card row is clicked", async () => {
+    it("navigates to patrimonio cartoes with ?cardId=<id> when a card row is clicked", async () => {
       const user = userEvent.setup();
       // Make sure a credit card exists in the default state.
       render(<HomePage />);
@@ -422,7 +422,7 @@ describe("HomePage", () => {
       const cardRow = screen.getByText("Nubank Crédito").closest('[data-testid="card-row"]');
       expect(cardRow).toBeTruthy();
       await user.click(cardRow!);
-      expect(mockRouter.push).toHaveBeenCalledWith("/cartoes?cardId=acc4");
+      expect(mockRouter.push).toHaveBeenCalledWith("/hub/patrimonio?aba=cartoes&cardId=acc4");
     });
 
     it("category rows no longer need click-through (macro rows are non-clickable)", () => {
@@ -529,7 +529,7 @@ describe("HomePage", () => {
     /**
      * The credit card section was rebuilt: per-card tile with first-letter
      * badge, limit-progress bar, and % pill. Old: a horizontal bar with
-     * no badge. Preserved: click still drills into /cartoes?cardId=<id>.
+     * no badge. Preserved: click still drills into patrimonio cartoes with ?cardId=<id>.
      */
     it("per-card tile shows percentage, name and amount", () => {
       vi.spyOn(appStateModule, "useAppState").mockReturnValue({
@@ -1171,7 +1171,7 @@ describe("HomePage", () => {
       render(<HomePage />);
       expect(screen.getByText("Nenhuma conta ainda")).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "Adicionar conta" }));
-      expect(mockRouter.push).toHaveBeenCalledWith("/contas");
+      expect(mockRouter.push).toHaveBeenCalledWith("/hub/patrimonio?aba=contas");
     });
 
     it("shows EmptyState with Registrar despesa CTA when there are no expenses", () => {

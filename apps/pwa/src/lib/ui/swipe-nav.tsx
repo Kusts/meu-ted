@@ -6,27 +6,28 @@ import { useIsOverlayOpen } from "./overlay-a11y";
 import { useSheet } from "@/lib/sheet-context";
 
 /**
- * F1 — swipe horizontal entre as 3 telas raiz (Resumo ↔ Registros ↔ A pagar).
+ * F1 — swipe horizontal entre as telas raiz da IA canônica
+ * (Início ↔ Extrato ↔ Compromissos ↔ Hub, item 13).
  *
  * Decisão do debate: touch handlers + `router.push` (SEM scroll-snap pager —
- * quebraria fetch por rota, deep-link e precache do SW). Nenhum
- * `preventDefault` durante o gesto: só observamos touchstart/touchend, então
- * a rolagem vertical nativa nunca é sequestrada. A animação é de ENTRADA da
- * página destino (Web Animations API, 260ms, var(--easing-standard)),
- * nunca transform durante o gesto.
+ * quebraria fetch por rota, deep-link e precache do SW; View Transitions só
+ * como enhancement progressivo). Nenhum `preventDefault` durante o gesto: só
+ * observamos touchstart/touchend, então a rolagem vertical nativa nunca é
+ * sequestrada. A animação é de ENTRADA da página destino (Web Animations
+ * API, 260ms, var(--easing-standard)), nunca transform durante o gesto.
  *
  * Guardas: overlay aberto (lockCount), sheet de transação aberta,
  * origem em scroller horizontal ou `[data-no-swipe]`, viewport >= 860px,
  * sem touch (`(pointer: coarse)`). `prefers-reduced-motion`: a navegação
  * ocorre instantaneamente, sem animação de entrada.
  *
- * Onda 5: nas rotas NÃO-raiz (subpáginas do drawer Mais), swipe dominante
+ * Onda 5: nas rotas NÃO-raiz (subpáginas do Hub e demais), swipe dominante
  * para a DIREITA executa `router.back()` uma vez por gesto, instantâneo e
  * sem animação de entrada, sob as MESMAS guardas acima.
  */
 
 /** Ordem de navegação por swipe: esquerda avança, direita volta. */
-export const SWIPE_ROUTES = ["/", "/registros", "/a-pagar"] as const;
+export const SWIPE_ROUTES = ["/", "/registros", "/compromissos", "/hub"] as const;
 
 export const SWIPE_THRESHOLD_PX = 60;
 export const SWIPE_MIN_VELOCITY_PX_MS = 0.25;
@@ -218,7 +219,7 @@ export function SwipeNav({ children }: { children: ReactNode }) {
       router.push(dest);
       return;
     }
-    // Onda 5: subpágina do Mais + swipe para a direita = router.back(),
+    // Onda 5: subpágina do Hub + swipe para a direita = router.back(),
     // instantâneo e SEM animação de entrada (respeita reduced-motion por
     // construção). Um gesto dispara no máximo uma navegação (return).
     if (shouldSwipeBack(pathname, dx)) {

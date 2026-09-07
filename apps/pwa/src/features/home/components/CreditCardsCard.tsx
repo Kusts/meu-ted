@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import Link from "next/link";
 import { formatBRL } from "@/lib/format/brl";
 import type { Account, CardStatement, Transaction } from "@/lib/state/types";
+import { routePatrimonio } from "@/lib/routes";
 
 interface CardRow {
   card: Account;
@@ -54,7 +55,7 @@ export function CreditCardsCard({ cards, statements, transactions, onOpenCard }:
       <div className="mb-3 flex items-center justify-between">
         <span className="text-[14px] font-bold text-text-primary">Cartões de crédito</span>
         <Link
-          href="/cartoes"
+          href={routePatrimonio("cartoes")}
           className="text-[11px] font-bold text-primary hover:underline"
         >
           Ver tudo
