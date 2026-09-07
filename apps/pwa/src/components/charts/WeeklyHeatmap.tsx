@@ -36,7 +36,7 @@ export function WeeklyHeatmap({
               <div
                 key={day.date}
                 title={`${day.date}: ${formatValue(day.totalCents)}`}
-                className="aspect-square w-full rounded-[4px] border border-border-subtle transition-all duration-300"
+                className="aspect-square w-full rounded-[4px] border border-border-subtle transition-all duration-300 motion-reduce:transition-none"
                 style={
                   day.level === 0
                     ? { background: "var(--surface-2)" }

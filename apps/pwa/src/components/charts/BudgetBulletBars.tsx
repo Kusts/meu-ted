@@ -48,7 +48,7 @@ export function BudgetBulletBars({
               aria-label={`${item.name} ${item.pctUsed}% do teto`}
             >
               <div
-                className="h-full rounded-full transition-all duration-300"
+                className="h-full rounded-full transition-all duration-300 motion-reduce:transition-none"
                 style={{ width: `${fillPct}%`, background: over ? OVER : MINT }}
               />
               <span

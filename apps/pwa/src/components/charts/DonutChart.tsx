@@ -53,7 +53,7 @@ export function DonutChart({
           viewBox={`0 0 ${size} ${size}`}
           role="img"
           aria-label={summary}
-          className="[&_circle]:transition-all [&_circle]:duration-300"
+          className="[&_circle]:transition-all [&_circle]:duration-300 [&_circle]:motion-reduce:transition-none"
         >
           <circle
             cx={size / 2}
@@ -95,7 +95,7 @@ export function DonutChart({
           <span className="max-w-[70%] truncate text-[11px] font-bold uppercase tracking-wider text-text-muted">
             {active?.name ?? "—"}
           </span>
-          <span className="text-[16px] font-bold tabular-nums text-text-primary">
+          <span className="text-[16px] font-bold tabular-nums text-text-primary" data-testid="donut-center-value">
             {formatValue(active?.valueCents ?? 0)}
           </span>
         </div>

@@ -75,7 +75,7 @@ export function CashflowAreaChart({
             <stop offset="100%" stopColor="var(--primary)" stopOpacity={0.04} />
           </linearGradient>
         </defs>
-        {areaPath !== "" && <path d={areaPath} fill={`url(#${gid})`} className="transition-all duration-300" />}
+        {areaPath !== "" && <path d={areaPath} fill={`url(#${gid})`} className="transition-all duration-300 motion-reduce:transition-none" />}
         {previousPath !== "" && (
           <path
             d={previousPath}
@@ -87,7 +87,7 @@ export function CashflowAreaChart({
           />
         )}
         {currentPath !== "" && (
-          <path d={currentPath} fill="none" stroke="var(--primary)" strokeWidth={2.5} strokeLinecap="round" className="transition-all duration-300" />
+          <path d={currentPath} fill="none" stroke="var(--primary)" strokeWidth={2.5} strokeLinecap="round" className="transition-all duration-300 motion-reduce:transition-none" />
         )}
       </svg>
       <figcaption className="sr-only">
