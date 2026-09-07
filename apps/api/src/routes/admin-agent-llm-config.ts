@@ -11,10 +11,18 @@ import {
   patchProviderSchema,
   rolloutSchema,
   securityEpochSchema,
+  setCredentialSchema,
   syncCatalogSchema,
   testConnectionSchema,
   toggleEnabledSchema,
 } from '@pi-finance/llm-contracts';
+import {
+  clearCredential,
+  getCredentialStatus,
+  listRemoteModels,
+  setCredential,
+  testCredential,
+} from '../agent/llm-credentials.js';
 import { canActivate, isKindExecutable, validateModel, type PrivacyClass, type Protocol } from '../agent/llm-config.js';
 
 const invalidBody = (
@@ -162,10 +170,13 @@ export const registerAdminAgentLlmConfigRoutes = (
         }
       }
 
-      // Prohibit SSRF and raw secret injection in body
+      // Prohibit SSRF and raw secret injection in body. The per-provider
+      // credential route is the ONLY endpoint allowed to carry a key field:
+      // it validates via setCredentialSchema and never echoes the value.
       if (req.body && typeof req.body === 'object') {
         const bodyObj = req.body as Record<string, unknown>;
-        if (bodyObj['baseUrl'] !== undefined || bodyObj['apiKey'] !== undefined || bodyObj['base_url'] !== undefined || bodyObj['api_key'] !== undefined) {
+        const isCredentialRoute = typeof req.url === 'string' && req.url.includes('/credential');
+        if (bodyObj['baseUrl'] !== undefined || bodyObj['base_url'] !== undefined || (!isCredentialRoute && (bodyObj['apiKey'] !== undefined || bodyObj['api_key'] !== undefined))) {
           return reply.code(400).send({
             code: 'agent.invalid_parameters',
             message: 'Injeção de baseUrl ou apiKey é estritamente proibida.',
@@ -670,6 +681,102 @@ export const registerAdminAgentLlmConfigRoutes = (
         code: 'not_configured',
         latencyMs: 0,
       });
+    },
+  );
+
+  const mapCredentialError = (reply: FastifyReply, err: unknown) => {
+    const e = err as { statusCode?: number; code?: string; reason?: string; message?: string };
+    if (typeof e?.statusCode === 'number') {
+      const body: Record<string, unknown> = { code: e.code ?? 'agent.invalid_parameters' };
+      if (e.message) body['message'] = e.message;
+      if (e.reason !== undefined) body['reason'] = e.reason;
+      return reply.code(e.statusCode).send(body);
+    }
+    throw err;
+  };
+
+  // GET /admin/agent/llm-config/providers/:id/credential — masked status only.
+  app.get<{ Params: { id: string } }>(
+    '/admin/agent/llm-config/providers/:id/credential',
+    { preHandler: guard },
+    async (req, reply) => {
+      try {
+        const credential = await getCredentialStatus(deps.store, req.params.id);
+        return reply.send({ credential });
+      } catch (err) {
+        return mapCredentialError(reply, err);
+      }
+    },
+  );
+
+  // POST .../credential — set/update the API key (or dryRun-validate it).
+  app.post<{ Params: { id: string } }>(
+    '/admin/agent/llm-config/providers/:id/credential',
+    { preHandler: guard },
+    async (req, reply) => {
+      const parsed = setCredentialSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        const reason = parsed.error.issues[0]?.message ?? 'invalid credential payload';
+        return invalidBody(reply, 'agent.invalid_parameters', reason);
+      }
+      try {
+        const credential = await setCredential(deps.store, req.params.id, parsed.data.apiKey, {
+          ...(parsed.data.dryRun !== undefined ? { dryRun: parsed.data.dryRun } : {}),
+        });
+        return reply.send({ credential });
+      } catch (err) {
+        return mapCredentialError(reply, err);
+      }
+    },
+  );
+
+  // DELETE .../credential — remove the saved key (env overlay + record).
+  app.delete<{ Params: { id: string } }>(
+    '/admin/agent/llm-config/providers/:id/credential',
+    { preHandler: guard },
+    async (req, reply) => {
+      try {
+        const credential = await clearCredential(deps.store, req.params.id);
+        return reply.send({ ok: true, credential });
+      } catch (err) {
+        return mapCredentialError(reply, err);
+      }
+    },
+  );
+
+  // POST .../test-connection — live probe with the saved key (dryRun skips
+  // network so CI never needs a real key). Sanitized {ready, code} response.
+  app.post<{ Params: { id: string } }>(
+    '/admin/agent/llm-config/providers/:id/test-connection',
+    { preHandler: guard },
+    async (req, reply) => {
+      const parsed = testConnectionSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        const reason = parsed.error.issues[0]?.message ?? 'invalid test-connection payload';
+        return invalidBody(reply, 'agent.invalid_parameters', reason);
+      }
+      try {
+        const result = await testCredential(deps.store, req.params.id, {
+          ...(parsed.data.dryRun !== undefined ? { dryRun: parsed.data.dryRun } : {}),
+        });
+        return reply.send(result);
+      } catch (err) {
+        return mapCredentialError(reply, err);
+      }
+    },
+  );
+
+  // GET .../remote-models — real-time upstream model listing (60s TTL).
+  app.get<{ Params: { id: string } }>(
+    '/admin/agent/llm-config/providers/:id/remote-models',
+    { preHandler: guard },
+    async (req, reply) => {
+      try {
+        const result = await listRemoteModels(deps.store, req.params.id);
+        return reply.send(result);
+      } catch (err) {
+        return mapCredentialError(reply, err);
+      }
     },
   );
 };

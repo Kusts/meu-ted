@@ -50,6 +50,7 @@ const LEGACY_SAFE_PREFIXES = [
   "V041",
   "V042",
   "V043",
+  "V044",
 ];
 
 export const migrationChecksum = (sql: string): string =>

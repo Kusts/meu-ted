@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import { AuthCacheManager } from './auth-status.js';
+import { BrowserLoginManager, LoginBeginSchema, LoginCallbackSchema, type CodeExchangeResult } from './browser-login.js';
 import { CodexRuntimeAdapter, ChatCompletionRequestSchema, ALLOWLISTED_MODELS } from './runtime-adapter.js';
 import {
   createInMemoryNonceReplayStore,
@@ -15,6 +16,8 @@ export type ServerOptions = {
   cfAccessClientSecret?: string;
   replayStore?: NonceReplayStore;
   adapter?: CodexRuntimeAdapter;
+  /** ChatGPT OAuth code exchange (injected; default rejects — see browser-login.ts). */
+  codeExchange?: (code: string) => Promise<CodeExchangeResult>;
 };
 
 export const buildCodexBrokerApp = (opts: ServerOptions): FastifyInstance => {
@@ -22,6 +25,10 @@ export const buildCodexBrokerApp = (opts: ServerOptions): FastifyInstance => {
   const authManager = new AuthCacheManager(opts.authCachePath);
   const adapter = opts.adapter ?? new CodexRuntimeAdapter();
   const replayStore = opts.replayStore ?? createInMemoryNonceReplayStore();
+  const loginManager = new BrowserLoginManager(
+    authManager,
+    ...(opts.codeExchange ? [opts.codeExchange] : [] as const),
+  );
 
   const verifyCloudflareAccess = (req: FastifyRequest): boolean => {
     if (!opts.cfAccessClientId || !opts.cfAccessClientSecret) {
@@ -133,8 +140,7 @@ export const buildCodexBrokerApp = (opts: ServerOptions): FastifyInstance => {
   });
 
   // Cancel execution
-  app.post('/v1/cancel', async (req, reply) => {
-    if (!verifyCloudflareAccess(req)) {
+  app.post('/v1/cancel', async (req, reply) => {    if (!verifyCloudflareAccess(req)) {
       return reply.code(403).send({ error: 'invalid_cloudflare_access_credentials' });
     }
 
@@ -154,6 +160,74 @@ export const buildCodexBrokerApp = (opts: ServerOptions): FastifyInstance => {
 
     const cancelled = adapter.cancelExecution(body.requestId);
     return reply.code(200).send({ ok: true, cancelled });
+  });
+
+  // ── Browser login (MVP, refactor item 6) ──────────────────────────
+  // Operator flow: POST /auth/login → open verificationUri in a browser and
+  // approve the ChatGPT Coding-plan authorization → POST /auth/callback with
+  // the returned code. Session persists via atomic 0600 write; tokens never
+  // appear in logs or responses.
+
+  app.post('/auth/login', async (req, reply) => {
+    if (!verifyCloudflareAccess(req)) {
+      return reply.code(403).send({ error: 'invalid_cloudflare_access_credentials' });
+    }
+    const parsed = LoginBeginSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_request_schema', issues: parsed.error.issues });
+    }
+    const login = loginManager.beginLogin(parsed.data.callbackUrl);
+    return reply.code(200).send({
+      verificationUri: login.verificationUri,
+      userCode: login.userCode,
+      state: login.state,
+      expiresAt: login.expiresAt,
+    });
+  });
+
+  app.post('/auth/callback', async (req, reply) => {
+    if (!verifyCloudflareAccess(req)) {
+      return reply.code(403).send({ error: 'invalid_cloudflare_access_credentials' });
+    }
+    const parsed = LoginCallbackSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_request_schema', issues: parsed.error.issues });
+    }
+    try {
+      const result = await loginManager.completeLogin(
+        parsed.data.code,
+        ...(parsed.data.state ? [parsed.data.state] : [] as const),
+      );
+      return reply.code(200).send({ ok: true, ...result });
+    } catch (e) {
+      const err = e as { statusCode?: number; code?: string; message?: string };
+      if (typeof err?.statusCode === 'number') {
+        return reply.code(err.statusCode).send({ error: err.code ?? 'login_failed' });
+      }
+      return reply.code(502).send({ error: 'login_exchange_failed' });
+    }
+  });
+
+  app.get('/auth/status', async (req, reply) => {
+    if (!verifyCloudflareAccess(req)) {
+      return reply.code(403).send({ error: 'invalid_cloudflare_access_credentials' });
+    }
+    const status = authManager.getAuthStatus();
+    // AuthCacheManager already strips tokens — status carries metadata only.
+    return reply.code(200).send({ auth: status });
+  });
+
+  app.post('/auth/logout', async (req, reply) => {
+    if (!verifyCloudflareAccess(req)) {
+      return reply.code(403).send({ error: 'invalid_cloudflare_access_credentials' });
+    }
+    const rawBody = JSON.stringify(req.body ?? {});
+    const hmacCheck = verifyHmacRequest(req, rawBody);
+    if (!hmacCheck.valid) {
+      return reply.code(401).send({ error: 'hmac_verification_failed', reason: hmacCheck.reason });
+    }
+    loginManager.revokeLocalSession();
+    return reply.code(200).send({ ok: true, auth: authManager.getAuthStatus() });
   });
 
   return app;
