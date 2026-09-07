@@ -53,8 +53,8 @@ vi.mock("@/lib/unsaved-changes", () => ({
 }));
 
 vi.mock("@/components/BottomNav", () => ({
-  default: ({ onFabClick }: { onFabClick: () => void }) => (
-    <button type="button" aria-label="Nova transação" onClick={onFabClick} />
+  default: ({ onNavClick }: { onNavClick: () => void }) => (
+    <button type="button" aria-label="Nova transação" onClick={onNavClick} />
   ),
 }));
 
