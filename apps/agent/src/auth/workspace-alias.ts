@@ -6,6 +6,27 @@
  * missing canonical id) THROWS — callers must deny (503/401), never fall
  * back to the received alias. For tests, mock this module via vi.mock.
  */
+/**
+ * C-05: canonical gate for every Durable Object name. When the caller can
+ * reach the authority (service token configured), the received id — which
+ * may be a raw alias — MUST resolve to the canonical household id before
+ * any `idFromName` or any persistent key is derived from it. Any resolution
+ * failure THROWS (fail-closed: the caller denies, never falls back to the
+ * alias). Without a service token the caller cannot consult the authority;
+ * the id is returned unresolved and the caller MUST treat it as
+ * legacy/degraded (documented in docs/ops/do-canonical-namespace.md).
+ */
+export const requireCanonicalWorkspaceId = async (
+  apiOrigin: string,
+  serviceToken: string | undefined,
+  workspaceId: string,
+): Promise<{ canonical: string; resolved: boolean }> => {
+  if (!workspaceId) return { canonical: workspaceId, resolved: false };
+  if (!serviceToken || !serviceToken.trim()) return { canonical: workspaceId, resolved: false };
+  const canonical = await resolveCanonicalHouseholdId(apiOrigin, serviceToken, workspaceId);
+  return { canonical, resolved: true };
+};
+
 export const resolveCanonicalHouseholdId = async (
   apiOrigin: string,
   serviceToken: string,

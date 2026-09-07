@@ -498,8 +498,7 @@ export async function authorizeWorkspaceMembership(
     // authoritative resolution cannot confirm the canonical id.
     let canonicalWorkspaceId: string;
     try {
-      canonicalWorkspaceId = await resolveCanonicalHouseholdId(env.API_ORIGIN, serviceToken, workspaceId);
-    } catch {
+      canonicalWorkspaceId = await resolveCanonicalHouseholdId(env.API_ORIGIN, serviceToken, workspaceId);    } catch {
       return Response.json({ code: "agent.membership_unavailable", message: "Workspace resolution unavailable" }, { status: 503 });
     }
     const { verifyAgentConnectionToken, consumeAgentToken } = await import("./auth/connection-token.js");
@@ -562,6 +561,20 @@ export async function authorizeWorkspaceMembership(
   const membership = await response.clone().json() as { items?: Array<{ userId?: unknown; role?: unknown }> };
   const member = membership.items?.find((item) => item.userId === actorId);
   if (!member || (member.role !== 'owner' && member.role !== 'member')) return Response.json({ code: "agent.workspace_forbidden" }, { status: 403 });
+  // C-05: the cookie fallback also names the DO by canonical id whenever the
+  // authority is reachable (service token configured). Unresolvable alias →
+  // deny (503). Without a service token the id stays unresolved (legacy
+  // degraded path, documented in docs/ops/do-canonical-namespace.md).
+  const serviceToken = env.AGENT_AUTH_SERVICE_TOKEN?.trim();
+  if (serviceToken) {
+    try {
+      const { requireCanonicalWorkspaceId } = await import("./auth/workspace-alias.js");
+      const { canonical } = await requireCanonicalWorkspaceId(env.API_ORIGIN, serviceToken, workspaceId);
+      return { actorId, role: member.role, workspaceId: canonical };
+    } catch {
+      return Response.json({ code: "agent.membership_unavailable", message: "Workspace resolution unavailable" }, { status: 503 });
+    }
+  }
   return { actorId, role: member.role, workspaceId };
 }
 
@@ -581,7 +594,9 @@ const worker = {
       headers.set("x-agent-role", authorization.role);
       headers.set("x-agent-workspace", authorization.workspaceId);
       headers.set("x-agent-capabilities", "financial.read,financial.write");
-      return getAgentByName(env.AGENT, workspaceId).fetch(new Request(request, { headers }));
+      // C-05: the DO is ALWAYS named by the authorized canonical id, never
+      // by the raw path id (which may be an alias).
+      return getAgentByName(env.AGENT, authorization.workspaceId).fetch(new Request(request, { headers }));
     }
     return new Response("Not found", { status: 404 });
   },

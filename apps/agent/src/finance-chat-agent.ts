@@ -421,6 +421,11 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
   }
 
   override async onChatMessage(messagePayload: unknown, ..._rest: unknown[]): Promise<unknown> {
+    // C-06 trust boundary: the SDK direct leg carries NO transport identity.
+    // `payload.actorId` is a gateway-stamped hint, NEVER a source of
+    // identity — the Worker gateway compares any client-supplied actorId
+    // against the authenticated actor (403 on mismatch) before this code is
+    // reachable, and the REST legs derive identity from verified headers.
     const payload = (messagePayload ?? {}) as { text?: string; intentionId?: string; actorId?: string };
     const text = typeof payload.text === "string" ? payload.text.trim() : "";
     const intentionId = payload.intentionId ?? `intent-${Date.now()}`;
@@ -671,6 +676,21 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       if (!actorId || !workspaceId || !actorId.trim() || !workspaceId.trim()) {
         return Response.json({ code: "agent.unauthorized", message: "Missing authenticated actor or workspace" }, { status: 401 });
       }
+      // C-06: effective identity — built ONCE from the gateway-verified
+      // headers (assertConnectionBinding already ran above) and frozen.
+      // Any `actorId`/`actor_id` field in the client JSON body is IGNORED
+      // for identity (spoof-tested): memory, tools, audit, export and
+      // compaction only ever receive this struct's fields.
+      const identity = Object.freeze({
+        actorId,
+        workspaceId,
+        role: (request.headers.get("x-agent-role") === "owner" ? "owner" : "member") as "owner" | "member",
+      });
+      // H-12: device binding — gateway-stamped (x-agent-device) and
+      // cross-checked against the connection token claims in
+      // assertConnectionBinding above; never a free client header.
+      const deviceHeader = request.headers.get("x-agent-device")?.trim();
+      const deviceId = deviceHeader ? deviceHeader : undefined;
 
       let body: { text?: unknown; content?: unknown; intentionId?: unknown; attachments?: unknown };
       try {
@@ -698,7 +718,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         // blocks, canary non-cohort promotes the fallback pair.
         let activeSnapshot: IntentionSnapshotRow;
         try {
-          activeSnapshot = await this.authorizeTurn(snapshot, { workspaceId, actorId, intentionId });
+          activeSnapshot = await this.authorizeTurn(snapshot, { workspaceId: identity.workspaceId, actorId: identity.actorId, intentionId });
         } catch (turnErr) {
           const turnCode = (turnErr as { code?: string })?.code;
           if (turnCode === 'agent.security_epoch_changed') {
@@ -711,7 +731,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         }
 
         if (this.state?.storage?.sql) {
-          const budgetCheck = checkUsageLimit(this.state.storage.sql, actorId, estimateTokens(text));
+          const budgetCheck = checkUsageLimit(this.state.storage.sql, identity.actorId, estimateTokens(text));
           if (!budgetCheck.allowed) {
             return Response.json({ code: "agent.usage_limit", message: budgetCheck.reason }, { status: 429 });
           }
@@ -724,8 +744,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           role: "user",
           parts: [{ type: "text", text }],
           metadata: {
-            actorId,
-            workspaceId,
+            actorId: identity.actorId,
+            workspaceId: identity.workspaceId,
             createdAt: userCreatedAt,
             ...(incomingAttachments.length > 0 ? { attachments: incomingAttachments } : {}),
           },
@@ -748,19 +768,22 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           try {
             const delegationSecret = this.env?.AGENT_DELEGATION_SECRET;
             if (delegationSecret) {
-              const roleHeader = (this as unknown as { env: Env }).env ? "member" : "member";
               // Criar token delegado workspace-isolado para chamadas de ferramentas.
               // C-03 least-privilege: o enriquecimento do relay executa
               // SOMENTE leituras (get_balance, extratos, metas, orçamentos,
               // faturas); sem financial.write a API nega qualquer escrita
               // (fail-closed via auth.delegation_scope_forbidden).
+              // C-06: actor/workspace/role vêm da identidade efetiva (nunca
+              // do body do cliente); H-12: deviceId quando o gateway o
+              // carimbou (ver x-agent-device).
               const delegatedToken = await createDelegatedTurnToken(
                 {
-                  actorId,
-                  workspaceId,
-                  role: "member",
+                  actorId: identity.actorId,
+                  workspaceId: identity.workspaceId,
+                  role: identity.role,
                   capabilities: ["financial.read"],
                   requestId: intentionId,
+                  ...(deviceId ? { deviceId } : {}),
                 },
                 delegationSecret,
               );
@@ -769,15 +792,15 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
               // Heurística leve para chamar ferramentas relevantes antes do LLM, garantindo que TED não negue acesso
               const lower = text.toLowerCase();
               const toolCalls: Array<{ name: string; params: Record<string, unknown> }> = [];
-              if (/(saldo|balance|conta|accounts)/i.test(lower)) toolCalls.push({ name: "get_balance", params: { householdId: workspaceId } });
-              if (/(transa[çc][aã]o|extrato|gastos|despesa|transactions)/i.test(lower)) toolCalls.push({ name: "list_recent_transactions", params: { householdId: workspaceId, limit: 10 } });
-              if (/(meta|goal)/i.test(lower)) toolCalls.push({ name: "list_goals", params: { householdId: workspaceId } });
-              if (/(or[çc]amento|budget)/i.test(lower)) toolCalls.push({ name: "list_budgets", params: { householdId: workspaceId } });
-              if (/(cart[aã]o|fatura|statement|cartao)/i.test(lower)) toolCalls.push({ name: "list_statements", params: { householdId: workspaceId } });
+              if (/(saldo|balance|conta|accounts)/i.test(lower)) toolCalls.push({ name: "get_balance", params: { householdId: identity.workspaceId } });
+              if (/(transa[çc][aã]o|extrato|gastos|despesa|transactions)/i.test(lower)) toolCalls.push({ name: "list_recent_transactions", params: { householdId: identity.workspaceId, limit: 10 } });
+              if (/(meta|goal)/i.test(lower)) toolCalls.push({ name: "list_goals", params: { householdId: identity.workspaceId } });
+              if (/(or[çc]amento|budget)/i.test(lower)) toolCalls.push({ name: "list_budgets", params: { householdId: identity.workspaceId } });
+              if (/(cart[aã]o|fatura|statement|cartao)/i.test(lower)) toolCalls.push({ name: "list_statements", params: { householdId: identity.workspaceId } });
               if (toolCalls.length === 0) {
                 // Fallback: sempre oferecer contexto mínimo para evitar "sem autorização"
-                toolCalls.push({ name: "get_balance", params: { householdId: workspaceId } });
-                toolCalls.push({ name: "list_recent_transactions", params: { householdId: workspaceId, limit: 5 } });
+                toolCalls.push({ name: "get_balance", params: { householdId: identity.workspaceId } });
+                toolCalls.push({ name: "list_recent_transactions", params: { householdId: identity.workspaceId, limit: 5 } });
               }
               // Executar até 2 ferramentas para não estourar tempo, com fail-open
               for (const call of toolCalls.slice(0, 2)) {
@@ -787,7 +810,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
                   const result = await (tool.execute as unknown as (p: Record<string, unknown>) => Promise<unknown>)(call.params);
                   const snippet = JSON.stringify(result).slice(0, 800);
                   // Enriquecer prompt com resultado da ferramenta (isolado por workspace)
-                  enrichedPrompt += `\n\n[Dados da ferramenta ${call.name} (workspace ${workspaceId}): ${snippet}]`;
+                  enrichedPrompt += `\n\n[Dados da ferramenta ${call.name} (workspace ${identity.workspaceId}): ${snippet}]`;
                 } catch {
                   // fail-open: não bloquear chat se ferramenta falhar
                 }
@@ -807,7 +830,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           // relay has no tool loop, so the enriched prompt keeps carrying
           // workspace data).
           const relaySql = this.memorySql();
-          const relayMemoryContext = relaySql ? this.loadMemoryContext(workspaceId, actorId, text) : null;
+          const relayMemoryContext = relaySql ? this.loadMemoryContext(identity.workspaceId, identity.actorId, text) : null;
           const cognition = assembleCognition(text, {
             webEnv: (this.env ?? {}) as Record<string, string | undefined>,
             ...(relayMemoryContext ? { hooks: { memoryContext: relayMemoryContext } } : {}),
@@ -826,8 +849,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
                 system: cognition.system,
                 requestId: attempt === 'primary' ? intentionId : `${intentionId}:fallback`,
                 intentionId,
-                workspaceId,
-                actorId,
+                workspaceId: identity.workspaceId,
+                actorId: identity.actorId,
               });
             }
             const relayRes = await fetch(`${relayOrigin.replace(/\/$/, "")}/internal/agent/llm-relay`, {
@@ -913,7 +936,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           const output = redactTranscript(attemptOutcome.result);
 
           if (this.state?.storage?.sql) {
-            recordUsage(this.state.storage.sql, actorId, intentionId, estimateTokens(text), estimateTokens(output));
+            recordUsage(this.state.storage.sql, identity.actorId, intentionId, estimateTokens(text), estimateTokens(output));
           }
 
           // Persist Assistant TED message (redacted) AFTER relay response
@@ -924,7 +947,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             parts: [{ type: "text", text: output }],
             metadata: {
               actorId: "ted",
-              workspaceId,
+              workspaceId: identity.workspaceId,
               provider: effectiveProvider,
               model: effectiveModel,
               fallback: usedFallback,
@@ -946,10 +969,10 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           let memorized: string[] = [];
           if (relaySql) {
             try {
-              const turnCount = bumpTurnCount(relaySql, workspaceId);
+              const turnCount = bumpTurnCount(relaySql, identity.workspaceId);
               const learned = await learnFromTurn(relaySql, {
-                workspaceId,
-                actorId,
+                workspaceId: identity.workspaceId,
+                actorId: identity.actorId,
                 userText: text,
                 assistantText: output,
                 turnCount,
@@ -984,6 +1007,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       if (!actorId || !workspaceId || !actorId.trim() || !workspaceId.trim()) {
         return Response.json({ code: "agent.unauthorized", message: "Missing authenticated actor or workspace" }, { status: 401 });
       }
+      // C-06: frozen effective identity (headers verified by the gateway).
+      const identity = Object.freeze({ actorId, workspaceId });
       const sql = this.memorySql();
       if (!sql) {
         return Response.json({ code: "agent.persistence_unavailable", message: "Memory storage is not available" }, { status: 503 });
@@ -998,7 +1023,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       } catch {
         return Response.json({ code: "agent.invalid_message" }, { status: 400 });
       }
-      setMemoryEnabled(sql, workspaceId, enabled);
+      setMemoryEnabled(sql, identity.workspaceId, enabled);
       return Response.json({ ok: true, enabled });
     }
 
@@ -1012,6 +1037,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       if (!actorId || !workspaceId || !actorId.trim() || !workspaceId.trim()) {
         return Response.json({ code: "agent.unauthorized", message: "Missing authenticated actor or workspace" }, { status: 401 });
       }
+      // C-06: frozen effective identity (headers verified by the gateway).
+      const identity = Object.freeze({ actorId, workspaceId });
       const sql = this.memorySql();
       if (!sql) {
         return Response.json({ code: "agent.persistence_unavailable", message: "Session storage is not available" }, { status: 503 });
@@ -1031,8 +1058,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       // Empty renewals only reset the context without archiving noise.
       let previous: { id: string } | null = null;
       if (messageCount > 0) {
-        currentSession(sql, workspaceId, actorId);
-        previous = endSession(sql, workspaceId, actorId, {
+        currentSession(sql, identity.workspaceId, identity.actorId);
+        previous = endSession(sql, identity.workspaceId, identity.actorId, {
           ...(summary ? { summary } : {}),
           messageCount,
         });
@@ -1044,7 +1071,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         // Best effort: a fresh session id is still returned.
       }
       if (Array.isArray(this.messages)) this.messages.length = 0;
-      const next = currentSession(sql, workspaceId, actorId);
+      const next = currentSession(sql, identity.workspaceId, identity.actorId);
       return Response.json({
         ok: true,
         sessionId: next.id,
@@ -1060,12 +1087,14 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       if (!actorId || !workspaceId || !actorId.trim() || !workspaceId.trim()) {
         return Response.json({ code: "agent.unauthorized", message: "Missing authenticated actor or workspace" }, { status: 401 });
       }
+      // C-06: frozen effective identity (headers verified by the gateway).
+      const identity = Object.freeze({ actorId, workspaceId });
 
       const allMessages = Array.isArray(this.messages) ? this.messages : [];
       // Isolamento por workspace: filtrar mensagens cujo workspaceId difere (defesa em profundidade, DO já é por workspace)
       const rawMessages = allMessages.filter((msg) => {
         const ws = (msg.metadata as { workspaceId?: string } | undefined)?.workspaceId;
-        return !ws || ws === workspaceId;
+        return !ws || ws === identity.workspaceId;
       });
 
       const items = rawMessages.map((msg) => {
@@ -1074,7 +1103,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         if (Array.isArray(msg.parts)) {
           contentText = msg.parts.map((p) => (typeof p.text === "string" ? p.text : "")).join("");
         }
-        const isOwn = msg.role === "user" && msgActorId === actorId;
+        const isOwn = msg.role === "user" && msgActorId === identity.actorId;
         const createdAt = (msg.metadata as { createdAt?: string } | undefined)?.createdAt ?? undefined;
         const attachments = (msg.metadata as { attachments?: Array<{ type: string; url: string; name: string }> } | undefined)?.attachments;
         return {

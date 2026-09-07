@@ -200,13 +200,23 @@ export default {
       const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string; AGENT_AUTH_SERVICE_TOKEN?: string }, workspaceId);
       if (auth instanceof Response) return auth;
 
+      // C-05: every Durable Object name and every persistent key derives
+      // from the AUTHORIZED canonical id — never from the raw path id,
+      // which may be an unresolved alias. Alias-namespaced DOs created
+      // before this fix are abandoned (never read/written); see
+      // docs/ops/do-canonical-namespace.md for the migration policy.
+      const canonicalId = auth.workspaceId;
+      if (canonicalId !== workspaceId) {
+        console.warn(`do.alias_namespace_avoided alias=${workspaceId} canonical=${canonicalId}`);
+      }
+
       const subPath = url.pathname.slice(financeMatch[0].length);
       const isRestRpc = subPath === "/rpc/chat" || subPath === "/rpc/history" || subPath === "/rpc/session/new" || subPath === "/rpc/memory/prefs";
 
       if (isRestRpc) {
-        const financeAgent = env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(workspaceId));
+        const financeAgent = env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(canonicalId));
         const isHistory = subPath === "/rpc/history";
-        const syncError = await syncLegacyHistory(env, workspaceId, financeAgent, {
+        const syncError = await syncLegacyHistory(env, canonicalId, financeAgent, {
           allowPendingForHistory: isHistory,
         });
         if (syncError) return syncError;
@@ -232,6 +242,27 @@ export default {
       const workspaceId = decodeURIComponent(legacyMatch[1]!);
       const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string; AGENT_AUTH_SERVICE_TOKEN?: string }, workspaceId);
       if (auth instanceof Response) return auth;
+      // C-05: canonical id for every downstream DO name (see finance route).
+      const canonicalId = auth.workspaceId;
+      if (canonicalId !== workspaceId) {
+        console.warn(`do.alias_namespace_avoided alias=${workspaceId} canonical=${canonicalId}`);
+      }
+      // C-06: the gateway is the identity boundary — a client-supplied
+      // actorId in the body is NEVER a source of identity. When present it
+      // must equal the authenticated actor, otherwise the turn is rejected
+      // (403). The downstream forward drops the client field entirely and
+      // the DO only ever sees gateway-stamped headers.
+      if (request.method === "POST") {
+        try {
+          const peeked = (await request.clone().json()) as { actorId?: unknown; actor_id?: unknown };
+          const claimed = typeof peeked.actorId === "string" ? peeked.actorId : typeof peeked.actor_id === "string" ? peeked.actor_id : undefined;
+          if (claimed !== undefined && claimed !== auth.actorId) {
+            return Response.json({ code: "agent.identity_mismatch", message: "Authenticated identity does not match request body" }, { status: 403 });
+          }
+        } catch {
+          // Non-JSON bodies are validated by the downstream handler.
+        }
+      }
       // For new message turns, route to the real FinanceChatAgent RPC when a
       // runtime provider is configured; fall back to the legacy WorkspaceAgent
       // only for history/export/stream operations that still live there.
@@ -246,8 +277,9 @@ export default {
           configured = false;
         }
         if (configured) {
-          const financeAgent = env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(workspaceId));
-          const syncError = await syncLegacyHistory(env, workspaceId, financeAgent);
+          // C-05: canonical DO name (see finance route above).
+          const financeAgent = env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(canonicalId));
+          const syncError = await syncLegacyHistory(env, canonicalId, financeAgent);
           if (syncError) return syncError;
 
           const headers = new Headers(request.headers);
@@ -271,7 +303,8 @@ export default {
       headers.set("x-agent-actor", auth.actorId);
       headers.set("x-agent-role", auth.role);
       headers.set("x-agent-workspace", auth.workspaceId);
-      return env.AGENT.get(env.AGENT.idFromName(workspaceId)).fetch(new Request(request, { headers }));
+      // C-05: legacy namespace also follows the canonical id.
+      return env.AGENT.get(env.AGENT.idFromName(canonicalId)).fetch(new Request(request, { headers }));
     }
 
     return new Response("Not found", { status: 404 });
