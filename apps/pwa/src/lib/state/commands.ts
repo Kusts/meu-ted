@@ -137,6 +137,29 @@ export interface CategoryInput {
   idempotencyKey?: string;
 }
 
+export interface CategoryUpdateInput {
+  name?: string;
+  icon?: string | null;
+  color?: string | null;
+}
+
+export type CategoryDeleteInput =
+  | { mode: "move"; destinationCategoryId: string }
+  | { mode: "cascade"; confirm: true };
+
+export interface CategoryDeleteResult {
+  ok: boolean;
+  deletedCategoryIds: string[];
+  movedTransactions: number;
+  softDeletedTransactions: number;
+}
+
+export interface CategoryDefaultsResult {
+  ok: boolean;
+  created: number;
+  skipped: number;
+}
+
 export interface CardInput {
   name: string;
   creditLimitCents: number;
@@ -215,13 +238,10 @@ export interface Commands {
 
   // ── Categories (create / update / deactivate) ──────────────────
   addCategory(input: CategoryInput): Promise<Category>;
-  updateCategory(id: string, input: { name?: string; icon?: string | null; color?: string | null }): Promise<Category>;
+  updateCategory(id: string, input: CategoryUpdateInput): Promise<Category>;
   deactivateCategory(id: string): Promise<void>;
-  deleteCategory(
-    id: string,
-    input: { mode: "move"; destinationCategoryId: string } | { mode: "cascade"; confirm: true },
-  ): Promise<{ ok: boolean; deletedCategoryIds: string[]; movedTransactions: number; softDeletedTransactions: number }>;
-  applyCategoryDefaults(): Promise<{ ok: boolean; created: number; skipped: number }>;
+  deleteCategory(id: string, input: CategoryDeleteInput): Promise<CategoryDeleteResult>;
+  applyCategoryDefaults(): Promise<CategoryDefaultsResult>;
 
   // ── Cards (credit) ─────────────────────────────────────────────
   createCard(input: CardInput): Promise<Account>;
