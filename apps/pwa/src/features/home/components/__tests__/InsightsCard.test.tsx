@@ -41,4 +41,16 @@ describe("InsightsCard", () => {
       screen.queryByRole("button", { name: /conversar com o ted/i }),
     ).not.toBeInTheDocument();
   });
+
+  it("shows the 36px TED avatar in the header (item premium 3)", () => {
+    render(
+      <InsightsCard
+        insights={[
+          { title: "Gasto alto", body: "Alimentação subiu R$ 100", color: "#C8483B" },
+        ]}
+      />,
+    );
+    expect(screen.getByLabelText("TED")).toBeInTheDocument();
+    expect(screen.getByText("Insights do TED")).toBeInTheDocument();
+  });
 });

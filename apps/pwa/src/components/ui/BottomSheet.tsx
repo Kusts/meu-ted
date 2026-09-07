@@ -217,13 +217,14 @@ export function BottomSheet({
         onClick={requestClose}
       />
 
-      {/* Sheet container: durante leaving a animação de entrada é
-          removida (classe + animation:none inline) para o translateY(100%)
-          da saída sempre prevalecer, mesmo fechando nos primeiros 280ms. */}
+      {/* Sheet container: S3 surface + elevated top edge (item premium 2).
+          Durante leaving a animação de entrada é removida (classe +
+          animation:none inline) para o translateY(100%) da saída sempre
+          prevalecer, mesmo fechando nos primeiros 280ms. */}
       <div
         ref={sheetRef}
         data-testid="bottom-sheet-panel"
-        className={`fixed bottom-0 left-0 right-0 z-50 flex max-h-[92vh] flex-col overflow-y-auto rounded-t-[26px] border-t border-border-subtle bg-surface-1 shadow-sheet ${leaving ? "" : "animate-sheet-up "}${className}`}
+        className={`fixed bottom-0 left-0 right-0 z-50 flex max-h-[92vh] flex-col overflow-y-auto rounded-t-[26px] border-t border-border-strong bg-surface-3 shadow-sheet ${leaving ? "" : "animate-sheet-up "}${className}`}
         style={{
           padding: "20px 20px 32px",
           ...(leaving

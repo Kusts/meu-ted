@@ -166,6 +166,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
           animatedBalance={animatedBalance}
           onOpenProfile={() => router.push("/perfil")}
           onOpenNotifications={() => setNotificationsOpen(true)}
+          hasPendingInsights={insights.length > 0}
         />
 
         <QuickActions onNew={handleNew} />

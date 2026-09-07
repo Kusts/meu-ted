@@ -65,7 +65,7 @@ export function Dialog({
 
       {/* Dialog Box */}
       <div
-        className={`relative z-10 w-full max-w-md overflow-hidden rounded-[20px] border border-border-subtle bg-surface-1 p-6 shadow-elevated transition-all ${className}`}
+        className={`relative z-10 w-full max-w-md overflow-hidden rounded-[20px] border border-border-strong bg-surface-3 p-6 shadow-elevated transition-all ${className}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

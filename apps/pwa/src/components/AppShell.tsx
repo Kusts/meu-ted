@@ -243,6 +243,8 @@ export default function AppShell({ children }: AppShellProps) {
 
   return (
     <div className="flex min-h-dvh w-full bg-bg">
+      {/* Atmosphere canvas: fixed top glow, rendered once (item premium 2) */}
+      <div className="atmosphere" aria-hidden="true" />
       {/* Desktop Sidebar Rail */}
       <SidebarRail onNewTransaction={() => openSheetLocal()} />
 

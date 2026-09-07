@@ -72,8 +72,7 @@ describe("PayablesPage", () => {
 
   describe("with data", () => {
     it("renders the page header", () => {
-      render(<PayablesPage />);
-      expect(screen.getByText("Contas a pagar")).toBeInTheDocument();
+      render(<PayablesPage />);      expect(screen.getByText("Contas a pagar")).toBeInTheDocument();
     });
 
     it("renders KPI totals", () => {
@@ -219,6 +218,15 @@ describe("PayablesPage", () => {
       expect(screen.getByText("Sim, desfazer pagamento")).toBeInTheDocument();
       await user.click(screen.getByText("Sim, desfazer pagamento"));
       expect(undoSpy).toHaveBeenCalledWith("p-paid");
+    });
+  });
+
+  describe("empty state (item premium 3)", () => {
+    it("shows the relaxed bear with Tudo em dia copy when nothing matches", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ payables: [] }));
+      render(<PayablesPage />);
+      expect(screen.getByText("Nenhuma conta pendente. Tudo em dia!")).toBeInTheDocument();
+      expect(screen.getByLabelText("Ted relaxado")).toBeInTheDocument();
     });
   });
 

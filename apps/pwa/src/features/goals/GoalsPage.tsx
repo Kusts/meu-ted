@@ -7,6 +7,7 @@ import BottomSheet from "@/components/BottomSheet";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
+import { TedMark } from "@/components/brand/TedMark";
 import { useAppState } from "@/lib/state/app-state-context";
 import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import type { Goal } from "@/lib/state/types";
@@ -416,6 +417,12 @@ export default function GoalsPage() {
                       <div className="h-full rounded-full transition-all duration-300" style={{ width: `${g.pct}%`, background: "linear-gradient(90deg, #0E8C5A, #2FA56F)" }} />
                     </div>
                     <div className="mb-2 text-[11px] font-medium text-text-muted">{formatPct(g.pct)} concluído</div>
+                    {g.pct >= 100 && (
+                      <div className="mb-2 flex items-center gap-2 rounded-[12px] bg-success-tint px-3 py-2">
+                        <TedMark size={24} variant="check" label="Meta batida" />
+                        <span className="text-[12px] font-bold text-success">Meta batida!</span>
+                      </div>
+                    )}
                     <div className="mb-3 flex justify-between text-[12px] font-medium text-text-secondary">
                       <span className="font-mono tabular-nums font-bold text-text-primary">{formatBRL(g.currentAmountCents)}</span>
                       <span>de <span className="font-mono tabular-nums">{formatBRL(g.targetAmountCents)}</span></span>

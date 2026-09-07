@@ -42,6 +42,18 @@ describe("GoalsPage", () => {
     it("shows current/target amounts", () => { render(<GoalsPage />); expect(screen.getByText(/1\.500,\d{2}/)).toBeInTheDocument(); expect(screen.getByText(/6\.000,\d{2}/)).toBeInTheDocument(); });
     it("switches to Dívidas tab", async () => { const user = userEvent.setup(); render(<GoalsPage />); await user.click(screen.getByText("Dívidas")); expect(screen.getByText("Financiamento Carro")).toBeInTheDocument(); });
     it("active Metas tab by default", () => { render(<GoalsPage />); expect(screen.getByText("Metas")).toBeInTheDocument(); });
+    it("celebrates an achieved goal with Meta batida (item premium 3)", () => {
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        mockState({
+          goals: [
+            { id: "g-done", name: "Reserva pronta", goalType: "emergency_fund", targetAmountCents: 100000, currentAmountCents: 100000, startDate: "2026-01-01", status: "active" },
+          ],
+        }),
+      );
+      render(<GoalsPage />);
+      expect(screen.getByText("Meta batida!")).toBeInTheDocument();
+      expect(screen.getByLabelText("Meta batida")).toBeInTheDocument();
+    });
   });
 
   describe("loading", () => {

@@ -7,6 +7,7 @@ import BottomSheet from "@/components/BottomSheet";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
 import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
+import { TedMark } from "@/components/brand/TedMark";
 import { useAppState } from "@/lib/state/app-state-context";
 import { usePullToRefresh, PullToRefreshIndicator } from "@/lib/ui/use-pull-to-refresh";
 import { useFormDirtySafe } from "@/lib/unsaved-changes";
@@ -460,9 +461,10 @@ export default function PayablesPage() {
             </div>
           ))}
           {groups.length === 0 && (
-            <div className="py-[50px] text-center text-text-muted">
-              <div className="text-[14px] font-semibold">Nada encontrado</div>
-              <div className="mt-1 text-[12px]">Nenhuma conta com este status.</div>
+            <div className="flex flex-col items-center py-[50px] text-center">
+              <TedMark size={56} variant="relaxed" label="Ted relaxado" />
+              <div className="mt-3 text-[14px] font-bold text-text-primary">Nenhuma conta pendente. Tudo em dia!</div>
+              <div className="mt-1 text-[12px] text-text-muted">Nenhuma conta com este status.</div>
             </div>
           )}
         </div>

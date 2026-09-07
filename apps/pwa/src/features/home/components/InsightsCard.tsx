@@ -2,6 +2,7 @@
 
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
+import { TedAvatar } from "@/components/brand/TedMark";
 import { openTedChat } from "@/features/ted/TedChatLauncher";
 import type { InsightItem } from "../hooks/useFallbackInsights";
 import { MessageCircle, Sparkles } from "lucide-react";
@@ -9,7 +10,10 @@ import { MessageCircle, Sparkles } from "lucide-react";
 export function InsightsCard({ insights }: { insights: InsightItem[] }) {
   return (
     <div className="rounded-[18px] border border-border-subtle bg-surface-1 px-4 py-4 shadow-card">
-      <div className="mb-3 text-[13px] font-bold text-text-primary">Insights</div>
+      <div className="mb-3 flex items-center gap-2.5">
+        <TedAvatar size={36} />
+        <div className="text-[13px] font-bold text-text-primary">Insights do TED</div>
+      </div>
       {insights.length === 0 ? (
         <EmptyState
           icon={<Sparkles size={24} />}

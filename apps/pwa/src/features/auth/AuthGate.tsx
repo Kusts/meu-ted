@@ -8,6 +8,7 @@ import { signInWithEmail, registerDeviceToken, verifyDeviceToken } from "@/lib/a
 import { clearSensitiveSession } from "@/lib/session";
 import { SessionProvider } from "@/lib/auth/session-context";
 import { Lock, Mail, ArrowRight } from "lucide-react";
+import { Splash } from "@/components/Splash";
 
 type AuthState = "loading" | "login" | "unlocked";
 
@@ -114,15 +115,7 @@ export function AuthGate({ children }: Props) {
 
   if (state === "unlocked")
     return <SessionProvider value={{ expireSession }}>{children}</SessionProvider>;
-  if (state === "loading")
-    return (
-      <main className="flex h-dvh items-center justify-center bg-bg text-text-secondary">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-border-subtle border-t-primary" />
-          <span className="text-[13px] font-semibold text-text-muted">Carregando…</span>
-        </div>
-      </main>
-    );
+  if (state === "loading") return <Splash />;
 
   return (
     <main className="relative flex min-h-dvh items-center justify-center bg-bg p-5 sm:p-8">
