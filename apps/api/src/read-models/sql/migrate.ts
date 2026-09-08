@@ -32,6 +32,13 @@ type MigrationManifestEntry = {
 // tables). Required in legacy mode because the production VPS boots with
 // DB_SCHEMA=legacy and V031 (admin columns) was never legacy-safe, so login
 // 500s with SCHEMA_MISMATCH until V043 applies at boot.
+// V044 = LLM kimi catalog; V045 = category tree defaults columns;
+// V046 = transaction notes; V047 = statement uniqueness + card purchase
+// metadata; V049 = legacy category uniqueness (dual-schema DO block: no-op
+// on canonical where V048 already ran, legacy dedupe + unique index
+// otherwise). V048 is deliberately NOT here (canonical-only: needs
+// categories.status); see LEGACY_EXCLUDED_JUSTIFICATIONS and
+// docs/ops/v048-legacy-boot-decision.md.
 // The canonical V001/V002/V004-V007 and modern workspace/auth migrations V013-V031
 // are skipped in legacy mode because they assume canonical schema or rely on modern
 // tables (Better Auth, workspaces, ownership transfers).
@@ -54,6 +61,7 @@ export const LEGACY_SAFE_PREFIXES = [
   "V045",
   "V046",
   "V047",
+  "V049",
 ];
 
 /**

@@ -134,48 +134,68 @@ const applyDefaultsLegacyInTx = async (
   let created = 0;
   let skipped = 0;
   for (const [macroIdx, macro] of DEFAULT_CATEGORY_CATALOG.entries()) {
-    const found = await client.query<Row>(
-      `SELECT id FROM categories
-        WHERE household_id = $1 AND parent_id IS NULL AND kind = $2
-          AND lower(name) = lower($3) AND active = true AND deleted_at IS NULL
-        LIMIT 1`,
-      [householdId, macro.kind, macro.name],
+    // Race-safe: INSERT ... ON CONFLICT DO NOTHING (functional unique index
+    // from V049) + SELECT, mirroring the canonical applyDefaultsInTx. Two
+    // concurrent applications converge on the same rows; counts stay exact.
+    const ins = await client.query<Row>(
+      `INSERT INTO categories (id, household_id, name, kind, active, parent_id, icon, color, sort_order, is_default, is_system)
+       VALUES (gen_random_uuid(), $1, $2, $3, true, NULL, $4, $5, $6, true, false)
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [householdId, macro.name, macro.kind, macro.icon, macro.color, macroIdx],
     );
     let macroId: string;
-    if (found.rowCount === 0) {
-      const ins = await client.query<Row>(
-        `INSERT INTO categories (id, household_id, name, kind, active, parent_id, icon, color, sort_order, is_default, is_system)
-         VALUES (gen_random_uuid(), $1, $2, $3, true, NULL, $4, $5, $6, true, false)
-         RETURNING id`,
-        [householdId, macro.name, macro.kind, macro.icon, macro.color, macroIdx],
-      );
+    if ((ins.rowCount ?? 0) === 1) {
       macroId = ins.rows[0]!['id'] as string;
       created += 1;
     } else {
-      macroId = found.rows[0]!['id'] as string;
+      const found = await findActiveCategoryByKey(client, householdId, macro.kind, null, macro.name);
+      macroId = found!.id;
       skipped += 1;
     }
     for (const sub of macro.subs) {
-      const subFound = await client.query(
-        `SELECT 1 FROM categories
-          WHERE household_id = $1 AND parent_id = $2 AND lower(name) = lower($3)
-            AND active = true AND deleted_at IS NULL
-          LIMIT 1`,
-        [householdId, macroId, sub.name],
-      );
-      if ((subFound.rowCount ?? 0) > 0) {
-        skipped += 1;
-        continue;
-      }
-      await client.query(
+      const subIns = await client.query(
         `INSERT INTO categories (id, household_id, name, kind, active, parent_id, icon, color, sort_order, is_default, is_system)
-         VALUES (gen_random_uuid(), $1, $2, $3, true, $4, $5, NULL, 0, true, false)`,
+         VALUES (gen_random_uuid(), $1, $2, $3, true, $4, $5, NULL, 0, true, false)
+         ON CONFLICT DO NOTHING
+         RETURNING id`,
         [householdId, sub.name, macro.kind, macroId, sub.icon],
       );
-      created += 1;
+      if ((subIns.rowCount ?? 0) === 1) {
+        created += 1;
+      } else {
+        skipped += 1;
+      }
     }
   }
   return { created, skipped };
+};
+
+/**
+ * Active category lookup by the V049 uniqueness key
+ * (household/kind/parent NULL-safe/case-insensitive name). Returns the id,
+ * or null when no live row matches. Shared by the upsert SELECT-after-
+ * conflict paths below.
+ */
+const findActiveCategoryByKey = async (
+  client: PoolClient,
+  householdId: string,
+  kind: string,
+  parentId: string | null,
+  name: string,
+): Promise<{ id: string } | null> => {
+  const found = await client.query<Row>(
+    `SELECT id FROM categories
+      WHERE household_id = $1 AND kind = $2
+        AND COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid) =
+            COALESCE($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+        AND lower(name) = lower($4)
+        AND active = true
+      LIMIT 1`,
+    [householdId, kind, parentId, name],
+  );
+  if ((found.rowCount ?? 0) === 0) return null;
+  return { id: found.rows[0]!['id'] as string };
 };
 
 export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
@@ -234,9 +254,14 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
             throw domainErrors.invalid('parentId', 'categoria pai deve ter o mesmo kind');
           }
         }
+        // Race-safe (M-02 on legacy): INSERT ... ON CONFLICT DO NOTHING on
+        // the V049 functional unique index + SELECT. A concurrent duplicate
+        // reuses the existing live row instead of duplicating it — same
+        // return shape either way.
         const res = await client.query<Row>(
           `INSERT INTO categories (id, household_id, name, kind, active, parent_id, icon, color, sort_order, is_default, is_system)
            VALUES (gen_random_uuid(), $1, $2, $3, true, $4, $5, $6, $7, $8, false)
+           ON CONFLICT DO NOTHING
            RETURNING ${LEGACY_CATEGORY_COLUMNS}`,
           [
             householdId,
@@ -248,7 +273,19 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
             input.sortOrder ?? 0,
             input.isDefault ?? false,
           ]);
-        return mapCategory(res.rows[0]!);
+        if ((res.rowCount ?? 0) === 1) return mapCategory(res.rows[0]!);
+        const existing = await client.query<Row>(
+          `SELECT ${LEGACY_CATEGORY_COLUMNS} FROM categories
+            WHERE household_id = $1 AND kind = $2
+              AND COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid) =
+                  COALESCE($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+              AND lower(name) = lower($4)
+              AND active = true
+            LIMIT 1`,
+          [householdId, input.kind, input.parentId ?? null, input.name],
+        );
+        if ((existing.rowCount ?? 0) === 0) throw domainErrors.inUse('Categoria', 'nome duplicado');
+        return mapCategory(existing.rows[0]!);
       });
     },
     async updateCategory(householdId: string, id: string, patch: UpdateCategoryInput) {

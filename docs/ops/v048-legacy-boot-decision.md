@@ -2,7 +2,9 @@
 
 **Data:** 2026-09-07
 **Decisão:** V048 (`V048__category_uniqueness.sql`) permanece FORA de
-`LEGACY_SAFE_PREFIXES`. Nenhuma ação manual é necessária nem segura no VPS.
+`LEGACY_SAFE_PREFIXES`. A unicidade de categorias no VPS é entregue por
+V049 (`V049__category_uniqueness_legacy.sql`), legado-safe. Nenhuma ação
+manual é necessária no VPS.
 
 ## Por que não é legacy-safe
 
@@ -22,12 +24,18 @@ não subiria.
 ## O que acontece no boot do VPS hoje (correto)
 
 1. `server/index.ts` chama `runMigrations(pool, /* legacyOnly */ true)`.
-2. Somente `LEGACY_SAFE_PREFIXES` (V003, V008–V012, V032–V035,
-   V040–V047) é aplicado; V048 nunca é tentado — boot íntegro.
-3. Unicidade de categorias no legado continua pelo caminho
-   check-then-insert dos adapters (`legacy-postgres.ts`,
-   `assertCategoryNameFree` com `lower(name)` + `active = true`).
-   Sem regressão: é o comportamento anterior a V048.
+2. `LEGACY_SAFE_PREFIXES` (V003, V008–V012, V032–V035, V040–V047, **V049**)
+   é aplicado; V048 nunca é tentado — boot íntegro.
+3. V049 deduplica categorias legadas por
+   `(household_id, kind, parent, lower(name))` entre `active = true`,
+   reponta `transactions.category_id/subcategory_id` e cria o índice único
+   `categories_household_kind_parent_name_uidx_legacy`. Em schema canônico
+   V049 é no-op (V048 já fez o trabalho).
+4. Os adapters legados (`writes/legacy-postgres.ts`) criam categorias e
+   aplicam defaults via `INSERT ... ON CONFLICT DO NOTHING + SELECT`
+   sobre o índice V049 — a corrida check-then-insert (M-02) está fechada
+   no VPS; duplicata concorrente **reusa** a linha viva (sem 409, sem
+   duplicação).
 
 ## O que NÃO fazer
 
@@ -43,8 +51,11 @@ não subiria.
 
 Se o banco do VPS for um dia migrado para o schema canônico, V048
 aplica sozinha no próximo boot normal (ela já está no manifesto
-canônico e é idempotente). Até lá, qualquer migração `V0xx >= V044`
-nova precisa entrar em `LEGACY_SAFE_PREFIXES` ou ganhar justificativa
-em `LEGACY_EXCLUDED_JUSTIFICATIONS` — o teste
+canônico e é idempotente; V049 vira no-op permanente). Até lá,
+qualquer migração `V0xx >= V044` nova precisa entrar em
+`LEGACY_SAFE_PREFIXES` ou ganhar justificativa em
+`LEGACY_EXCLUDED_JUSTIFICATIONS` — o teste
 `tests/db/migrations-integrity.test.ts` ("legacy-safe inventory pin")
-quebra caso contrário.
+quebra caso contrário. Prova viva do caminho legado em
+`tests/integration/postgres-legacy-category-proof.test.ts` (dedupe,
+convergência concorrente, no-op canônico, ordem de boot legacy).
