@@ -1,14 +1,21 @@
 /**
- * Records edit-subcategory E2E test.
- * ID: EDIT-SUB
+ * Records edit-category E2E test.
+ * ID: EDIT-CAT
  *
- * Canonical spec for editing a transaction's subcategory: open the edit
- * sheet for a transaction with a subcategory, switch to another
- * subcategory, save, and assert persistence (journal PATCH body).
+ * Canonical spec for editing a transaction's TOP-LEVEL category: open the
+ * edit sheet, switch to another category, save, and assert persistence
+ * (journal PATCH body carries the new categoryId).
+ *
+ * Honesty note (R2): the edit UI (TransactionEditSheet) models ONLY a
+ * single aggregated category select bound to `categoryId` — there is no
+ * subcategory picker in the edit flow, the PWA Transaction state has no
+ * `subcategoryId` field, and the fixture PATCH ignores it. Subcategory
+ * end-to-end (subcategoryId from creation through edit) is a documented
+ * follow-up, NOT claimed here. This spec proves top-level category edits
+ * stick (no snap-back) and persist.
  *
  * Seed (populated): tx-1 Supermercado, cat-1 (Alimentação), acc-1.
- * Categories: cat-1 Alimentação, cat-2 Transporte, cat-4 Sub-alimentação
- * (parentId cat-1), all kind expense.
+ * Categories: cat-1 Alimentação, cat-2 Transporte, both kind expense.
  * Fixed clock: 2026-07-17T12:00:00.000Z
  */
 
@@ -24,7 +31,7 @@ import {
 let counter = 0;
 function tid(): string {
   counter += 1;
-  return `edit-sub-${counter}`;
+  return `edit-cat-${counter}`;
 }
 
 async function init(page: import("@playwright/test").Page, id: string) {
@@ -34,7 +41,7 @@ async function init(page: import("@playwright/test").Page, id: string) {
   return guard;
 }
 
-test("[EDIT-SUB] edit transaction subcategory persists", async ({ page }) => {
+test("[EDIT-CAT] edit transaction top-level category persists", async ({ page }) => {
   const id = tid();
   const guard = await init(page, id);
 
@@ -51,12 +58,12 @@ test("[EDIT-SUB] edit transaction subcategory persists", async ({ page }) => {
   await expect(categorySelect).toBeVisible();
   await expect(categorySelect).toHaveValue("cat-1");
 
-  // Switch to the subcategory cat-4 (Sub-alimentação)
-  await categorySelect.selectOption("cat-4");
+  // Switch to the top-level category cat-2 (Transporte)
+  await categorySelect.selectOption("cat-2");
 
   // The edited value must stick (regression: the sheet used to snap back
   // to the original value ~500ms after any edit).
-  await expect(categorySelect).toHaveValue("cat-4");
+  await expect(categorySelect).toHaveValue("cat-2");
 
   // Save
   await page.getByRole("button", { name: "Salvar" }).click();
@@ -67,7 +74,7 @@ test("[EDIT-SUB] edit transaction subcategory persists", async ({ page }) => {
   // PATCH confirmed via journal
   await expectJournalEntry(id, "PATCH", "/transactions/tx-1", 200);
 
-  // Persistence: the PATCH body must carry the NEW subcategory
+  // Persistence: the PATCH body must carry the NEW top-level category
   await expect
     .poll(async () => {
       const entries = await getJournalEntries(id);
@@ -82,7 +89,7 @@ test("[EDIT-SUB] edit transaction subcategory persists", async ({ page }) => {
     .filter((e) => e.method === "PATCH" && e.path === "/transactions/tx-1" && e.status === 200)
     .at(-1);
   expect(patch).toBeDefined();
-  expect(patch!.body).toMatchObject({ categoryId: "cat-4" });
+  expect(patch!.body).toMatchObject({ categoryId: "cat-2" });
 
   assertNoUndeclaredFailures(guard);
 });

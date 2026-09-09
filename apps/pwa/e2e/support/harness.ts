@@ -26,11 +26,10 @@ export function rewriteCspForFixture(csp: string): string {
     csp
       .replace(/connect-src\s+([^;]+)/, `connect-src ${FIXTURE_URL} $1`)
       // Test-only: drop the build's per-response nonce and allow inline
-      // scripts. The product ships one inline theme bootstrap without a nonce
-      // (CSPDIAG 2026-09-09: 6 inline scripts, 5 nonced, 1 bare), which logs a
-      // console error that trips the failure guard. Keeping the nonce while
-      // adding 'unsafe-inline' would NOT work (browsers ignore unsafe-inline
-      // when a nonce is present), so the directive is replaced wholesale.
+      // scripts. Since fix 5513482 the product stamps its inline theme
+      // bootstrap with the per-request nonce (x-nonce), but a static rewrite
+      // cannot mint that nonce, so the directive is still replaced wholesale
+      // (browsers ignore 'unsafe-inline' when a nonce is present).
       .replace(/script-src\s+[^;]+/, "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:")
   );
 }
