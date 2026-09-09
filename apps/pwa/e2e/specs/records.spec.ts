@@ -195,6 +195,24 @@ test("[REC-05] edit transaction PATCH /transactions/:id", async ({ page }) => {
   // PATCH confirmed via journal
   await expectJournalEntry(id, "PATCH", "/transactions/tx-1", 200);
 
+  // Hardened: the PATCH body must carry the EDITED values (regression —
+  // the edit sheet used to snap back to the originals and send those).
+  await expect
+    .poll(async () => {
+      const entries = await getJournalEntries(id);
+      return entries.filter(
+        (e) => e.method === "PATCH" && e.path === "/transactions/tx-1" && e.status === 200,
+      );
+    })
+    .not.toHaveLength(0);
+
+  const patchEntries = await getJournalEntries(id);
+  const patch = patchEntries
+    .filter((e) => e.method === "PATCH" && e.path === "/transactions/tx-1" && e.status === 200)
+    .at(-1);
+  expect(patch).toBeDefined();
+  expect(patch!.body).toMatchObject({ description: "Mercado teste", amountCents: 200 });
+
   assertNoUndeclaredFailures(guard);
 });
 
