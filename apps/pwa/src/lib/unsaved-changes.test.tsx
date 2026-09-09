@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { renderHook, act } from "@testing-library/react";
-import { UnsavedChangesProvider, useUnsavedChanges } from "./unsaved-changes";
+import * as React from "react";
+import { render, renderHook, act } from "@testing-library/react";
+import {
+  UnsavedChangesProvider,
+  useFormDirtySafe,
+  useUnsavedChanges,
+} from "./unsaved-changes";
 
 describe("UnsavedChangesContext", () => {
   it("starts clean (not dirty)", () => {
@@ -55,5 +60,98 @@ describe("UnsavedChangesContext", () => {
 
     act(() => { cleanup(); });
     expect(result.current.isDirty).toBe(false);
+  });
+});
+
+describe("useFormDirtySafe — provider lifecycle edge cases", () => {
+  it("keeps stable markDirty/markClean identities across dirty cycles", () => {
+    const { result } = renderHook(() => useFormDirtySafe(), {
+      wrapper: UnsavedChangesProvider,
+    });
+    const { markDirty, markClean } = result.current;
+    expect(result.current.isDirty).toBe(false);
+
+    act(() => {
+      markDirty();
+    });
+    expect(result.current.isDirty).toBe(true);
+    expect(result.current.markDirty).toBe(markDirty);
+    expect(result.current.markClean).toBe(markClean);
+
+    act(() => {
+      markClean();
+    });
+    expect(result.current.isDirty).toBe(false);
+    expect(result.current.markDirty).toBe(markDirty);
+    expect(result.current.markClean).toBe(markClean);
+  });
+
+  it("operates as a local stub without a provider (no throw, stable identities)", () => {
+    // Documented contract: safe to call outside an UnsavedChangesProvider
+    // (isolated tests). Dirt lives in a local flag; nothing global changes.
+    const { result } = renderHook(() => useFormDirtySafe());
+    const markDirty = result.current.markDirty;
+    const markClean = result.current.markClean;
+    expect(result.current.isDirty).toBe(false);
+
+    act(() => {
+      markDirty();
+    });
+    expect(result.current.isDirty).toBe(true);
+    expect(result.current.markDirty).toBe(markDirty);
+    expect(result.current.markClean).toBe(markClean);
+
+    act(() => {
+      markClean();
+    });
+    expect(result.current.isDirty).toBe(false);
+    expect(result.current.markDirty).toBe(markDirty);
+    expect(result.current.markClean).toBe(markClean);
+  });
+
+  it("cleans its token on unmount so siblings and global state recover", () => {
+    const api: {
+      first?: ReturnType<typeof useFormDirtySafe>;
+      second?: ReturnType<typeof useFormDirtySafe>;
+      global?: boolean;
+    } = {};
+    function Form({ id }: { id: "first" | "second" }) {
+      api[id] = useFormDirtySafe();
+      return null;
+    }
+    function GlobalProbe() {
+      api.global = useUnsavedChanges().isDirty;
+      return null;
+    }
+    const { rerender } = render(
+      <UnsavedChangesProvider>
+        <Form key="first" id="first" />
+        <Form key="second" id="second" />
+        <GlobalProbe key="global" />
+      </UnsavedChangesProvider>,
+    );
+    const secondDirty = api.second!.markDirty;
+    const secondClean = api.second!.markClean;
+
+    // Dirty the first form only: global flips, sibling token stays clean.
+    act(() => {
+      api.first!.markDirty();
+    });
+    expect(api.global).toBe(true);
+    expect(api.second!.isDirty).toBe(false);
+
+    // Unmount the dirty first form (keys pin each instance, so exactly the
+    // dirty one unmounts): its cleanup clears the token, global recovers,
+    // and the sibling's helper identities never changed.
+    rerender(
+      <UnsavedChangesProvider>
+        <Form key="second" id="second" />
+        <GlobalProbe key="global" />
+      </UnsavedChangesProvider>,
+    );
+    expect(api.global).toBe(false);
+    expect(api.second!.isDirty).toBe(false);
+    expect(api.second!.markDirty).toBe(secondDirty);
+    expect(api.second!.markClean).toBe(secondClean);
   });
 });
