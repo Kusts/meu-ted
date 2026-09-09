@@ -11,6 +11,14 @@ import { test, expect } from "@playwright/test";
 import { prepareSpec } from "../support/harness";
 import { assertNoUndeclaredFailures } from "../support/failure-guard";
 
+// Cross-origin mocked API responses must carry CORS headers: the app calls
+// the absolute fixture origin with credentials:include, so a fulfill without
+// ACAO + ACA-Credentials is rejected by the browser (Failed to fetch).
+const MOCK_CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "http://127.0.0.1:3000",
+  "Access-Control-Allow-Credentials": "true",
+};
+
 let counter = 0;
 function tid(): string {
   counter += 1;
@@ -59,6 +67,7 @@ async function setupMockApi(page: import("@playwright/test").Page, config: ApiMo
       return route.fulfill({
         status: 200,
         contentType: "application/json",
+        headers: MOCK_CORS_HEADERS,
         body: JSON.stringify({ deviceId: "dev-1", householdId: config.sharedWsId }),
       });
     }
@@ -69,6 +78,7 @@ async function setupMockApi(page: import("@playwright/test").Page, config: ApiMo
       return route.fulfill({
         status: 200,
         contentType: "application/json",
+        headers: MOCK_CORS_HEADERS,
         body: JSON.stringify({
           items: [
             { userId: "usr-owner-1", name: "Alice Owner", email: "owner@example.test", role: isOwner ? "owner" : "member" },
@@ -87,12 +97,14 @@ async function setupMockApi(page: import("@playwright/test").Page, config: ApiMo
         return route.fulfill({
           status: res.status,
           contentType: "application/json",
+          headers: MOCK_CORS_HEADERS,
           body: JSON.stringify(res.body),
         });
       }
       return route.fulfill({
         status: 200,
         contentType: "application/json",
+        headers: MOCK_CORS_HEADERS,
         body: JSON.stringify({ success: true, inviteId }),
       });
     }
@@ -102,6 +114,7 @@ async function setupMockApi(page: import("@playwright/test").Page, config: ApiMo
       return route.fulfill({
         status: 200,
         contentType: "application/json",
+        headers: MOCK_CORS_HEADERS,
         body: JSON.stringify({ items, total: items.length }),
       });
     }
@@ -115,12 +128,14 @@ async function setupMockApi(page: import("@playwright/test").Page, config: ApiMo
         return route.fulfill({
           status: res.status,
           contentType: "application/json",
+          headers: MOCK_CORS_HEADERS,
           body: JSON.stringify(res.body),
         });
       }
       return route.fulfill({
         status: 200,
         contentType: "application/json",
+        headers: MOCK_CORS_HEADERS,
         body: JSON.stringify({ id: transferId, status: "accepted" }),
       });
     }
@@ -130,6 +145,7 @@ async function setupMockApi(page: import("@playwright/test").Page, config: ApiMo
       return route.fulfill({
         status: 200,
         contentType: "application/json",
+        headers: MOCK_CORS_HEADERS,
         body: JSON.stringify({ items, total: items.length }),
       });
     }
@@ -138,6 +154,7 @@ async function setupMockApi(page: import("@playwright/test").Page, config: ApiMo
       return route.fulfill({
         status: 200,
         contentType: "application/json",
+        headers: MOCK_CORS_HEADERS,
         body: JSON.stringify({
           items: [
             { id: config.sharedWsId, name: "Empresa Compartilhada", kind: "shared", role: config.getRole(), status: "active" },
@@ -148,24 +165,24 @@ async function setupMockApi(page: import("@playwright/test").Page, config: ApiMo
     }
 
     // Bootstrap endpoints for app sync & background polling
-    if (pathname.includes("/transactions")) return route.fulfill({ status: 200, contentType: "application/json", body: emptyList });
-    if (pathname.includes("/accounts")) return route.fulfill({ status: 200, contentType: "application/json", body: emptyArray });
-    if (pathname.includes("/categories")) return route.fulfill({ status: 200, contentType: "application/json", body: emptyArray });
-    if (pathname.includes("/records")) return route.fulfill({ status: 200, contentType: "application/json", body: emptyList });
-    if (pathname.includes("/cards")) return route.fulfill({ status: 200, contentType: "application/json", body: emptyArray });
-    if (pathname.includes("/budgets")) return route.fulfill({ status: 200, contentType: "application/json", body: emptyArray });
-    if (pathname.includes("/goals")) return route.fulfill({ status: 200, contentType: "application/json", body: emptyArray });
-    if (pathname.includes("/subscriptions")) return route.fulfill({ status: 200, contentType: "application/json", body: emptyArray });
-    if (pathname.includes("/payables")) return route.fulfill({ status: 200, contentType: "application/json", body: emptyArray });
-    if (pathname.includes("/pending-operations")) return route.fulfill({ status: 200, contentType: "application/json", body: emptyList });
-    if (pathname.includes("/profile")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ profile: null }) });
-    if (pathname.includes("/alerts/price")) return route.fulfill({ status: 200, contentType: "application/json", body: emptyList });
-    if (pathname.includes("/audit")) return route.fulfill({ status: 200, contentType: "application/json", body: emptyList });
-    if (pathname.includes("/push/vapid-public-key")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ publicKey: "mock-key" }) });
-    if (pathname.includes("/auth/agent-token")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ token: "mock-token", expiresIn: 90 }) });
+    if (pathname.includes("/transactions")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyList });
+    if (pathname.includes("/accounts")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
+    if (pathname.includes("/categories")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
+    if (pathname.includes("/records")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyList });
+    if (pathname.includes("/cards")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
+    if (pathname.includes("/budgets")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
+    if (pathname.includes("/goals")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
+    if (pathname.includes("/subscriptions")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
+    if (pathname.includes("/payables")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
+    if (pathname.includes("/pending-operations")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyList });
+    if (pathname.includes("/profile")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: JSON.stringify({ profile: null }) });
+    if (pathname.includes("/alerts/price")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyList });
+    if (pathname.includes("/audit")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyList });
+    if (pathname.includes("/push/vapid-public-key")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: JSON.stringify({ publicKey: "mock-key" }) });
+    if (pathname.includes("/auth/agent-token")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: JSON.stringify({ token: "mock-token", expiresIn: 90 }) });
 
     if (pathname.startsWith("/api/")) {
-      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+      return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: "{}" });
     }
 
     return route.continue();

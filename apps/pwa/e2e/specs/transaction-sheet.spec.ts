@@ -187,17 +187,18 @@ test("[TX-04] save transfer via POST /transfers with invalid same account reject
   // Origin only
   await contaCorrente.nth(0).click();
 
-  // Negative: missing destination — Transferir must not POST
-  await dialog.getByRole("button", { name: /^Transferir$/ }).click();
+  // Negative: missing destination — the product keeps Transferir disabled,
+  // which is a stronger no-POST guarantee than clicking; assert disabled.
+  await expect(dialog.getByRole("button", { name: /^Transferir$/ })).toBeDisabled();
   await expect(dialog).toBeVisible();
   let journal = await getJournal(id);
   expect(
     journal.filter((e) => e.method === "POST" && e.path === "/transfers"),
   ).toHaveLength(0);
 
-  // Negative: same account origin=destination — no POST
+  // Negative: same account origin=destination — still disabled, no POST
   await contaCorrente.nth(1).click();
-  await dialog.getByRole("button", { name: /^Transferir$/ }).click();
+  await expect(dialog.getByRole("button", { name: /^Transferir$/ })).toBeDisabled();
   await expect(dialog).toBeVisible();
   journal = await getJournal(id);
   expect(
@@ -256,8 +257,9 @@ test("[TX-06] add subcategory inline via create endpoint", async ({ page }) => {
   await catSheet.getByRole("button", { name: /Nova subcategoria em Alimentação/ }).click();
   await expect(catSheet.getByPlaceholder("Nome da subcategoria")).toBeVisible();
 
-  // Negative: blank cancel
-  await catSheet.getByRole("button", { name: "Cancelar" }).click();
+  // Negative: blank cancel. The sheet unmounts on cancel (close animation
+  // detaches the button mid-click), so force-dispatch and assert the outcome.
+  await catSheet.getByRole("button", { name: "Cancelar" }).click({ force: true });
   await expect(catSheet.getByPlaceholder("Nome da subcategoria")).toHaveCount(0);
 
   await catSheet.getByRole("button", { name: /Nova subcategoria em Alimentação/ }).click();
@@ -313,8 +315,9 @@ test("[TX-08] add card inline via create endpoint", async ({ page }) => {
   const guard = await init(page, id);
 
   const dialog = await openTransactionSheet(page);
-  // Origin sheet (Cartão tab) hosts the inline card form
-  await dialog.getByRole("button", { name: "Cartão" }).click();
+  // Origin sheet (Cartão tab) hosts the inline card form. The "Selecionar
+  // conta ou cartão" button contains "cartão" as substring — match exactly.
+  await dialog.getByRole("button", { name: "Cartão", exact: true }).click();
   await dialog.getByRole("button", { name: "Selecionar conta ou cartão" }).click();
   const originSheet = page.getByRole("dialog").last();
   const novoCard = originSheet.getByRole("button", { name: "Novo cartão" });
@@ -354,8 +357,9 @@ test("[TX-09] save installments via POST /cards/installments with invalid count 
   const dialog = await openTransactionSheet(page);
   await typeAmount(dialog, "600000");
   await dialog.getByPlaceholder("Ex: Aluguel, mercado...").fill("Notebook E2E");
-  // Card origin first (installments only exist on card origin)
-  await dialog.getByRole("button", { name: "Cartão" }).click();
+  // Card origin first (installments only exist on card origin).
+  // Exact match: "Selecionar conta ou cartão" also contains the substring.
+  await dialog.getByRole("button", { name: "Cartão", exact: true }).click();
   await dialog.getByRole("button", { name: "Selecionar conta ou cartão" }).click();
   const originSheet = page.getByRole("dialog").last();
   // Seed card is named "Nubank"

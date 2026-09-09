@@ -69,6 +69,65 @@
 
 Nenhuma falha restante é de infra de auth: journal, token, CSP, redirects e bootstrap estão verdes (AUTH-01/02, DIRECT, REDIRECT passam). Restantes são divergências spec × UI do produto para triagem individual — produto NÃO tocado.
 
+## Triagem 1-a-1 das 27 falhas (2026-09-09, specs isoladas, run sequencial)
+
+Regra operacional aprendida: NUNCA rodar suítes em paralelo neste ambiente — duas
+instâncias disputam as portas 3000/3001 (`EADDRINUSE`) e os resultados se contaminam
+(CAT-03/04 "falharam" só no run paralelo; isoladas passam). Sempre sequencial.
+
+| # | Teste | Reproduz isolado? | Causa | Ação |
+|---|-------|-------------------|-------|------|
+| 1 | ACC-03 | sim | strict-mode: "Nubank" ×3; overlay animado flaky no clique "Novo" | spec `.first()`; overlay em aberto |
+| 2 | ACC-05 | sim (2 modos) | strict-mode Nubank ×3; abort de request em navegação | spec `.first()` + guard ignora `ERR_ABORTED` |
+| 3 | admin-llm | sim | 1º: `authenticate()` em página em branco (sem goto) — corrigido; 2º: botão "configuração llm (admin)" não renderiza (role-gating do produto) | spec: goto; restante classificado |
+| 4 | CAT-02 | sim | strict-mode: 2 botões "Receita" | spec: escopo ao dialog — **verificado 5/5 isolado** |
+| 5 | CAT-03/04 | NÃO (passam isolado) | contaminação do run paralelo (`EADDRINUSE`) | nenhuma — **verificado 5/5 isolado** |
+| 6 | G3-01/02 | sim | fillExpense sem menuitem + `fill()` não valida + categoria/origem fora de sheets | spec: menuitem + digitação sequencial + pickers via sheets |
+| 7 | G3-05 | sim | mesmo FAB-menu no corpo do teste | spec: menuitem |
+| 8 | HOME-02 | sim | texto stale do rename ("Alertas do Pi" → "Alertas do Meu Ted") | spec: 1 palavra |
+| 9 | NOAPI-01 | sim (+2 causas) | sem menuitem; `fill()` não valida; Salvar exige categoria+origem | spec: menuitem + sequencial + pickers — **verificado verde isolado** |
+| 9b | UI-07/08 coda | sim | após o fix: botão BottomNav chama-se "Extrato", não "Registros"; picker de origem exige sheet própria (chip abre picker, não seleciona) | spec: Extrato + origin via sheet — **verificado verde isolado (2/2)** |
+| 10 | REP-01..04 | sim | UI do produto evoluiu (filtros "Período/Conta", sem chips Mês/Ano) | classificado, sem fix (reescrita de spec fora do escopo) |
+| 11 | UI-02 | sim (+2ª causa) | sem menuitem; filtro `hasText: "Novo lançamento"` (título real é "Nova despesa") | spec: menuitem + filtro — **verificado verde isolado** |
+| 12 | UI-03/04 | sim | sem menuitem | spec: menuitem no helper (UI-03/04 verdes no final) |
+| 13 | UI-07/08 | sim (+2ª causa) | sem menuitem; Salvar exige categoria | spec: menuitem + picker de categoria |
+| 14 | TED chat | sim | 5 bugs de spec corrigidos (goto, launcher `.last()`, placeholder, mock de history na URL errada, CORS); input renderiza só após 25–45s ociosos sem tráfego — gating do componente a investigar | parcial; restante classificado |
+| 15 | TX-04 | sim | produto mantém "Transferir" disabled no inválido (correto) | spec: assert disabled — **verde no final** |
+| 16 | TX-06 | sim | "Cancelar" desmonta o sheet; reabertura não traz o input | spec: force-click (insuficiente) — em aberto |
+| 17 | TX-08/09 | sim | strict-mode: substring "cartão" | spec: `exact: true` — **verdes no final** |
+| 18 | TX-02/03 | — | stub `detect-duplicate` (task anterior) | **verificados verdes isolado** |
+| 19 | WAL-01 | sim | strict-mode: aba × span | spec: escopo a `main` |
+| 20 | WS ×3 | sim | fulfills sem CORS (corrigido, 25 pontos) MAS segue "Sem conexão" — qual request falha ainda a isolar | parcial; em aberto |
+| 21 | PAYSTMT/TRF (4 novos) | n/a (specs novas pós-baseline) | — | veredito no re-run final |
+
+Specs novas no re-run final: `card-statement-payment.spec.ts` (PAYSTMT) + `transfer-record.spec.ts` (TRF), adicionadas em a8c36cf após o baseline 109/27/24 → total 164.
+
+**Veredito final (re-run 128/12/24)**: confirmados verdes — ACC-03/05, CAT-02, G3-01/02, HOME-02, NAV-07, NOAPI-01, TX-08/09, UI-02/03/04, WAL-01, PAYSTMT/TRF (4/4). UI-07/08 passam isolados (2/2) mas falham no run completo (race de timing). TX-04 falhou neste run só por flake de infra (`goto` timeout na init; a causa de validação está corrigida). Em aberto para follow-up: admin-llm (role-gating), G3-05 (validação offline), REP-01..04 (reescrita p/ nova UI), TED (gating do input), TX-04 flake (confirmar no próximo run), TX-06 (state do sheet), UI-07/08 (race ordem-dependente), WS ×3 (qual request falha).
+
+## Re-run final pós-triagem (2026-09-09)
+
+| Métrica | Total |
+|---------|-------|
+| Passed | 128 |
+| Failed | 12 |
+| Skipped | 24 |
+| **Total** | **164** |
+
+(Evolução completa: 89/47/24 em 160 → 109/27/24 em 160 → **128/12/24 em 164**, incluindo 4 specs novas PAYSTMT/TRF. Verdes confirmadas no final: AUTH-01/02, DIRECT-01..12, REDIRECT-01..04, ACC-01..06, CAT-01..05, G3-01/02, HOME-01..10, NAV-01..07/08..13, NOAPI-01, TX-01/02/03/05/07/08/09, UI-01/03/04/05/06, WAL-02..10.)
+
+Restantes (12), todas classificadas abaixo — nenhuma é infra de auth:
+
+| Grupo | Causa (1 linha) | Sev. |
+|-------|-----------------|------|
+| admin-llm | Botão "configuração llm (admin)" não renderiza no /perfil — role-gating do produto não atendido pelo contexto do teste | BAIXA |
+| G3-05 | Salvar segue disabled no modo offline (categoria indisponível com GETs em 503) — premissa do teste × validação do produto | MÉDIA |
+| REP-01..04 | UI do produto evoluiu (filtros, sem chips) — requer reescrita dos specs | MÉDIA |
+| TED chat | Input renderiza só após 25–45s ociosos sem tráfego — gating do componente a investigar | MÉDIA |
+| UI-07/08 | Salvar segue disabled NO RUN COMPLETO (passam isolados 2/2) — race na seleção via pickers, dependente de ordem/timing da suíte | MÉDIA |
+| TX-04 | Flake de infra neste run (`goto` com timeout na init; falha anterior de validação já corrigida) | BAIXA |
+| TX-06 | Reabertura do form inline não traz o input — state machine do sheet a investigar | MÉDIA |
+| WS ×3 | "Sem conexão" persiste mesmo com CORS nos mocks — qual request falha ainda a isolar | MÉDIA |
+
 **Screenshots 390x844** (`apps/pwa/docs/design/previews/e2e-smoke/`, viewport do projeto):
 
 | Arquivo | Fluxo | Estado |

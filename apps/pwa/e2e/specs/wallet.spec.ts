@@ -76,8 +76,9 @@ test("[WAL-01] open patrimonio tab → wallet page renders", async ({ page }) =>
 
   await expect(page).toHaveURL(/\/hub\/patrimonio/);
   await expect(page.getByText("Patrimônio líquido")).toBeVisible();
-  await expect(page.getByText("Contas", { exact: true })).toBeVisible();
-  await expect(page.getByText("Cartões", { exact: true })).toBeVisible();
+  // "Contas"/"Cartões" also label the tab buttons — scope to main content.
+  await expect(page.getByRole("main").getByText("Contas", { exact: true })).toBeVisible();
+  await expect(page.getByRole("main").getByText("Cartões", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: /Conta Corrente/ })).toBeVisible();
   await expect(page.getByRole("link", { name: /Nubank/ }).first()).toBeVisible();
   await assertNoUnexpectedWrites(id);

@@ -31,11 +31,21 @@ async function setScenario(testId: string, scenario: Record<string, unknown>): P
 }
 
 async function fillExpense(page: import("@playwright/test").Page, description: string): Promise<void> {
+  // Current UX: FAB opens a quick menu — pick Despesa to open the sheet.
+  await page.getByRole("menuitem", { name: "Despesa" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByPlaceholder("0,00").fill("5000");
+  // Amount needs sequential digit input to satisfy validation (plain fill()
+  // leaves Salvar disabled — same pattern as TX typeAmount).
+  const amount = dialog.getByPlaceholder("0,00");
+  await amount.click();
+  await amount.fill("");
+  await amount.pressSequentially("5000", { delay: 15 });
   await dialog.getByPlaceholder("Ex: Aluguel, mercado...").fill(description);
-  await dialog.getByRole("button", { name: "Alimentação" }).click();
-  await dialog.getByRole("button", { name: "Conta Corrente" }).click();
+  // Category/origin live in picker sheets (same pattern as TX-02).
+  await dialog.getByRole("button", { name: "Selecionar categoria" }).click();
+  await page.getByRole("dialog").last().getByRole("button", { name: "Alimentação" }).click();
+  await dialog.getByRole("button", { name: "Selecionar conta ou cartão" }).click();
+  await page.getByRole("dialog").last().getByRole("button", { name: /Conta Corrente/ }).click();
 }
 
 type DeferredRequest = {
@@ -154,7 +164,9 @@ test("[G3-05] offline snapshot is read-only", async ({ page }) => {
   await page.reload({ waitUntil: "networkidle" });
   await page.goto("/registros");
   await expect(page.getByTestId("stale-banner")).toBeVisible();
+  // Current UX: FAB opens a quick menu — pick Despesa to open the sheet.
   await page.getByLabel("Nova transação").click();
+  await page.getByRole("menuitem", { name: "Despesa" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByPlaceholder("0,00").fill("5000");
   await dialog.getByPlaceholder("Ex: Aluguel, mercado...").fill("G3 offline");

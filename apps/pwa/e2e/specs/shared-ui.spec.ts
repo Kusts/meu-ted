@@ -68,7 +68,9 @@ async function init(
 }
 
 async function dirtifyTxSheet(page: import("@playwright/test").Page) {
+  // Current UX: FAB opens a quick menu — pick Despesa to open the sheet.
   await page.getByLabel("Nova transação").click();
+  await page.getByRole("menuitem", { name: "Despesa" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   const amount = dialog.getByPlaceholder("0,00");
@@ -121,8 +123,8 @@ test("[UI-02] close dirty form shows confirm prompt", async ({ page }) => {
   const confirm = discardDialog(page);
   await expect(confirm).toBeVisible();
   await expect(confirm.getByText(/alterações não salvas/i)).toBeVisible();
-  // Sheet still open
-  await expect(page.getByRole("dialog").filter({ hasText: "Novo lançamento" })).toBeVisible();
+  // Sheet still open underneath (its title is "Nova despesa", not the menu name).
+  await expect(page.getByRole("dialog").filter({ hasText: "Nova despesa" })).toBeVisible();
   assertNoUndeclaredFailures(guard);
 });
 
@@ -260,13 +262,20 @@ test("[UI-07] write-error retry button → retry journal", async ({ page }) => {
   });
 
   await page.getByLabel("Nova transação").click();
+  await page.getByRole("menuitem", { name: "Despesa" }).click();
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
   const amount = sheet.getByPlaceholder("0,00");
   await amount.click();
   await amount.pressSequentially("5000", { delay: 10 });
   await sheet.getByPlaceholder("Ex: Aluguel, mercado...").fill("Falha E2E");
-  await sheet.getByRole("button", { name: "Conta Corrente" }).click();
+  // Salvar enables only with category + origin picked via their picker
+  // sheets (same as TX-02 — the bare "Conta Corrente" chip on the main
+  // sheet only opens the picker instead of selecting).
+  await sheet.getByRole("button", { name: "Selecionar categoria" }).click();
+  await page.getByRole("dialog").last().getByRole("button", { name: "Alimentação" }).click();
+  await sheet.getByRole("button", { name: "Selecionar conta ou cartão" }).click();
+  await page.getByRole("dialog").last().getByRole("button", { name: /Conta Corrente/ }).click();
   await sheet.getByRole("button", { name: /^Salvar$/ }).click();
 
   // Failed write keeps sheet open + dirty; discard to reach page chrome
@@ -275,7 +284,8 @@ test("[UI-07] write-error retry button → retry journal", async ({ page }) => {
   await expect(confirmClose).toBeVisible();
   await confirmClose.getByRole("button", { name: "Descartar" }).click();
 
-  await page.getByRole("button", { name: "Registros" }).click();
+  // BottomNav label is "Extrato" (navigates to /registros).
+  await page.getByRole("button", { name: "Extrato" }).click();
   await expect(page).toHaveURL(/\/registros/);
 
   const banner = page.getByTestId("write-error-banner");
@@ -311,12 +321,19 @@ test("[UI-08] write-error dismiss button → no retry", async ({ page }) => {
   });
 
   await page.getByLabel("Nova transação").click();
+  await page.getByRole("menuitem", { name: "Despesa" }).click();
   const sheet = page.getByRole("dialog");
   const amount = sheet.getByPlaceholder("0,00");
   await amount.click();
   await amount.pressSequentially("5000", { delay: 10 });
   await sheet.getByPlaceholder("Ex: Aluguel, mercado...").fill("Falha dismiss");
-  await sheet.getByRole("button", { name: "Conta Corrente" }).click();
+  // Salvar enables only with category + origin picked via their picker
+  // sheets (same as TX-02 — the bare "Conta Corrente" chip on the main
+  // sheet only opens the picker instead of selecting).
+  await sheet.getByRole("button", { name: "Selecionar categoria" }).click();
+  await page.getByRole("dialog").last().getByRole("button", { name: "Alimentação" }).click();
+  await sheet.getByRole("button", { name: "Selecionar conta ou cartão" }).click();
+  await page.getByRole("dialog").last().getByRole("button", { name: /Conta Corrente/ }).click();
   await sheet.getByRole("button", { name: /^Salvar$/ }).click();
 
   await sheet.getByRole("button", { name: "Fechar" }).click();
@@ -324,7 +341,8 @@ test("[UI-08] write-error dismiss button → no retry", async ({ page }) => {
   await expect(confirmClose).toBeVisible();
   await confirmClose.getByRole("button", { name: "Descartar" }).click();
 
-  await page.getByRole("button", { name: "Registros" }).click();
+  // BottomNav label is "Extrato" (navigates to /registros).
+  await page.getByRole("button", { name: "Extrato" }).click();
   await expect(page).toHaveURL(/\/registros/);
   await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout: 10000 });
 

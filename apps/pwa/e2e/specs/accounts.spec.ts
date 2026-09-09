@@ -61,7 +61,9 @@ test("[ACC-02] create cash account → POST /accounts", async ({ page }) => {
 test("[ACC-03] create card → POST /cards", async ({ page }) => {
   const id = tid(); const g = await init(page, id);
   await page.goto("/hub/patrimonio?aba=cartoes");
-  await expect(page.getByText("Nubank")).toBeVisible({ timeout: 10000 });
+  // The product renders the card name 3x (card header, subtitle, summary
+  // span) — assert on the first instead of tripping strict mode.
+  await expect(page.getByText("Nubank").first()).toBeVisible({ timeout: 10000 });
 
   await page.getByRole("button", { name: "Novo", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Novo cartão" })).toBeVisible({ timeout: 5000 });
@@ -107,7 +109,7 @@ test("[ACC-04] edit account detail sheet opens", async ({ page }) => {
 test("[ACC-05] edit card detail opens inline", async ({ page }) => {
   const id = tid(); const g = await init(page, id);
   await page.goto("/hub/patrimonio?aba=cartoes");
-  await expect(page.getByText("Nubank")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Nubank").first()).toBeVisible({ timeout: 10000 });
 
   // Tap Nubank card (clickable div, not button)
   await page.getByText("Nubank").first().click();

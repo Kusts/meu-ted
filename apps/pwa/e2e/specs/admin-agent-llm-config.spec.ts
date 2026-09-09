@@ -73,7 +73,10 @@ test.describe("Admin Agent LLM Configuration", () => {
       });
     });
 
-    await authenticate(page, id);
+    // authenticate() acts on the current page — land on the app first
+    // (prepareSpec deliberately does not navigate).
+    await page.goto("/");
+    await authenticate(page);
     await page.goto("/perfil");
 
     // Click Admin LLM Configuration option

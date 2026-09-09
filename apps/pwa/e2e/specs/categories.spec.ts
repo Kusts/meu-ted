@@ -45,7 +45,8 @@ test("[CAT-02] create income category → POST /categories", async ({ page }) =>
   await page.getByRole("button", { name: "Nova", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Nova categoria" })).toBeVisible({ timeout: 5000 });
   await page.getByPlaceholder("Ex: Alimentação, Salário...").fill("Freelance E2E");
-  await page.getByRole("button", { name: "Receita" }).click();
+  // Two "Receita" buttons exist on the page — scope to the open sheet.
+  await page.getByRole("dialog").last().getByRole("button", { name: "Receita" }).click();
   await page.getByRole("button", { name: "Salvar" }).click();
   await expectJournal(id, "POST", "/categories", 200);
   assertNoUndeclaredFailures(g);

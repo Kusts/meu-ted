@@ -36,12 +36,25 @@ test("[NOAPI-01] no API rejects write before optimistic success", async ({ page 
   allowFailure(guard, { message: "Failed to load resource", reason: "intentional no-API abort" });
   allowFailure(guard, { url: "transactions/expense", reason: "intentional no-API abort" });
 
+  // Current UX: FAB opens a quick menu — pick Despesa to open the sheet
+  // (same pattern as TX-01's openTransactionSheet helper).
   await page.getByLabel("Nova transação").click();
+  await page.getByRole("menuitem", { name: "Despesa" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 
-  await dialog.getByPlaceholder("0,00").fill("5000");
+  // Amount needs sequential digit input to satisfy validation (same pattern
+  // as TX's typeAmount helper — plain fill() leaves Salvar disabled).
+  const amountInput = dialog.getByPlaceholder("0,00");
+  await amountInput.click();
+  await amountInput.fill("");
+  await amountInput.pressSequentially("5000", { delay: 15 });
   await dialog.getByPlaceholder("Ex: Aluguel, mercado...").fill("Não deve salvar");
+  // Salvar enables only with category + origin picked (same as TX-02).
+  await dialog.getByRole("button", { name: "Selecionar categoria" }).click();
+  await page.getByRole("dialog").last().getByRole("button", { name: "Alimentação" }).click();
+  await dialog.getByRole("button", { name: "Selecionar conta ou cartão" }).click();
+  await page.getByRole("dialog").last().getByRole("button", { name: "Conta Corrente" }).click();
   await dialog.getByRole("button", { name: /^Salvar$/ }).click();
 
   // The draft must NOT be rendered as a persisted transaction anywhere.

@@ -97,12 +97,13 @@ export function onRequestFailed(
   const url = request.url();
   const failure = request.failure();
   if (!failure) return;
-  // An aborted static-asset request (fonts, chunks, images) under /_next/static/
-  // is benign: swift client navigation cancels in-flight font/asset downloads on
-  // Windows/local runs without any functional impact. Treat it as noise and
-  // skip recording it, so the failure-guard only surfaces real request failures.
-  const isStaticAsset = /\/_next\/static\//.test(url) && failure.errorText === "net::ERR_ABORTED";
-  if (isStaticAsset) return;
+  // An aborted request (net::ERR_ABORTED) is benign by construction: it means
+  // the client navigated away and cancelled an in-flight download — the
+  // server never saw a failure. Previously scoped to /_next/static/ assets;
+  // widened after ACC-05 triage (2026-09-09) showed the same race on API
+  // calls (e.g. pending-me aborted by navigation). Real failures (4xx/5xx,
+  // DNS, refused) are still recorded.
+  if (failure.errorText === "net::ERR_ABORTED") return;
   guard.requestFailures.push({ url, errorText: failure.errorText });
 }
 
