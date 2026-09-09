@@ -36,7 +36,10 @@ type MigrationManifestEntry = {
 // V046 = transaction notes; V047 = statement uniqueness + card purchase
 // metadata; V049 = legacy category uniqueness (dual-schema DO block: no-op
 // on canonical where V048 already ran, legacy dedupe + unique index
-// otherwise). V048 is deliberately NOT here (canonical-only: needs
+// otherwise). V050 = canonical users.phone compat column (ADD COLUMN IF
+// NOT EXISTS: adds the legacy-only column canonically so the invite accept
+// INSERT works on both schemas; strict no-op on legacy where phone already
+// exists). V048 is deliberately NOT here (canonical-only: needs
 // categories.status); see LEGACY_EXCLUDED_JUSTIFICATIONS and
 // docs/ops/v048-legacy-boot-decision.md.
 // The canonical V001/V002/V004-V007 and modern workspace/auth migrations V013-V031
@@ -62,6 +65,7 @@ export const LEGACY_SAFE_PREFIXES = [
   "V046",
   "V047",
   "V049",
+  "V050",
 ];
 
 /**

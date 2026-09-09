@@ -16,7 +16,8 @@ const ensureApplicationUser = async (pool: Pool, authUserId: string): Promise<st
   // email-based app users (real phone binding lives in user_phone_bindings).
   // Use the user's email as a deterministic unique phone fallback (users.email
   // is already UNIQUE via users_email_uidx) to satisfy NOT NULL + UNIQUE without
-  // colliding on ''.
+  // colliding on ''. The canonical schema provides the same column via V050
+  // (nullable compat, legacy no-op), so this INSERT runs on both schemas.
   const appUserResult = await queryInTransaction<Row>(pool,
     `INSERT INTO users (auth_user_id, email, name, phone, created_at)
      VALUES ($1, $2, $3, $2, $4)

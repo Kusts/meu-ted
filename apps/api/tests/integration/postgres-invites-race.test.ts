@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import Fastify from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
@@ -101,7 +102,7 @@ describe('Postgres invite race integration', () => {
     const create = await app.inject({
       method: 'POST',
       url: '/auth/invites',
-      headers: { origin: 'http://localhost:3000', cookie: ownerCookie },
+      headers: { origin: 'http://localhost:3000', cookie: ownerCookie, 'idempotency-key': randomBytes(16).toString('hex') },
       payload: { householdId: HOUSEHOLD_ID, email: ` ${MEMBER_EMAIL.toUpperCase()} `, role: 'member', expiresAt: '2030-01-01T00:00:00.000Z' },
     });
     expect(create.statusCode).toBe(201);

@@ -1,0 +1,44 @@
+-- V050: users.phone compatibility column for the canonical schema.
+--
+-- WHAT:
+--   Adds a nullable `phone` column to the canonical `users` table so the
+--   invite accept path (POST /auth/invites/accept) works on both schemas.
+--
+-- WHY (root cause):
+--   apps/api/src/auth/invites-postgres.ts (ensureApplicationUser + the
+--   acceptInvite transaction) runs
+--     INSERT INTO users (auth_user_id, email, name, phone, created_at)
+--     VALUES ($1, $2, $3, $2, $4) ...
+--   `users.phone` exists ONLY in the legacy VPS schema (phone TEXT NOT NULL,
+--   no DEFAULT, users_phone_key UNIQUE — inherited from the original
+--   phone allow-list in docs/migrations/001_initial_schema.sql), while the
+--   canonical V020 users table (id, auth_user_id, email, name, status,
+--   created_at) never had it. On a canonical database the accept therefore
+--   failed with `column "phone" of relation "users" does not exist`
+--   (smoke E2E worked around it with a direct memberships INSERT).
+--
+-- WHY NOT JUST DROP phone FROM THE INSERT (option (a)):
+--   The same code runs in production against the legacy schema, where
+--   `phone` is TEXT NOT NULL without a DEFAULT — omitting it breaks the
+--   legacy accept with 23502 (incident 2026-09-01, fixed by commits
+--   f217185/c670ae9 with the email-as-phone fallback). Removing the column
+--   reference is NOT legacy-safe; adding the column canonically is.
+--
+-- PRODUCT NOTE: canonical `users.phone` is compatibility-only. Real phone
+--   binding lives in user_phone_bindings (V030) and profile display phone
+--   lives in profiles (V010/V011). The invite code keeps writing the
+--   deterministic email-as-phone fallback (emails are UNIQUE, so the legacy
+--   users_phone_key UNIQUE is satisfied on both schemas). Nothing reads
+--   users.phone on the canonical path.
+--
+-- LEGACY_SAFE: yes. `ADD COLUMN IF NOT EXISTS` is a strict no-op on legacy
+--   databases (phone already exists there with its NOT NULL/UNIQUE shape,
+--   which this migration does not touch). Nullable with no constraints on
+--   canonical: pre-existing canonical rows keep phone = NULL, every writer
+--   provides the value, so no backfill is needed.
+--
+-- OPERATIONAL ROLLBACK (forward-only runner, no down migrations):
+--   Dropping the column is only safe after confirming no code path
+--   references users.phone (today: invites-postgres.ts does, on purpose).
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
