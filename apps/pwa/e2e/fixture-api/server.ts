@@ -88,6 +88,11 @@ function handleCors(req: http.IncomingMessage, res: http.ServerResponse): boolea
   res.setHeader("Access-Control-Allow-Origin", ALLOWED_ORIGIN);
   res.setHeader("Access-Control-Allow-Methods", ALLOWED_METHODS);
   res.setHeader("Access-Control-Allow-Headers", ALLOWED_HEADERS);
+  // Required: the PWA apiFetch always sends `credentials: "include"`. Without
+  // this header the browser rejects every cross-origin fixture response
+  // (net::ERR_FAILED) even though the server processed it — the journal fills
+  // while the app sees "Failed to fetch" and AUTH-01 can never pass.
+  res.setHeader("Access-Control-Allow-Credentials", "true");
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -309,6 +314,14 @@ async function handleFixtureRequest(
       deviceId: store.seed.authRegister.deviceId,
       householdId: store.seed.authRegister.householdId,
     });
+    return;
+  }
+
+  if (pathname === "/auth/invites/pending-me" && method === "GET") {
+    // Fixture has no invites; empty set keeps the home bootstrap quiet
+    // (a 404 here logs a console error that trips the e2e failure guard).
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, { items: [], total: 0 });
     return;
   }
 
@@ -980,6 +993,112 @@ async function handleFixtureRequest(
   if (pathname === "/observability/adoption-events" && method === "POST") {
     journalPush(testId, method, pathname, body, 201);
     sendJson(res, 201, { ok: true });
+    return;
+  }
+
+  // ── Home bootstrap stubs ─────────────────────────────────────────────────
+  // The authenticated home fires these on load. The fixture has no data for
+  // them; empty-but-valid shapes keep the bootstrap quiet (a 404 here logs a
+  // console error that trips the e2e failure guard).
+
+  if (pathname === "/workspaces" && method === "GET") {
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, {
+      items: [
+        {
+          id: store.seed.householdId || "e2e-household-001",
+          name: "Casa",
+          kind: "personal",
+          role: "owner",
+          status: "active",
+        },
+      ],
+      total: 1,
+    } as unknown as Record<string, unknown>);
+    return;
+  }
+
+  if (pathname === "/pending-operations" && method === "GET") {
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, { items: [], total: 0 });
+    return;
+  }
+
+  if (pathname === "/analytics/kpis" && method === "GET") {
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, {
+      period: { from: "2026-06-17", to: "2026-07-17" },
+      previousPeriod: { from: "2026-05-18", to: "2026-06-16" },
+      netLiquidBalanceCents: 520000,
+      accountsTotalCents: 520000,
+      dueSoonCents: 0,
+      openInvoices: { committedCents: 0, limitCents: 500000, utilizationPct: 0 },
+      savingsRatePct: null,
+      savingsRateTargetPct: 20,
+      previousSavingsRatePct: null,
+      fixedVsDiscretionary: {
+        scope: "household",
+        fixedCents: 0,
+        discretionaryCents: 17500,
+        fixedPctOfIncome: null,
+        subscriptionsCents: 5590,
+      },
+      incomeCents: 0,
+      expenseCents: 17500,
+      previousIncomeCents: 0,
+      previousExpenseCents: 0,
+      netWorthCents: 520000,
+    } as unknown as Record<string, unknown>);
+    return;
+  }
+
+  if (pathname === "/analytics/cashflow-series" && method === "GET") {
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, {
+      period: { from: "2026-06-17", to: "2026-07-17" },
+      current: [],
+      previous: [],
+    } as unknown as Record<string, unknown>);
+    return;
+  }
+
+  if (pathname === "/analytics/category-breakdown" && method === "GET") {
+    const kindParam = new URL(req.url ?? "/", "http://localhost").searchParams.get("kind");
+    const kind = kindParam === "income" ? "income" : "expense";
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, {
+      period: { from: "2026-06-17", to: "2026-07-17" },
+      kind,
+      totalCents: 0,
+      slices: [],
+    } as unknown as Record<string, unknown>);
+    return;
+  }
+
+  if (pathname === "/analytics/budget-consumption" && method === "GET") {
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, { items: [] });
+    return;
+  }
+
+  if (pathname === "/analytics/daily-heatmap" && method === "GET") {
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, { endDate: "2026-07-17", weeks: [] } as unknown as Record<string, unknown>);
+    return;
+  }
+
+  if (pathname === "/analytics/net-worth-history" && method === "GET") {
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, { months: [] });
+    return;
+  }
+
+  if (pathname === "/transactions/detect-duplicate" && method === "POST") {
+    // Duplicate detector: fixture has no duplicates; report none so the
+    // save flow proceeds (a 404 here logs a console error that trips the
+    // e2e failure guard in TX-02/TX-03).
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, { duplicate_detected: false });
     return;
   }
 

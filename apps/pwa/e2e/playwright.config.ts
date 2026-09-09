@@ -104,6 +104,13 @@ export default defineConfig({
         PORT: String(NEXT_PORT),
         HOSTNAME: "127.0.0.1",
         NEXT_PUBLIC_PI_FINANCE_API_BASE_URL: `http://127.0.0.1:${FIXTURE_PORT}`,
+        // Root cause fix: the built client calls the relative /api/backend
+        // proxy (baked from .env.local at build time), so the runtime
+        // NEXT_PUBLIC_* env above never reaches the browser. The proxy route
+        // (/api/backend/[...path]) forwards to PWA_BACKEND_PROXY_ORIGIN,
+        // defaulting to production — point it at the fixture instead, or the
+        // fixture journal stays empty and AUTH-01 can never pass.
+        PWA_BACKEND_PROXY_ORIGIN: `http://127.0.0.1:${FIXTURE_PORT}`,
       },
     },
     {

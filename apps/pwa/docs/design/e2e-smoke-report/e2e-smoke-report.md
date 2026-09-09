@@ -18,50 +18,67 @@
 | G3-Gate (G3-01 a G3-05) | FAIL | MÉDIUM | Bloqueado por Falha de auth anterior | 5/5 g3-gate specs falham |
 | Budgets (BUD-01 a BUD-04) | FAIL | MÉDIUM | Bloqueado por Falha de auth anterior | 4/4 budgets specs falham |
 
-## Re-execução pós-fixes (2026-09-09)
+## Causa raiz do bloqueio de auth (2026-09-09, provada com evidência)
 
-**Ambiente**: Playwright `functional-mobile` (chromium headless), base URL `http://127.0.0.1:4010` (fixture API port 4010), serviceWorkers: `allow` no projeto functional-mobile.
+**Sintoma**: journal do fixture vazio para `POST /auth/devices/register`; FAB "Nova transação" nunca aparece; 160/160 specs falham no bootstrap. Produção saudável → causa no setup de teste, não no produto.
 
-**Resumo numérico da re-execução**:
+**Cadeia causal provada** (diagnóstico NETDIAG/CSPDIAG/RDIAG*, specs temporárias já removidas):
 
-| Metric | Count |
-|--------|-------|
-| Passed | 0 |
-| Failed | 3 |
-| Skipped | 19 |
-| Total run | 22 (AUTH-grep subset) |
+1. **Fixture sem `Access-Control-Allow-Credentials`** (causa principal): `apiFetch` sempre envia `credentials: "include"` (`src/lib/api/client.ts:145`). O fixture respondia `POST /auth/sign-in/email 200` (journal preenchia!) mas sem `ACA-Credentials: true` o browser rejeita a resposta cross-origin (`net::ERR_FAILED`, "Failed to fetch") — servidor processa, app nunca recebe. Fix: 1 header em `e2e/fixture-api/server.ts` (`handleCors`). Após o fix, sign-in 200 + register 200 + token `pi-finance:token` + home carregam (NETDIAG pós-fix).
+2. **Harness clicava em botão inexistente**: `authenticate()` (commit fccb56a) clicava em "Registrar" — o produto (`AuthGate.tsx`) só tem "Entrar". Revertido para o fluxo real: preencher e-mail/senha → Entrar → app chama sign-in + register.
+3. **CSP do build bloqueava inline script do produto**: 1 script inline de tema sem nonce × `script-src` com nonce → console error → failure-guard. Fix só no harness (`rewriteCspForFixture` neutraliza `script-src` para e2e; nonce presente anula `unsafe-inline`, por isso a diretiva é substituída).
+4. **Rotas 307 engolidas pelo `route.fulfill()`**: `fulfill` não processa redirect no browser — REDIRECT ficava na URL legada. Fix no harness: `fetch({ maxRedirects: 0 })` em documents + redirect client-side sintético (RDIAG5 prova CSP reescrita + fixture alcançável pós-redirect).
+5. **Rotas chamadas pelo app e ausentes no fixture** (implementadas no fixture, sem tocar produto): `GET /auth/invites/pending-me`, `GET /workspaces`, `GET /pending-operations`, 6× `GET /analytics/*`, `POST /transactions/detect-duplicate` — cada 404 logava console error e derrubava o guard.
+6. **Gate DIRECT contava bootstrap como escrita**: `assertNoUnexpectedWrites` excluía só o register; agora exclui também `POST /auth/sign-in/email` (bootstrap obrigatório).
+7. **Higiene**: `apps/pwa/playwright.config.ts` havia sido sobrescrito por engano (commit 18bdc4d) com config e2e apontando `baseURL` ao fixture (4010) — restaurado ao original (`scripts/offline-shell-spike`). Suíte real usa `apps/pwa/e2e/playwright.config.ts` (harness 3000 → Next 3001 → fixture 4010). `PWA_BACKEND_PROXY_ORIGIN` apontado ao fixture no `webServer` para o caso de build com base relativa `/api/backend`.
 
-**Falhas observadas**:
+**Resultado das correções verificadas isoladamente antes do re-run**: AUTH-01 ✅, AUTH-02 ✅, DIRECT-01..12 ✅ (12/12), REDIRECT-01/02/04 ✅; REDIRECT-03 exigiu ainda 1 ajuste de regex no spec (Next preserva `?cardId=..` antes de `&aba=`).
 
-1. **AUTH-01** `[e2e/specs/auth.spec.ts:37]` - `POST /auth/devices/register 200, token stored, home rendered`: Journal entry not found for registration. A sessão não persiste pois o fixture API não grava a entrada `authRegister` no journal — o fluxo de clique em "Registrar" está correto no harness, mas o dado de seed do fixture precisa de `DATABASE_URL` para PG real na VPS (porta 3101) ou seed data adequada.
+## Re-execução completa pós-fixes (2026-09-09)
 
-2. **AUTH-02** `[e2e/specs/auth.spec.ts:81]` - `GET /auth/devices/me 401, storage cleared, register screen`: Same root cause — journal vazio para a rota de validação de token.
+**Ambiente**: Playwright `functional-mobile` (chromium headless, viewport 390x844), `apps/pwa/e2e/playwright.config.ts`, fixture 4010 + Next 3001 + harness 3000 via `webServer`, 160 testes, 1 worker.
 
-3. **workspaces-multiuser** `[e2e/specs/workspaces-multiuser.spec.ts:291]` - Falha de autenticação na tela de aceitação de transferência de titularidade (elemento não encontrado após login).
+**Resumo numérico FINAL**:
 
-**Status por grupo de specs** (pós-fixes):
+| Métrica | Total |
+|---------|-------|
+| Passed | 109 |
+| Failed | 27 |
+| Skipped | 24 |
+| **Total** | **160** |
 
-| Grupo | Status | Observação |
-|-------|--------|-----------|
-| AUTH-01 | ⚠️ **FIXED‑IN-HARNESS** | Fluxo de device-registration implementado; pending fixture seed |
-| AUTH-02 | ⚠️ **FIXED‑IN-HARNESS** | Igual a AUTH-01 |
-| ACC/CARD/CAT | Blocked by auth | Depende de AUTH-01 resolver o journal |
-| DIRECT-01 a DIRECT-12 | ⚠️ **OK routes** | Navegação routes testam sem auth; CSP/blocking ainda interfere |
-| REDIRECT-01 a REDIRECT-04 | ✅ **Matrix aligned** | 12 rotas canônicas mapeadas corretamente |
-| NAV-01 a NAV-08 | ⚠️ **Depende de auth** | FAB quick menu navegação requer sessão ativa |
-| G3-Gate G3-01 a G3-05 | Blocked by auth | 5/5 goals specs falham idêntico |
-| Budgets BUD-01 a BUD-04 | Blocked by auth | 4/4 budgets specs falham idêntico |
-| Live-PWA admin | Skipped | Requer estado autenticado avançado |
-| Production-smoke | Skipped/Opt-in | Requer `E2E_PRODUCTION_SMOKE=1` |
+(Evolução: 89/47/24 no re-run anterior → 109/27/24. Corrigidos desta vez: DIRECT-01..12, REDIRECT-01..04, TX-02, TX-03, NAV-07, NAV-12. AUTH-01 e AUTH-02 verdes.)
 
-**Próximos passos para completar o relatório**:
+**Falhas por grupo** (1 linha de causa cada; nada de produto corrigido):
 
-1. Subir fixture API com seed populado adequado ou conectar DATABASE_URL → PG na VPS (3101) para registrar as entradas no journal
-2. Capturar screenshots 390x844 dos fluxos: login/home, registros, fatura cartão, compromissos, TED chat, analytics
-3. Se um fluxo não puder renderizar por falha de auth, capturar a tela que chegar e anotar no relatório
-4. Deletar arquivos temporários (.txt, logs)
-5. Commit + push origin/main
-6. Enviar worker_done exatamente uma vez
+| Grupo | Falhas | Causa (1 linha) | Sev. |
+|-------|--------|-----------------|------|
+| ACC-03, ACC-05 | 2 | Painel de detalhe do cartão nunca visível — fluxo UI do produto × localizadores do spec | MÉDIA |
+| admin-agent-llm-config | 1 | Tela de config LLM não visível para o usuário do teste | BAIXA |
+| CAT-02 | 1 | Strict-mode: 2 botões "Receita" renderizados — spec ambíguo × produto | BAIXA |
+| G3-01, G3-02, G3-05 | 3 | `fill` com timeout 45s — campos do form nunca acionáveis no cenário | MÉDIA |
+| HOME-02 | 1 | Sheet de notificações não abre ao tocar o sino | BAIXA |
+| NOAPI-01 | 1 | UI de rejeição offline não visível como esperado | BAIXA |
+| REP-01..04 | 4 | Stubs de `/analytics/*` retornam formas válidas porém vazias — chips/gráficos sem conteúdo ou rótulo divergente | MÉDIA |
+| UI-02, UI-03, UI-04, UI-07, UI-08 | 5 | Prompts de confirm-discard / retry de erro não visíveis ou clique com timeout | MÉDIA |
+| TED chat | 1 | Launcher/dialog do TED não visível no contexto da suíte | MÉDIA |
+| TX-04, TX-06 | 2 | Cliques com timeout nos fluxos inline de transferência/subcategoria | MÉDIA |
+| TX-08, TX-09 | 2 | Strict-mode: 2 botões "Cartão" no dialog — botões duplicados no produto | BAIXA |
+| WAL-01 | 1 | Elemento da página patrimônio não visível | BAIXA |
+| workspaces-multiuser ×3 | 3 | Card de proposta de titularidade não visível / clique com timeout | MÉDIA |
+
+Nenhuma falha restante é de infra de auth: journal, token, CSP, redirects e bootstrap estão verdes (AUTH-01/02, DIRECT, REDIRECT passam). Restantes são divergências spec × UI do produto para triagem individual — produto NÃO tocado.
+
+**Screenshots 390x844** (`apps/pwa/docs/design/previews/e2e-smoke/`, viewport do projeto):
+
+| Arquivo | Fluxo | Estado |
+|---------|-------|--------|
+| `s01-home.png` | home autenticada | renderizada (~121 KB) |
+| `s02-registros.png` | /registros | renderizada (~52 KB) |
+| `s03-fatura-cartao.png` | /hub/patrimonio?aba=cartoes | renderizada (~104 KB) |
+| `s04-compromissos.png` | /compromissos | renderizada (~79 KB) |
+| `s05-ted-chat.png` | TED chat (launcher + dialog) | renderizada (~121 KB) |
+| `s06-analytics.png` | /hub/relatorios | renderizada (~69 KB) |
 
 ## Observações Técnicas
 

@@ -45,11 +45,17 @@ async function setup(page: import("@playwright/test").Page, id: string) {
   });
 }
 
-/** Assert the fixture journal has no unexpected write entries (exclude auth registration). */
+/** Assert the fixture journal has no unexpected write entries (exclude auth bootstrap). */
 async function assertNoUnexpectedWrites(testId: string): Promise<void> {
   const journal = await getJournal(testId);
-  // Auth registration is required for bootstrap — exclude it
-  const writes = journal.filter((e) => e.method !== "GET" && e.path !== "/auth/devices/register");
+  // Email sign-in + device registration are required bootstrap for every
+  // authenticated spec (AuthGate always runs sign-in first) — exclude both.
+  const writes = journal.filter(
+    (e) =>
+      e.method !== "GET" &&
+      e.path !== "/auth/devices/register" &&
+      e.path !== "/auth/sign-in/email",
+  );
   expect(writes).toHaveLength(0);
 }
 
@@ -169,7 +175,10 @@ test("[REDIRECT-02] legacy /contas lands on /hub/patrimonio?aba=contas", async (
 test("[REDIRECT-03] legacy /cartoes?cardId=<id> preserves the detail param", async ({ page }) => {
   const id = tid("redirect"); const guard = await setup(page, id);
   await page.goto("/cartoes?cardId=card-1"); await registerDevice(page);
-  await expect(page).toHaveURL(/\/hub\/patrimonio\?aba=cartoes/);
+  // Next.js merges the preserved query with the redirect target; the
+  // original param comes first (?cardId=..&aba=cartoes), so match aba=
+  // in either position.
+  await expect(page).toHaveURL(/\/hub\/patrimonio\?([^&]*&)?aba=cartoes/);
   expect(page.url()).toContain("cardId=card-1");
   assertNoUndeclaredFailures(guard);
 });
