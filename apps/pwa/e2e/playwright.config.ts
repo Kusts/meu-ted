@@ -24,7 +24,7 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${HARNESS_PORT}`,
     headless: true,
-    serviceWorkers: "block",
+    serviceWorkers: "allow",
     extraHTTPHeaders: {
       "x-e2e-test-id": "default-test",
     },

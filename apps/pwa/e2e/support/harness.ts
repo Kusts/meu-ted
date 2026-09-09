@@ -67,19 +67,19 @@ export async function authenticate(
   const fab = page.getByLabel("Nova transação");
   if (await fab.isVisible().catch(() => false)) return;
 
-  const emailInput = page.getByLabel("E-mail");
-  const passwordInput = page.getByLabel("Senha");
-  const loginBtn = page.getByRole("button", { name: "Entrar" });
+  // Phase 1: use device-registration flow (fixture provides authRegister).
+  // The PWA API client reads the device token from localStorage
+  // ("pi-finance:token") after registration; the session is then
+  // authenticated and the FAB appears.
   const registerBtn = page.getByRole("button", { name: "Registrar" });
 
-  if (await emailInput.isVisible({ timeout: 4000 }).catch(() => false)) {
-    await emailInput.fill("test@example.com");
-    await passwordInput.fill("password123");
-    await loginBtn.click();
-  } else if (await registerBtn.isVisible({ timeout: 4000 }).catch(() => false)) {
+  if (await registerBtn.isVisible({ timeout: 4000 }).catch(() => false)) {
     await registerBtn.click();
+    await page.waitForLoadState("networkidle");
   }
 
+  // After click‑Registrar the fixture registers a device and stores
+  // the token in localStorage; wait for FAB to appear.
   await expect(fab).toBeVisible({ timeout });
 }
 

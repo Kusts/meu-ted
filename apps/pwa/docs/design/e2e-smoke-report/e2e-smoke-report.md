@@ -18,6 +18,20 @@
 | G3-Gate (G3-01 a G3-05) | FAIL | MÉDIUM | Bloqueado por Falha de auth anterior | 5/5 g3-gate specs falham |
 | Budgets (BUD-01 a BUD-04) | FAIL | MÉDIUM | Bloqueado por Falha de auth anterior | 4/4 budgets specs falham |
 
+## Re-execução pós-fixes (2026-09-09)
+
+- `authenticate()` no `support/harness.ts` refeito para fluxo de device-registration (clique em "Registrar" antes de login email/senha)
+- `playwright.config.ts` atualizado: `serviceWorkers` alterado de `"block"` para `"allow"` no projeto `functional-mobile`
+- Fixture API na porta 4010 iniciada com seed populated contendo `authRegister`
+- Resultado esperado: AUTH-01 deve estabelecer sessão via token `pi-finance:localStorage` e FAB "Nova transação" deve aparecer
+- Status: testes ainda bloqueados — fixture API ou ambiente de seed pode precisar de DATABASE_URL apontando para PG real na VPS (porta 3101) para validar fluxo completo. Ver `e2e-seed.tmp.ts` para padrão de seed.
+
+| Fluxo | Status Pós-Fixes | Observação |
+|-------|-----------------|-----------|
+| AUTH-01 | PENDING | Aguardando fixture API ou seed real |
+| ACC/CARD/CAT | PENDING | Depende de AUTH-01 |
+| DIRECT/REDIRECT/NAV | PENDING | Depende de AUTH-01 |
+
 ## Observações Técnicas
 
 1. **Autenticação (nóde crítico)**: O `authenticate()` no `support/harness.ts` tenta logar com `test@example.com / password123` ou clicar em "Registrar". O fixture API (port 4010) tem dados populados incluindo `authRegister`, mas a sessão não persiste para o Playwright. O journal está vazio para `POST /auth/devices/register`, indicando que a rota nem é atingida ou a resposta não é gravada.
