@@ -1,22 +1,22 @@
 # E2E Smoke Report — Production-Like Validation (Windows, Nemotron 3.5 LT Free)
 
-## Execução
-- **Suite**: Playwright `functional-mobile` (chromium headless)
-- **Base URL**: `http://127.0.0.1:4010` (fixture API) com `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL`
-- **Testes**: 160 specs rodadas; todas falharam no mesmo estágio de autenticação
+## Execução (estado FINAL)
+- **Suíte**: Playwright `functional-mobile` (chromium headless, viewport 390x844), config `apps/pwa/e2e/playwright.config.ts`
+- **Topologia**: harness `http://127.0.0.1:3000` → Next standalone `:3001` → fixture API `:4010` (via `PWA_BACKEND_PROXY_ORIGIN`); o cliente chama o proxy relativo `/api/backend` (baked de `apps/pwa/.env.local`)
+- **Resultado FINAL (2026-09-09)**: **128 passed / 12 failed / 24 skipped em 164 testes** (inclui 4 specs novas PAYSTMT/TRF de `a8c36cf`)
 - **Data**: 2026-09-08 a 2026-09-09
+- **Evolução**: 160/160 falhando no bootstrap de auth (pré-fix, 2026-09-08) → 89/47/24 → 109/27/24 em 160 → **128/12/24 em 164** (pós-triagem `0bca478`). Detalhe por grupo em "Re-run final pós-triagem"; o estado pré-fix está preservado em "Histórico — estado pré-fix (resolvido em 72eda03)".
 
-## Resultado Resumido
+## Resultado Resumido (FINAL)
 
-| Fluxo | Status | Severidade | Causa Apparente | Evidência |
-|-------|--------|------------|-----------------|-----------|
-| Login / Registro (AUTH-01) | FAIL | MÉDIUM | Sessão não estabelecida — FAB "Nova transação" não visível após `authenticate()` | Trace zip disponível; journal vazio para POST /auth/devices/register; CSP rewrite aplicado mas session não persiste |
-| Conta/Cartão creation (ACC-01, CARD-01, CAT-01) | FAIL | MÉDIUM | Bloqueado por Falha de auth anterior — FAB nunca apareceu | 29/30 accounts/cards/categories specs falham idêntico |
-| Goals (GOAL-01 a GOAL-06) | FAIL | MÉDIUM | Bloqueado por Falha de auth anterior | 6/6 goals specs falham |
-| Home/perfil (HOME-01 a HOME-07) | FAIL | MÉDIUM | Bloqueado por Falha de auth anterior | 7/7 home specs falham |
-| Navigation (DIRECT-01 a DIRECT-07) | FAIL | MÉDIUM | Bloqueado por Falha de auth anterior; navigation specs testam routes sem auth mas CSP/blocking interfere | 7/7 navigation specs falham |
-| G3-Gate (G3-01 a G3-05) | FAIL | MÉDIUM | Bloqueado por Falha de auth anterior | 5/5 g3-gate specs falham |
-| Budgets (BUD-01 a BUD-04) | FAIL | MÉDIUM | Bloqueado por Falha de auth anterior | 4/4 budgets specs falham |
+| Métrica | Total |
+|---------|-------|
+| Passed | 128 |
+| Failed | 12 (todas classificadas — nenhuma é infra de auth) |
+| Skipped | 24 |
+| **Total** | **164** |
+
+Falhas restantes por grupo, causas e veredito: ver "Re-run final pós-triagem" (não renegociados aqui).
 
 ## Causa raiz do bloqueio de auth (2026-09-09, provada com evidência)
 
@@ -38,7 +38,7 @@
 
 **Ambiente**: Playwright `functional-mobile` (chromium headless, viewport 390x844), `apps/pwa/e2e/playwright.config.ts`, fixture 4010 + Next 3001 + harness 3000 via `webServer`, 160 testes, 1 worker.
 
-**Resumo numérico FINAL**:
+**Resumo numérico (intermediário — baseline da triagem)**:
 
 | Métrica | Total |
 |---------|-------|
@@ -97,12 +97,12 @@ instâncias disputam as portas 3000/3001 (`EADDRINUSE`) e os resultados se conta
 | 17 | TX-08/09 | sim | strict-mode: substring "cartão" | spec: `exact: true` — **verdes no final** |
 | 18 | TX-02/03 | — | stub `detect-duplicate` (task anterior) | **verificados verdes isolado** |
 | 19 | WAL-01 | sim | strict-mode: aba × span | spec: escopo a `main` |
-| 20 | WS ×3 | sim | fulfills sem CORS (corrigido, 25 pontos) MAS segue "Sem conexão" — qual request falha ainda a isolar | parcial; em aberto |
+| 20 | WS ×3 | sim | fulfills sem CORS (corrigido, 25 pontos) MAS segue "Sem conexão" — request isolado (Coder 2): `GET /api/backend/workspaces` no bootstrap; mecanismo em confirmação via experimento mínimo | parcial; em aberto — ver seção WS×3 |
 | 21 | PAYSTMT/TRF (4 novos) | n/a (specs novas pós-baseline) | — | veredito no re-run final |
 
 Specs novas no re-run final: `card-statement-payment.spec.ts` (PAYSTMT) + `transfer-record.spec.ts` (TRF), adicionadas em a8c36cf após o baseline 109/27/24 → total 164.
 
-**Veredito final (re-run 128/12/24)**: confirmados verdes — ACC-03/05, CAT-02, G3-01/02, HOME-02, NAV-07, NOAPI-01, TX-08/09, UI-02/03/04, WAL-01, PAYSTMT/TRF (4/4). UI-07/08 passam isolados (2/2) mas falham no run completo (race de timing). TX-04 falhou neste run só por flake de infra (`goto` timeout na init; a causa de validação está corrigida). Em aberto para follow-up: admin-llm (role-gating), G3-05 (validação offline), REP-01..04 (reescrita p/ nova UI), TED (gating do input), TX-04 flake (confirmar no próximo run), TX-06 (state do sheet), UI-07/08 (race ordem-dependente), WS ×3 (qual request falha).
+**Veredito final (re-run 128/12/24)**: confirmados verdes — ACC-03/05, CAT-02, G3-01/02, HOME-02, NAV-07, NOAPI-01, TX-08/09, UI-02/03/04, WAL-01, PAYSTMT/TRF (4/4). UI-07/08 passam isolados (2/2) mas falham no run completo (race de timing). TX-04 falhou neste run só por flake de infra (`goto` timeout na init; a causa de validação está corrigida). Em aberto para follow-up: admin-llm (role-gating), G3-05 (validação offline), REP-01..04 (reescrita p/ nova UI), TED (gating do input), TX-04 flake (confirmar no próximo run), TX-06 (state do sheet), UI-07/08 (race ordem-dependente), WS ×3 (request isolado — `GET /api/backend/workspaces`; mecanismo em confirmação — ver seção WS×3).
 
 ## Re-run final pós-triagem (2026-09-09)
 
@@ -126,7 +126,7 @@ Restantes (12), todas classificadas abaixo — nenhuma é infra de auth:
 | UI-07/08 | Salvar segue disabled NO RUN COMPLETO (passam isolados 2/2) — race na seleção via pickers, dependente de ordem/timing da suíte | MÉDIA |
 | TX-04 | Flake de infra neste run (`goto` com timeout na init; falha anterior de validação já corrigida) | BAIXA |
 | TX-06 | Reabertura do form inline não traz o input — state machine do sheet a investigar | MÉDIA |
-| WS ×3 | "Sem conexão" persiste mesmo com CORS nos mocks — qual request falha ainda a isolar | MÉDIA |
+| WS ×3 | "Sem conexão" persiste mesmo com CORS nos mocks — request isolado: `GET /api/backend/workspaces` no bootstrap; mecanismo em confirmação (ver seção WS×3) | MÉDIA |
 
 **Screenshots 390x844** (`apps/pwa/docs/design/previews/e2e-smoke/`, viewport do projeto):
 
@@ -139,25 +139,38 @@ Restantes (12), todas classificadas abaixo — nenhuma é infra de auth:
 | `s05-ted-chat.png` | TED chat (launcher + dialog) | renderizada (~121 KB) |
 | `s06-analytics.png` | /hub/relatorios | renderizada (~69 KB) |
 
-## Observações Técnicas
+## WS×3 — investigação read-only (Coder 2, 2026-09-09)
 
-1. **Autenticação (nóde crítico)**: O `authenticate()` no `support/harness.ts` tenta logar com `test@example.com / password123` ou clicar em "Registrar". O fixture API (port 4010) tem dados populados incluindo `authRegister`, mas a sessão não persiste para o Playwright. O journal está vazio para `POST /auth/devices/register`, indicando que a rota nem é atingida ou a resposta não é gravada.
+Escopo: read-only — nenhum código de produto ou spec alterado, nenhuma suíte executada (portas 3000/3001/4010 single-instance, via E2E com o Coder 1).
 
-2. **CSP Rewrite**: `applyCspRewrite(page)` aplica `connect-src http://127.0.0.1:4010` e `script-src 'unsafe-eval'`, mas parece não ser suficiente para manter a sessão ativa across navigations no modo headless com service workers bloqueados.
+**Request que falha**: `GET /api/backend/workspaces` (same-origin; base relativa `/api/backend` baked em `apps/pwa/.env.local:1`, proxy em `src/app/api/backend/[...path]/route.ts`) via `fetchWorkspaces()` (`src/lib/api/workspaces.ts:65-71` → `apiFetch` com `credentials: "include"`, `src/lib/api/client.ts:142-147`), disparado no bootstrap do `WorkspaceProvider` (`src/lib/auth/workspace-context.tsx:164`). O erro é exibido em `WorkspaceManagerPage.tsx:506-511` (alert + "Tentar novamente"); a lista fica vazia (`:553-560`, "0 total" / "Nenhum workspace ainda") e o badge vira "Sem conexão" (`WorkspaceSwitcher.tsx:108-144`).
 
-3. **Service Workers**: `serviceWorkers: "block"` no config — SWs bloqueados, mas o app depende de SW para estado persistente. A remoção temporária dos SWs ou o modo `allow` não resolveu.
+**Evidência (assinatura idêntica nos 3)**: `apps/pwa/test-results/specs-workspaces-multiuser-*/error-context.md` — alert "Failed to fetch" + retry, "0 total", "Nenhum workspace ainda". Sem `activeWorkspace`, os 3 alvos somem em cascata: heading "Convites pendentes" (`WorkspaceManagerPage.tsx:639`, exige workspace compartilhado ativo), botão "revogar convite…" (clique com timeout, teste 2) e "Proposta de Titularidade" (`:519-523`, exige `pendingTransferForMember`, `:157`).
 
-4. **PWA dev server**: O `next start --port 3001` (standalone server) não foi subido neste rodagem — o ambiente usa apenas o fixture API em 4010 + PWA build parado. A health checks de produção (PWA / 200 + title "Meu Ted", /pwa-control v3.3.0, Agent /health schemaVersion 5, API /health 200, 6 redirects legacy 200) foram validadas separadamente via `curl` externo e estão **VERDES**.
+**Excluído — CORS nos fulfills**: o run que gerou as evidências JÁ continha `MOCK_CORS_HEADERS` (o fonte do spec embutido no error-context o prova) e, além disso, o tráfego real do app é same-origin (`/api/backend`), onde `Access-Control-Allow-Origin/Credentials` nos mocks são irrelevantes.
 
-5. **Seed data**: O `e2e-seed.tmp.ts` (apps/api, NÃO rastreado) cria admin/member + workspaces usando DATABASE_URL + API real em 3101. Não foi rodado neste ciclo por exigir DB setup adicional; o fixture API já vem com `populated` seed contendo `authRegister`.
+**Hipótese mais provável — sombreamento de rota no spec**: `workspaces-multiuser.spec.ts:49` registra `page.route("**/*")` DEPOIS do `applyCspRewrite` (`e2e/support/harness.ts:158-201`). O Playwright dá precedência à rota registrada por último (playwright-core@1.61.1 `types.d.ts:4054`) e só `route.fallback()` encadeia para o próximo handler — `route.continue()` vai direto à rede. Consequências neste spec (o ÚNICO da suíte com catch-all próprio; todos os outros `page.route` usam padrões estreitos — `g3-gate`, `no-api`, `ted-chat-workspaces`, `admin-agent-llm-config`): (a) os documents nunca passam pelo rewrite de CSP (consistente com o erro de CSP que só este spec precisa tolerar, spec:199/252/314); (b) o mock responde até a requests não-API cujo pathname colide (`endsWith("/workspaces")` casa `/workspaces` de documents/RSC/prefetch). Agravante: qualquer mock-miss cai no caminho real via proxy, que NUNCA retorna dado do fixture porque o proxy descarta `x-e2e-test-id` (allowlist em `src/app/api/backend/[...path]/route.ts:24-44`) enquanto o fixture o exige (`e2e/fixture-api/server.ts:252-256`, 400 sem ele) — ou seja, o mock é load-bearing e o sombreamento o torna frágil.
 
-6. **Classificação de Severidade**: **MÉDIUM** — falha de integração entre fixture API + Playwright no Windows/Nemotron setup. Dados de seed existem e são válidos; a correção exigirá ajuste no harness ou do ambiente de teste, não em código de produto.
+**O que falta**: `apps/pwa/test-results/` retém só `error-context.md` (snapshots) — nenhum `trace.zip`/log de rede. Sem isso, o ponto exato de rejeição (browser × harness × proxy × fixture) não é fechável read-only.
 
-## Evidências Coletadas
+**Experimento mínimo (1 spec focado, NÃO executado)**: spec temporário replicando o teste 1 com mocks em padrão ESTREITO (`**/api/backend/**`, sem interceptar documents — o rewrite de CSP volta a valer) + `page.on("requestfailed"/"response")` logando a `GET /api/backend/workspaces` (status/errorText) + `trace: "on"`. Asserções: alert de erro AUSENTE e "1 total". Se verde → sombreamento confirmado (estreitar o padrão no spec real resolve); se ainda "Failed to fetch" → o `errorText` distingue falha TCP (contaminação de run paralelo / servidor fora) de HTTP (investigar proxy→fixture). Rodar sequencial, sem outra instância E2E nas portas 3000/3001/4010, e reter o trace.
 
-- **Traces**: `test-results/*/trace.zip` para cada spec executada (160 arquivos) — contêm screenshots de tela no ponto do failure
-- **Contexto de erro**: `error-context.md` em cada pastinha de teste — descreve `expect(received).toBeDefined()` recebendo `undefined` no `getByLabel('Nova transação')`
-- **Sprints**: Não geradas por falha de ambiente; será delegada correção de harness/ambiente
+## Histórico — estado pré-fix (resolvido em 72eda03)
+
+> Tudo abaixo descreve o estado de 2026-09-08, SUPERADO pelo commit `72eda03` (causa-raiz CORS + harness) e pela triagem `0bca478`. Mantido como registro — não usar para decisões.
+
+1. **Autenticação (nó crítico, RESOLVIDO)**: o `authenticate()` clicava em "Registrar" inexistente e o fixture não enviava `Access-Control-Allow-Credentials` — journal vazio para `POST /auth/devices/register`, FAB nunca aparecia, 160/160 falhavam no bootstrap. Ver "Causa raiz do bloqueio de auth" acima.
+2. **CSP Rewrite (RESOLVIDO no harness)**: `rewriteCspForFixture` hoje neutraliza `script-src` e prefixa `connect-src` com o fixture — era insuficiente antes do fix porque o bloqueio real era CORS, não CSP.
+3. **Service Workers (esclarecido)**: `serviceWorkers: "block"` no projeto `functional-mobile` é intencional; SW não era a causa.
+4. **Servidores do run (esclarecido)**: a topologia canônica é fixture 4010 + Next 3001 + harness 3000 via `webServer` (`apps/pwa/e2e/playwright.config.ts:87-124`). Fato ainda válido: probes de produção via `curl` externo estavam e seguem VERDES (PWA / 200 + title "Meu Ted", /pwa-control v3.3.0, Agent /health schemaVersion 5, API /health 200, 6 redirects legacy 200).
+5. **Seed data (fato ainda válido)**: `e2e-seed.tmp.ts` (apps/api, NÃO rastreado) cria admin/member + workspaces contra a API real em 3101; não roda neste ciclo (exige DB) — a suíte usa o seed `populated` do fixture, que já contém `authRegister`.
+6. **Severidade histórica**: MÉDIA — mesmo no pior momento, era falha de integração fixture↔Playwright no setup Windows, nunca de produto.
+
+## Evidências Coletadas (estado final)
+
+- **Falhas finais**: 12× `error-context.md` em `apps/pwa/test-results/*/` (snapshots + fonte do spec no ponto da falha). Nenhum `trace.zip` foi retido — coleta de rede é follow-up (ver WS×3 acima).
+- **Contexto de erro típico**: `expect(...).toBeVisible()` / `locator.click` com timeout após bootstrap incompleto; cada pasta documenta o caso.
+- **Screenshots**: `apps/pwa/docs/design/previews/e2e-smoke/` (tabela em "Re-run final pós-triagem").
 
 ## Cobertura canônica — Coder 2 (2026-09-09)
 
@@ -179,8 +192,11 @@ Restantes (12), todas classificadas abaixo — nenhuma é infra de auth:
 
 **Contrato TED (nesta lane):** `generate-agent-tools --check` acusava gerado defasado → regenerado `apps/agent/src/generated/http-tools.ts` (52 tools; `create_expense`/`create_income` ganharam `subcategoryId` + `notes`, conferindo com `NewTransactionSheet` — nada inventado) + header factual do `tool-capability-inventory.md` (apontava para `.pi/...` removido). Gates: `capabilities:check` 52/72 ✅, `write-policy:check` 176/176 ✅, `--check` ✅. Refs de tools em `agent-config/` conferidas contra o gerado (5 candidatos são tools locais legítimas: `web_search`, `web_fetch`, `remember_fact`, `recall`/`list_past_sessions`/`get_session_summary`).
 
-## Recomendações
+## Recomendações (estado final 2026-09-09)
 
-- **Não corrigir código de produto** — todas as falhas são no fluxo de teste/integração.
-- **Próximo passo**: Ajustar `authenticate()` no harness ou ajustar CSP/scenario no fixture API para garantir que `POST /auth/devices/register` seja gravado no journal.
-- **Manter**: Probes de produção (PWA, Agent, API) continuam verdes — documentadas em `docs/agent/2026-09-08-v049-api-release.md`.
+- **Decisão canônica**: fixture/harness corrigido (commit `72eda03`) em vez de apontar a suíte contra a API real local — as probes de produção separadas já validam a API real (verdes); o fixture determinístico mantém a suíte reproduzível.
+- **REC-05 é falso-positivo conhecido**: bug `TransactionEditSheet` (o select de edição reverte qualquer alteração; causa-raiz documentada em "Cobertura canônica" acima) — fix em andamento pelo Coder 1. Não confiar no verde atual do REC-05.
+- **EDIT-SUB pendente de reativação**: spec pronto para reativar assim que o produto segurar a edição (sem prometer status antes do fix).
+- **WS×3**: confirmar via experimento mínimo (seção acima) antes de qualquer alteração em spec ou produto.
+- **Regra operacional**: NUNCA rodar suítes em paralelo neste ambiente — portas 3000/3001/4010 são single-instance (`EADDRINUSE` contamina resultados; ver triagem). Sempre sequencial.
+- **Manter**: probes de produção (PWA, Agent, API) verdes — documentadas em `docs/agent/2026-09-08-v049-api-release.md`.
