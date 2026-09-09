@@ -75,7 +75,7 @@ Restam as conferências de higiene pós-rename:
 
 ### 2.4 Identidade da API na VPS (`pi-stack`, `~/infra/pi-finance-api`, `api.synkroo.com.br`)
 
-- **Estado:** release `9a7e988` deployado em 2026-09-07 com a identidade atual;
+- **Estado:** release `3cf4cba` (V049 legacy-safe) deployado em 2026-09-08 com a identidade atual (anterior `9a7e988` de 2026-09-07);
   o rename segue pendente de decisão do dono (janela + transição de hostname).
 
 - **Risco:** médio–alto. Renomear serviço/diretório exige restart com janela;
