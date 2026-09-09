@@ -139,25 +139,40 @@ export function useFormDirtySafe(): {
   const ctx = useContext(UnsavedChangesContext);
   const live = ctx !== null;
 
+  // Latest-context ref: the context *object* is recreated on every
+  // setDirtyTokens (provider value useMemo depends on dirtyTokens /
+  // isFormDirty). Depending on `ctx` directly would give the bound helpers
+  // below a new identity on every keystroke, and any consumer effect
+  // listing them as deps (e.g. the TransactionEditSheet sync effect) would
+  // re-run and reset the form to the original values (snap-back bug).
+  // Reading through the ref keeps markDirty/markClean STABLE across
+  // dirty-state changes; only a provider mount/unmount (live) or a new
+  // token changes their identity.
+  const ctxRef = useRef(ctx);
+  useEffect(() => {
+    ctxRef.current = ctx;
+  }, [ctx]);
+
   useEffect(() => {
     if (!live) return;
     return () => {
-      ctx!.markClean(token);
+      ctxRef.current?.markClean(token);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live]);
+  }, [live, token]);
 
   const isDirty = live ? ctx!.isFormDirty(token) : localDirty;
 
   const markDirty = useCallback(() => {
-    if (live) ctx!.markDirty(token);
+    const c = ctxRef.current;
+    if (c) c.markDirty(token);
     else setLocalDirty(true);
-  }, [live, ctx, token]);
+  }, [token]);
 
   const markClean = useCallback(() => {
-    if (live) ctx!.markClean(token);
+    const c = ctxRef.current;
+    if (c) c.markClean(token);
     else setLocalDirty(false);
-  }, [live, ctx, token]);
+  }, [token]);
 
   return { isDirty, markDirty, markClean };
 }
