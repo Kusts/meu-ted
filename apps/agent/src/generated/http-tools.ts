@@ -2845,6 +2845,26 @@ const specs = [
         }
       },
       {
+        "name": "subcategoryId",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      {
+        "name": "notes",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      {
         "name": "installmentsTotal",
         "in": "body",
         "required": false,
@@ -2957,6 +2977,26 @@ const specs = [
         "schema": {
           "type": "string",
           "format": "uuid"
+        }
+      },
+      {
+        "name": "subcategoryId",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      {
+        "name": "notes",
+        "in": "body",
+        "required": false,
+        "context": false,
+        "schema": {
+          "type": "string",
+          "maxLength": 2000
         }
       }
     ]
@@ -3704,6 +3744,8 @@ function createTool(spec: ToolSpec) {
     "amountCents": Type.Integer({"minimum":1}),
     "date": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "categoryId": Type.Optional(Type.String({"format":"uuid"})),
+    "subcategoryId": Type.Optional(Type.String({"format":"uuid"})),
+    "notes": Type.Optional(Type.String({"maxLength":2000})),
     "installmentsTotal": Type.Optional(Type.Integer({"minimum":1,"maximum":48})),
     "installmentNumber": Type.Optional(Type.Integer({"minimum":1,"maximum":48})),
   }),
@@ -3716,6 +3758,8 @@ function createTool(spec: ToolSpec) {
     "purchaseDate": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "installmentsTotal": Type.Integer({"minimum":1,"maximum":48}),
     "categoryId": Type.Optional(Type.String({"format":"uuid"})),
+    "subcategoryId": Type.Optional(Type.String({"format":"uuid"})),
+    "notes": Type.Optional(Type.String({"maxLength":2000})),
   }),
   "pay_statement": Type.Object({
     "householdId": Type.Optional(Type.String({})),

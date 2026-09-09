@@ -1,7 +1,7 @@
 # Tool capability inventory — G2.3.1 / G2.3.2 / G2.3.3
 
-**Snapshot:** 2026-07-31  
-**Source of truth for tool count:** `.pi/extensions/financial-tools/index.ts` — exactly 72 `registerTool` calls.  
+**Snapshot:** 2026-09-09  
+**Source of truth for tool count:** `apps/agent/src/generated/http-tools.ts` (regenerated via `scripts/generate-agent-tools.mjs` from `apps/api/openapi/agent-tools.openapi.json`) — 52 generated API tools; 72 classified rows total (51 api + 21 planned).  
 **API comparison:** `apps/api/src/routes/`.  
 **UI comparison:** canonical PWA pages under `apps/pwa/src/features/`.
 
