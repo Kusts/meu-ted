@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import { Plus_Jakarta_Sans, Space_Grotesk } from "next/font/google";
 import { RootProviders } from "@/components/RootProviders";
 import { THEME_SCRIPT } from "@/lib/theme";
@@ -60,11 +61,16 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Nonce issued per request by src/middleware.ts (x-nonce request header).
+  // The shipped CSP (buildCspValue) allows inline scripts ONLY with this
+  // nonce — without it the theme bootstrap below is blocked in production
+  // (HIGH #3). Layout is force-dynamic, so reading headers() is allowed.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     <html
       lang="pt-BR"
@@ -73,6 +79,7 @@ export default function RootLayout({
     >
       <head>
         <script
+          nonce={nonce}
           dangerouslySetInnerHTML={{
             __html: THEME_SCRIPT,
           }}
