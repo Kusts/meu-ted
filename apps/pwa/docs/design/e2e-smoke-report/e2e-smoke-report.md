@@ -100,6 +100,26 @@ Nenhuma falha restante é de infra de auth: journal, token, CSP, redirects e boo
 - **Contexto de erro**: `error-context.md` em cada pastinha de teste — descreve `expect(received).toBeDefined()` recebendo `undefined` no `getByLabel('Nova transação')`
 - **Sprints**: Não geradas por falha de ambiente; será delegada correção de harness/ambiente
 
+## Cobertura canônica — Coder 2 (2026-09-09)
+
+**Specs novos** (`apps/pwa/e2e/specs/`, projeto `functional-mobile`, viewport 390x844, fixture 4010 reutilizado — ciclo de vida do fixture intocado):
+
+| Spec | Resultado |
+|------|-----------|
+| [PAYSTMT-01] `card-statement-payment.spec.ts` — pagar fatura integral → `POST /cards/statements/stmt-1/pay` 200, sheet fecha | PASS |
+| [PAYSTMT-02] — após reload: badge "Paga" no histórico + CTA "Pagar fatura" desabilitado | PASS |
+| [TRF-01] `transfer-record.spec.ts` — transferência via FAB → `POST /transfers` 200, sheet fecha | PASS |
+| [TRF-02] — corpo do journal confere `description/amountCents/fromAccountId/toAccountId` (`Reserva mensal`, 25000, acc-1 → acc-2) | PASS |
+
+**Fluxos sem spec — motivo real (nada inventado):**
+
+- **(a) Edição com subcategoria — FLUXO EXISTE MAS QUEBRADO NO PRODUTO (bug, sem spec):** o `select#te-categoria` de "Editar lançamento" (`TransactionEditSheet.tsx`) reverte QUALQUER alteração. Snap-back imediato, sem flicker. Evidência de sonda E2E (spec temporário já removido): options `["","Sem categoria"],["cat-1","Alimentação"],["cat-2","Transporte"],["cat-4","Sub-alimentação"]`; após `selectOption("cat-4")`, `change` nativo disparou 1× mas valor ficou `cat-1` em 6 amostras/1,2 s; teclado confiável (`focus` + `s`) também ficou `cat-1`; `fill("XYZ probe")` em `#te-descricao` reverteu para `"Supermercado"` em 500 ms. Causa-raiz: `useEffect(..., [transaction, open, markClean])` (`TransactionEditSheet.tsx:46-57`) — `markClean` de `useFormDirtySafe` troca de identidade a cada dirty (`unsaved-changes.tsx`: `ctx` recriado via `useMemo` a cada `setDirtyTokens` → `markClean` recriado via `useCallback [live, ctx, token]`) → qualquer edição dispara `markDirty` → efeito re-roda → form resetado aos valores originais. Impacto colateral: **REC-05 é falso-positivo** (preenche descrição/valor, salva, mas o `PATCH` leva os valores ORIGINAIS — o spec nunca confere o corpo). Sugestão de lane: bugfix TDD em `TransactionEditSheet` (estabilizar deps do efeito) + endurecer REC-05 com asserção de corpo; spec EDIT-SUB pronto para reativar quando o produto segurar a edição.
+- **(b) Parcelamento fora do cartão — fluxo não implementado no produto:** UI de parcelas renderiza SOMENTE com `originKind === "card"` (`NewTransactionSheet.tsx:744-745`, `parcelado = !isTransfer && originKind === "card" && ...`, troca de origem reseta para 1×); API só tem `POST /cards/installments`. Spec não criado.
+- **(d) Recorrência de conta a pagar — fluxo não implementado no produto:** `NewPayableSheet` (`PayablesPage.tsx:31-126`) não tem campo de recorrência (só descrição/valor/vencimento/conta/categoria); `createPayable` aceita `type/frequency` opcional mas o fixture ignora e não expande ocorrências. (Recorrências de outro domínio — assinaturas — já têm `subscriptions.spec.ts`.) Spec não criado.
+- **(e) Transferência a terceiros — conceito inexistente; fluxo canônico existente coberto:** produto só transfere entre contas próprias (`fromAccountId/toAccountId`, sem destinatário externo — nem na API `apps/api`); TRF-01/02 pinam esse fluxo + registro correto.
+
+**Contrato TED (nesta lane):** `generate-agent-tools --check` acusava gerado defasado → regenerado `apps/agent/src/generated/http-tools.ts` (52 tools; `create_expense`/`create_income` ganharam `subcategoryId` + `notes`, conferindo com `NewTransactionSheet` — nada inventado) + header factual do `tool-capability-inventory.md` (apontava para `.pi/...` removido). Gates: `capabilities:check` 52/72 ✅, `write-policy:check` 176/176 ✅, `--check` ✅. Refs de tools em `agent-config/` conferidas contra o gerado (5 candidatos são tools locais legítimas: `web_search`, `web_fetch`, `remember_fact`, `recall`/`list_past_sessions`/`get_session_summary`).
+
 ## Recomendações
 
 - **Não corrigir código de produto** — todas as falhas são no fluxo de teste/integração.
