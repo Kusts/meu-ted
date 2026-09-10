@@ -310,4 +310,83 @@ describe('Fase 2 item 8 — dynamic relay allowlist (RED)', () => {
     expect(res.statusCode).toBe(504);
     expect(res.json()).toMatchObject({ code: 'agent.provider_timeout' });
   }, 10_000);
+
+  it('fails with 503 when openrouter provider is used but openrouterApiKey is missing', async () => {
+    registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN });
+    await app.ready();
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'openrouter', model: 'openai/gpt-4o-mini', prompt: 'hi' },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({
+      code: 'agent.provider_not_configured',
+      message: 'OPENROUTER_API_KEY não configurada na API.',
+    });
+  });
+
+  it('successfully relays to openrouter and parses OpenAI-compatible response', async () => {
+    const store = createInMemoryLlmConfigStore();
+    await store.upsertProvider({
+      id: 'openrouter', kind: 'openrouter', transport: 'direct', authMode: 'api-key',
+      secretAlias: 'OPENROUTER_API_KEY', eligibility: 'approved',
+    });
+    await store.setProviderEnabled('openrouter', true);
+    const m = await store.upsertModel({
+      providerId: 'openrouter', modelId: 'openai/gpt-4o-mini', protocol: 'chat-completions',
+      privacyClass: 'training_prohibited', enabled: true,
+    });
+    await store.setModelEnabled(m.id, true);
+
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN,
+      openrouterApiKey: 'test-openrouter-key',
+      llmConfigStore: store,
+    });
+    await app.ready();
+
+    let capturedUrl = '';
+    let capturedHeaders: Record<string, string> = {};
+    let capturedBody: unknown = null;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (url, init) => {
+      capturedUrl = String(url);
+      capturedHeaders = (init?.headers ?? {}) as Record<string, string>;
+      capturedBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: 'Olá do OpenRouter!' } }],
+          cost: 0.00001,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: {
+        provider: 'openrouter',
+        model: 'openai/gpt-4o-mini',
+        prompt: 'Olá assistente',
+        system: 'Você é o TED',
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      text: 'Olá do OpenRouter!',
+      model: 'openai/gpt-4o-mini',
+      provider: 'openrouter',
+      cost: 0.00001,
+    });
+    expect(capturedUrl).toBe('https://openrouter.ai/api/v1/chat/completions');
+    expect(capturedHeaders.authorization).toBe('Bearer test-openrouter-key');
+    expect(capturedBody).toEqual({
+      model: 'openai/gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'Você é o TED' },
+        { role: 'user', content: 'Olá assistente' },
+      ],
+    });
+  });
 });

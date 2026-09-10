@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import crypto from 'node:crypto';
 
 /**
  * Canonical alias → household resolver using the authoritative persistent source.
@@ -55,9 +56,6 @@ export const registerWorkspaceAliasRoutes = (
         const a = Buffer.from(provided, 'utf8');
         const b = Buffer.from(serviceToken, 'utf8');
         if (a.length === b.length) {
-          // timingSafeEqual evita oracle de tempo e resposta é não enumerável (mesmo 401 para ausente/incorreto)
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const crypto = require('node:crypto');
           valid = crypto.timingSafeEqual(a, b);
         }
       } catch {

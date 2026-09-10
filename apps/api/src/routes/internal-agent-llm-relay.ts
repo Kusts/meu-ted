@@ -4,7 +4,11 @@ import { safeCompareTokens as safeCompare } from '../auth/safe-compare.js';
 import { isKindExecutable } from '../agent/llm-config.js';
 
 const relayBody = z.object({
-  provider: z.literal('opencode-zen').or(z.literal('opencode-go')).or(z.literal('openai-api')),
+  provider: z
+    .literal('opencode-zen')
+    .or(z.literal('opencode-go'))
+    .or(z.literal('openai-api'))
+    .or(z.literal('openrouter')),
   model: z.string().trim().min(1).max(120),
   prompt: z.string().trim().min(1).max(16000),
   system: z.string().trim().max(8000).optional(),
@@ -19,6 +23,10 @@ const DEFAULT_ALLOWED_MODELS = new Set([
   'nemotron-3-ultra-free',
   'nemotron-3.5-lightning-free',
   'laguna-s-2.1-free',
+  // OpenRouter standard models fallback
+  'openai/gpt-4o-mini',
+  'deepseek/deepseek-chat',
+  'google/gemini-2.0-flash-001',
 ]);
 
 const RELAY_MODEL_CACHE_TTL_MS = 60_000;
@@ -93,6 +101,8 @@ export const registerAgentLlmRelayRoutes = (
     zenApiKey?: string;
     /** H-02: real OpenAI parity — relay executes openai-api upstream instead of only allowlisting it. */
     openaiApiKey?: string;
+    /** OpenRouter parity — relay executes openrouter upstream. */
+    openrouterApiKey?: string;
     llmConfigStore?: RelayModelSource;
     cacheTtlMs?: number;
     now?: () => number;
@@ -121,11 +131,22 @@ export const registerAgentLlmRelayRoutes = (
     // H-02: each relayable provider needs its own key — a missing key fails
     // closed before any upstream call.
     const isOpenAi = provider === 'openai-api';
-    const providerApiKey = isOpenAi ? deps.openaiApiKey : deps.zenApiKey;
+    const isOpenRouter = provider === 'openrouter';
+    const isOpenAiCompatible = isOpenAi || isOpenRouter;
+    const providerApiKey = isOpenAi
+      ? deps.openaiApiKey
+      : isOpenRouter
+        ? (deps.openrouterApiKey ?? process.env.OPENROUTER_API_KEY)
+        : deps.zenApiKey;
     if (!providerApiKey) {
+      const missingEnv = isOpenAi
+        ? 'OPENAI_API_KEY'
+        : isOpenRouter
+          ? 'OPENROUTER_API_KEY'
+          : 'OPENCODE_ZEN_API_KEY';
       return reply.code(503).send({
         code: 'agent.provider_not_configured',
-        message: isOpenAi ? 'OPENAI_API_KEY não configurada na API.' : 'OPENCODE_ZEN_API_KEY não configurada na API.',
+        message: `${missingEnv} não configurada na API.`,
       });
     }
 
@@ -152,14 +173,17 @@ export const registerAgentLlmRelayRoutes = (
       ? 'https://opencode.ai/zen/v1'
       : provider === 'opencode-go'
         ? 'https://opencode.ai/zen/go/v1'
-        : 'https://api.openai.com/v1';
+        : provider === 'openrouter'
+          ? 'https://openrouter.ai/api/v1'
+          : 'https://api.openai.com/v1';
     // H-02: allowlisted upstream origins only (H-06) — never a caller-supplied URL.
-    const upstreamUrl = isOpenAi ? `${baseUrl}/chat/completions` : `${baseUrl}/responses`;
-    const upstreamHeaders = {
+    const upstreamUrl = isOpenAiCompatible ? `${baseUrl}/chat/completions` : `${baseUrl}/responses`;
+    const upstreamHeaders: Record<string, string> = {
       authorization: `Bearer ${providerApiKey}`,
       'content-type': 'application/json',
+      ...(isOpenRouter ? { 'HTTP-Referer': 'https://synkroo.com.br', 'X-Title': 'Pi Financeiro' } : {}),
     };
-    const upstreamBody = isOpenAi
+    const upstreamBody = isOpenAiCompatible
       ? {
         model,
         messages: [
@@ -235,7 +259,7 @@ export const registerAgentLlmRelayRoutes = (
         return reply.code(res.status === 429 ? 429 : 502).send({ code, message });
       }
 
-      const text = isOpenAi
+      const text = isOpenAiCompatible
         ? (body?.choices?.[0]?.message?.content ?? '')
         : (body?.output
           ?.filter((o) => o.type === 'message')
