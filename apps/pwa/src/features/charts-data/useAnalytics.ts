@@ -128,11 +128,20 @@ export type AnalyticsBundle = {
   reload: () => void;
 };
 
+export type UseAnalyticsOptions = {
+  /**
+   * Quando false, pula o fetch de `/analytics/daily-heatmap` e mantém
+   * `heatmap` como null (ex.: Home, que não exibe o heatmap).
+   * Padrão true para preservar o comportamento de Reports.
+   */
+  includeHeatmap?: boolean;
+};
+
 /**
  * Carrega o pacote de analytics para os filtros atuais (etapa A: dados
  * prontos para a etapa B montar Home e /hub/relatorios).
  */
-export function useAnalytics(filters: AnalyticsFilters): AnalyticsBundle {
+export function useAnalytics(filters: AnalyticsFilters, options?: UseAnalyticsOptions): AnalyticsBundle {
   const [kpis, setKpis] = useState<AnalyticsKpis | null>(null);
   const [cashflow, setCashflow] = useState<CashflowSeries | null>(null);
   const [breakdown, setBreakdown] = useState<CategoryBreakdown | null>(null);
@@ -143,6 +152,7 @@ export function useAnalytics(filters: AnalyticsFilters): AnalyticsBundle {
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const includeHeatmap = options?.includeHeatmap ?? true;
 
   useEffect(() => {
     abortRef.current?.abort();
@@ -150,12 +160,15 @@ export function useAnalytics(filters: AnalyticsFilters): AnalyticsBundle {
     abortRef.current = controller;
     setLoading(true);
     setError(null);
+    if (!includeHeatmap) setHeatmap(null);
     void Promise.all([
       fetchKpis(filters, controller.signal).then(setKpis),
       fetchCashflowSeries(filters, controller.signal).then(setCashflow),
       fetchCategoryBreakdown(filters, "expense", controller.signal).then(setBreakdown),
       fetchBudgetConsumption(controller.signal).then(setBudgets),
-      fetchDailyHeatmap(filters, controller.signal).then(setHeatmap),
+      includeHeatmap
+        ? fetchDailyHeatmap(filters, controller.signal).then(setHeatmap)
+        : Promise.resolve(),
       fetchNetWorthHistory(filters, controller.signal).then(setNetWorth),
     ])
       .catch((e: unknown) => {
@@ -168,7 +181,7 @@ export function useAnalytics(filters: AnalyticsFilters): AnalyticsBundle {
       });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.period, filters.from, filters.to, filters.accountId, nonce]);
+  }, [filters.period, filters.from, filters.to, filters.accountId, nonce, includeHeatmap]);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
 

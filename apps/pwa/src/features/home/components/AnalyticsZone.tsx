@@ -1,13 +1,13 @@
 "use client";
 
-import { Pencil } from "lucide-react";
+import { CreditCard, Pencil, PiggyBank, Scale, WalletCards } from "lucide-react";
 import {
   AnalyticsFiltersProvider,
   useAnalyticsFilters,
 } from "@/components/filters/analytics-filters";
 import { useWorkspaceSafe } from "@/lib/auth/workspace-context";
 import { FilterPillBar, type FilterAccount } from "@/components/filters/FilterPillBar";
-import { CashflowAreaChart, KpiCard, WeeklyHeatmap } from "@/components/charts";
+import { CashflowAreaChart, KpiCard } from "@/components/charts";
 import { formatBRL, formatPct } from "@/lib/format/brl";
 import { useAnalytics } from "../../charts-data/useAnalytics";
 import { useBlockLayout } from "../../charts-data/useBlockLayout";
@@ -15,17 +15,17 @@ import { BlockEmpty, BlockShell, BlockSkeleton, ZoneError } from "../../charts-d
 import { formatDeltaPp, formatDeltaPct, pctChange, trendOf } from "../../charts-data/analytics-format";
 
 const HOME_BLOCKS_KEY = "meu-ted:home-blocks";
-const HOME_DEFAULT_ORDER = ["home-kpis", "home-cashflow", "home-heatmap"];
+const HOME_DEFAULT_ORDER = ["home-kpis", "home-cashflow"];
 
 const HOME_TITLES: Record<string, string> = {
   "home-kpis": "Indicadores",
   "home-cashflow": "Fluxo de caixa",
-  "home-heatmap": "Atividade semanal",
 };
 
 function HomeAnalyticsBlocks({ accounts }: { accounts: FilterAccount[] }) {
   const { filters, setPeriod, setAccountId } = useAnalyticsFilters();
-  const bundle = useAnalytics(filters);
+  // Home não exibe heatmap: pula o request de daily-heatmap.
+  const bundle = useAnalytics(filters, { includeHeatmap: false });
   const layout = useBlockLayout(HOME_BLOCKS_KEY, HOME_DEFAULT_ORDER);
   const { visible, editing, setEditing } = layout;
 
@@ -64,6 +64,8 @@ function HomeAnalyticsBlocks({ accounts }: { accounts: FilterAccount[] }) {
         kpis.savingsRatePct === null || kpis.previousSavingsRatePct === null
           ? null
           : kpis.savingsRatePct - kpis.previousSavingsRatePct;
+      const invoiceUtilizationPct = kpis.openInvoices.utilizationPct;
+      const fixedPctOfIncome = kpis.fixedVsDiscretionary.fixedPctOfIncome;
       return (
         <BlockShell key={id} title={title} testId={`analytics-block-${id}`} {...editProps(id, index)}>
           <div className="grid grid-cols-2 gap-2.5" data-testid="home-kpi-grid">
@@ -72,15 +74,25 @@ function HomeAnalyticsBlocks({ accounts }: { accounts: FilterAccount[] }) {
               value={formatBRL(kpis.netLiquidBalanceCents)}
               deltaText={formatDeltaPct(netDelta)}
               trend={trendOf(netDelta)}
+              icon={<WalletCards size={14} aria-hidden="true" />}
             />
             <KpiCard
-              label="Faturas abertas no mês"
+              label="Faturas em aberto"
               value={formatBRL(kpis.openInvoices.committedCents)}
               deltaText={null}
+              icon={<CreditCard size={14} aria-hidden="true" />}
               hint={
-                kpis.openInvoices.utilizationPct === null
-                  ? undefined
-                  : `uso de ${formatPct(kpis.openInvoices.utilizationPct)} do limite`
+                invoiceUtilizationPct === null
+                  ? "Limite não informado"
+                  : `uso de ${formatPct(invoiceUtilizationPct)} do limite`
+              }
+              progress={
+                invoiceUtilizationPct === null
+                  ? null
+                  : {
+                      valuePct: invoiceUtilizationPct,
+                      label: `Utilização do limite: ${formatPct(invoiceUtilizationPct)}`,
+                    }
               }
             />
             <KpiCard
@@ -88,15 +100,26 @@ function HomeAnalyticsBlocks({ accounts }: { accounts: FilterAccount[] }) {
               value={kpis.savingsRatePct === null ? "—" : formatPct(kpis.savingsRatePct)}
               deltaText={formatDeltaPp(savingsDelta)}
               trend={trendOf(savingsDelta)}
+              icon={<PiggyBank size={14} aria-hidden="true" />}
+              hint={kpis.savingsRatePct === null ? "Sem renda no período" : undefined}
             />
             <KpiCard
               label="Fixo vs discricionário"
               value={formatBRL(kpis.fixedVsDiscretionary.fixedCents)}
               deltaText={null}
+              icon={<Scale size={14} aria-hidden="true" />}
               hint={
-                kpis.fixedVsDiscretionary.fixedPctOfIncome === null
-                  ? `discricionário ${formatBRL(kpis.fixedVsDiscretionary.discretionaryCents)}`
-                  : `${formatPct(kpis.fixedVsDiscretionary.fixedPctOfIncome)} da renda é fixo`
+                fixedPctOfIncome === null
+                  ? "Sem renda no período"
+                  : `${formatPct(fixedPctOfIncome)} da renda é fixo`
+              }
+              progress={
+                fixedPctOfIncome === null
+                  ? null
+                  : {
+                      valuePct: fixedPctOfIncome,
+                      label: `Fixos representam ${formatPct(fixedPctOfIncome)} da renda`,
+                    }
               }
             />
           </div>
@@ -115,21 +138,16 @@ function HomeAnalyticsBlocks({ accounts }: { accounts: FilterAccount[] }) {
               current={series.current}
               previous={series.previous}
               formatValue={formatBRL}
+              availableBalanceCents={bundle.kpis?.netLiquidBalanceCents}
+              summaryLabel="Saldo disponível líquido"
             />
           )}
         </BlockShell>
       );
     }
-    const weeks = (bundle.heatmap?.weeks ?? []).slice(-4);
-    return (
-      <BlockShell key={id} title={title} testId={`analytics-block-${id}`} {...editProps(id, index)}>
-        {weeks.length === 0 ? (
-          <BlockEmpty message="Sem atividade no período." hint="Seus gastos por dia aparecem aqui." />
-        ) : (
-          <WeeklyHeatmap weeks={weeks} formatValue={formatBRL} />
-        )}
-      </BlockShell>
-    );
+    // Ids legados (ex.: home-heatmap de layouts salvos) são ignorados:
+    // o clamp do useBlockLayout já os filtra do schema atual.
+    return null;
   };
 
   return (
