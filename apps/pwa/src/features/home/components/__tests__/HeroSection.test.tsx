@@ -1,7 +1,5 @@
 import { render, screen } from "@/lib/test-utils";
-import userEvent from "@testing-library/user-event";
 import { HeroSection } from "../HeroSection";
-import { OPEN_TED_CHAT_EVENT } from "@/features/ted/TedChatLauncher";
 
 vi.mock("@/components/WorkspaceSwitcher", () => ({
   WorkspaceSwitcher: () => <div data-testid="workspace-switcher" />,
@@ -21,31 +19,19 @@ const baseProps = {
   onOpenNotifications: vi.fn(),
 };
 
-describe("HeroSection TED shortcut (item premium 3)", () => {
-  it("renders the 28px mascot shortcut opening the TED chat", async () => {
-    const user = userEvent.setup();
-    const handler = vi.fn();
-    window.addEventListener(OPEN_TED_CHAT_EVENT, handler);
-    try {
-      render(<HeroSection {...baseProps} />);
-      const shortcut = screen.getByRole("button", { name: "Abrir assistente TED" });
-      expect(shortcut).toBeInTheDocument();
-      await user.click(shortcut);
-      expect(handler).toHaveBeenCalledTimes(1);
-    } finally {
-      window.removeEventListener(OPEN_TED_CHAT_EVENT, handler);
-    }
+describe("HeroSection header (TED shortcut removed)", () => {
+  it("does not render the TED chat shortcut", () => {
+    render(<HeroSection {...baseProps} />);
+    expect(screen.queryByRole("button", { name: "Abrir assistente TED" })).not.toBeInTheDocument();
   });
 
-  it("shows no pulse dot without pending insights", () => {
-    const { container } = render(<HeroSection {...baseProps} hasPendingInsights={false} />);
+  it("keeps the notifications button", () => {
+    render(<HeroSection {...baseProps} />);
+    expect(screen.getByRole("button", { name: "Notificações" })).toBeInTheDocument();
+  });
+
+  it("renders no pulse dot", () => {
+    const { container } = render(<HeroSection {...baseProps} />);
     expect(container.querySelector(".pulse-dot")).not.toBeInTheDocument();
-  });
-
-  it("shows the emerald pulse dot with pending insights", () => {
-    const { container } = render(<HeroSection {...baseProps} hasPendingInsights />);
-    const dot = container.querySelector(".pulse-dot");
-    expect(dot).toBeInTheDocument();
-    expect(dot?.className).toMatch(/bg-primary/);
   });
 });

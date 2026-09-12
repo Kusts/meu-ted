@@ -17,7 +17,7 @@ export default function PatrimonioTabs() {
     <div className="flex min-h-dvh flex-col bg-bg pb-[var(--tab-bar-height)]">
       <div className="px-5 pt-[calc(var(--page-pt)+env(safe-area-inset-top))] sm:px-8 lg:px-12">
         <QueryTabs
-          ariaLabel="Patrimônio"
+          ariaLabel="Contas e Cartões"
           defaultKey="contas"
           tabs={[
             { key: "contas", label: "Contas" },

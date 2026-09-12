@@ -91,7 +91,7 @@ export const assembleCognition = (
     skillCatalog: skillCatalogLines(),
     activeSkillBody: renderInjectedSkills(fit),
     playbookBody: PLAYBOOK_BODY,
-    toolCatalog: toolSkillLines(),
+    toolCatalog: toolSkillLines(toolNames),
     webStatusLine: webAvailable
       ? 'disponível via web_search/web_fetch para dados externos atuais.'
       : 'indisponível (sem chave configurada) — responda com os dados do workspace.',

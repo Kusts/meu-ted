@@ -14,13 +14,13 @@ vi.mock("@/components/AppShell", () => ({
 describe("hub pages (item 13)", () => {
   it("hub lists the six canonical modules with links", () => {
     render(<Hub />);
-    expect(screen.getByRole("heading", { name: "Hub" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Mais" })).toBeInTheDocument();
     for (const [label, href] of [
-      ["Patrimônio", "/hub/patrimonio"],
-      ["Planejamento", "/hub/planejamento"],
+      ["Contas e Cartões", "/hub/patrimonio"],
+      ["Metas e Orçamento", "/hub/planejamento"],
       ["Relatórios", "/hub/relatorios"],
-      ["Alertas", "/hub/alertas"],
-      ["Categorias", "/hub/categorias"],
+      ["Avisos e Lembretes", "/hub/alertas"],
+      ["Organizar Gastos", "/hub/categorias"],
       ["Configurações", "/hub/configuracoes"],
     ] as const) {
       const link = screen.getByRole("link", { name: new RegExp(label) });
@@ -32,7 +32,7 @@ describe("hub pages (item 13)", () => {
     render(<HubConfiguracoes />);
     expect(screen.getByRole("heading", { name: "Configurações" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Perfil/ })).toHaveAttribute("href", "/perfil");
-    expect(screen.getByRole("link", { name: /Workspaces/ })).toHaveAttribute("href", "/workspaces");
+    expect(screen.getByRole("link", { name: /Meus Espaços/ })).toHaveAttribute("href", "/workspaces");
     expect(screen.getByRole("link", { name: /Auditoria/ })).toHaveAttribute("href", "/audit");
   });
 });

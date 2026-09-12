@@ -87,16 +87,16 @@ describe("ProfilePage", () => {
     expect(screen.getByText("Editar perfil")).toBeInTheDocument();
   });
 
-  it("renders Assistente TED item", () => {
+  it("does not render Assistente TED item (removed entry point)", () => {
     render(<ProfilePage />);
-    expect(screen.getByText("Assistente TED")).toBeInTheDocument();
+    expect(screen.queryByText("Assistente TED")).not.toBeInTheDocument();
   });
 
   it("links to workspace management", async () => {
     const user = userEvent.setup();
     render(<ProfilePage />);
 
-    await user.click(screen.getByText("Workspaces"));
+    await user.click(screen.getByText("Meus Espaços"));
     expect(mockRouter.push).toHaveBeenCalledWith("/workspaces");
   });
 

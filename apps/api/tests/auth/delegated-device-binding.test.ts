@@ -126,4 +126,20 @@ describe('H-12: deviceId binding end-to-end no token delegado', () => {
     expect(res.json().code ?? null).not.toBe('auth.device_binding_required');
     expect(res.json().code ?? null).not.toBe('auth.device_mismatch');
   });
+
+  it('leitura por agente com token com deviceId sem x-device-token é permitida', async () => {
+    const { store, a } = await twoDevices();
+    const token = await mintDelegated(a.deviceId, ['financial.read']);
+    const { app } = buildTestApp({}, workspaceAccess, store, SECRET);
+    await app.ready();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/accounts',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'x-workspace-id': HOUSEHOLD_A,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+  });
 });

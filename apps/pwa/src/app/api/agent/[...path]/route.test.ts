@@ -80,4 +80,38 @@ describe("Agent Next.js Proxy Route (/api/agent/[...path])", () => {
     expect(res.status).toBe(200);
     expect(capturedBody).toBe(JSON.stringify({ text: "Qual o meu saldo?" }));
   });
+
+  it("spoofs local origin (localhost and 127.0.0.1) to production PWA host", async () => {
+    let capturedUpstreamRequest: Request | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      capturedUpstreamRequest = new Request(input as string, init);
+      return new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const context = {
+      params: Promise.resolve({
+        path: ["agents", "finance-chat-agent", "ws-1", "rpc", "history"],
+      }),
+    };
+
+    // 1. localhost origin
+    const reqLocalhost = new Request("http://localhost:3000/api/agent/agents/finance-chat-agent/ws-1/rpc/history", {
+      method: "GET",
+      headers: { origin: "http://localhost:3000" },
+    });
+    await GET(reqLocalhost, context);
+    expect(capturedUpstreamRequest!.headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
+
+    // 2. 127.0.0.1 origin
+    const req127 = new Request("http://127.0.0.1:3000/api/agent/agents/finance-chat-agent/ws-1/rpc/history", {
+      method: "GET",
+      headers: { origin: "http://127.0.0.1:3000" },
+    });
+    await GET(req127, context);
+    expect(capturedUpstreamRequest!.headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
+  });
 });
+

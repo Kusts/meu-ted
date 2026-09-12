@@ -20,7 +20,7 @@ interface ConfigEntry {
 
 const ENTRIES: ConfigEntry[] = [
   { href: "/perfil", label: "Perfil", description: "Seus dados e notificações", Icon: User },
-  { href: "/workspaces", label: "Workspaces", description: "Ambientes, membros e convites", Icon: Layers },
+  { href: "/workspaces", label: "Meus Espaços", description: "Seus espaços, membros e convites", Icon: Layers },
   { href: "/audit", label: "Auditoria", description: "Histórico de operações", Icon: Shield },
 ];
 

@@ -100,4 +100,16 @@ describe("TedChatLauncher Component (Task 10)", () => {
       expect(screen.queryByRole("button", { name: /abrir assistente ted/i })).not.toBeInTheDocument();
     });
   });
+
+  describe("responsive positioning (tablet BottomNav clearance)", () => {
+    it("keeps FAB above BottomNav below lg and docks bottom-right only on lg+", () => {
+      render(<TedChatLauncher />);
+      const launcher = screen.getByRole("button", { name: /abrir assistente ted/i });
+      // Base (mobile + tablet 640-1023px): clearance above BottomNav
+      expect(launcher).toHaveClass("bottom-[88px]", "right-4", "lg:bottom-6", "lg:right-6");
+      // Must not dock early on sm (would overlap BottomNav on tablets)
+      expect(launcher.className).not.toMatch(/(?:^|\s)sm:bottom-6(?:\s|$)/);
+      expect(launcher.className).not.toMatch(/(?:^|\s)sm:right-6(?:\s|$)/);
+    });
+  });
 });

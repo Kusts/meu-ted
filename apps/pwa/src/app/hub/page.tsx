@@ -22,12 +22,12 @@ interface HubModule {
 }
 
 const MODULES: HubModule[] = [
-  { href: "/hub/patrimonio", label: "Patrimônio", description: "Contas, cartões e evolução", Icon: Wallet },
-  { href: "/hub/planejamento", label: "Planejamento", description: "Orçamentos, metas e assinaturas", Icon: Target },
+  { href: "/hub/patrimonio", label: "Contas e Cartões", description: "Suas contas e cartões em um lugar", Icon: Wallet },
+  { href: "/hub/planejamento", label: "Metas e Orçamento", description: "Metas, orçamentos e assinaturas", Icon: Target },
   { href: "/hub/relatorios", label: "Relatórios", description: "Fluxo, categorias e tendências", Icon: BarChart3 },
-  { href: "/hub/alertas", label: "Alertas", description: "Financeiras e de preço", Icon: Bell },
-  { href: "/hub/categorias", label: "Categorias", description: "Organize seus lançamentos", Icon: FolderOpen },
-  { href: "/hub/configuracoes", label: "Configurações", description: "Perfil, workspaces e auditoria", Icon: Settings },
+  { href: "/hub/alertas", label: "Avisos e Lembretes", description: "Alertas financeiros e de preço", Icon: Bell },
+  { href: "/hub/categorias", label: "Organizar Gastos", description: "Organize seus lançamentos", Icon: FolderOpen },
+  { href: "/hub/configuracoes", label: "Configurações", description: "Perfil, espaços e auditoria", Icon: Settings },
 ];
 
 /**
@@ -39,7 +39,7 @@ export default function Hub() {
       <div className="flex min-h-dvh flex-col bg-bg pb-[var(--tab-bar-height)]">
         <StatusBar />
         <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-5 py-4 sm:px-8 lg:px-12">
-          <PageHeader title="Hub" subtitle="Todos os módulos do Meu Ted em um lugar." />
+          <PageHeader title="Mais" subtitle="Tudo o que você precisa no Meu Ted em um só lugar." />
           <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
             {MODULES.map((module) => (
               <Link

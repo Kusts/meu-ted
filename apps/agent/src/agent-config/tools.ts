@@ -111,9 +111,11 @@ export const toolSkillMap = (): Record<string, string> => {
   return map;
 };
 
-export const toolSkillLines = (): string[] => {
+export const toolSkillLines = (names?: readonly string[]): string[] => {
   const map = toolSkillMap();
-  return Object.keys(TOOL_DESCRIPTIONS)
+  const keys = names ? names.filter((name) => name in TOOL_DESCRIPTIONS) : Object.keys(TOOL_DESCRIPTIONS);
+  return keys
+    .slice()
     .sort()
     .map((name) => `${name} (${map[name] ?? 'geral'}): ${TOOL_DESCRIPTIONS[name]}`);
 };

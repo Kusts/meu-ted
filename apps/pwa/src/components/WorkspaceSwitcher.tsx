@@ -77,7 +77,7 @@ export function WorkspaceSwitcher({
   const currentName = useMemo(
     () =>
       activeWorkspace?.name ??
-      (workspaces.length > 0 ? "Selecionar workspace" : "Sem workspace"),
+      (workspaces.length > 0 ? "Selecionar espaço" : "Sem espaços"),
     [activeWorkspace, workspaces]
   );
 
@@ -152,7 +152,7 @@ export function WorkspaceSwitcher({
     <div className="relative inline-block text-left" ref={dropdownRef}>
       <button
         type="button"
-        aria-label="Selecionar workspace"
+        aria-label="Selecionar espaço"
         aria-expanded={open}
         aria-haspopup="listbox"
         data-variant={variant}
@@ -273,10 +273,10 @@ export function WorkspaceSwitcher({
                   <Users size={20} />
                 </div>
                 <div className="text-sm font-semibold text-text-primary">
-                  Nenhum workspace
+                  Nenhum espaço
                 </div>
                 <div className="text-xs text-text-muted">
-                  Você ainda não participa de nenhum workspace.
+                  Você ainda não participa de nenhum espaço.
                 </div>
               </div>
             )}
@@ -287,11 +287,11 @@ export function WorkspaceSwitcher({
               onClick={() => setOpen(false)}
               className="flex items-center justify-between rounded-[10px] px-2 py-2 text-[11px] font-bold text-primary transition-colors hover:bg-primary-tint"
             >
-              <span>Gerenciar workspaces</span>
+              <span>Gerenciar espaços</span>
               <span aria-hidden="true">&gt;</span>
             </Link>
             <p className="px-2 pt-1 text-[10px] text-text-muted">
-              Trocar de workspace sincroniza dados do ambiente selecionado.
+              Trocar de espaço sincroniza dados do ambiente selecionado.
             </p>
           </div>
         </div>

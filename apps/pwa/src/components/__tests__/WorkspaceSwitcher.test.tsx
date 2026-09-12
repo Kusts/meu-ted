@@ -115,7 +115,7 @@ describe("WorkspaceSwitcher Component (Task 9)", () => {
     const user = userEvent.setup();
 
     render(<WorkspaceSwitcher compact />);
-    const trigger = screen.getByRole("button", { name: /selecionar workspace/i });
+    const trigger = screen.getByRole("button", { name: /selecionar espaço/i });
     expect(trigger).toHaveTextContent("Minhas Finanças");
 
     // Open dropdown
@@ -140,15 +140,15 @@ describe("WorkspaceSwitcher Component (Task 9)", () => {
     };
 
     render(<WorkspaceSwitcher compact />);
-    await user.click(screen.getByRole("button", { name: /selecionar workspace/i }));
+    await user.click(screen.getByRole("button", { name: /selecionar espaço/i }));
 
     expect(screen.queryByRole("option", { name: /Empresa Arquivada/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Gerenciar workspaces" })).toHaveAttribute("href", "/workspaces");
+    expect(screen.getByRole("link", { name: "Gerenciar espaços" })).toHaveAttribute("href", "/workspaces");
   });
 
   it("renders default variant with surface-1 styling by default", () => {
     render(<WorkspaceSwitcher compact />);
-    const trigger = screen.getByRole("button", { name: /selecionar workspace/i });
+    const trigger = screen.getByRole("button", { name: /selecionar espaço/i });
     expect(trigger.className).toContain("bg-surface-1");
     expect(trigger.className).toContain("border-border-subtle");
     expect(trigger).toHaveAttribute("data-variant", "default");
@@ -156,7 +156,7 @@ describe("WorkspaceSwitcher Component (Task 9)", () => {
 
   it("renders hero variant with translucent styling and white text", () => {
     render(<WorkspaceSwitcher variant="hero" compact />);
-    const trigger = screen.getByRole("button", { name: /selecionar workspace/i });
+    const trigger = screen.getByRole("button", { name: /selecionar espaço/i });
     expect(trigger).toHaveAttribute("data-variant", "hero");
     expect(trigger.className).toContain("bg-white/[0.14]");
     expect(trigger.className).toContain("border-white/15");
@@ -181,7 +181,7 @@ describe("WorkspaceSwitcher Component (Task 9)", () => {
   it("supports opening and selecting workspace in hero variant", async () => {
     const user = userEvent.setup();
     render(<WorkspaceSwitcher variant="hero" compact />);
-    const trigger = screen.getByRole("button", { name: /selecionar workspace/i });
+    const trigger = screen.getByRole("button", { name: /selecionar espaço/i });
 
     await user.click(trigger);
     expect(screen.getByRole("listbox")).toBeInTheDocument();

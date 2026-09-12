@@ -474,7 +474,7 @@ export default function WorkspaceManagerPage() {
   return (
     <div className="flex min-h-dvh flex-col bg-bg pb-[var(--tab-bar-height)]">
       <StatusBar />
-      <PageHeader title="Workspaces" subtitle="Organize cada contexto sem misturar seus dados." />
+      <PageHeader title="Meus Espaços" subtitle="Organize cada contexto sem misturar seus dados." />
 
       <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-5 px-5 py-4 sm:px-8 lg:px-12">
         <section className="relative overflow-hidden rounded-[24px] bg-gradient-to-br from-[#0d6b47] via-[#0e8c5a] to-[#1c9b72] p-5 text-white shadow-elevated sm:p-7" aria-labelledby="workspace-overview-heading">

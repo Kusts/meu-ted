@@ -2,9 +2,8 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { MessageCircle, User } from "lucide-react";
+import { User } from "lucide-react";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
-import { openTedChat } from "@/features/ted/TedChatLauncher";
 
 export interface PageHeaderProps {
   title: string;
@@ -20,7 +19,7 @@ const SCROLL_THRESHOLD_PX = 20;
  * Morphing header (item premium 1).
  *
  * Rest (scroll<=20): transparent row — WorkspaceSwitcher chip left,
- * action + TED shortcut + avatar right — with the Large Title in flow.
+ * action + avatar right — with the Large Title in flow.
  * Scrolled: fixed compact bar (56px + safe-area, z-30, saturated
  * dark-translucent, tonal 1px border, no diffuse shadows) with the compact
  * title cross-fading in (opacity + translateY 4px, 200ms easing).
@@ -63,14 +62,6 @@ export function PageHeader({ title, subtitle, action, compactTitle }: PageHeader
           <div className="hidden min-w-0 flex-none lg:block" aria-hidden="true" />
           <div className="flex flex-none items-center gap-1.5">
             {action}
-            <button
-              type="button"
-              onClick={openTedChat}
-              aria-label="Abrir assistente TED"
-              className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-surface-2 hover:text-text-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-            >
-              <MessageCircle size={17} strokeWidth={2} />
-            </button>
             <Link
               href="/perfil"
               aria-label="Abrir perfil"

@@ -2,8 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
-import { TedMark } from "@/components/brand/TedMark";
-import { openTedChat } from "@/features/ted/TedChatLauncher";
 import { formatBRL } from "@/lib/format/brl";
 import { haptic } from "@/lib/ui/haptics";
 import { HERO_BACKGROUND } from "../hero";
@@ -28,7 +26,7 @@ interface HeroSectionProps {
   animatedBalance: number;
   onOpenProfile: () => void;
   onOpenNotifications: () => void;
-  /** Pending insights → emerald pulse dot on the TED shortcut. */
+  /** Reservado: indica insights pendentes (sem efeito visual no header). */
   hasPendingInsights?: boolean;
 }
 
@@ -52,7 +50,6 @@ export function HeroSection({
   animatedBalance,
   onOpenProfile,
   onOpenNotifications,
-  hasPendingInsights = false,
 }: HeroSectionProps) {
   // Spec AGY §1: alternância em 2 fases (fade out 90ms → troca → fade in).
   const [leaving, setLeaving] = useState(false);
@@ -119,20 +116,6 @@ export function HeroSection({
           <div className="lg:hidden">
             <WorkspaceSwitcher compact variant="hero" />
           </div>
-          <button
-            type="button"
-            aria-label="Abrir assistente TED"
-            onClick={() => openTedChat()}
-            className="relative flex h-[38px] w-[38px] items-center justify-center rounded-full transition-all hover:bg-white/20 active:scale-95"
-          >
-            <TedMark size={28} label="Abrir assistente TED" />
-            {hasPendingInsights && (
-              <span
-                aria-hidden="true"
-                className="pulse-dot absolute right-[7px] top-[6px] h-[6px] w-[6px] rounded-full bg-primary"
-              />
-            )}
-          </button>
           <button
             type="button"
             aria-label="Notificações"

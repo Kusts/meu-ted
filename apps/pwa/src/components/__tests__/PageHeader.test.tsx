@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@/lib/test-utils";
 import PageHeader from "../PageHeader";
 
@@ -18,7 +18,7 @@ describe("PageHeader morphing (item premium 1)", () => {
     expect(container.innerHTML).toMatch(/var\(--page-pt\)/);
   });
 
-  it("renders subtitle, action, TED shortcut and profile avatar", () => {
+  it("renders subtitle, action and profile avatar", () => {
     render(
       <PageHeader
         title="Registros"
@@ -28,7 +28,6 @@ describe("PageHeader morphing (item premium 1)", () => {
     );
     expect(screen.getByText("Tudo que entrou e saiu")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ação" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Abrir assistente TED" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Abrir perfil" })).toHaveAttribute("href", "/perfil");
   });
 
@@ -43,14 +42,8 @@ describe("PageHeader morphing (item premium 1)", () => {
     expect(bar.textContent).toContain("Contas a pagar");
   });
 
-  it("opens the TED chat from the header shortcut", async () => {
-    const { openTedChat } = await import("@/features/ted/TedChatLauncher");
-    const dispatch = vi.spyOn(window, "dispatchEvent");
-    const { default: userEvent } = await import("@testing-library/user-event");
-    const user = userEvent.setup();
+  it("does not render the TED chat shortcut", () => {
     render(<PageHeader title="Registros" />);
-    await user.click(screen.getByRole("button", { name: "Abrir assistente TED" }));
-    expect(dispatch).toHaveBeenCalled();
-    expect(openTedChat).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Abrir assistente TED" })).not.toBeInTheDocument();
   });
 });

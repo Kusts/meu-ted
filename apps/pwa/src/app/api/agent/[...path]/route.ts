@@ -34,14 +34,27 @@ function forwardHeaders(request: Request): Headers {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
-  // Spoof origin to production PWA host for local testing via proxy
+  // Spoof origin to production PWA host so upstream Cloudflare Worker allows request
+  // when testing locally via /api/agent proxy.
   const origin = request.headers.get("origin");
-  if (origin && origin.includes("127.0.0.1")) {
+  if (origin && isLocalOrigin(origin)) {
     headers.set("origin", "https://pi-finance-pwa.walissonead.workers.dev");
   } else if (origin) {
     headers.set("origin", origin);
   }
   return headers;
+}
+
+function isLocalOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function upstreamErrorResponse(status: number, code: string, message: string): NextResponse {

@@ -16,7 +16,7 @@ export default function CompromissosTabs() {
     <div className="flex min-h-dvh flex-col bg-bg pb-[var(--tab-bar-height)]">
       <div className="px-5 pt-[calc(var(--page-pt)+env(safe-area-inset-top))] sm:px-8 lg:px-12">
         <QueryTabs
-          ariaLabel="Compromissos"
+          ariaLabel="Minhas Contas"
           defaultKey="a-pagar"
           tabs={[
             { key: "a-pagar", label: "A Pagar" },

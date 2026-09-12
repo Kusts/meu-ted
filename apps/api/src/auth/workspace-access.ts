@@ -35,7 +35,7 @@ export const createPostgresWorkspaceAccessStore = (pool: Pool): WorkspaceAccessS
          FROM users u
          JOIN memberships m ON m.user_id = u.id
          JOIN households h ON h.id = m.household_id
-        WHERE u.auth_user_id = $1
+        WHERE (u.auth_user_id = $1 OR u.id::text = $1)
           AND u.status = 'active'
           AND m.household_id = $2
           AND m.status = 'active'`,

@@ -117,7 +117,7 @@ describe("AppShell", () => {
       mockPath = "/";
       render(<AppShell><div>Content</div></AppShell>);
       expectActive("Início");
-      expectInactive("Hub");
+      expectInactive("Mais");
     });
 
     it("highlights Extrato for /registros", () => {
@@ -127,17 +127,17 @@ describe("AppShell", () => {
       expectInactive("Início");
     });
 
-    it("highlights Compromissos for /compromissos", () => {
+    it("highlights Minhas Contas for /compromissos", () => {
       mockPath = "/compromissos";
       render(<AppShell><div>Content</div></AppShell>);
-      expectActive("Compromissos");
+      expectActive("Minhas Contas");
       expectInactive("Início");
     });
 
-    it("highlights Hub for hub subroutes", () => {
+    it("highlights Mais for hub subroutes", () => {
       mockPath = "/hub/patrimonio";
       render(<AppShell><div>Content</div></AppShell>);
-      expectActive("Hub");
+      expectActive("Mais");
       expectInactive("Início");
     });
 
@@ -147,7 +147,7 @@ describe("AppShell", () => {
         mockPath = route;
         render(<AppShell><div>{route}</div></AppShell>);
         expectInactive("Início");
-        expectInactive("Hub");
+        expectInactive("Mais");
       },
     );
   });

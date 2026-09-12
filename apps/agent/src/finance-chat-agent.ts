@@ -27,6 +27,7 @@ import {
   setMemoryEnabled,
   currentSession,
   endSession,
+  isExplicitConfirmation,
   type MemorySql,
 } from "./agent-config/index.js";
 import {
@@ -792,8 +793,16 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           const relayOrigin = this.env?.API_ORIGIN ?? "https://api.synkroo.com.br";
           const adminToken = this.env?.AGENT_RUNTIME_ADMIN_TOKEN ?? "";
 
-          // --- Integração de ferramentas TED: preparar contexto delegado e enriquecer prompt com dados financeiros ---
-          let enrichedPrompt = text;
+          // --- Contexto da conversa: resgatar turnos anteriores para dar continuidade ao diálogo ---
+          const allTurns = this.sdkTurns();
+          const priorTurns = allTurns.slice(0, -1).slice(-8);
+          let historyContext = "";
+          if (priorTurns.length > 0) {
+            historyContext = "=== Histórico recente da conversa ===\n" +
+              priorTurns.map((t) => `${t.role === 'assistant' ? 'TED' : 'Usuário'}: ${t.content}`).join("\n\n") +
+              "\n=== Fim do histórico recente ===\n\n";
+          }
+          let enrichedPrompt = `${historyContext}Mensagem atual do Usuário: ${text}`;
           try {
             const delegationSecret = this.env?.AGENT_DELEGATION_SECRET;
             if (delegationSecret) {
@@ -812,36 +821,75 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
                   role: identity.role,
                   capabilities: ["financial.read"],
                   requestId: intentionId,
-                  ...(deviceId ? { deviceId } : {}),
                 },
                 delegationSecret,
               );
               setGlobalApiContext({ delegatedToken, apiOrigin: relayOrigin });
 
-              // Heurística leve para chamar ferramentas relevantes antes do LLM, garantindo que TED não negue acesso
+              // Heurística contextual para chamar ferramentas relevantes antes do LLM
               const lower = text.toLowerCase();
+              const isConfirmation = isExplicitConfirmation(text);
+              const isAskingBalance = /(saldo|balance|quanto tenho|extrato)/i.test(lower) || (!isConfirmation && /(quanto|dinheiro)/i.test(lower));
+
               const toolCalls: Array<{ name: string; params: Record<string, unknown> }> = [];
-              if (/(saldo|balance|conta|accounts)/i.test(lower)) toolCalls.push({ name: "get_balance", params: { householdId: identity.workspaceId } });
-              if (/(transa[çc][aã]o|extrato|gastos|despesa|transactions)/i.test(lower)) toolCalls.push({ name: "list_recent_transactions", params: { householdId: identity.workspaceId, limit: 10 } });
-              if (/(meta|goal)/i.test(lower)) toolCalls.push({ name: "list_goals", params: { householdId: identity.workspaceId } });
-              if (/(or[çc]amento|budget)/i.test(lower)) toolCalls.push({ name: "list_budgets", params: { householdId: identity.workspaceId } });
-              if (/(cart[aã]o|fatura|statement|cartao)/i.test(lower)) toolCalls.push({ name: "list_statements", params: { householdId: identity.workspaceId } });
-              if (toolCalls.length === 0) {
-                // Fallback: sempre oferecer contexto mínimo para evitar "sem autorização"
-                toolCalls.push({ name: "get_balance", params: { householdId: identity.workspaceId } });
-                toolCalls.push({ name: "list_recent_transactions", params: { householdId: identity.workspaceId, limit: 5 } });
+              if (isAskingBalance || /(conta|accounts)/i.test(lower)) {
+                toolCalls.push({ name: "list_accounts", params: { householdId: identity.workspaceId } });
               }
-              // Executar até 2 ferramentas para não estourar tempo, com fail-open
+              if (/(transa[çc][aã]o|extrato|gastos|despesa|receita|transactions)/i.test(lower)) {
+                toolCalls.push({ name: "list_recent_transactions", params: { householdId: identity.workspaceId, limit: 10 } });
+              }
+              if (/(meta|goal)/i.test(lower)) {
+                toolCalls.push({ name: "list_goals", params: { householdId: identity.workspaceId } });
+              }
+              if (/(or[çc]amento|budget)/i.test(lower)) {
+                toolCalls.push({ name: "list_budgets", params: { householdId: identity.workspaceId } });
+              }
+              if (/(cart[aã]o|fatura|statement|cartao)/i.test(lower)) {
+                toolCalls.push({ name: "list_statements", params: { householdId: identity.workspaceId } });
+              }
+              if (isConfirmation || /(gastei|gasto|despesa|receita|compra|lan[çc])/i.test(lower)) {
+                if (!toolCalls.some((c) => c.name === "list_accounts")) {
+                  toolCalls.push({ name: "list_accounts", params: { householdId: identity.workspaceId } });
+                }
+                toolCalls.push({ name: "list_categories", params: { householdId: identity.workspaceId } });
+              }
+              if (toolCalls.length === 0) {
+                // Fornecer contas como referência de contexto
+                toolCalls.push({ name: "list_accounts", params: { householdId: identity.workspaceId } });
+              }
+
+              // Executar até 2 ferramentas para não estourar tempo
               for (const call of toolCalls.slice(0, 2)) {
                 const tool = generatedHttpTools.find((t) => t.name === call.name);
                 if (!tool) continue;
                 try {
                   const result = await (tool.execute as unknown as (p: Record<string, unknown>) => Promise<unknown>)(call.params);
-                  const snippet = JSON.stringify(result).slice(0, 800);
+                  let snippet = JSON.stringify(result).slice(0, 1500);
+
+                  // Cálculos determinísticos para saldo e proteção contra alucinação
+                  if (call.name === 'list_accounts' && result && typeof result === 'object') {
+                    const accList = (result as { items?: Array<{ id: string; name: string; balanceCents?: number; status?: string }> })?.items;
+                    if (Array.isArray(accList)) {
+                      if (accList.length === 0) {
+                        snippet += `\n[Nota do sistema: O usuário não possui nenhuma conta cadastrada neste workspace ativo (${identity.workspaceId}). Diga claramente que não há contas cadastradas e NÃO invente valores nem contas.]`;
+                      } else {
+                        const activeAccs = accList.filter((a) => a.status === 'active');
+                        const totalCents = activeAccs.reduce((sum, a) => sum + (typeof a.balanceCents === 'number' ? a.balanceCents : 0), 0);
+                        const totalBrl = (totalCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                        if (isAskingBalance) {
+                          snippet += `\n[Saldo total consolidado calculado das contas ativas: ${totalBrl}. Use exatamente este valor como saldo total.]`;
+                        } else {
+                          snippet += `\n[Contas ativas disponíveis no workspace: ${activeAccs.map((a) => `"${a.name}" (id: "${a.id}", saldo: ${(((a.balanceCents ?? 0)) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })})`).join(', ')}]`;
+                        }
+                      }
+                    }
+                  }
+
                   // Enriquecer prompt com resultado da ferramenta (isolado por workspace)
                   enrichedPrompt += `\n\n[Dados da ferramenta ${call.name} (workspace ${identity.workspaceId}): ${snippet}]`;
-                } catch {
-                  // fail-open: não bloquear chat se ferramenta falhar
+                } catch (toolErr) {
+                  console.warn(`[finance-chat-agent] Pre-fetch ${call.name} failed:`, (toolErr as Error)?.message);
+                  enrichedPrompt += `\n\n[Aviso interno: Não foi possível obter os dados da ferramenta ${call.name} no momento. Informe educadamente ao usuário que não foi possível carregar os dados agora e NUNCA invente números ou contas inexistentes.]`;
                 }
               }
             }
@@ -864,6 +912,12 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             webEnv: (this.env ?? {}) as Record<string, string | undefined>,
             ...(relayMemoryContext ? { hooks: { memoryContext: relayMemoryContext } } : {}),
           });
+          const todayDate = new Date().toISOString().slice(0, 10);
+          enrichedPrompt += `\n\n[Instrução de execução do sistema: Data atual de referência: ${todayDate}.
+Ao registrar ou confirmar uma despesa ou receita (como quando o usuário diz "confirmo", "sim", "pode fazer" ou solicita um lançamento com todos os dados):
+1. Responda confirmando com clareza o que foi registrado (valor, descrição e conta).
+2. Se você tiver os dados necessários (conta com id, valor em centavos, descrição), inclua EXATAMENTE uma linha ao final com a ação a ser executada em formato JSON:
+[EXEC_ACTION: {"tool": "create_expense", "params": {"accountId": "<id-da-conta>", "amountCents": <valor-em-centavos>, "description": "<descrição>", "categoryId": "<id-da-categoria-se-houver>", "date": "${todayDate}"}}]]`;
           const runBufferedLeg = async (
             target: { providerId: string; modelName: string },
             attempt: 'primary' | 'fallback',
@@ -894,8 +948,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
               body: JSON.stringify({
                 provider: target.providerId,
                 model: target.modelName,
-                prompt: enrichedPrompt,
-                system: cognition.system,
+                prompt: enrichedPrompt.length > 15000 ? enrichedPrompt.slice(0, 15000) : enrichedPrompt,
+                system: cognition.system.length > 7900 ? cognition.system.slice(0, 7900) : cognition.system,
               }),
             });
             const relayRaw = await relayRes.text().catch(() => "");
@@ -987,7 +1041,69 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             attemptOutcome,
           );
 
-          const output = redactTranscript(attemptOutcome.result);
+          let output = redactTranscript(attemptOutcome.result);
+
+          // Executar ação estruturada se o modelo emitiu [EXEC_ACTION: ...]
+          const actionMatch = attemptOutcome.result.match(/\[EXEC_ACTION:\s*(\{.*?\})\]/s);
+          if (actionMatch && actionMatch[1]) {
+            output = output.replace(/(\n|^)\s*(Ação executada:?)?\s*\[EXEC_ACTION:\s*\{.*?\}\]\s*/s, "").trim();
+            try {
+              const action = JSON.parse(actionMatch[1]) as { tool?: string; params?: Record<string, unknown> };
+              const delegationSecret = this.env?.AGENT_DELEGATION_SECRET;
+              if (action.tool && action.params && delegationSecret) {
+                const writeToken = await createDelegatedTurnToken(
+                  {
+                    actorId: identity.actorId,
+                    workspaceId: identity.workspaceId,
+                    role: identity.role,
+                    capabilities: ["financial.read", "financial.write"],
+                    requestId: `mut-${intentionId}`,
+                    deviceId: deviceId ?? "agent_pwa_session",
+                  },
+                  delegationSecret,
+                );
+                setGlobalApiContext({ delegatedToken: writeToken, apiOrigin: relayOrigin });
+                const toolToExec = generatedHttpTools.find((t) => t.name === action.tool);
+                if (toolToExec) {
+                  if (!action.params.householdId) {
+                    action.params.householdId = identity.workspaceId;
+                  }
+                  if (action.tool === "create_expense" && !action.params.categoryId) {
+                    try {
+                      const listCat = generatedHttpTools.find((t) => t.name === "list_categories");
+                      if (listCat) {
+                        const cats = await (listCat.execute as unknown as (p: Record<string, unknown>) => Promise<{ items?: Array<{ id: string; kind?: string }> }>)({ householdId: identity.workspaceId });
+                        const defaultCat = cats?.items?.find((c) => c.kind === "expense") ?? cats?.items?.[0];
+                        if (defaultCat?.id) {
+                          action.params.categoryId = defaultCat.id;
+                        }
+                      }
+                    } catch {
+                      // best effort category
+                    }
+                  }
+                  if (action.tool === "create_expense" && typeof action.params.amountCents === "number") {
+                    action.params.amountCents = Math.round(action.params.amountCents);
+                  }
+                  await (toolToExec.execute as unknown as (
+                    params: Record<string, unknown>,
+                    p2?: unknown,
+                    p3?: unknown,
+                    p4?: unknown,
+                    ctx?: unknown
+                  ) => Promise<unknown>)(
+                    action.params,
+                    undefined,
+                    undefined,
+                    undefined,
+                    { mutationApproved: true, approvedTool: action.tool },
+                  );
+                }
+              }
+            } catch (actionErr) {
+              console.warn(`[finance-chat-agent] Falha ao executar ação estruturada:`, (actionErr as Error)?.message);
+            }
+          }
 
           if (this.state?.storage?.sql) {
             recordUsage(this.state.storage.sql, identity.actorId, intentionId, estimateTokens(text), estimateTokens(output));

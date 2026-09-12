@@ -12,14 +12,13 @@ import { useAppState } from "@/lib/state/app-state-context";
 import { useSession } from "@/lib/auth/session-context";
 import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import { useTheme } from "@/lib/theme/use-theme";
-import { recordAdoptionEvent } from "@/lib/api/adoption";
 import { useEffectiveProfile } from "./hooks";
-import { Sun, Moon, Laptop, Sparkles, LogOut, ChevronRight, ChevronLeft, User, Bell, Bot, Shield, FolderOpen } from "lucide-react";
+import { Sun, Moon, Laptop, LogOut, ChevronRight, ChevronLeft, User, Bell, Shield, FolderOpen } from "lucide-react";
 
 export { AgentTranscript } from "./AgentTranscript";
 import { AgentLlmSettingsSheet } from "./AgentLlmSettingsSheet";
 
-type ProfileSheet = "edit" | "chat" | "notifications" | "llm-admin" | null;
+type ProfileSheet = "edit" | "notifications" | "llm-admin" | null;
 
 const BASE_PROFILE_ITEMS = [
   {
@@ -33,13 +32,8 @@ const BASE_PROFILE_ITEMS = [
     icon: <Bell size={18} className="text-text-muted" />,
   },
   {
-    key: "chat" as const,
-    label: "Assistente TED",
-    icon: <Bot size={18} className="text-primary" />,
-  },
-  {
     key: "workspaces" as const,
-    label: "Workspaces",
+    label: "Meus Espaços",
     icon: <FolderOpen size={18} className="text-text-muted" />,
   },
 ];
@@ -84,8 +78,7 @@ export default function ProfilePage() {
     if (key === "edit") {
       setOpen("edit");
       setEditKey((k) => k + 1);
-    } else if (key === "chat") setOpen("chat");
-    else if (key === "notifications") setOpen("notifications");
+    } else if (key === "notifications") setOpen("notifications");
     else if (key === "llm-admin") setOpen("llm-admin");
     else if (key === "workspaces") router.push("/workspaces");
   }
@@ -217,7 +210,6 @@ export default function ProfilePage() {
         open={open === "notifications"}
         onClose={() => setOpen(null)}
       />
-      <ChatSheet open={open === "chat"} onClose={() => setOpen(null)} />
       <AgentLlmSettingsSheet
         open={open === "llm-admin"}
         onClose={() => setOpen(null)}
@@ -456,48 +448,5 @@ function EditProfileSheet({
         onCancel={() => setDiscardOpen(false)}
       />
     </>
-  );
-}
-
-function ChatSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  return (
-    <BottomSheet
-      open={open}
-      onClose={onClose}
-      title="TED — Assistente Financeiro"
-    >
-      <div className="flex items-center gap-3 pb-4">
-        <BackButton onClick={onClose} />
-      </div>
-
-      <div
-        className="mb-4 rounded-[20px] p-5 text-center text-white shadow-card"
-        style={{ background: "linear-gradient(150deg, #0F6B45, #0A3A28)" }}
-      >
-        <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-white/15 text-white shadow-xs">
-          <Sparkles size={28} />
-        </div>
-        <div className="mb-1.5 text-[16px] font-bold">TED está ativo</div>
-        <div className="text-[13px] text-white/80 leading-relaxed">
-          Seu assistente conversacional com inteligência artificial para registrar despesas, emitir diagnósticos e analisar seu fluxo de caixa.
-        </div>
-      </div>
-
-      <div className="mb-4 rounded-[16px] border border-border-subtle bg-surface-2 px-4 py-3.5 text-[13px] text-text-secondary">
-        Status: <b className="text-primary font-bold">Pronto para atendimento</b>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => {
-          void recordAdoptionEvent("chat_used");
-          onClose();
-        }}
-        className="flex items-center justify-center gap-2 w-full rounded-[14px] bg-primary py-3.5 text-center text-[15px] font-bold text-white shadow-fab transition-all hover:bg-primary-hover active:scale-[0.98]"
-      >
-        <Bot size={18} />
-        Interagir com o TED
-      </button>
-    </BottomSheet>
   );
 }

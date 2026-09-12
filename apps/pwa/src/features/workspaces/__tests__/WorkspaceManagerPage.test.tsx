@@ -48,7 +48,7 @@ describe("WorkspaceManagerPage", () => {
   it("renders active and archived workspaces with role and lifecycle state", () => {
     render(<WorkspaceManagerPage />);
 
-    expect(screen.getByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Meus Espaços" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Minhas Finanças" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Empresa LTDA" })).toBeInTheDocument();
     expect(screen.getByText("Ativo")).toBeInTheDocument();

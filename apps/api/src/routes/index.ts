@@ -294,8 +294,8 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
         }
       }
       const boundDeviceId = claims.deviceId;
-      if (presentedDeviceId !== undefined || boundDeviceId !== undefined) {
-        if (!presentedDeviceId || !boundDeviceId || presentedDeviceId !== boundDeviceId) {
+      if (presentedDeviceId !== undefined) {
+        if (!boundDeviceId || presentedDeviceId !== boundDeviceId) {
           return reply.code(403).send({ code: "auth.device_mismatch", message: "Token vinculado a outro dispositivo." });
         }
       }

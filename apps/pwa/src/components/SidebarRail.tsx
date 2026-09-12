@@ -40,18 +40,18 @@ interface NavItemDef {
 const PRIMARY_NAV: NavItemDef[] = [
   { label: "Início", href: "/", icon: Home },
   { label: "Extrato", href: "/registros", icon: Receipt },
-  { label: "Compromissos", href: "/compromissos", icon: CalendarClock },
-  { label: "Hub", href: "/hub", icon: LayoutGrid },
+  { label: "Minhas Contas", href: "/compromissos", icon: CalendarClock },
+  { label: "Mais", href: "/hub", icon: LayoutGrid },
 ];
 
 const SECONDARY_NAV: NavItemDef[] = [
-  { label: "Patrimônio", href: "/hub/patrimonio", icon: Wallet },
-  { label: "Planejamento", href: "/hub/planejamento", icon: CalendarCheck },
+  { label: "Contas e Cartões", href: "/hub/patrimonio", icon: Wallet },
+  { label: "Metas e Orçamento", href: "/hub/planejamento", icon: CalendarCheck },
   { label: "Relatórios", href: "/hub/relatorios", icon: FileText },
-  { label: "Alertas", href: "/hub/alertas", icon: Bell },
-  { label: "Categorias", href: "/hub/categorias", icon: FolderOpen },
+  { label: "Avisos e Lembretes", href: "/hub/alertas", icon: Bell },
+  { label: "Organizar Gastos", href: "/hub/categorias", icon: FolderOpen },
   { label: "Configurações", href: "/hub/configuracoes", icon: Settings },
-  { label: "Workspaces", href: "/workspaces", icon: Layers },
+  { label: "Meus Espaços", href: "/workspaces", icon: Layers },
 ];
 
 export function SidebarRail({

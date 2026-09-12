@@ -35,8 +35,8 @@ describe("BottomNav", () => {
       renderNav();
       expect(screen.getByText("Início")).toBeInTheDocument();
       expect(screen.getByText("Extrato")).toBeInTheDocument();
-      expect(screen.getByText("Compromissos")).toBeInTheDocument();
-      expect(screen.getByText("Hub")).toBeInTheDocument();
+      expect(screen.getByText("Minhas Contas")).toBeInTheDocument();
+      expect(screen.getByText("Mais")).toBeInTheDocument();
       expect(screen.getByLabelText("Nova transação")).toBeInTheDocument();
     });
   });
@@ -66,7 +66,7 @@ describe("BottomNav", () => {
     it("calls onNavClick when a tab is clicked", async () => {
       const user = userEvent.setup();
       renderNav();
-      await user.click(screen.getByText("Hub"));
+      await user.click(screen.getByText("Mais"));
       expect(handlers.onNavClick).toHaveBeenCalledWith("hub");
     });
 
@@ -128,7 +128,7 @@ describe("BottomNav", () => {
 
     it("renders labels at 11px", () => {
       renderNav();
-      for (const label of ["Início", "Extrato", "Compromissos", "Hub"]) {
+      for (const label of ["Início", "Extrato", "Minhas Contas", "Mais"]) {
         expect(screen.getByText(label).className).toMatch(/text-\[11px\]/);
       }
     });

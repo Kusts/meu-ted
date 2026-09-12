@@ -22,10 +22,10 @@ describe("SidebarRail", () => {
 
   it("renders canonical navigation items (item 13)", () => {
     render(<SidebarRail onNewTransaction={vi.fn()} />);
-    for (const label of ["Início", "Extrato", "Compromissos", "Hub", "Patrimônio", "Planejamento", "Relatórios", "Alertas", "Categorias", "Configurações"]) {
+    for (const label of ["Início", "Extrato", "Minhas Contas", "Mais", "Contas e Cartões", "Metas e Orçamento", "Relatórios", "Avisos e Lembretes", "Organizar Gastos", "Configurações", "Meus Espaços"]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
-    expect(screen.getByRole("link", { name: "Patrimônio" })).toHaveAttribute("href", "/hub/patrimonio");
+    expect(screen.getByRole("link", { name: "Contas e Cartões" })).toHaveAttribute("href", "/hub/patrimonio");
   });
 
   it("marks the active route with aria-current='page'", () => {
@@ -43,7 +43,7 @@ describe("SidebarRail", () => {
     mockPath = "/workspaces";
     render(<SidebarRail onNewTransaction={vi.fn()} />);
 
-    const workspacesLink = screen.getByRole("link", { name: "Workspaces" });
+    const workspacesLink = screen.getByRole("link", { name: "Meus Espaços" });
     expect(workspacesLink).toHaveAttribute("href", "/workspaces");
     expect(workspacesLink).toHaveAttribute("aria-current", "page");
   });

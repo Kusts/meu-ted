@@ -32,8 +32,8 @@ interface ItemDef {
 const ITEMS: ItemDef[] = [
   { key: "home", label: "Início", Icon: Home },
   { key: "records", label: "Extrato", Icon: Receipt },
-  { key: "compromissos", label: "Compromissos", Icon: CalendarClock },
-  { key: "hub", label: "Hub", Icon: LayoutGrid },
+  { key: "compromissos", label: "Minhas Contas", Icon: CalendarClock },
+  { key: "hub", label: "Mais", Icon: LayoutGrid },
 ];
 
 type QuickActionKind = "expense" | "income" | "transfer" | "receipt";
@@ -210,7 +210,7 @@ export function BottomNav({
         )}
       </div>
 
-      {/* Items: right side (Compromissos, Hub) */}
+      {/* Items: right side (Minhas Contas, Mais) */}
       {ITEMS.slice(2).map((item) => (
         <NavButton
           key={item.key}
