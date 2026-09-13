@@ -21,6 +21,8 @@ export type MemorySql = {
 };
 
 export type MemoryKind = 'fact' | 'preference' | 'learning' | 'summary';
+/** Provenance is descriptive only: memory never becomes financial authority. */
+export type MemorySource = 'user' | 'assistant' | 'api' | 'system';
 
 export type MemoryItem = {
   id: string;
@@ -32,6 +34,8 @@ export type MemoryItem = {
   createdAt: string;
   lastSeenAt: string;
   expiresAt: string | null;
+  source: MemorySource;
+  confidence: number;
 };
 
 export const MEMORY_BUDGET_CHARS = 1200;
@@ -59,10 +63,20 @@ export const initializeMemorySchema = (sql: MemorySql): void => {
       salience REAL NOT NULL DEFAULT 0.5,
       created_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
-      expires_at TEXT
+      expires_at TEXT,
+      source TEXT NOT NULL DEFAULT 'user',
+      confidence REAL NOT NULL DEFAULT 0.5
     );
   `);
   sql.exec(`CREATE INDEX IF NOT EXISTS agent_memory_workspace_idx ON agent_memory (workspace_id, actor);`);
+  // Existing DOs may have the Part B table already; additive columns keep
+  // upgrades compatible without a destructive migration.
+  for (const statement of [
+    `ALTER TABLE agent_memory ADD COLUMN source TEXT NOT NULL DEFAULT 'user'`,
+    `ALTER TABLE agent_memory ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5`,
+  ]) {
+    try { sql.exec(statement); } catch { /* already present or test adapter */ }
+  }
   sql.exec(`
     CREATE TABLE IF NOT EXISTS agent_prefs (
       workspace_id TEXT PRIMARY KEY,
@@ -150,6 +164,8 @@ const mapRow = (row: Record<string, unknown>): MemoryItem => ({
   createdAt: String(row['created_at']),
   lastSeenAt: String(row['last_seen_at']),
   expiresAt: row['expires_at'] == null ? null : String(row['expires_at']),
+  source: (['user', 'assistant', 'api', 'system'].includes(String(row['source'])) ? row['source'] : 'user') as MemorySource,
+  confidence: Math.min(1, Math.max(0, Number(row['confidence'] ?? 0.5))),
 });
 
 export type RememberResult =
@@ -165,6 +181,8 @@ export const rememberFact = (
     content: string;
     salience?: number;
     expiresAt?: string | null;
+    source?: MemorySource;
+    confidence?: number;
   },
 ): RememberResult => {
   const raw = (input.content ?? '').trim();
@@ -212,10 +230,12 @@ export const rememberFact = (
     createdAt: nowIso(),
     lastSeenAt: nowIso(),
     expiresAt: input.expiresAt ?? null,
+    source: input.source ?? 'user',
+    confidence: Math.min(1, Math.max(0, input.confidence ?? 0.5)),
   };
   sql.exec(
-    `INSERT INTO agent_memory (id, workspace_id, actor, kind, content, salience, created_at, last_seen_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO agent_memory (id, workspace_id, actor, kind, content, salience, created_at, last_seen_at, expires_at, source, confidence)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     item.id,
     item.workspaceId,
     item.actor,
@@ -225,6 +245,8 @@ export const rememberFact = (
     item.createdAt,
     item.lastSeenAt,
     item.expiresAt,
+    item.source,
+    item.confidence,
   );
   return { stored: true, deduped: false, item };
 };
@@ -233,6 +255,11 @@ const ageDays = (iso: string): number => {
   const ms = Date.now() - new Date(iso).getTime();
   return Number.isFinite(ms) && ms > 0 ? ms / 86_400_000 : 0;
 };
+
+// A cached statement about a changing financial value is never suitable for
+// grounding. Current values must come from the authoritative API evidence.
+const CURRENT_FINANCIAL_STATE_RE = /\b(saldo|dispon[ií]vel|fatura|or[cç]amento|limite|d[ií]vida|parcela|lan[cç]amento|transa[cç][aã]o|patrim[oô]nio|conta)\b.{0,40}\b(?:r\$|\d+[,.]?\d*|atual|hoje|venc|resta|faltam?)\b/i;
+export const isCurrentFinancialState = (content: string): boolean => CURRENT_FINANCIAL_STATE_RE.test(content);
 
 export const recallMemories = (
   sql: MemorySql,
@@ -266,7 +293,7 @@ export const recallMemories = (
     const overlapScore = queryTokens.size > 0 ? overlap / queryTokens.size : 0;
     const score = item.salience * Math.exp(-ageDays(item.lastSeenAt) / 180) + overlapScore * 0.5;
     return { item, score };
-  });
+  }).filter(({ item }) => !isCurrentFinancialState(item.content));
   scored.sort((a, b) => b.score - a.score);
   const picked: MemoryItem[] = [];
   let chars = 0;
@@ -284,6 +311,14 @@ export const recallMemories = (
     }
   }
   return picked;
+};
+
+/** Memory is an optional aid: storage faults degrade to no recalled context. */
+export const recallMemoriesSafe = (
+  sql: MemorySql,
+  input: Parameters<typeof recallMemories>[1],
+): MemoryItem[] => {
+  try { return recallMemories(sql, input); } catch { return []; }
 };
 
 /** Compact `MEMÓRIA DO USUÁRIO` block for system-prompt injection. */

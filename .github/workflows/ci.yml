@@ -23,17 +23,17 @@ jobs:
           version: '10'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter meu-ted-api lint
-      - run: pnpm --filter meu-ted-api typecheck
-      - run: pnpm --filter meu-ted-api test
-      - run: pnpm --filter meu-ted-api build
+      - run: pnpm --filter meu-ted-api --fail-if-no-match lint
+      - run: pnpm --filter meu-ted-api --fail-if-no-match typecheck
+      - run: pnpm --filter meu-ted-api --fail-if-no-match test
+      - run: pnpm --filter meu-ted-api --fail-if-no-match build
 
-  # ─── Bridge ───────────────────────────────────────────────────────────
-  bridge:
-    name: Bridge — lint + typecheck + test
+  # ─── Agent ────────────────────────────────────────────────────────────
+  agent:
+    name: Agent — typecheck + test + deterministic eval + architecture
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -43,13 +43,33 @@ jobs:
           version: '10'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @pi-financeiro/whatsapp-bridge lint
-      - run: pnpm --filter @pi-financeiro/whatsapp-bridge typecheck
-      - run: pnpm --filter @pi-financeiro/whatsapp-bridge test
-      - run: pnpm --filter @pi-financeiro/whatsapp-bridge build
+      - run: pnpm --filter pi-finance-agent --fail-if-no-match typecheck
+      - run: pnpm --filter pi-finance-agent --fail-if-no-match test
+      - run: pnpm --filter pi-finance-agent --fail-if-no-match eval:ted-v2
+      - run: pnpm architecture:check
+      - run: pnpm --filter pi-finance-agent --fail-if-no-match build
+
+  # ─── Codex Broker ─────────────────────────────────────────────────────
+  broker:
+    name: Codex Broker — typecheck + test + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter pi-finance-codex-broker --fail-if-no-match typecheck
+      - run: pnpm --filter pi-finance-codex-broker --fail-if-no-match test
+      - run: pnpm --filter pi-finance-codex-broker --fail-if-no-match build
 
   # ─── PWA ──────────────────────────────────────────────────────────────
   pwa:
@@ -63,13 +83,13 @@ jobs:
           version: '10'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter pwa typecheck
-      - run: pnpm --filter pwa lint
-      - run: pnpm --filter pwa build
-      - run: pnpm --filter pwa test
+      - run: pnpm --filter pwa --fail-if-no-match typecheck
+      - run: pnpm --filter pwa --fail-if-no-match lint
+      - run: pnpm --filter pwa --fail-if-no-match build
+      - run: pnpm --filter pwa --fail-if-no-match test
 
   # ─── Postgres integration ────────────────────────────────────────────
   postgres:
@@ -97,7 +117,7 @@ jobs:
           version: '10'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - name: Create disposable database marker
@@ -111,16 +131,21 @@ jobs:
 
   # ─── Docker image builds ─────────────────────────────────────────────
   docker:
-    name: Docker — API + Pi bridge images
+    name: Docker — API + Codex Broker images
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - uses: docker/setup-buildx-action@v3
       - name: Build API image
         run: docker build -f apps/api/Dockerfile -t pi-finance-api:ci .
-      - name: Build Pi bridge image
-        run: docker build -f docker/pi-stack/Dockerfile -t pi-finance-pi-stack:ci .
+      - name: Build Codex Broker image
+        run: docker build -f apps/codex-broker/Dockerfile -t pi-finance-codex-broker:ci .
+      - name: Smoke API and Codex Broker containers
+        run: pnpm container:smoke
 
   # ─── Capability inventory gate ────────────────────────────────────────
   capabilities:
@@ -134,17 +159,11 @@ jobs:
           version: '10'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm capabilities:check
       - run: node --test scripts/check-tool-capability-inventory.test.mjs
-      - name: Test & typecheck financial-tools extension
-        run: |
-          cd .pi/extensions/financial-tools
-          npm install --no-audit --no-fund
-          npx tsx --test api-client-context.test.ts api-migration.test.ts pending-tools.test.ts pending-write-adapters.test.ts tool-schema.test.ts
-          npx tsc --noEmit
 
   # ─── Write/mutator policy gate ───────────────────────────────────────
   write-policy:
@@ -158,7 +177,7 @@ jobs:
           version: '10'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm write-policy:check
@@ -178,7 +197,7 @@ jobs:
           version: '10'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: |
@@ -203,7 +222,7 @@ jobs:
           version: '10'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm security:secrets
@@ -211,8 +230,8 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - name: Build API image for scan
         run: docker build -f apps/api/Dockerfile -t pi-finance-api:ci .
-      - name: Build Pi bridge image for scan
-        run: docker build -f docker/pi-stack/Dockerfile -t pi-finance-pi-stack:ci .
+      - name: Build Codex Broker image for scan
+        run: docker build -f apps/codex-broker/Dockerfile -t pi-finance-codex-broker:ci .
       - run: pnpm security:containers
 
   # ─── Documentation gate ──────────────────────────────────────────────
@@ -227,7 +246,7 @@ jobs:
           version: '10'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm docs:lint
@@ -237,8 +256,7 @@ jobs:
   # ─── Global gate ──────────────────────────────────────────────────────
   gate:
     name: Gate — all checks
-    needs: [api, bridge, pwa, postgres, docker, capabilities, write-policy, governance, security, docs]
+    needs: [api, agent, broker, pwa, postgres, docker, capabilities, write-policy, governance, security, docs]
     runs-on: ubuntu-latest
     steps:
       - run: echo "All CI checks passed."
-

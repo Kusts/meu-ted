@@ -27,7 +27,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20]
+        node-version: [22]
         pnpm-version: [10]
 
     steps:
@@ -102,7 +102,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20]
+        node-version: [22]
         pnpm-version: [10]
 
     steps:

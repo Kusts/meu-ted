@@ -8,6 +8,8 @@ import {
   ROLLOUT_MODES,
   SECRET_ALIASES,
   TRANSPORTS,
+  type PendingOperationV2,
+  type PendingOperationV2JsonValue,
 } from './types.js';
 
 export const providerKindSchema = z.enum(PROVIDER_KINDS);
@@ -182,6 +184,70 @@ export const remoteModelsResponseSchema = z.object({
   cached: z.boolean(),
   manualEntryAllowed: z.boolean(),
 });
+
+const pendingJsonValueSchema: z.ZodType<PendingOperationV2JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number().finite(),
+    z.boolean(),
+    z.null(),
+    z.array(pendingJsonValueSchema),
+    z.record(z.string(), pendingJsonValueSchema),
+  ]),
+);
+
+export const pendingOperationV2BindingsSchema = z.object({
+  workspaceId: z.string().trim().min(1),
+  actorId: z.string().trim().min(1),
+  deviceId: z.string().trim().min(1),
+}).strict();
+
+export const pendingOperationV2Schema = z.object({
+  version: z.literal(2),
+  workspaceId: z.string().trim().min(1),
+  actorId: z.string().trim().min(1),
+  deviceId: z.string().trim().min(1),
+  tool: z.string().trim().min(1).regex(/^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9_]*)+$/),
+  normalizedArgs: z.record(z.string(), pendingJsonValueSchema),
+  proposalHash: z.string().regex(/^[a-f0-9]{64}$/),
+  idempotencyKey: z.string().trim().min(1).max(256),
+  createdAt: z.string().datetime({ offset: true }),
+  expiresAt: z.string().datetime({ offset: true }),
+  bindings: pendingOperationV2BindingsSchema,
+}).strict().superRefine((value, ctx) => {
+  if (value.bindings.workspaceId !== value.workspaceId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bindings', 'workspaceId'], message: 'workspace binding does not match workspaceId' });
+  if (value.bindings.actorId !== value.actorId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bindings', 'actorId'], message: 'actor binding does not match actorId' });
+  if (value.bindings.deviceId !== value.deviceId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bindings', 'deviceId'], message: 'device binding does not match deviceId' });
+  if (Date.parse(value.expiresAt) <= Date.parse(value.createdAt)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['expiresAt'], message: 'expiresAt must be after createdAt' });
+});
+
+const stableJson = (value: PendingOperationV2JsonValue): string => {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key]!)}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+};
+
+const hashInput = (operation: Pick<PendingOperationV2, 'tool' | 'normalizedArgs' | 'workspaceId' | 'actorId' | 'deviceId'>): string =>
+  stableJson({
+    tool: operation.tool,
+    normalizedArgs: operation.normalizedArgs,
+    workspaceId: operation.workspaceId,
+    actorId: operation.actorId,
+    deviceId: operation.deviceId,
+  });
+
+export const computePendingOperationV2Hash = async (operation: Pick<PendingOperationV2, 'tool' | 'normalizedArgs' | 'workspaceId' | 'actorId' | 'deviceId'>): Promise<string> => {
+  const bytes = new TextEncoder().encode(hashInput(operation));
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
+export const verifyPendingOperationV2Hash = async (operation: PendingOperationV2): Promise<boolean> => {
+  if (!pendingOperationV2Schema.safeParse(operation).success) return false;
+  return (await computePendingOperationV2Hash(operation)) === operation.proposalHash;
+};
 
 /** Codex browser-login flow (item 6): callback carries an opaque code, the
  * broker exchanges it server-side and persists via atomic 0600 write. */

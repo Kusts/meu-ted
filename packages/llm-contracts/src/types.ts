@@ -308,3 +308,35 @@ export interface LlmFailoverEvent {
   usedFallback: boolean;
   failoverReason: string | null;
 }
+
+export type PendingOperationV2JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | PendingOperationV2JsonValue[]
+  | { [key: string]: PendingOperationV2JsonValue };
+
+export interface PendingOperationV2Bindings {
+  workspaceId: string;
+  actorId: string;
+  deviceId: string;
+}
+
+/**
+ * Authoritative approval proposal shared by API and Agent. `summary`, status,
+ * timestamps and idempotency are deliberately not part of the proposal hash.
+ */
+export interface PendingOperationV2 {
+  version: 2;
+  workspaceId: string;
+  actorId: string;
+  deviceId: string;
+  tool: string;
+  normalizedArgs: { [key: string]: PendingOperationV2JsonValue };
+  proposalHash: string;
+  idempotencyKey: string;
+  createdAt: string;
+  expiresAt: string;
+  bindings: PendingOperationV2Bindings;
+}

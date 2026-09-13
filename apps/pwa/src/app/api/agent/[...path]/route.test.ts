@@ -113,5 +113,19 @@ describe("Agent Next.js Proxy Route (/api/agent/[...path])", () => {
     await GET(req127, context);
     expect(capturedUpstreamRequest!.headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
   });
-});
 
+  it("rejects a foreign browser origin for state-changing requests", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const response = await POST(new Request("https://pwa.example/api/agent/turn", {
+      method: "POST", headers: { origin: "https://attacker.example", "content-type": "application/json" }, body: "{}",
+    }), { params: Promise.resolve({ path: ["turn"] }) });
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("marks agent responses as non-cacheable", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const response = await GET(new Request("https://pwa.example/api/agent/history"), { params: Promise.resolve({ path: ["history"] }) });
+    expect(response.headers.get("cache-control")).toContain("no-store");
+  });
+});

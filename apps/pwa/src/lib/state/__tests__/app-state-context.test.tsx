@@ -4,7 +4,7 @@ import { AppStateProvider, useAppState } from "../app-state-context";
 import * as endpoints from "@/lib/api/endpoints";
 import { ApiError, apiFetch } from "@/lib/api/client";
 import { SessionProvider } from "@/lib/auth/session-context";
-import type { Account, Transaction, Payable } from "@/lib/state/types";
+import type { Account, Category, Transaction, Payable } from "@/lib/state/types";
 
 // ─── Spy setup ──────────────────────────────────────────────────────────────
 
@@ -569,10 +569,10 @@ describe("AppStateProvider — refreshSubscriptions (lazy load)", () => {
         id: "s1",
         name: "Netflix",
         amountCents: 39_90,
-        cycle: "monthly",
+        cycle: "monthly" as const,
         day: 15,
         paymentMethod: "credit_card",
-        status: "active",
+        status: "active" as const,
       },
     ];
     const spy = vi
@@ -1034,10 +1034,10 @@ describe("AppStateProvider — API write path", () => {
       id: "sub-real-1",
       name: "Netflix",
       amountCents: 39_90,
-      cycle: "monthly",
-      day: 15,
-      paymentMethod: "credit_card",
-      status: "active",
+        cycle: "monthly" as const,
+        day: 15,
+        paymentMethod: "credit_card",
+        status: "active" as const,
       createdAt: new Date().toISOString(),
     });
 

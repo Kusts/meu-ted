@@ -12,10 +12,10 @@ This matrix is the policy ledger for every discovered write surface. CI discover
 
 ## Discovery contract
 
-- Sources: `apps/pwa/src/lib/state/commands.ts`, `apps/pwa/src/lib/api/endpoints.ts`, `apps/pwa/src/app/**/route.ts`, `apps/api/src/routes/**/*.ts`, `apps/whatsapp-bridge/src/server.ts`, `.pi/extensions/financial-tools/tools/**/*.ts`, and the generated `.pi/extensions/financial-tools/generated/http-tools.ts` artifact.
+- Sources: `apps/pwa/src/lib/state/commands.ts`, `apps/pwa/src/lib/api/endpoints.ts`, `apps/pwa/src/app/**/route.ts`, `apps/api/src/routes/**/*.ts`, and the generated `apps/agent/src/generated/http-tools.ts` artifact. Removed Bridge and Pi-extension paths are intentionally not active write surfaces.
 - Only `POST`, `PUT`, `PATCH`, and `DELETE` are write methods. GET/read paths are intentionally excluded.
 - `Source`, `Method`, `Path`, `Layer`, and `Operation` are source-derived and must match exactly; do not hand-edit them to hide drift.
-- PWA telemetry and bridge ingress rows are included as transport writes; they use `not-applicable (transport)` for idempotency/projection and do not mutate financial projections.
+- PWA telemetry rows are transport writes; they use `not-applicable (transport)` for idempotency/projection and do not mutate financial projections.
 
 ## Matrix
 
@@ -88,8 +88,6 @@ This matrix is the policy ledger for every discovered write surface. CI discover
 | pwa.endpoint.cancelGoal | pwa-endpoint | cancelGoal | POST | /goals/:id/cancel | apps/pwa/src/lib/api/endpoints.ts | client-generated | canonical response | throw to caller | reconcile affected domain | high |
 | pwa.endpoint.updateGoal | pwa-endpoint | updateGoal | PATCH | /goals/:id | apps/pwa/src/lib/api/endpoints.ts | client-generated | canonical response | throw to caller | reconcile affected domain | medium |
 | pwa.endpoint.patchProfile | pwa-endpoint | patchProfile | PATCH | /profile | apps/pwa/src/lib/api/endpoints.ts | client-generated | canonical response | throw to caller | reconcile affected domain | medium |
-| pwa.endpoint.approvePendingOperation | pwa-endpoint | approvePendingOperation | POST | /pending-operations/:id/approve | apps/pwa/src/lib/api/endpoints.ts | client-generated | canonical response | throw to caller | reconcile affected domain | medium |
-| pwa.endpoint.rejectPendingOperation | pwa-endpoint | rejectPendingOperation | POST | /pending-operations/:id/reject | apps/pwa/src/lib/api/endpoints.ts | client-generated | canonical response | throw to caller | reconcile affected domain | medium |
 | pwa.endpoint.undoLastAction | pwa-endpoint | undoLastAction | POST | /audit/undo | apps/pwa/src/lib/api/endpoints.ts | client-generated | canonical response | throw to caller | reconcile affected domain | medium |
 | pwa.endpoint.checkDuplicate | pwa-endpoint | checkDuplicate | POST | /transactions/detect-duplicate | apps/pwa/src/lib/api/endpoints.ts | client-generated | canonical response | throw to caller | reconcile affected domain | medium |
 | pwa.endpoint.createPriceAlert | pwa-endpoint | createPriceAlert | POST | /alerts/price | apps/pwa/src/lib/api/endpoints.ts | client-generated | canonical response | throw to caller | reconcile affected domain | medium |
@@ -148,6 +146,14 @@ This matrix is the policy ledger for every discovered write surface. CI discover
 | api.route.POST:/pending-operations/:id/approve | api-route | POST /pending-operations/:id/approve | POST | /pending-operations/:id/approve | apps/api/src/routes/pending-operations.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | medium |
 | api.route.POST:/pending-operations/:id/reject | api-route | POST /pending-operations/:id/reject | POST | /pending-operations/:id/reject | apps/api/src/routes/pending-operations.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | medium |
 | api.route.POST:/pending-operations/undo | api-route | POST /pending-operations/undo | POST | /pending-operations/undo | apps/api/src/routes/pending-operations.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | medium |
+| api.route.POST:/pending-operations/v2/propose | api-route | POST /pending-operations/v2/propose | POST | /pending-operations/v2/propose | apps/api/src/routes/pending-operations.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | medium |
+| api.route.POST:/pending-operations/v2 | api-route | POST /pending-operations/v2 | POST | /pending-operations/v2 | apps/api/src/routes/pending-operations.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | medium |
+| api.route.POST:/pending-operations/v2/:id/confirm | api-route | POST /pending-operations/v2/:id/confirm | POST | /pending-operations/v2/:id/confirm | apps/api/src/routes/pending-operations.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | medium |
+| api.route.POST:/pending-operations/v2/:id/reject | api-route | POST /pending-operations/v2/:id/reject | POST | /pending-operations/v2/:id/reject | apps/api/src/routes/pending-operations.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | high |
+| api.route.POST:/pending-operations/v2/:id/cancel | api-route | POST /pending-operations/v2/:id/cancel | POST | /pending-operations/v2/:id/cancel | apps/api/src/routes/pending-operations.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | high |
+| api.route.POST:/pending-operations/v2/:id/execute | api-route | POST /pending-operations/v2/:id/execute | POST | /pending-operations/v2/:id/execute | apps/api/src/routes/pending-operations.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | high |
+| api.route.POST:/pending-operations/v2/:id/retry | api-route | POST /pending-operations/v2/:id/retry | POST | /pending-operations/v2/:id/retry | apps/api/src/routes/pending-operations.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | medium |
+| api.route.POST:/pending-operations/v2/:id/expire | api-route | POST /pending-operations/v2/:id/expire | POST | /pending-operations/v2/:id/expire | apps/api/src/routes/pending-operations.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | high |
 | api.route.POST:/alerts/price | api-route | POST /alerts/price | POST | /alerts/price | apps/api/src/routes/price-alerts.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | medium |
 | api.route.POST:/alerts/price/check | api-route | POST /alerts/price/check | POST | /alerts/price/check | apps/api/src/routes/price-alerts.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | medium |
 | api.route.PATCH:/profile | api-route | PATCH /profile | PATCH | /profile | apps/api/src/routes/profile.ts | required | canonical response | throw; transaction rollback | reconcile affected domain | medium |

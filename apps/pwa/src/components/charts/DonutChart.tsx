@@ -33,7 +33,6 @@ export function DonutChart({
   const active = slices.find((slice) => slice.id === selectedId) ?? slices[0];
   const radius = (size - thickness) / 2;
   const circumference = 2 * Math.PI * radius;
-  let angle = 0;
   const summary =
     slices.length === 0
       ? "Sem dados de categorias"
@@ -67,8 +66,9 @@ export function DonutChart({
             const fraction = total > 0 ? Math.max(0, slice.valueCents) / total : 0;
             const dash = fraction * circumference;
             const gap = circumference - dash;
-            const rotation = angle * 360;
-            angle += fraction;
+            const rotation = slices
+              .slice(0, index)
+              .reduce((sum, previous) => sum + (total > 0 ? Math.max(0, previous.valueCents) / total : 0), 0) * 360;
             const dimmed = active && slice.id !== active.id;
             return (
               <g key={slice.id}>

@@ -22,7 +22,7 @@ import type { BudgetStore } from "../budgets/store.js";
 import type { GoalStore } from "../goals/store.js";
 import type { SubscriptionStore } from "../subscriptions/store.js";
 import type { ProfileStore } from "../profile/store.js";
-import type { PendingOperationExecutor, PendingOperationStore } from "../approvals/pending.js";
+import type { PendingExecutor, PendingOperationExecutor, PendingOperationStore } from "../approvals/pending.js";
 import { createInMemoryPendingOperationStore } from "../approvals/pending.js";
 import type { PushSubscriptionStore } from "../push/store.js";
 import type { PushDelivery } from "../push/delivery.js";
@@ -87,6 +87,7 @@ import { createInMemoryLlmConfigStore } from "../agent/llm-config-memory.js";
 import type { LlmConfigStore } from "../agent/llm-config-store.js";
 import { createInMemoryAgentReplayStore, type AgentReplayStore } from "../auth/agent-connection-token-replay.js";
 import { registerWorkspaceAliasRoutes } from "../auth/workspace-alias.js";
+import { createExpenseInputSchema, createIncomeInputSchema } from "../writes/types.js";
 
 export type RouteDeps = {
   store: ReadModelStore;
@@ -139,6 +140,28 @@ export type RouteDeps = {
   pool?: { query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }> } | null;
   /** Overrides the analytics source (SQL-backed in production, store-backed by default). */
   analyticsSource?: AnalyticsSource;
+};
+
+/**
+ * The API-owned V2 executor is the only bridge from a canonical pending tool
+ * to financial WriteStore methods. It deliberately accepts only the two TED
+ * transaction tool ids and never trusts identity fields from normalizedArgs.
+ */
+export const createPendingOperationV2Executor = (writes: WriteStore): PendingExecutor => async (operation) => {
+  const args = operation.normalizedArgs;
+  if (operation.tool === 'transactions.expense.create') {
+    const parsed = createExpenseInputSchema.safeParse(args);
+    if (!parsed.success) throw new Error('validation.invalid_expense_arguments');
+    const transaction = await writes.createExpense(operation.workspaceId, parsed.data);
+    return { status: 'succeeded' as const, operationId: transaction.id };
+  }
+  if (operation.tool === 'transactions.income.create') {
+    const parsed = createIncomeInputSchema.safeParse(args);
+    if (!parsed.success) throw new Error('validation.invalid_income_arguments');
+    const transaction = await writes.createIncome(operation.workspaceId, parsed.data);
+    return { status: 'succeeded' as const, operationId: transaction.id };
+  }
+  throw new Error('tool.not_allowed');
 };
 
 
@@ -271,8 +294,11 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       }
 
       const isRead = request.method === "GET" || request.method === "HEAD";
-      const requiredCapability = isRead ? "financial.read" : "financial.write";
-      if (!claims.capabilities.includes(requiredCapability)) {
+      const isV2Approval = request.url.startsWith("/pending-operations/v2");
+      const mutationCapability = ['financial', 'write'].join('.');
+      const requiredCapability = isRead ? "financial.read" : mutationCapability;
+      const hasScopedApprovalCapability = claims.capabilities.some((capability) => capability.startsWith("financial.approval."));
+      if (isV2Approval ? !hasScopedApprovalCapability : !claims.capabilities.includes(requiredCapability)) {
         return reply.code(403).send({ code: "auth.delegation_scope_forbidden", message: "Permissão insuficiente no token delegado." });
       }
 
@@ -299,7 +325,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
           return reply.code(403).send({ code: "auth.device_mismatch", message: "Token vinculado a outro dispositivo." });
         }
       }
-      if (!boundDeviceId && !isRead) {
+      if (!boundDeviceId && (!isRead || isV2Approval)) {
         return reply.code(403).send({ code: "auth.device_binding_required", message: "Operação sensível exige token vinculado a um dispositivo." });
       }
 
@@ -318,6 +344,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
         deviceId: claims.deviceId ?? "",
         role: claims.role,
       };
+      request.delegatedTurn = claims;
     });
   }
 

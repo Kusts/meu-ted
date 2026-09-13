@@ -67,7 +67,7 @@ describe("Bootstrap resilience and finite state transitions", () => {
     vi.mocked(endpoints.fetchProfile).mockResolvedValue(null as never);
     vi.mocked(endpoints.fetchQuickInsights).mockResolvedValue([]);
 
-    const preloadedAccounts = [{ id: "acc-preloaded", name: "Preloaded Bank", kind: "bank", balanceCents: 500, isActive: true }];
+    const preloadedAccounts = [{ id: "acc-preloaded", name: "Preloaded Bank", kind: "bank" as const, balanceCents: 500, status: "active" }];
 
     await runBootstrap("token-123", dispatch, expireSession, {
       accounts: { data: preloadedAccounts, syncedAt: "2026-08-29T10:00:00.000Z" },
@@ -85,7 +85,7 @@ describe("Bootstrap resilience and finite state transitions", () => {
     const dispatch = (action: AppStateAction) => actions.push(action);
     const expireSession = vi.fn();
 
-    vi.mocked(endpoints.fetchAccounts).mockResolvedValue([{ id: "acc-1", name: "Checking", kind: "bank", balanceCents: 100, isActive: true }]);
+    vi.mocked(endpoints.fetchAccounts).mockResolvedValue([{ id: "acc-1", name: "Checking", kind: "bank" as const, balanceCents: 100, status: "active" }]);
     vi.mocked(endpoints.fetchCategories).mockResolvedValue([]);
     vi.mocked(endpoints.fetchTransactions).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(endpoints.fetchPayables).mockResolvedValue([]);

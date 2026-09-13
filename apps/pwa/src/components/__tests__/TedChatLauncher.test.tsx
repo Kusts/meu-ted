@@ -41,7 +41,6 @@ describe("TedChatLauncher Component (Task 10)", () => {
 
     vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("mock-token");
     vi.spyOn(agentClient, "fetchAgentHistory").mockResolvedValue([]);
-    vi.spyOn(agentClient, "fetchPendingOperations").mockResolvedValue([]);
 
     render(<TedChatLauncher />);
 
@@ -56,7 +55,6 @@ describe("TedChatLauncher Component (Task 10)", () => {
   it("opens TedChat when the public open event fires (empty Insights CTA)", async () => {
     vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("mock-token");
     vi.spyOn(agentClient, "fetchAgentHistory").mockResolvedValue([]);
-    vi.spyOn(agentClient, "fetchPendingOperations").mockResolvedValue([]);
 
     render(<TedChatLauncher />);
     expect(screen.queryByRole("dialog", { name: /chat com ted/i })).not.toBeInTheDocument();
@@ -92,7 +90,6 @@ describe("TedChatLauncher Component (Task 10)", () => {
 
       vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("mock-token");
       vi.spyOn(agentClient, "fetchAgentHistory").mockResolvedValue([]);
-      vi.spyOn(agentClient, "fetchPendingOperations").mockResolvedValue([]);
 
       render(<TedChatLauncher />);
       await user.click(screen.getByRole("button", { name: /abrir assistente ted/i }));

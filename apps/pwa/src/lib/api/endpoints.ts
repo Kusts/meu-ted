@@ -17,7 +17,6 @@ import type {
   Profile,
   QuickInsight,
   DashboardSummary,
-  PendingOperation,
 } from "@/lib/state/types";
 import { apiFetch } from "./client";
 
@@ -489,24 +488,6 @@ export async function fetchQuickInsights(): Promise<QuickInsight[]> {
   return res.items;
 }
 
-// ─── Pending Operations ───────────────────────────────────────────
-
-export async function fetchPendingOperations(
-  status: PendingOperation["status"] = "pending",
-): Promise<PendingOperation[]> {
-  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
-  const res = await apiFetch<{ items: PendingOperation[]; total: number }>(`/pending-operations${qs}`);
-  return res.items;
-}
-
-export async function approvePendingOperation(id: string): Promise<PendingOperation> {
-  return apiFetch<PendingOperation>(`/pending-operations/${encodeURIComponent(id)}/approve`, mutationOptions("POST"));
-}
-
-export async function rejectPendingOperation(id: string): Promise<PendingOperation> {
-  return apiFetch<PendingOperation>(`/pending-operations/${encodeURIComponent(id)}/reject`, mutationOptions("POST"));
-}
-
 export async function undoLastAction(input?: { lastOperationId?: string }): Promise<{
   undone: { operation: string; entityId: string; reversal: string };
 }> {
@@ -632,4 +613,3 @@ export async function checkPriceAlertsApi(input?: {
     body: JSON.stringify(input ?? {}),
   });
 }
-

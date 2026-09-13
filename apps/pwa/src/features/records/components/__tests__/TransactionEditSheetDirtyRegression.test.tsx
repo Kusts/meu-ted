@@ -4,7 +4,8 @@ import type { ReactNode } from "react";
 import { UnsavedChangesProvider } from "@/lib/unsaved-changes";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories } from "@/lib/state/mock-data";
-import type { AppState, Transaction } from "@/lib/state/types";
+import type { AppState } from "@/lib/state/app-state-context";
+import type { Transaction } from "@/lib/state/types";
 import { TransactionEditSheet } from "../TransactionEditSheet";
 
 const expenseTx: Transaction = {

@@ -8,7 +8,7 @@ const containerScript = fs.readFileSync('scripts/security-containers.mjs', 'utf8
 const gitleaksConfig = fs.readFileSync('.gitleaks.toml', 'utf8');
 const workflow = fs.readFileSync('.github/workflows/ci.yml', 'utf8');
 const apiDockerfile = fs.readFileSync('apps/api/Dockerfile', 'utf8');
-const piDockerfile = fs.readFileSync('docker/pi-stack/Dockerfile', 'utf8');
+const brokerDockerfile = fs.readFileSync('apps/codex-broker/Dockerfile', 'utf8');
 
 for (const name of ['security:secrets', 'security:deps', 'security:containers']) {
   test(`package exposes ${name}`, () => {
@@ -48,13 +48,13 @@ test('container gate fails on high or critical vulnerabilities for both CI image
   assert.match(containerScript, /--exit-code/);
   assert.match(containerScript, /HIGH,CRITICAL/);
   assert.match(containerScript, /pi-finance-api:ci/);
-  assert.match(containerScript, /pi-finance-pi-stack:ci/);
+  assert.match(containerScript, /pi-finance-codex-broker:ci/);
   assert.match(containerScript, /shell: false/);
 });
 
 test('runtime images install dependencies and exclude package-manager stores', () => {
   assert.match(apiDockerfile, /pnpm install --frozen-lockfile/);
-  assert.match(piDockerfile, /pnpm install --frozen-lockfile/);
+  assert.match(brokerDockerfile, /pnpm install --frozen-lockfile/);
   assert.match(apiDockerfile, /FROM node:22-alpine/);
 });
 

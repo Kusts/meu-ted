@@ -5,9 +5,6 @@ import * as agentClient from "@/lib/api/agent-client";
 
 vi.mock("@/lib/api/agent-client", () => ({
   fetchAgentHistory: vi.fn(),
-  fetchPendingOperations: vi.fn(),
-  approvePendingOperation: vi.fn(),
-  rejectPendingOperation: vi.fn(),
   sendAgentMessage: vi.fn(),
   exportAgentHistory: vi.fn(),
   deleteAgentHistory: vi.fn(),
@@ -20,11 +17,10 @@ vi.mock("@/lib/api/agent-client", () => ({
 describe("AgentTranscript – Canonical REST Contract & Display Sanitization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(agentClient.fetchPendingOperations).mockResolvedValue([]);
     vi.mocked(agentClient.fetchAgentHistory).mockResolvedValue([
-      { id: "m1", actorId: "user-uuid-12345", role: "user", content: "Minha mensagem", isOwn: true },
-      { id: "m2", actorId: "ted", role: "assistant", content: "Mensagem do TED", isOwn: false },
-      { id: "m3", actorId: "user-uuid-67890", role: "user", content: "Mensagem de outro membro", isOwn: false },
+      { id: "m1", actorId: "user-uuid-12345", role: "user", content: "Minha mensagem", isOwn: true, createdAt: undefined, attachments: undefined },
+      { id: "m2", actorId: "ted", role: "assistant", content: "Mensagem do TED", isOwn: false, createdAt: undefined, attachments: undefined },
+      { id: "m3", actorId: "user-uuid-67890", role: "user", content: "Mensagem de outro membro", isOwn: false, createdAt: undefined, attachments: undefined },
     ]);
   });
 
@@ -65,7 +61,7 @@ describe("AgentTranscript – Canonical REST Contract & Display Sanitization", (
     vi.mocked(agentClient.fetchAgentHistory)
       .mockReturnValueOnce(oldHistory)
       .mockResolvedValueOnce([
-        { id: "workspace-b-message", actorId: "user-b", role: "user", content: "Mensagem do workspace B", isOwn: true },
+        { id: "workspace-b-message", actorId: "user-b", role: "user", content: "Mensagem do workspace B", isOwn: true, createdAt: undefined, attachments: undefined },
       ]);
 
     const { rerender } = render(<AgentTranscript open workspaceId="workspace-a" />);
@@ -75,7 +71,7 @@ describe("AgentTranscript – Canonical REST Contract & Display Sanitization", (
 
     await act(async () => {
       resolveOldHistory([
-        { id: "workspace-a-message", actorId: "user-a", role: "user", content: "Mensagem do workspace A", isOwn: true },
+        { id: "workspace-a-message", actorId: "user-a", role: "user", content: "Mensagem do workspace A", isOwn: true, createdAt: undefined, attachments: undefined },
       ]);
     });
 
@@ -111,38 +107,11 @@ describe("AgentTranscript – Canonical REST Contract & Display Sanitization", (
     expect(agentClient.retryAgentTurn).not.toHaveBeenCalled();
   });
 
-  it("renders approve and reject actions for pending operations", async () => {
-    vi.mocked(agentClient.fetchPendingOperations).mockResolvedValue([
-      {
-        id: "pending-1",
-        householdId: "workspace-shared",
-        requesterId: "user-a",
-        operation: "transactions.expense.create",
-        payload: {},
-        reason: "high_value",
-        idempotencyKey: "key-1",
-        status: "pending",
-        createdAt: "now",
-        expiresAt: "later",
-      },
-    ]);
-    vi.mocked(agentClient.approvePendingOperation).mockResolvedValue({
-      id: "pending-1",
-      householdId: "workspace-shared",
-      requesterId: "user-a",
-      operation: "transactions.expense.create",
-      payload: {},
-      reason: "high_value",
-      idempotencyKey: "key-1",
-      status: "approved",
-      createdAt: "now",
-      expiresAt: "later",
-    });
-
+  it("does not expose legacy approval actions in the profile transcript", async () => {
     render(<AgentTranscript open workspaceId="workspace-shared" />);
-    expect(await screen.findByText("Aprovação necessária")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Aprovar" }));
-    await waitFor(() => expect(agentClient.approvePendingOperation).toHaveBeenCalledWith("workspace-shared", "pending-1"));
-    expect(screen.queryByText("Aprovação necessária")).not.toBeInTheDocument();
+
+    expect(await screen.findByText("Minha mensagem")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Aprovar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rejeitar" })).not.toBeInTheDocument();
   });
 });

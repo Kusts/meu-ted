@@ -2,25 +2,39 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import { WorkspaceSwitcher } from "../WorkspaceSwitcher";
+import type { WorkspaceContextValue } from "@/lib/auth/workspace-context";
 
-const mockContext = vi.hoisted(() => ({
+const mockContext: { value: WorkspaceContextValue } = vi.hoisted(() => ({
   value: {
     workspaces: [
-      { id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner" },
-      { id: "ws-2", name: "Empresa LTDA", kind: "shared" as const, role: "member" },
+      { id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner" as const, status: "active" as const },
+      { id: "ws-2", name: "Empresa LTDA", kind: "shared" as const, role: "member" as const, status: "active" as const },
     ],
-    activeWorkspace: { id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner" },
+    activeWorkspace: { id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner" as const, status: "active" as const },
     members: [],
+    pendingInvites: [],
+    ownershipTransfers: [],
     loading: false,
     membersLoading: false,
+    pendingInvitesLoading: false,
+    ownershipTransfersLoading: false,
     error: null,
     selectWorkspace: vi.fn(),
     refreshWorkspaces: vi.fn(),
     refreshMembers: vi.fn(),
+    refreshPendingInvites: vi.fn(),
+    refreshOwnershipTransfers: vi.fn(),
     createWorkspace: vi.fn(),
+    renameWorkspace: vi.fn(),
+    archiveWorkspace: vi.fn(),
+    restoreWorkspace: vi.fn(),
     inviteMember: vi.fn(),
+    resendInvite: vi.fn(),
+    revokeInvite: vi.fn(),
     acceptInvite: vi.fn(),
     removeMember: vi.fn(),
+    transferOwnership: vi.fn(),
+    acceptTransfer: vi.fn(),
     leave: vi.fn(),
   },
 }));
@@ -39,21 +53,34 @@ describe("WorkspaceSwitcher Component (Task 9)", () => {
     vi.clearAllMocks();
     mockContext.value = {
       workspaces: [
-        { id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner" },
-        { id: "ws-2", name: "Empresa LTDA", kind: "shared" as const, role: "member" },
+        { id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner" as const, status: "active" as const },
+        { id: "ws-2", name: "Empresa LTDA", kind: "shared" as const, role: "member" as const, status: "active" as const },
       ],
-      activeWorkspace: { id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner" },
+      activeWorkspace: { id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner" as const, status: "active" as const },
       members: [],
+      pendingInvites: [],
+      ownershipTransfers: [],
       loading: false,
       membersLoading: false,
+      pendingInvitesLoading: false,
+      ownershipTransfersLoading: false,
       error: null,
       selectWorkspace: vi.fn(),
       refreshWorkspaces: vi.fn(),
       refreshMembers: vi.fn(),
+      refreshPendingInvites: vi.fn(),
+      refreshOwnershipTransfers: vi.fn(),
       createWorkspace: vi.fn(),
+      renameWorkspace: vi.fn(),
+      archiveWorkspace: vi.fn(),
+      restoreWorkspace: vi.fn(),
       inviteMember: vi.fn(),
+      resendInvite: vi.fn(),
+      revokeInvite: vi.fn(),
       acceptInvite: vi.fn(),
       removeMember: vi.fn(),
+      transferOwnership: vi.fn(),
+      acceptTransfer: vi.fn(),
       leave: vi.fn(),
     };
   });

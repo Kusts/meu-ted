@@ -36,9 +36,9 @@ describe('C-03: mutation gate fail-closed', () => {
     expect(checkToolExecutionPolicy('list_accounts', 'read')).toBeNull();
   });
 
-  it('checkToolExecutionPolicy libera write só com gate vinculado à tool', () => {
+  it('checkToolExecutionPolicy permanece fechado mesmo com objeto de aprovação legado', () => {
     const gate = { mutationApproved: true as const, approvedTool: 'create_expense' };
-    expect(checkToolExecutionPolicy('create_expense', 'write', gate)).toBeNull();
+    expect(checkToolExecutionPolicy('create_expense', 'write', gate)).toMatchObject({ blocked: true });
     // Gate de outra tool não autoriza (sem reuso cruzado).
     expect(checkToolExecutionPolicy('delete_transaction', 'write', gate)).toMatchObject({ blocked: true });
     // Gate malformado não autoriza.
@@ -47,7 +47,7 @@ describe('C-03: mutation gate fail-closed', () => {
     });
   });
 
-  it('wrapper exposto exige confirmação para deactivate_category e executa após confirmar', async () => {
+  it('wrapper exposto bloqueia deactivate_category até MutationExecutor V2', async () => {
     const realFetch = globalThis.fetch;
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }),
@@ -67,18 +67,19 @@ describe('C-03: mutation gate fail-closed', () => {
       });
       const asked = (await (
         pending['deactivate_category'] as { execute: (p: unknown) => Promise<unknown> }
-      ).execute({ categoryId: '00000000-0000-4000-8000-000000000001' })) as { needsApproval?: boolean };
-      expect(asked.needsApproval).toBe(true);
+      ).execute({ categoryId: '00000000-0000-4000-8000-000000000001' })) as { blocked?: boolean };
+      expect(asked.blocked).toBe(true);
       expect(fetchMock).not.toHaveBeenCalled();
 
       const confirmed = buildExposedTools(['deactivate_category'], {
         ...base,
         lastUserMessage: 'sim, pode desativar a categoria lazer',
       });
-      await (
+      const result = await (
         confirmed['deactivate_category'] as { execute: (p: unknown) => Promise<unknown> }
       ).execute({ categoryId: '00000000-0000-4000-8000-000000000001' });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ blocked: true });
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       globalThis.fetch = realFetch;
     }

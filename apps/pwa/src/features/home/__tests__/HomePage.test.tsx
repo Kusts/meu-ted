@@ -42,6 +42,7 @@ function defaultState(): AppState {
     addAccount: vi.fn(), updateAccount: vi.fn(), addCategory: vi.fn(), addCard: vi.fn(), updateCard: vi.fn(),
     addSubscription: vi.fn(), cancelSubscription: vi.fn(), updateSubscription: vi.fn(),
     createTransfer: vi.fn(), payStatement: vi.fn(), createInstallments: vi.fn(),
+    createCardPurchase: vi.fn(), deleteCategory: vi.fn(), applyCategoryDefaults: vi.fn(),
   };
 }
 

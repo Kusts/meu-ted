@@ -31,7 +31,6 @@ vi.mock("@/lib/api/agent-client", async (importOriginal) => {
     ...actual,
     fetchAgentHistory: vi.fn().mockResolvedValue([]),
     sendAgentMessage: vi.fn().mockResolvedValue({ turnId: "t", status: "completed" }),
-    fetchPendingOperations: vi.fn().mockResolvedValue([]),
   };
 });
 

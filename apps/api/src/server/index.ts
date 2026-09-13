@@ -32,7 +32,8 @@ import { createInMemoryPushSubscriptionStore } from "../push/store.js";
 import { loadVapidConfig } from "../push/vapid.js";
 import { createLegacyPostgresReadModelStore } from "../read-models/legacy-postgres-store.js";
 import { createPostgresReadModelStore } from "../read-models/postgres-store.js";
-import { runMigrations } from "../read-models/sql/migrate.js";
+import { verifySchema } from "./schema-verifier.js";
+import { validateProductionConfig } from "./startup-guard.js";
 import { createInMemoryReadModelStoreFromState } from "../read-models/store.js";
 import { registerRoutes } from "../routes/index.js";
 import { createSqlAnalyticsSource } from "../analytics/source.js";
@@ -56,6 +57,10 @@ import { registerCors } from "./cors.js";
 import { createPostgresInviteRuntime, createPostgresAccountInviteRuntime } from "./production-routes.js";
 import { createPostgresAccountInviteStore } from "../auth/account-invites-postgres.js";
 import { createAccountInviteService } from "../auth/account-invites.js";
+import { createPostgresPendingOperationV2Store } from "../approvals/pending-v2.js";
+import { createPostgresPendingOperationStore } from "../approvals/pending.js";
+import { registerPendingOperationRoutes } from "../routes/pending-operations.js";
+import { createPendingOperationV2Executor } from "../routes/index.js";
 
 const start = async (): Promise<void> => {
   const cfg = loadConfig();
@@ -65,21 +70,12 @@ const start = async (): Promise<void> => {
 
   if (cfg.databaseUrl) {
     const pool = createPool({ connectionString: cfg.databaseUrl });
-    // Migrations must complete BEFORE createBetterAuth: better-auth performs
-    // a schema check at boot and caches the verdict, so migrating afterwards
-    // leaves a pre-migration mismatch cached until a manual restart.
     const isLegacySchema = process.env.DB_SCHEMA === "legacy";
-    const migrationResult = await runMigrations(pool, isLegacySchema);
-    if (isLegacySchema) {
-      app.log.info(
-        { legacyMigrations: migrationResult.applied },
-        "legacy-safe migrations applied",
-      );
-    } else {
-      app.log.info(
-        { database: "postgres", appliedMigrations: migrationResult.applied },
-        "using postgres stores",
-      );
+    const schemaValid = await verifySchema(pool, isLegacySchema);
+    if (process.env.NODE_ENV === 'production') {
+      validateProductionConfig({ authSecret: cfg.betterAuthSecret, databaseUrl: cfg.databaseUrl, schemaValid });
+    } else if (!schemaValid) {
+      throw new Error('FATAL: Database schema is missing or incompatible. Run the migration job before starting the API.');
     }
     const { createPostgresInviteSignupGuard } = await import("../auth/invite-signup-guard.js");
     const inviteSignupGuard = createPostgresInviteSignupGuard(pool);
@@ -181,7 +177,7 @@ const start = async (): Promise<void> => {
         timer.unref();
         app.addHook("onClose", async () => clearInterval(timer));
       }
-       registerRoutes(app, {
+      registerRoutes(app, {
         store,
         writes,
         tokenStore,
@@ -219,7 +215,14 @@ const start = async (): Promise<void> => {
         disableDeviceRegistration: cfg.disableDeviceRegistration,
         pool,
         ...(vapid?.publicKey ? { vapidPublicKey: vapid.publicKey } : {}),
-        ...(pushDelivery ? { pushDelivery } : {}),
+       ...(pushDelivery ? { pushDelivery } : {}),
+      });
+      registerPendingOperationRoutes(app, {
+        store: createPostgresPendingOperationStore(pool),
+        resolveToken: async (token) => tokenStore.resolve(token),
+        v2Store: createPostgresPendingOperationV2Store(pool),
+        v2Executor: createPendingOperationV2Executor(writes),
+        v2Only: true,
       });
     } else {
       const store = createPostgresReadModelStore({ pool });
@@ -314,6 +317,13 @@ const start = async (): Promise<void> => {
         ...(vapid?.publicKey ? { vapidPublicKey: vapid.publicKey } : {}),
         ...(pushDelivery ? { pushDelivery } : {}),
       });
+      registerPendingOperationRoutes(app, {
+        store: createPostgresPendingOperationStore(pool),
+        resolveToken: async (token) => tokenStore.resolve(token),
+        v2Store: createPostgresPendingOperationV2Store(pool),
+        v2Executor: createPendingOperationV2Executor(writes),
+        v2Only: true,
+      });
     }
     app.addHook("onClose", async () => {
       await auth.close();
@@ -381,6 +391,7 @@ const start = async (): Promise<void> => {
   }
 
   try {
+    app.get('/ready', async () => ({ status: 'ready' }));
     await app.listen({ port: cfg.port, host: cfg.host });
   } catch (err) {
     app.log.error(err);

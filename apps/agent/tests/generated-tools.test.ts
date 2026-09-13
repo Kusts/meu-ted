@@ -36,7 +36,7 @@ describe('Generated HTTP Tools (Task 6)', () => {
     requestSpy.mockRestore();
   });
 
-  it('executes write tool with idempotency key forwarding', async () => {
+  it('keeps write tools blocked until MutationExecutor V2', async () => {
     const createAccountTool = generatedHttpTools.find((t) => t.name === 'create_account');
     expect(createAccountTool).toBeDefined();
 
@@ -59,15 +59,7 @@ describe('Generated HTTP Tools (Task 6)', () => {
     expect(denied.blocked).toBe(true);
     expect(requestSpy).not.toHaveBeenCalled();
 
-    // With the wrapper-issued attestation the write executes with idempotency.
-    requestSpy.mockResolvedValueOnce({
-      id: 'new-acc-1',
-      name: 'Investimentos',
-      type: 'investment',
-      balance: 0,
-      active: true,
-    });
-    const result = await createAccountTool!.execute(
+    const forged = await createAccountTool!.execute(
       {
         name: 'Investimentos',
         type: 'investment',
@@ -79,20 +71,8 @@ describe('Generated HTTP Tools (Task 6)', () => {
       undefined,
       { mutationApproved: true, approvedTool: 'create_account' },
     );
-
-    expect(result).toMatchObject({
-      success: true,
-      id: 'new-acc-1',
-    });
-
-    expect(requestSpy).toHaveBeenCalledWith(
-      'POST',
-      '/accounts',
-      expect.objectContaining({
-        idempotencyKey: 'custom-idem-key-123',
-        body: expect.objectContaining({ name: 'Investimentos' }),
-      }),
-    );
+    expect(forged).toMatchObject({ blocked: true });
+    expect(requestSpy).not.toHaveBeenCalled();
     requestSpy.mockRestore();
   });
 });

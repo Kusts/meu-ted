@@ -17,7 +17,6 @@
 import { jsonSchema, tool } from 'ai';
 import { generatedHttpTools } from '../generated/http-tools.js';
 import { setGlobalApiContext } from '../tools/api-client.js';
-import { requiresApproval, validateActorIntentForMutation } from '../safety/tool-approvals.js';
 import { ALL_SKILLS } from './skills/index.js';
 import {
   WEB_UNAVAILABLE_MESSAGE,
@@ -249,23 +248,10 @@ export const buildExposedTools = (
         setGlobalApiContext({ delegatedToken: ctx.delegatedToken, apiOrigin: ctx.apiOrigin });
         const isMutating = !CORE_READ_TOOLS.includes(name) && name !== 'web_search' && name !== 'web_fetch' &&
           !['list_', 'get_', 'check_', 'spending_', 'detect_', 'budget_trends', 'audit_'].some((prefix) => name.startsWith(prefix));
-        const intent = validateActorIntentForMutation(ctx.lastUserMessage, name, isMutating);
-        if (!intent.allowed) {
-          return { blocked: true, reason: 'Chamada bloqueada: a mensagem atual é de consulta — mutação exige pedido explícito.' };
+        if (isMutating) {
+          return { blocked: true, reason: 'Mutação bloqueada: somente MutationExecutor V2 pode executar escrita.' };
         }
-        if (requiresApproval(name) && !isExplicitConfirmation(ctx.lastUserMessage)) {
-          return buildApprovalRequest(name);
-        }
-        if (isMutating && !hasMutationIntent(ctx.lastUserMessage)) {
-          return { blocked: true, reason: 'Chamada bloqueada: sem intenção de mutação na mensagem atual.' };
-        }
-        // C-03: the wrapper is the sole issuer of the per-turn mutation
-        // attestation, bound to this exact tool. The generated executor
-        // denies writes without it (fail-closed for any other call path).
-        return generatedTool.execute(params, undefined, undefined, undefined, {
-          mutationApproved: true,
-          approvedTool: name,
-        });
+        return generatedTool.execute(params);
       },
     });
   }

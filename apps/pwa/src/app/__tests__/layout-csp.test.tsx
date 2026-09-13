@@ -18,11 +18,21 @@ vi.mock("next/headers", () => ({
     }),
 }));
 
-function findThemeScript(tree: ReactElement): ReactElement {
-  const top = React.Children.toArray(tree.props.children) as ReactElement[];
+type ThemeScriptProps = {
+  children?: React.ReactNode;
+  nonce?: string;
+  dangerouslySetInnerHTML?: { __html: string };
+};
+
+function findThemeScript(tree: ReactElement): ReactElement<ThemeScriptProps> {
+  const top = React.Children.toArray(
+    (tree.props as ThemeScriptProps).children,
+  ) as ReactElement<ThemeScriptProps>[];
   const head = top.find((el) => el.type === "head");
   expect(head).toBeDefined();
-  const scripts = React.Children.toArray(head!.props.children) as ReactElement[];
+  const scripts = React.Children.toArray(
+    (head!.props as ThemeScriptProps).children,
+  ) as ReactElement<ThemeScriptProps>[];
   const script = scripts.find((el) => el.type === "script");
   expect(script).toBeDefined();
   return script!;
@@ -36,7 +46,7 @@ describe("RootLayout theme script × CSP (HIGH #3)", () => {
     const script = findThemeScript(await RootLayout({ children: null }));
 
     expect(script.props.nonce).toBe(nonceHolder.value);
-    expect(script.props.dangerouslySetInnerHTML.__html).toContain("pi-theme");
+    expect(script.props.dangerouslySetInnerHTML?.__html).toContain("pi-theme");
 
     // Compatibility: the shipped policy authorizes exactly this nonce, and
     // the script-src directive grants no blanket unsafe-inline (unsafe-inline

@@ -211,7 +211,7 @@ export default {
       }
 
       const subPath = url.pathname.slice(financeMatch[0].length);
-      const isRestRpc = subPath === "/rpc/chat" || subPath === "/rpc/history" || subPath === "/rpc/session/new" || subPath === "/rpc/memory/prefs";
+      const isRestRpc = subPath === "/rpc/chat" || subPath === "/rpc/history" || subPath === "/rpc/session/new" || subPath === "/rpc/memory/prefs" || /^\/rpc\/pending-operations\/[^/]+\/decision$/.test(subPath);
 
       if (isRestRpc) {
         const financeAgent = env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(canonicalId));
@@ -245,6 +245,9 @@ export default {
     const legacyMatch = url.pathname.match(/^\/agents\/workspace\/([^/]+)/);
     if (legacyMatch) {
       const workspaceId = decodeURIComponent(legacyMatch[1]!);
+      if (request.method === "POST" && /\/message\/[^/]+\/(?:process|retry)$/.test(url.pathname)) {
+        return Response.json({ code: "agent.legacy_mutation_path_removed" }, { status: 410 });
+      }
       const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string; AGENT_AUTH_SERVICE_TOKEN?: string }, workspaceId);
       if (auth instanceof Response) return auth;
       // C-05: canonical id for every downstream DO name (see finance route).

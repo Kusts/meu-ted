@@ -1,8 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runFinalValidation, executeValidationGate, generateFinalValidationMarkdown } from "./run-final-validation.mjs";
+import fs from "node:fs";
 
 test("final validation runner", async (t) => {
+  await t.test("uses active app, architecture and capability gates without bridge or migrations", () => {
+    const source = fs.readFileSync(new URL("./run-final-validation.mjs", import.meta.url), "utf8");
+    assert.match(source, /pi-finance-agent/);
+    assert.match(source, /pnpm --filter pwa --fail-if-no-match test/);
+    assert.match(source, /pnpm --filter pi-finance-agent --fail-if-no-match eval:ted-v2/);
+    assert.match(source, /pnpm architecture:check/);
+    assert.match(source, /pnpm capabilities:check/);
+    assert.match(source, /pnpm lint/);
+    assert.match(source, /pnpm governance:check/);
+    assert.match(source, /pnpm container:smoke/);
+    assert.doesNotMatch(source, /whatsapp-bridge|cutover-check|migration/i);
+  });
   await t.test("executes mock gates and passes when all exit 0", () => {
     const mockGates = [
       { id: "VAL.1", name: "Mock 1", command: "echo 1" },

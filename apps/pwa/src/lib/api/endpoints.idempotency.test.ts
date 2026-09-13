@@ -81,8 +81,8 @@ describe("endpoints — idempotency-key propagation on mutations", () => {
     expect(headerKeyOf()).toMatch(UUID_V4);
   });
 
-  it("covers pending operation approvals", async () => {
-    await endpoints.approvePendingOperation("op-1");
+  it("covers undo mutations", async () => {
+    await endpoints.undoLastAction();
     expect(headerKeyOf()).toMatch(UUID_V4);
   });
 

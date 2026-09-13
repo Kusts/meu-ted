@@ -32,6 +32,11 @@ function defaultState(): AppState {
     cardStatements: [],
     writeError: null,
     clearWriteError: vi.fn(),
+    profile: null,
+    dashboardSummary: null,
+    saveProfile: vi.fn(),
+    refreshProfile: vi.fn(),
+    refreshDashboardSummary: vi.fn(),
     sync: {
       accounts: { source: "mock", syncedAt: null },
       categories: { source: "mock", syncedAt: null },
@@ -52,6 +57,18 @@ function defaultState(): AppState {
     createTransfer: vi.fn(),
     payStatement: vi.fn(),
     createInstallments: vi.fn(),
+    createCardPurchase: vi.fn(),
+    updateTransaction: vi.fn(),
+    updateGoal: vi.fn(),
+    updateAccount: vi.fn(),
+    deactivateAccount: vi.fn(),
+    updateCategory: vi.fn(),
+    deactivateCategory: vi.fn(),
+    deleteCategory: vi.fn(),
+    applyCategoryDefaults: vi.fn(),
+    updateSubscription: vi.fn(),
+    refreshSubscriptions: vi.fn(),
+    refreshDomains: vi.fn(),
   };
 }
 

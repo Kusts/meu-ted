@@ -2,7 +2,8 @@ import { render, screen, waitFor, waitForElementToBeRemoved } from "@/lib/test-u
 import userEvent from "@testing-library/user-event";
 import ProfilePage from "../ProfilePage";
 import * as appStateModule from "@/lib/state/app-state-context";
-import type { AppState, Profile } from "@/lib/state/types";
+import type { AppState } from "@/lib/state/app-state-context";
+import type { Profile } from "@/lib/state/types";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
 
 const mockRouter = { push: vi.fn(), refresh: vi.fn() };
@@ -177,8 +178,8 @@ describe("ProfilePage", () => {
   it("reopening edit sheet rehydrates fields from updated profile", async () => {
     const user = userEvent.setup();
     let profile: Profile = SAMPLE_PROFILE;
-    const saveSpy = vi.fn(async (input: { name: string; email: string; phone: string }) => {
-      profile = { ...profile, name: input.name, email: input.email, phone: input.phone };
+    const saveSpy = vi.fn(async (input: { name?: string; email?: string; phone?: string }) => {
+      profile = { ...profile, name: input.name ?? profile.name, email: input.email ?? profile.email, phone: input.phone ?? profile.phone };
       return undefined;
     });
     vi.spyOn(appStateModule, "useAppState").mockImplementation(() =>

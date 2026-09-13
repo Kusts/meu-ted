@@ -1,65 +1,56 @@
 # Meu Ted
 
-Sistema completo de gestão financeira pessoal e familiar com assistente inteligente (TED), PWA moderno e backend server-side com isolamento por workspace/household.
+Sistema de gestão financeira pessoal e familiar com PWA, API autoritativa e o
+assistente TED. Dados financeiros e decisões de escrita pertencem à API; o TED
+é um cliente conversacional sujeito às mesmas fronteiras de identidade,
+capability, confirmação e idempotência.
 
-## Arquitetura do Monorepo
+## Componentes ativos
 
-```
-.
-├── apps/
-│   ├── api/                # Backend autoritativo Fastify + PostgreSQL (Hostinger VPS)
-│   ├── pwa/                # Aplicação PWA canônica Next.js / React (Cloudflare Pages)
-│   ├── agent/              # Assistente AI com Durable Objects & Agents SDK (Cloudflare Worker)
-│   └── whatsapp-bridge/    # Bridge de mensageria WhatsApp (transição de runtime)
-├── docs/                   # Documentação técnica, ADRs, runbooks e planos
-├── scripts/                # Automação de CI, auditoria, backup, restore e validações
-└── .pi/                    # Adapters e extensões de ferramentas do assistente
-```
+| Componente | Responsabilidade | Runtime |
+| --- | --- | --- |
+| `apps/api` | Fonte de verdade financeira, Better-Auth, autorização de workspace e pending operations V2 | Hostinger VPS + PostgreSQL 16 |
+| `apps/pwa` | Cliente web/mobile canônico e proxies same-origin privados | Cloudflare Pages/Workers + OpenNext |
+| `apps/agent` | TED V2: orquestração, memória conversacional e decisão de aprovação delegada | Cloudflare Workers + Durable Objects |
+| `apps/codex-broker` | Broker isolado para provider Codex; sem capability financeira ou acesso a PostgreSQL | Container Node 22 |
 
-## Stack Tecnológica
+O antigo `apps/whatsapp-bridge` e a extensão `.pi/extensions/financial-tools`
+não são componentes ativos nem fontes de produção.
 
-| Componente | Stack / Framework | Hospedagem / Runtime |
-|---|---|---|
-| **API Autoritativa** (`apps/api`) | Fastify 5, TypeScript, PostgreSQL 16 (`pg`), Kysely, Zod, Better-Auth | Hostinger VPS (`pi-stack`) |
-| **PWA Web & Mobile** (`apps/pwa`) | Next.js 16, React 19, Tailwind CSS v4, Serwist | Cloudflare Pages / Workers (OpenNext) |
-| **Assistente AI TED** (`apps/agent`) | Cloudflare Agents SDK, Durable Objects, SQLite | Cloudflare Workers |
-| **Bridge WhatsApp** (`apps/whatsapp-bridge`) | Node.js, Fastify, Evolution API | Hostinger VPS (transição / descomissionamento) |
+## Fronteiras obrigatórias
 
-## Princípios de Arquitetura
+1. A API é a única autoridade para dados financeiros e pending operations.
+2. O browser usa `/api/backend` e `/api/agent`; ele não recebe atestação,
+   capability de escrita ou identidade financeira livre.
+3. O Agent normaliza os canais em um pipeline V2. Durable Objects persistem
+   conversa e memória não autoritativa, nunca dados financeiros.
+4. `MutationExecutor` é a única fronteira do Agent para confirmar/executar
+   uma pending operation V2. A operação deve estar vinculada a workspace,
+   ator e dispositivo e ser confirmada antes da escrita.
+5. Rollback pode reverter roteamento de leitura, mas nunca reativa
+   `[EXEC_ACTION]`, writes V1 ou bypasses de capability.
 
-1. **Fonte de Verdade Única:** `apps/api` é a única autoridade para transações, saldos, faturas e auditoria. Todas as mutações passam por endpoints autenticados e com chaves de idempotência.
-2. **Isolamento por Workspace:** Todo acesso a dados é estritamente delimitado por `household_id` ou `workspace_id`.
-3. **PWA Canônica:** O cliente principal do usuário é a PWA hospedada na Cloudflare (`apps/pwa`) com autenticação baseada em sessão (Better-Auth).
-4. **Assistente Autenticado:** O assistente (TED) utiliza tokens delegados assinados e de curta duração emitidos pelo backend (`POST /auth/bridge-context`).
-
-## Comandos Principais
+## Comandos principais
 
 ```bash
-# Instalar dependências
-pnpm install
-
-# Rodar testes em todos os workspaces
-pnpm test
-
-# Verificação estática de tipos (typecheck em todos os workspaces)
-pnpm typecheck
-
-# Validação e lint de links e documentos canônicos
+pnpm install --frozen-lockfile
 pnpm docs:lint
-
-# Validação do contrato de políticas de governança e escrita
+pnpm typecheck
+pnpm test
+pnpm build:all
 pnpm governance:check
-
-# Validação de readiness de cutover
-npx tsx scripts/cutover-check.ts
+pnpm architecture:check
+pnpm validate:final
 ```
 
-## Documentação e Governança
+`pnpm validate:final` gera evidências locais em `docs/reports/`. Não executa
+deploy, migration de produção nem altera segredos.
 
-- [Visão Geral de Produto](docs/PRODUCT.md)
-- [Arquitetura Atual](docs/ARCHITECTURE-CURRENT.md)
-- [Arquitetura Alvo](docs/ARCHITECTURE-TARGET.md)
-- [Roadmap do Projeto](docs/ROADMAP.md)
-- [Registro de Decisões de Arquitetura (ADRs)](docs/adr/README.md)
-- [Runbook de Backup & Restore](docs/runbooks/backup-restore.md)
+## Documentação canônica
 
+- [Produto](docs/PRODUCT.md)
+- [Arquitetura atual](docs/ARCHITECTURE-CURRENT.md)
+- [Arquitetura alvo](docs/ARCHITECTURE-TARGET.md)
+- [Roadmap](docs/ROADMAP.md)
+- [ADRs](docs/adr/README.md)
+- [Runbook de migration V2](docs/runbooks/api-migration-v2.md)

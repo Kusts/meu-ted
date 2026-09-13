@@ -27,3 +27,10 @@ export const validateStartupConfig = (cfg: StartupConfig): void => {
     throw new Error('FATAL: VAPID_SUBJECT, VAPID_PUBLIC_KEY, and VAPID_PRIVATE_KEY are required. Refusing to start.');
   }
 };
+
+export const validateProductionConfig = (cfg: StartupConfig): void => {
+  validateStartupConfig(cfg);
+  if (!cfg.authSecret || cfg.authSecret.length < 32) {
+    throw new Error('FATAL: production authentication secret must contain at least 32 characters.');
+  }
+};

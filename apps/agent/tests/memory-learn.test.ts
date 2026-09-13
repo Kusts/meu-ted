@@ -83,8 +83,8 @@ describe('post-turn learning (Part B)', () => {
   });
 
   it('dedups repetitions instead of piling rows', async () => {
-    await learnFromTurn(sql, { workspaceId: 'ws-1', actorId: 'u-1', userText: 'Prefiro resumos curtos', assistantText: '', turnCount: 1 });
-    const second = await learnFromTurn(sql, { workspaceId: 'ws-1', actorId: 'u-1', userText: 'Prefiro resumos curtos sempre', assistantText: '', turnCount: 2 });
+    await learnFromTurn(sql, { workspaceId: 'ws-1', actorId: 'u-1', userText: 'Prefiro resumos curtos', assistantText: 'Entendi e vou considerar isso.', turnCount: 1 });
+    const second = await learnFromTurn(sql, { workspaceId: 'ws-1', actorId: 'u-1', userText: 'Prefiro resumos curtos sempre', assistantText: 'Certo, anotado.', turnCount: 2 });
     expect(second).toHaveLength(0);
     expect(sql.tables.get('agent_memory')).toHaveLength(1);
   });

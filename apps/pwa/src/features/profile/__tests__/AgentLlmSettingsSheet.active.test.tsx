@@ -14,8 +14,8 @@ describe("AgentLlmSettingsSheet active badge (regressão)", () => {
   it("mostra exatamente um Ativo e 2 Ativar Global quando 3 modelos e um é o runtime canônico (id)", async () => {
     vi.spyOn(adminLlmConfig, "fetchAdminLlmConfig").mockResolvedValue({
       providers: [
-        { id: "opencode-zen", name: "OpenCode Zen", baseUrl: "https://zen...", secretAlias: "OPENCODE_ZEN_API_KEY", eligibility: "approved", enabled: true },
-        { id: "openai-api", name: "OpenAI", baseUrl: "https://api.openai.com/v1", secretAlias: "OPENAI_API_KEY", eligibility: "approved", enabled: true },
+        { id: "opencode-zen", name: "OpenCode Zen", baseUrl: "https://zen...", secretAlias: "OPENCODE_ZEN_API_KEY", eligibility: "approved", enabled: true, kind: "opencode-zen", transport: "direct", authMode: "api-key" },
+        { id: "openai-api", name: "OpenAI", baseUrl: "https://api.openai.com/v1", secretAlias: "OPENAI_API_KEY", eligibility: "approved", enabled: true, kind: "openai-api", transport: "direct", authMode: "api-key" },
       ],
       models: [
         { id: "opencode-zen:gpt-4.1", providerId: "opencode-zen", modelId: "gpt-4.1", protocol: "chat-completions", privacyClass: "training_prohibited", retention: null, enabled: true },
@@ -23,12 +23,16 @@ describe("AgentLlmSettingsSheet active badge (regressão)", () => {
         { id: "openai-api:gpt-4o-mini", providerId: "openai-api", modelId: "gpt-4o-mini", protocol: "chat-completions", privacyClass: "training_prohibited", retention: null, enabled: true },
       ],
       runtime: {
-        id: 1,
+        singleton: "active" as const,
         version: 3,
         activeProviderId: "opencode-zen",
         activeModelId: "opencode-zen:gpt-4.1",
         activeProtocol: "chat-completions",
         activeRolloutPercentage: 100,
+        activeRolloutMode: "all",
+        canaryAllowlist: [],
+        fallbackProviderId: null,
+        fallbackModelId: null,
         securityEpoch: 2,
         updatedBy: "admin@test.com",
         updatedAt: new Date().toISOString(),
@@ -47,18 +51,22 @@ describe("AgentLlmSettingsSheet active badge (regressão)", () => {
 
   it("mostra 1 Ativar Global quando 2 modelos e um é o ativo (canônico)", async () => {
     vi.spyOn(adminLlmConfig, "fetchAdminLlmConfig").mockResolvedValue({
-      providers: [{ id: "opencode-zen", name: "OpenCode Zen", baseUrl: "x", secretAlias: "OPENCODE_ZEN_API_KEY", eligibility: "approved", enabled: true }],
+      providers: [{ id: "opencode-zen", name: "OpenCode Zen", baseUrl: "x", secretAlias: "OPENCODE_ZEN_API_KEY", eligibility: "approved", enabled: true, kind: "opencode-zen", transport: "direct", authMode: "api-key" }],
       models: [
         { id: "opencode-zen:model-a", providerId: "opencode-zen", modelId: "model-a", protocol: "chat-completions", privacyClass: "training_prohibited", retention: null, enabled: true },
         { id: "opencode-zen:model-b", providerId: "opencode-zen", modelId: "model-b", protocol: "chat-completions", privacyClass: "training_prohibited", retention: null, enabled: true },
       ],
       runtime: {
-        id: 1,
+        singleton: "active" as const,
         version: 2,
         activeProviderId: "opencode-zen",
         activeModelId: "opencode-zen:model-a",
         activeProtocol: "chat-completions",
         activeRolloutPercentage: 100,
+        activeRolloutMode: "all",
+        canaryAllowlist: [],
+        fallbackProviderId: null,
+        fallbackModelId: null,
         securityEpoch: 1,
         updatedBy: "admin@test.com",
         updatedAt: new Date().toISOString(),
@@ -74,15 +82,19 @@ describe("AgentLlmSettingsSheet active badge (regressão)", () => {
 
   it("compatibilidade: quando runtime usa modelId legado, ainda identifica ativo", async () => {
     vi.spyOn(adminLlmConfig, "fetchAdminLlmConfig").mockResolvedValue({
-      providers: [{ id: "opencode-zen", name: "OpenCode Zen", baseUrl: "x", secretAlias: "OPENCODE_ZEN_API_KEY", eligibility: "approved", enabled: true }],
+      providers: [{ id: "opencode-zen", name: "OpenCode Zen", baseUrl: "x", secretAlias: "OPENCODE_ZEN_API_KEY", eligibility: "approved", enabled: true, kind: "opencode-zen", transport: "direct", authMode: "api-key" }],
       models: [{ id: "opencode-zen:gpt-4o", providerId: "opencode-zen", modelId: "gpt-4o", protocol: "chat-completions", privacyClass: "training_prohibited", retention: null, enabled: true }],
       runtime: {
-        id: 1,
+        singleton: "active" as const,
         version: 2,
         activeProviderId: "opencode-zen",
         activeModelId: "gpt-4o",
         activeProtocol: "chat-completions",
         activeRolloutPercentage: 100,
+        activeRolloutMode: "all",
+        canaryAllowlist: [],
+        fallbackProviderId: null,
+        fallbackModelId: null,
         securityEpoch: 1,
         updatedBy: "admin@test.com",
         updatedAt: new Date().toISOString(),

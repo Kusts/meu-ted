@@ -13,6 +13,8 @@ function defaultState(): AppState {
     debts: [], subscriptions: [], loading: false, error: null,
     addTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(), cancelPayable: vi.fn(), createPayable: vi.fn(), createBudget: vi.fn(), updateBudget: vi.fn(), createGoal: vi.fn(), contributeToGoal: vi.fn(), cancelGoal: vi.fn(),
     cardStatements: [], writeError: null, clearWriteError: vi.fn(),
+    profile: null, dashboardSummary: null,
+    saveProfile: vi.fn(), refreshProfile: vi.fn(), refreshDashboardSummary: vi.fn(),
     sync: {
       accounts: { source: "mock", syncedAt: null },
       categories: { source: "mock", syncedAt: null },
@@ -27,6 +29,11 @@ function defaultState(): AppState {
     addAccount: vi.fn(), addCategory: vi.fn(), addCard: vi.fn(), updateCard: vi.fn(),
     addSubscription: vi.fn(), cancelSubscription: vi.fn(),
     createTransfer: vi.fn(), payStatement: vi.fn(), createInstallments: vi.fn(),
+    createCardPurchase: vi.fn(), updateTransaction: vi.fn(), updatePayable: vi.fn(),
+    undoPayablePayment: vi.fn(), updateGoal: vi.fn(), updateAccount: vi.fn(),
+    deactivateAccount: vi.fn(), updateCategory: vi.fn(), deactivateCategory: vi.fn(),
+    deleteCategory: vi.fn(), applyCategoryDefaults: vi.fn(), updateSubscription: vi.fn(),
+    refreshSubscriptions: vi.fn(), refreshDomains: vi.fn(),
   };
 }
 function mockState(o: Partial<AppState>): AppState { return { ...defaultState(), ...o }; }

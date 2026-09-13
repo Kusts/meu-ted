@@ -1,45 +1,56 @@
-# Meu Ted — Arquitetura Atual
+# Meu Ted — Arquitetura atual
 
-**Last verified:** 2026-08-31
-**Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)  
+**Last verified:** 2026-09-13
+**Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)
 
-## 1. Visão Geral da Topologia
-
-A arquitetura do Meu Ted opera em modelo híbrido entre Borda (Cloudflare) e Servidor Autoritativo (Hostinger VPS). O frontend PWA e o assistente AI rodam na Cloudflare, enquanto a API autoritativa e o banco de dados relacional PostgreSQL 16 residem na VPS.
+## Topologia implementada
 
 ```mermaid
 graph TD
-    User([Usuário]) --> PWA[PWA - apps/pwa<br/>Cloudflare Pages / OpenNext]
-    User --> Agent[Agent Worker - apps/agent<br/>Cloudflare Workers / DO]
-    PWA --> API[Fastify API - apps/api<br/>Hostinger VPS pi-stack]
+    User([Usuário]) --> PWA[PWA canônica<br/>Cloudflare/OpenNext]
+    PWA --> Proxy[Proxies same-origin<br/>/api/backend e /api/agent]
+    Proxy --> API[API Fastify autoritativa<br/>Hostinger VPS]
+    Proxy --> Agent[TED Agent V2<br/>Cloudflare Worker + DO]
     Agent --> API
-    API --> Postgres[(PostgreSQL 16 DB<br/>Hostinger VPS)]
+    Agent -. provider isolado .-> Broker[Codex Broker opcional]
+    API --> Postgres[(PostgreSQL 16)]
 ```
 
-## 2. Componentes e Responsabilidades
+## Responsabilidades e limites
 
-- **`apps/api` (Fastify 5 + PostgreSQL 16 + Better-Auth):**
-  - Única fonte da verdade para o domínio financeiro, mutações e consistência contábil.
-  - Autenticação de usuários via Better-Auth (email/senha, sessões e convites administrativos).
-  - Controle estrito de isolamento por `workspace_id` e `household_id` com suporte a chaves de idempotência.
-  - Camada de migrações SQL versionadas (V001 a V033), suportando esquemas legados e canônicos.
-- **`apps/pwa` (Next.js 16 + React 19 + Tailwind CSS v4 + Serwist):**
-  - Cliente canônico web/mobile com suporte offline para leitura de cache e service worker para assets e notificações.
-  - Tela de autenticação baseada em credenciais (email e senha), persistência síncrona de token e emissão subordinada de dispositivo.
-  - Comunicação HTTP autoritativa direta com a API (`https://api.synkroo.com.br`).
-- **`apps/agent` (Cloudflare Workers + Agents SDK + Durable Objects):**
-  - `FinanceChatAgent extends AIChatAgent` com binding `FINANCE_CHAT_AGENT` (migration v2) e `WorkspaceAgent` legado preservado (v1) para rollback.
-  - Chat TED global por workspace via `useAgent` + `useAgentChat`, autenticação por `POST /auth/agent-token` (TTL 120s, anti-replay JTI) e tokens delegados por turno.
-  - Configuração LLM global (`agent_llm_providers`/`agent_llm_models`/`agent_llm_runtime_config`, V034) com providers `opencode-zen`/`opencode-go`/`openai-api` e candidato `openai-codex-subscription` (`experimental_blocked`).
-  - Tools geradas em `apps/agent/src/generated/http-tools.ts` a partir de OpenAPI, com `intentionId` ledger e `securityEpoch` por intenção.
+- **API (`apps/api`):** única fonte da verdade financeira. Autentica,
+  autoriza por workspace e aplica idempotência. Pending operations V2 são
+  armazenadas e transitam aqui, vinculadas a `workspaceId`, `actorId` e
+  `deviceId`; confirmação, execução, cancelamento, retry e expiração são
+  rotas autoritativas com capability delegada específica.
+- **PWA (`apps/pwa`):** aplica sessão e CSRF nos proxies same-origin. A UX do
+  TED envia apenas uma decisão e um `requestId`; nunca envia/recebe
+  atestação. Rotas V1 de aprovação direta não são utilizadas.
+- **Agent (`apps/agent`):** todos os canais passam por
+  `ConversationOrchestrator` e `TurnInput`. Router, evidências, resposta
+  grounded, memória e observabilidade são internos. A SQLite do Durable
+  Object contém apenas conversa/memória; não contém autoridade financeira.
+- **MutationExecutor:** único consumidor/emissor de atestação no Agent e
+  único cliente do ciclo de decisão V2. O provider/modelo não concede
+  capability, aprovação ou write.
+- **Codex Broker (`apps/codex-broker`):** container Node 22 non-root com
+  healthcheck. Ele não possui acesso a PostgreSQL nem capability financeira.
 
-## 3. Segurança, Identidade & Migrações Recentes
+## Segurança operacional
 
-- **Autenticação com Better-Auth (V017, V019, V031):**
-  - Estrutura completa de tabelas de usuário, conta, sessão e papéis administrativos (`role`, `banned`, `issuer`).
-  - Suporte a preflight CORS (respostas `204` em `/auth/*`) e transporte de cookies com `credentials: 'include'`.
-- **Evolução do Schema e Cartões (V032, V033):**
-  - Suporte a `household_id` em compras legadas de cartão (`V032`) e fluxo transacional de cancelamento de compras (`V033`).
-- **Isolamento e Idempotência:**
-  - Garantia de que nenhuma requisição ou agente acesse registros fora do workspace associado.
-  - Mutações protegidas contra repetição acidental via `Idempotency-Key` e tabela `idempotency_keys`.
+- Mutações financeiras exigem API autoritativa, capability estreita,
+  binding de workspace/ator/dispositivo, proposta válida e idempotência.
+- O sistema falha fechado se falta esquema, evidência, binding, capability,
+  confirmação ou autoridade do provider.
+- O Agent revalida a configuração/epoch do provider antes de publicar uma
+  resposta; falha de upstream não produz sucesso sintético.
+- A API web inicializa em modo verify-only. Migrations são executadas somente
+  pelo job explícito documentado em `docs/runbooks/api-migration-v2.md`.
+
+## Legado e estado de implantação
+
+`WorkspaceAgent` existe somente para compatibilidade de histórico; não é uma
+rota de write financeiro. O WhatsApp Bridge e a extensão Pi foram removidos
+dos workspaces, CI e runtime ativo. A implementação V2 foi validada localmente
+em 2026-09-13; esta documentação não afirma deploy, migration ou alteração de
+segredos em produção.

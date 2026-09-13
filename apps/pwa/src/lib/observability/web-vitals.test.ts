@@ -169,7 +169,7 @@ describe("initRUM", () => {
       observe = observeSpy;
       disconnect = vi.fn();
     }
-    // @ts-expect-error test stub for the global PerformanceObserver
+    // Test stub for the global PerformanceObserver
     (globalThis as unknown as { PerformanceObserver: unknown }).PerformanceObserver =
       FakeObserver as unknown as PerformanceObserver;
 

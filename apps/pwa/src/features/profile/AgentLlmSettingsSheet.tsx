@@ -75,11 +75,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, providers.map((p) => p.id).join(",") ]);
 
-  useEffect(() => {
-    if (!remoteProviderId && providers.length > 0 && providers[0]) {
-      setRemoteProviderId(providers[0].id);
-    }
-  }, [providers, remoteProviderId]);
+  const effectiveRemoteProviderId = remoteProviderId || providers[0]?.id || "";
 
   const closeConfirm = () => setPendingConfirm(null);
 
@@ -280,7 +276,7 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
           <div className="flex gap-2">
             <select
               aria-label="Provider da lista remota"
-              value={remoteProviderId}
+              value={effectiveRemoteProviderId}
               onChange={(e) => setRemoteProviderId(e.target.value)}
               className="h-10 min-w-0 flex-1 rounded-[12px] border border-border-subtle bg-surface-2 px-3 text-[13px] font-medium text-text-primary outline-none focus:border-primary"
             >
@@ -292,8 +288,8 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
             </select>
             <button
               type="button"
-              disabled={isMutating || remoteModelsLoading || !remoteProviderId}
-              onClick={() => void llm.loadRemoteModels(remoteProviderId, { force: true })}
+              disabled={isMutating || remoteModelsLoading || !effectiveRemoteProviderId}
+              onClick={() => void llm.loadRemoteModels(effectiveRemoteProviderId, { force: true })}
               className="inline-flex items-center gap-1.5 rounded-[12px] border border-border-subtle bg-surface-2 px-4 py-2 text-[13px] font-bold text-text-primary hover:bg-surface-3 disabled:opacity-60"
             >
               <RefreshCw size={14} /> Atualizar lista
@@ -302,12 +298,12 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
           <div className="mt-3 flex flex-col gap-2">
             {remoteModelsLoading ? (
               <div className="py-3 text-center text-[12px] font-medium text-text-muted">Consultando provider…</div>
-            ) : (remoteModels[remoteProviderId] ?? []).length === 0 ? (
+            ) : (remoteModels[effectiveRemoteProviderId] ?? []).length === 0 ? (
               <div className="py-2 text-[12px] font-medium text-text-muted">
                 Nenhum modelo remoto — cadastre o id manualmente abaixo.
               </div>
             ) : (
-              (remoteModels[remoteProviderId] ?? []).slice(0, 20).map((m) => (
+              (remoteModels[effectiveRemoteProviderId] ?? []).slice(0, 20).map((m) => (
                 <div key={m.id} className="flex items-center justify-between gap-2 rounded-[12px] border border-border-subtle bg-surface-2 px-3 py-2">
                   <span className="min-w-0 truncate font-mono text-[12px] font-semibold text-text-primary">{m.id}</span>
                   <button
@@ -315,11 +311,11 @@ export function AgentLlmSettingsSheet({ open, onClose }: AgentLlmSettingsSheetPr
                     aria-label={`Cadastrar modelo remoto ${m.id}`}
                     disabled={isMutating}
                     onClick={() => {
-                      const provider = providers.find((p) => p.id === remoteProviderId);
-                      const kind = provider?.kind ?? remoteProviderId;
+                      const provider = providers.find((p) => p.id === effectiveRemoteProviderId);
+                      const kind = provider?.kind ?? effectiveRemoteProviderId;
                       const protocol: Protocol =
                         kind === "anthropic" ? "messages" : kind === "google" ? "google-generative-ai" : "chat-completions";
-                      void llm.createModel(remoteProviderId, m.id, protocol);
+                      void llm.createModel(effectiveRemoteProviderId, m.id, protocol);
                     }}
                     className="shrink-0 rounded-full bg-primary px-3 py-1 text-[11px] font-bold text-white hover:bg-primary-hover disabled:opacity-60"
                   >

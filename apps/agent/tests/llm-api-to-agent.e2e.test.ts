@@ -189,18 +189,17 @@ describe("E2E API -> Agent (Fase 3 item 5)", () => {
     await seedActivePair();
     upstreamBehavior = "http500";
     const agent = makeAgent();
-    const out = (await agent.onChatMessage({
+    // V2 consumes provider output inside ConversationOrchestrator, so a
+    // failed stream rejects the turn itself rather than leaking a deferred
+    // `text` promise to the SDK adapter.
+    const failure = await agent.onChatMessage({
       text: "Qual o meu saldo?",
       intentionId: "e2e-up500-1",
-    })) as unknown as ChatResult;
-    // AI SDK v5: a dead stream rejects consumption with a typed operational
-    // error (after SDK retries). It must never resolve success content,
-    // never leak the secret, never echo raw upstream bytes.
-    await expect(readText(out)).rejects.toThrow(/No output generated/);
-    const failure = await readText(out).then(
+    }).then(
       () => "",
       (err: unknown) => String((err as Error)?.message ?? err),
     );
+    expect(failure).toMatch(/No output generated/);
     expect(failure).not.toContain("E2E ok");
     expect(failure).not.toContain(OPENAI_KEY);
     expect(failure).not.toContain("upstream boom");

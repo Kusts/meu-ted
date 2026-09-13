@@ -158,9 +158,11 @@ export function useAnalytics(filters: AnalyticsFilters, options?: UseAnalyticsOp
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    setLoading(true);
-    setError(null);
-    if (!includeHeatmap) setHeatmap(null);
+    void Promise.resolve().then(() => {
+      setLoading(true);
+      setError(null);
+      if (!includeHeatmap) setHeatmap(null);
+    });
     void Promise.all([
       fetchKpis(filters, controller.signal).then(setKpis),
       fetchCashflowSeries(filters, controller.signal).then(setCashflow),

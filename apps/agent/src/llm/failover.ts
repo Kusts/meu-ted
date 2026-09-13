@@ -34,7 +34,7 @@ export const isRetryableLlmError = (err: unknown): boolean => {
     return false;
   }
   const code = typeof e.code === 'string' ? e.code : '';
-  if (/^(agent\.rate_limited|agent\.provider_timeout|agent\.provider_error|agent\.provider_auth|ETIMEDOUT|ECONNRESET|ENOTFOUND|fetch_failed|network_error|timeout)$/i.test(code)) {
+  if (/^(agent\.rate_limited|agent\.provider_timeout|agent\.provider_error|agent\.provider_auth|agent\.invalid_provider_output|ETIMEDOUT|ECONNRESET|ENOTFOUND|fetch_failed|network_error|timeout)$/i.test(code)) {
     return true;
   }
   const message = typeof e.message === 'string' ? e.message : '';

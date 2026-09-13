@@ -5,7 +5,13 @@ vi.mock('ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('ai')>();
   return {
     ...actual,
-    streamText: vi.fn(async () => ({ text: 'resposta-mockada' })),
+    // V2 waits for the completed stream and explicitly observes metadata so
+    // provider failures cannot become unhandled rejections.
+    streamText: vi.fn(() => ({
+      text: Promise.resolve('resposta-mockada'),
+      finishReason: Promise.resolve('stop'),
+      totalUsage: Promise.resolve({ totalTokens: 1 }),
+    })),
   };
 });
 

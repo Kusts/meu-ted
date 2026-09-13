@@ -6,12 +6,10 @@ import {
   fetchAgentHistory,
   sendAgentMessage,
   renewAgentSession,
-  fetchPendingOperations,
   type AgentMessage,
-  type PendingOperation,
 } from "@/lib/api/agent-client";
 import { TedMessage } from "./TedMessage";
-import { TedApprovalCard } from "./TedApprovalCard";
+import { TedApprovalCard, type TedPendingOperation } from "./TedApprovalCard";
 import { useBodyScrollLock } from "@/lib/ui/overlay-a11y";
 import { Sparkles, X, Send, Mic, MicOff, Image as ImageIcon, FileText, Paperclip, Trash2, RefreshCw } from "lucide-react";
 
@@ -30,7 +28,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
   const activeWorkspace = ws?.activeWorkspace ?? null;
   const members = ws?.members ?? [];
   const [messages, setMessages] = useState<AgentMessage[]>([]);
-  const [pendingOps, setPendingOps] = useState<PendingOperation[]>([]);
+  const [pendingOps, setPendingOps] = useState<TedPendingOperation[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,12 +64,9 @@ export function TedChat({ open, onClose }: TedChatProps) {
     if (!activeWorkspace) return;
     try {
       setStatus("connecting");
-      const [history, ops] = await Promise.all([
-        fetchAgentHistory(activeWorkspace.id),
-        fetchPendingOperations(activeWorkspace.id).catch(() => []),
-      ]);
+      const history = await fetchAgentHistory(activeWorkspace.id);
       setMessages(history);
-      setPendingOps(ops);
+      setPendingOps([]);
       if (!preserveError) setError(null);
       setStatus("ready");
     } catch {
@@ -245,6 +240,9 @@ export function TedChat({ open, onClose }: TedChatProps) {
           : await sendAgentMessage(activeWorkspace.id, textWithAttachments);
       if (turn.memorized && turn.memorized.length > 0) {
         flashNotice(`TED memorizou: ${turn.memorized.slice(0, 2).join(" · ")}`);
+      }
+      if (turn.pendingOperation) {
+        setPendingOps((previous) => [turn.pendingOperation!, ...previous.filter((operation) => operation.id !== turn.pendingOperation!.id)]);
       }
       await loadHistory();
     } catch {

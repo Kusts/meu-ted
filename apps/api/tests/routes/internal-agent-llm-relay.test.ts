@@ -19,11 +19,15 @@ describe('Fase 2 item 8 — dynamic relay allowlist (RED)', () => {
 
   beforeEach(async () => {
     delete process.env.RELAY_ALLOWED_MODELS;
+    // The missing-credential contract must not depend on a developer or CI
+    // process inheriting a real OpenRouter credential.
+    delete process.env.OPENROUTER_API_KEY;
     app = Fastify({ logger: false });
   });
 
   afterEach(async () => {
     delete process.env.RELAY_ALLOWED_MODELS;
+    delete process.env.OPENROUTER_API_KEY;
     vi.restoreAllMocks();
     await app.close();
   });

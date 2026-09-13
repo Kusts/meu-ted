@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  approvePendingOperation,
+  decidePendingOperation,
   deleteAgentHistory,
   exportAgentHistory,
   fetchAgentHistory,
-  fetchPendingOperations,
-  rejectPendingOperation,
   sendAgentMessage,
 } from "./agent-client";
 import * as agentAuth from "./agent-auth";
@@ -16,6 +14,28 @@ afterEach(() => {
 });
 
 describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
+  it("sends a pending decision only to the authenticated Agent RPC", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("signed-token-123");
+    let capturedUrl = "";
+    let capturedInit: RequestInit | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      capturedUrl = String(url);
+      capturedInit = init;
+      return new Response(JSON.stringify({ operationId: "op-1", status: "succeeded" }), { status: 200 });
+    });
+
+    await expect(decidePendingOperation("workspace-123", "op-1", "confirm")).resolves.toEqual({
+      operationId: "op-1",
+      status: "succeeded",
+    });
+
+    expect(capturedUrl).toBe("https://agent.example.test/agents/finance-chat-agent/workspace-123/rpc/pending-operations/op-1/decision");
+    expect(capturedInit?.method).toBe("POST");
+    const body = JSON.parse(String(capturedInit?.body));
+    expect(body).toMatchObject({ decision: "confirm" });
+    expect(body).not.toHaveProperty("attestation");
+  });
   it("sendAgentMessage sends POST to /agents/finance-chat-agent/:workspaceId/rpc/chat with x-agent-connection-token and text payload", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
     vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("signed-token-123");
@@ -164,19 +184,4 @@ describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
     await expect(deleteAgentHistory("w1")).resolves.toEqual({ deleted: true, recordCount: 2 });
   });
 
-  it("lists and decides pending operations through the API workspace boundary", async () => {
-    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.test");
-    const pending = {
-      id: "p1", householdId: "w1", requesterId: "u1", operation: "transactions.expense.create", payload: {},
-      reason: "high_value", idempotencyKey: "k1", status: "pending", createdAt: "now", expiresAt: "later",
-    };
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [pending], total: 1 }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ...pending, status: "approved" }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ...pending, status: "rejected" }), { status: 200 }));
-
-    await expect(fetchPendingOperations("w1")).resolves.toHaveLength(1);
-    await expect(approvePendingOperation("w1", "p1")).resolves.toMatchObject({ status: "approved" });
-    await expect(rejectPendingOperation("w1", "p1")).resolves.toMatchObject({ status: "rejected" });
-  });
 });

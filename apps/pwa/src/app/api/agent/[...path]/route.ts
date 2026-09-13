@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 const AGENT_ORIGIN = "https://pi-finance-agent.walissonead.workers.dev";
 /** Upstream budget: generous for streaming/LLM agent responses. */
 const UPSTREAM_TIMEOUT_MS = 120_000;
+const MAX_BODY_BYTES = 2_097_152;
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "keep-alive",
@@ -64,6 +65,13 @@ function upstreamErrorResponse(status: number, code: string, message: string): N
   );
 }
 
+function hasValidBrowserOrigin(request: Request): boolean {
+  const origin = request.headers.get("origin");
+  if (!origin) return true;
+  try { return new URL(origin).origin === new URL(request.url).origin || isLocalOrigin(origin); }
+  catch { return false; }
+}
+
 function isTimeoutError(cause: unknown): boolean {
   return (
     typeof cause === "object" &&
@@ -73,8 +81,18 @@ function isTimeoutError(cause: unknown): boolean {
 }
 
 async function proxy(request: Request, context: RouteContext): Promise<NextResponse> {
+  if (!["GET", "HEAD", "OPTIONS"].includes(request.method) && !hasValidBrowserOrigin(request)) {
+    return upstreamErrorResponse(403, "csrf.origin_mismatch", "Origem da requisição não autorizada.");
+  }
+  const declaredLength = Number(request.headers.get("content-length") ?? 0);
+  if (declaredLength > MAX_BODY_BYTES) {
+    return upstreamErrorResponse(413, "request.body_too_large", "O corpo da requisição excede o limite permitido.");
+  }
   const { path } = await context.params;
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
+  if (body && body.byteLength > MAX_BODY_BYTES) {
+    return upstreamErrorResponse(413, "request.body_too_large", "O corpo da requisição excede o limite permitido.");
+  }
   let upstream: Response;
   try {
     upstream = await fetch(upstreamUrl(path, new URL(request.url).search), {
@@ -104,6 +122,8 @@ async function proxy(request: Request, context: RouteContext): Promise<NextRespo
     if (name !== "set-cookie" && !HOP_BY_HOP_HEADERS.has(name.toLowerCase())) headers.append(name, value);
   });
   for (const cookie of upstream.headers.getSetCookie?.() ?? []) headers.append("set-cookie", cookie);
+  headers.set("cache-control", "no-store");
+  headers.set("cdn-cache-control", "no-store");
 
   return new NextResponse(upstream.body, { status: upstream.status, headers });
 }

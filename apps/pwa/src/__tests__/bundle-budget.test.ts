@@ -9,7 +9,7 @@
 // budget.json.totalGzipKB is the equivalent-set baseline (re-baselined
 // 2026-09-06 to 495.04 KB; the 2026-07-15 280.7 KB line is kept as historical
 // reference in budget.json notes and in the HISTORICAL fixture below).
-// Next.js framework chunks (currently 89973f52-*/510-*, evidenced via
+// Next.js framework chunks (currently 2262cfa8-*/208-*, evidenced via
 // build-manifest.json#rootMainFiles) are NOT application code and are excluded
 // from the equivalent set. App/ lazy route chunks ARE part of the equivalent
 // set — they are included, not excluded merely because lazy. The equivalent
@@ -134,8 +134,8 @@ describe("bundle measure — fixture proofs", () => {
     const r = summarize(
       E([
         ["framework-abc.js", 10],
-        ["89973f52-xyz.js", 100], // framework -> subtracted
-        ["510-q.js", 21.69], // framework -> subtracted
+        ["2262cfa8-xyz.js", 100], // framework -> subtracted
+        ["208-q.js", 21.69], // framework -> subtracted
         ["app/dashboard/index.js", 30], // app lazy
         ["app/settings/page.js", 5], // app lazy
         ["136-aaa.js", 40], // unknown/other -> included
@@ -147,14 +147,14 @@ describe("bundle measure — fixture proofs", () => {
     // app chunks are part of the equivalent set, never subtracted
     expect(r.equivalentSetGzipKB).toBeGreaterThan(r.appLevelGzipKB);
     expect(isAppLevel("app/dashboard/index.js")).toBe(true);
-    expect(isAppLevel("89973f52-xyz.js")).toBe(false);
+    expect(isAppLevel("2262cfa8-xyz.js")).toBe(false);
   });
 
   it("treats unknown chunks conservatively (included in equivalent set, never excluded)", () => {
     const r = summarize(
       E([
         ["mystery-chunk-9.js", 50], // matches no known prefix
-        ["89973f52-xyz.js", 100], // framework -> subtracted
+        ["2262cfa8-xyz.js", 100], // framework -> subtracted
       ]),
     );
     // total = 150, framework = 100 -> equivalent = 50 (mystery MUST stay)
@@ -192,15 +192,16 @@ describe("bundle measure — fixture proofs", () => {
   it("pinned FRAMEWORK_PREFIXES are the currently evidenced Next.js ids", () => {
     // Fase 3 R4: script and fixtures must name the same framework chunk ids.
     // 624-/3896037c- (Next 16.2.9 era) were superseded by 89973f52-/510-
+    // (16.2.12 era), themselves superseded by 2262cfa8-/208- (Next 16.3.5 era)
     // (see measure-bundle.mjs history note). A Next upgrade that renames
     // them must update the script AND this pin together.
-    expect([...FRAMEWORK_PREFIXES]).toEqual(["89973f52-", "510-"]);
+    expect([...FRAMEWORK_PREFIXES]).toEqual(["2262cfa8-", "208-"]);
     const manifest = {
       json: {
         rootMainFiles: [
           "static/chunks/webpack-1ea83a7bda9eb7a6.js",
-          "static/chunks/89973f52-cdab712dca2a9cf0.js",
-          "static/chunks/510-abf218878bab7e84.js",
+          "static/chunks/2262cfa8-cdab712dca2a9cf0.js",
+          "static/chunks/208-abf218878bab7e84.js",
           "static/chunks/main-app-8cb15600dee149a8.js",
         ],
       },
@@ -213,8 +214,8 @@ describe("bundle measure — fixture proofs", () => {
   it("equivalent-set membership is stable across repeated classification", () => {
     const entries = E([
       ["framework-abc.js", 10],
-      ["89973f52-xyz.js", 100],
-      ["510-q.js", 21.69],
+      ["2262cfa8-xyz.js", 100],
+      ["208-q.js", 21.69],
       ["app/dashboard/index.js", 30],
       ["136-aaa.js", 40],
     ]);
@@ -222,8 +223,8 @@ describe("bundle measure — fixture proofs", () => {
     const b = summarize(entries);
     expect(a).toEqual(b);
     // same name always classifies identically
-    expect(classifyChunk("89973f52-cdab712dca2a9cf0.js")).toBe("framework");
-    expect(classifyChunk("510-abf218878bab7e84.js")).toBe("framework");
+    expect(classifyChunk("2262cfa8-cdab712dca2a9cf0.js")).toBe("framework");
+    expect(classifyChunk("208-abf218878bab7e84.js")).toBe("framework");
     expect(classifyChunk("app/foo/page.js")).toBe("other");
     expect(classifyChunk("mystery-1.js")).toBe("other");
     expect(classifyChunk("framework-9.js")).toBe("initial");
@@ -231,27 +232,27 @@ describe("bundle measure — fixture proofs", () => {
   });
 
   it("verifies framework prefixes against build-manifest.json#rootMainFiles when present", () => {
-    // Canonical evidence: Next.js lists 89973f52-* and 510-* as framework root files.
+    // Canonical evidence: Next.js lists 2262cfa8-* and 208-* as framework root files.
     const manifest = {
       json: {
         rootMainFiles: [
           "static/chunks/webpack-1ea83a7bda9eb7a6.js",
-          "static/chunks/89973f52-cdab712dca2a9cf0.js",
-          "static/chunks/510-abf218878bab7e84.js",
+          "static/chunks/2262cfa8-cdab712dca2a9cf0.js",
+          "static/chunks/208-abf218878bab7e84.js",
           "static/chunks/main-app-8cb15600dee149a8.js",
         ],
       },
     };
-    const v = verifyFrameworkPrefixesAgainstManifest(["89973f52-", "510-"], manifest);
+    const v = verifyFrameworkPrefixesAgainstManifest(["2262cfa8-", "208-"], manifest);
     expect(v.verified).toBe(true);
     expect(v.missing).toEqual([]);
   });
 
   it("hard-fails verification if a pinned prefix is NOT in the framework manifest", () => {
     const manifest = { json: { rootMainFiles: ["static/chunks/webpack-x.js"] } };
-    const v = verifyFrameworkPrefixesAgainstManifest(["89973f52-", "510-"], manifest);
+    const v = verifyFrameworkPrefixesAgainstManifest(["2262cfa8-", "208-"], manifest);
     expect(v.verified).toBe(false);
-    expect(v.missing).toEqual(["89973f52-", "510-"]);
+    expect(v.missing).toEqual(["2262cfa8-", "208-"]);
   });
 });
 
@@ -281,8 +282,8 @@ describe("bundle measure — fail-closed manifest check and composition report",
   it("writes bundle-report.json with composition evidence when asked", () => {
     const cwd = makeFakeBuild([
       "static/chunks/webpack-x.js",
-      "static/chunks/89973f52-y.js",
-      "static/chunks/510-z.js",
+      "static/chunks/2262cfa8-y.js",
+      "static/chunks/208-z.js",
       "static/chunks/main-app-w.js",
     ]);
     execFileSync("node", [MEASURE_PATH, "--write-report"], { cwd, encoding: "utf-8", stdio: "pipe" });

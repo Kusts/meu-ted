@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { apiFetch, isApiConfigured } from "./client";
 import { fetchAgentConnectionToken, clearAgentConnectionTokenCache, trackAgentConnection } from "./agent-auth";
 
 export const attachmentSchema = z.object({
@@ -42,7 +41,28 @@ function agentBaseUrl(): string {
   return "/api/agent";
 }
 
-export type AgentTurn = { turnId: string; status: string; attempts?: number; output?: string; memorized?: string[] };
+export type AgentTurn = {
+  turnId: string;
+  status: string;
+  attempts?: number;
+  output?: string;
+  memorized?: string[];
+  pendingOperation?: Readonly<{
+    id: string;
+    status: "proposed" | "succeeded" | "failed" | "cancelled" | "expired";
+    operation: string;
+    summary?: string;
+  }>;
+};
+
+const pendingDecisionSchema = z.object({
+  operationId: z.string(),
+  status: z.enum(["proposed", "succeeded", "failed", "cancelled", "expired"]),
+  retryable: z.boolean().optional(),
+}).strict();
+
+/** Safe result of an approval decision. Attestations never cross the browser boundary. */
+export type PendingOperationDecision = z.infer<typeof pendingDecisionSchema>;
 
 const agentHistoryExportSchema = z.object({
   version: z.number(),
@@ -57,21 +77,6 @@ const deleteAgentHistorySchema = z.object({ deleted: z.boolean(), recordCount: z
 export type DeleteAgentHistoryResult = z.infer<typeof deleteAgentHistorySchema>;
 const accessLogSchema = z.object({ items: z.array(z.object({ id: z.number(), actor_id: z.string(), action: z.string(), record_count: z.number(), created_at: z.string() })) });
 export type AgentAccessLog = z.infer<typeof accessLogSchema>;
-
-const pendingOperationSchema = z.object({
-  id: z.string(),
-  householdId: z.string(),
-  requesterId: z.string(),
-  operation: z.string(),
-  payload: z.unknown(),
-  reason: z.enum(["high_value", "destructive"]),
-  idempotencyKey: z.string(),
-  status: z.enum(["pending", "approved", "rejected", "expired"]),
-  createdAt: z.string(),
-  expiresAt: z.string(),
-}).passthrough();
-const pendingOperationsSchema = z.object({ items: z.array(pendingOperationSchema), total: z.number() });
-export type PendingOperation = z.infer<typeof pendingOperationSchema>;
 
 function agentRequestUrl(workspaceId: string, suffix: string): string {
   const baseUrl = agentBaseUrl();
@@ -183,13 +188,40 @@ export async function sendAgentMessage(
     else if (response.status === 403) err.code = "auth.workspace_forbidden";
     throw err;
   }
-  const data = await response.json() as { turnId?: string; intentionId?: string; status?: string; output?: string; memorized?: string[] };
+  const data = await response.json() as { turnId?: string; intentionId?: string; status?: string; output?: string; memorized?: string[]; pendingOperation?: AgentTurn["pendingOperation"] };
   return {
     turnId: data.turnId ?? data.intentionId ?? `turn-${Date.now()}`,
     status: data.status ?? "completed",
     output: data.output,
     ...(Array.isArray(data.memorized) ? { memorized: data.memorized.filter((m): m is string => typeof m === "string") } : {}),
+    ...(data.pendingOperation && typeof data.pendingOperation.id === "string" && typeof data.pendingOperation.operation === "string" && ["proposed", "succeeded", "failed", "cancelled", "expired"].includes(data.pendingOperation.status)
+      ? { pendingOperation: data.pendingOperation }
+      : {}),
   };
+}
+
+/**
+ * Sends a user decision to the authenticated Agent. The Agent, not the
+ * browser, owns V2 confirmation, credential consumption and execution.
+ */
+export async function decidePendingOperation(
+  workspaceId: string,
+  operationId: string,
+  decision: "confirm" | "cancel" | "retry",
+): Promise<PendingOperationDecision> {
+  const baseUrl = agentBaseUrl();
+  const requestId = crypto.randomUUID();
+  const response = await fetchWithAgentAuth(
+    workspaceId,
+    `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/pending-operations/${encodeURIComponent(operationId)}/decision`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json", "X-Workspace-Id": workspaceId },
+      body: JSON.stringify({ decision, requestId }),
+    },
+  );
+  return pendingDecisionSchema.parse(await parseJson<unknown>(response));
 }
 
 export type AgentSessionRenewal = {
@@ -320,31 +352,6 @@ export async function fetchAgentAccessLog(workspaceId: string): Promise<AgentAcc
     headers: { "X-Workspace-Id": workspaceId },
   });
   return parseJson<AgentAccessLog>(response).then((body) => accessLogSchema.parse(body));
-}
-
-export async function fetchPendingOperations(workspaceId: string): Promise<PendingOperation[]> {
-  if (!isApiConfigured()) return [];
-  const response = await apiFetch<z.infer<typeof pendingOperationsSchema>>(`/pending-operations?status=pending`, {
-    responseSchema: pendingOperationsSchema,
-    headers: { "X-Workspace-Id": workspaceId },
-  });
-  return response.items;
-}
-
-export async function approvePendingOperation(workspaceId: string, pendingOperationId: string): Promise<PendingOperation> {
-  return apiFetch<PendingOperation>(`/pending-operations/${encodeURIComponent(pendingOperationId)}/approve`, {
-    method: "POST",
-    responseSchema: pendingOperationSchema,
-    headers: { "X-Workspace-Id": workspaceId },
-  });
-}
-
-export async function rejectPendingOperation(workspaceId: string, pendingOperationId: string): Promise<PendingOperation> {
-  return apiFetch<PendingOperation>(`/pending-operations/${encodeURIComponent(pendingOperationId)}/reject`, {
-    method: "POST",
-    responseSchema: pendingOperationSchema,
-    headers: { "X-Workspace-Id": workspaceId },
-  });
 }
 
 export async function fetchAgentHistory(workspaceId: string): Promise<AgentMessage[]> {

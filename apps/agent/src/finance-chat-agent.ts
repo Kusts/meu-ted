@@ -46,10 +46,21 @@ import {
   type MigrationResult,
   type SdkUIMessage,
 } from "./migration/legacy-history.js";
-import { generatedHttpTools } from "./generated/http-tools.js";
-import { setGlobalApiContext } from "./tools/api-client.js";
+import { requestPiApiJson } from "./tools/api-client.js";
 import { createDelegatedTurnToken } from "./delegated-token.js";
 import { verifyAgentConnectionToken } from "./auth/connection-token.js";
+import {
+  ConversationOrchestrator,
+  normalizeRestTurn,
+  normalizeSdkTurn,
+  type AuthenticatedIdentity,
+  type TurnInput,
+  type TurnPlan,
+} from "./orchestration/conversation-orchestrator.js";
+import { routeIntent } from "./orchestration/intent-router.js";
+import { parseFinancialMutation } from "./mutations/financial-parser.js";
+import { MutationApiClient } from "./mutations/mutation-api-client.js";
+import { MutationExecutor, type ApprovalDecision } from "./mutations/mutation-executor.js";
 
 export type Env = {
   AGENT_DELEGATION_SECRET?: string;
@@ -422,20 +433,194 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     return snapshot;
   }
 
+  /**
+   * Canonical response provider used by every conversational adapter.  The
+   * provider receives only the normalized, DLP-scrubbed turn and its plan;
+   * identity is used for scoping reads, never for granting write authority.
+   */
+  private async provideUnifiedResponse(input: TurnInput, _plan: TurnPlan): Promise<string> {
+    const snapshot = await this.resolveIntentionSnapshot(input.intentionId);
+    if (!snapshot) throw Object.assign(new Error('agent.provider_not_configured'), { code: 'agent.provider_not_configured', status: 503 });
+    const activeSnapshot = await this.authorizeTurn(snapshot, {
+      workspaceId: input.workspaceId,
+      actorId: input.actorId,
+      intentionId: input.intentionId,
+    });
+    const cognition = assembleCognition(input.text, {
+      webEnv: (this.env ?? {}) as Record<string, string | undefined>,
+    });
+
+    // REST keeps the buffered relay as a provider transport. It is invoked
+    // only from runTurn, after the canonical plan/authority checks above.
+    if (input.channel === 'pwa-rest') {
+      if (typeof this.persistMessages !== 'function') {
+        throw Object.assign(new Error('agent.persistence_unavailable'), { code: 'agent.persistence_unavailable', status: 503 });
+      }
+      const userMessage: UIMessage = {
+        id: `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: 'user',
+        parts: [{ type: 'text', text: input.text }],
+        metadata: {
+          actorId: input.actorId,
+          workspaceId: input.workspaceId,
+          createdAt: new Date().toISOString(),
+        },
+      } as unknown as UIMessage;
+      await this.persistMessages([userMessage]);
+      const relayOrigin = this.env?.API_ORIGIN ?? 'https://api.synkroo.com.br';
+      const response = await fetch(`${relayOrigin.replace(/\/$/, '')}/internal/agent/llm-relay`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-agent-runtime-admin-token': this.env?.AGENT_RUNTIME_ADMIN_TOKEN ?? '',
+        },
+        body: JSON.stringify({
+          provider: activeSnapshot.provider_id,
+          model: activeSnapshot.model_name ?? resolveBareModelName(activeSnapshot.provider_id, activeSnapshot.model_id, null),
+          prompt: input.text.slice(0, 15_000),
+          system: cognition.system.slice(0, 7_900),
+        }),
+        redirect: 'error',
+      });
+      const body = await response.json().catch(() => ({})) as { text?: unknown; message?: unknown };
+      if (!response.ok || typeof body.text !== 'string' || !body.text) {
+        throw Object.assign(new Error(redactTranscript(typeof body.message === 'string' ? body.message : `HTTP ${response.status}`)), { code: 'agent.inference_error', status: 502 });
+      }
+      const output = redactTranscript(body.text);
+      // The relay response is not publishable until the same authority that
+      // admitted the turn is still valid. This makes an epoch/rollout change
+      // during inference fail closed before an assistant message is durable.
+      await this.authorizeTurn(activeSnapshot, {
+        workspaceId: input.workspaceId,
+        actorId: input.actorId,
+        intentionId: input.intentionId,
+      });
+      const assistantMessage: UIMessage = {
+        id: `msg-asst-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: 'assistant',
+        parts: [{ type: 'text', text: output }],
+        metadata: { actorId: 'ted', workspaceId: input.workspaceId, createdAt: new Date().toISOString() },
+      } as unknown as UIMessage;
+      await this.persistMessages([assistantMessage]);
+      return output;
+    }
+
+    const target = {
+      providerId: activeSnapshot.provider_id,
+      modelName: resolveBareModelName(activeSnapshot.provider_id, activeSnapshot.model_id, activeSnapshot.model_name),
+    };
+    if (!target.modelName) throw Object.assign(new Error('agent.provider_not_configured'), { code: 'agent.provider_not_configured', status: 503 });
+
+    if (isCodexProviderId(target.providerId)) {
+      return runCodexBrokerText((this.env ?? {}) as CodexBrokerEnv, {
+        model: target.modelName,
+        prompt: input.text,
+        system: cognition.system,
+        requestId: input.traceId,
+        intentionId: input.intentionId,
+        workspaceId: input.workspaceId,
+        actorId: input.actorId,
+      });
+    }
+
+    const modelInstance = createLanguageModel(
+      target.providerId,
+      target.modelName,
+      activeSnapshot.protocol as Protocol,
+      (this.env ?? {}) as Record<string, string | undefined>,
+    );
+    const memoryTools = this.memorySql()
+      ? buildMemoryTools({ sql: this.memorySql()!, workspaceId: input.workspaceId, actorId: input.actorId })
+      : {};
+    const tools = buildExposedTools(
+      cognition.toolNames,
+      {
+        apiOrigin: this.env?.API_ORIGIN,
+        workspaceId: input.workspaceId,
+        actorId: input.actorId,
+        intentionId: input.intentionId,
+        lastUserMessage: input.text,
+        webEnv: (this.env ?? {}) as Record<string, string | undefined>,
+      },
+      memoryTools,
+    );
+    // The upstream contract is streaming. We consume it before returning from
+    // the canonical boundary, while marking SDK metadata promises observed so
+    // an empty/error stream cannot surface as an unrelated unhandled reject.
+    let text: string;
+    try {
+      const generated = streamText({
+        model: modelInstance.model,
+        system: cognition.system,
+        messages: [{ role: 'user' as const, content: input.text }],
+        tools,
+        stopWhen: stepCountIs(5),
+      }) as unknown as {
+        finishReason: Promise<unknown>;
+        totalUsage: Promise<unknown>;
+        text: Promise<string>;
+      };
+      void generated.finishReason.catch(() => undefined);
+      void generated.totalUsage.catch(() => undefined);
+      text = await generated.text;
+    } catch {
+      throw Object.assign(new Error('No output generated by provider.'), {
+        code: 'agent.inference_error',
+        status: 502,
+      });
+    }
+    if (!text) throw Object.assign(new Error('agent.invalid_provider_output'), { code: 'agent.invalid_provider_output', status: 502 });
+    return redactTranscript(text);
+  }
+
+  private orchestratorForChannel(dependencies: {
+    mutationApiClient?: MutationApiClient;
+    plan?: (input: TurnInput) => TurnPlan;
+  } = {}): ConversationOrchestrator {
+    return new ConversationOrchestrator({
+      ...dependencies,
+      responseProvider: (input, plan) => this.provideUnifiedResponse(input, plan),
+    });
+  }
+
   override async onChatMessage(messagePayload: unknown, ..._rest: unknown[]): Promise<unknown> {
     // C-06 trust boundary: the SDK direct leg carries NO transport identity.
     // `payload.actorId` is a gateway-stamped hint, NEVER a source of
     // identity — the Worker gateway compares any client-supplied actorId
     // against the authenticated actor (403 on mismatch) before this code is
     // reachable, and the REST legs derive identity from verified headers.
-    const payload = (messagePayload ?? {}) as { text?: string; intentionId?: string; actorId?: string };
+    const payload = (messagePayload ?? {}) as { text?: string; intentionId?: string; actorId?: string; workspaceId?: string };
     const text = typeof payload.text === "string" ? payload.text.trim() : "";
     const intentionId = payload.intentionId ?? `intent-${Date.now()}`;
     const actorId = payload.actorId ?? "anonymous";
+    const sdkWorkspace = payload.workspaceId ?? "workspace";
 
     if (!text) {
       return { text: "Mensagem vazia." };
     }
+
+    // T2.1: the SDK adapter normalizes into the canonical pipeline. Body
+    // identity is only a compatibility hint here; authenticated gateway
+    // identity remains authoritative at the REST boundary.
+    const sdkInput = normalizeSdkTurn(payload, {
+      actorId,
+      workspaceId: sdkWorkspace,
+      role: "member",
+      deviceId: null,
+    });
+    let turnResult;
+    try {
+      turnResult = await this.orchestratorForChannel().runTurn(sdkInput);
+    } catch (error) {
+      // The SDK protocol is text based, so the one expected configuration
+      // failure remains a safe message. All other typed failures propagate:
+      // they must never become a fabricated successful response.
+      if ((error as { code?: unknown }).code === 'agent.provider_not_configured') {
+        return { text: "TED ready: provider not configured" };
+      }
+      throw error;
+    }
+    if (turnResult.response) return { text: turnResult.response.text };
 
     const estimatedTokens = estimateTokens(text);
     if (this.state?.storage?.sql) {
@@ -453,7 +638,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     // H-03: epoch + rollout/canary re-verified per turn before any attempt.
     let activeSnapshot: IntentionSnapshotRow;
     try {
-      activeSnapshot = await this.authorizeTurn(snapshot, { workspaceId: 'direct', actorId, intentionId });
+      activeSnapshot = await this.authorizeTurn(snapshot, { workspaceId: sdkWorkspace, actorId, intentionId });
     } catch (turnErr) {
       if ((turnErr as { code?: string })?.code === 'agent.security_epoch_changed') {
         return { text: "Configuração de IA atualizada durante o turno. Tente de novo." };
@@ -472,7 +657,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         // playbook + workspace memory assembled per turn, with the model's
         // tools actually wired.
         const sql = this.memorySql();
-        const memoryWorkspace = 'direct';
+        const memoryWorkspace = sdkWorkspace;
         const memoryContext = sql ? this.loadMemoryContext(memoryWorkspace, actorId, text) : null;
         const cognition = assembleCognition(text, {
           webEnv: (this.env ?? {}) as Record<string, string | undefined>,
@@ -485,7 +670,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             system: cognition.system,
             requestId: `direct-${intentionId}`,
             intentionId,
-            workspaceId: 'direct',
+            workspaceId: sdkWorkspace,
             actorId,
           });
           return { text: brokerText };
@@ -501,7 +686,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           cognition.toolNames,
           {
             apiOrigin: this.env?.API_ORIGIN,
-            workspaceId: 'direct',
+            workspaceId: sdkWorkspace,
             actorId,
             intentionId,
             lastUserMessage: text,
@@ -564,7 +749,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       // H-14: same post-inference re-verification as the relay leg — a
       // revocation during inference blocks publication of the result.
       try {
-        await this.authorizeTurn(activeSnapshot, { workspaceId: 'direct', actorId, intentionId });
+        await this.authorizeTurn(activeSnapshot, { workspaceId: sdkWorkspace, actorId, intentionId });
       } catch (postErr) {
         if ((postErr as { code?: string })?.code === 'agent.security_epoch_changed') {
           return { text: "Configuração de IA atualizada durante o turno. Tente de novo." };
@@ -584,9 +769,9 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       const learnSql = this.memorySql();
       if (learnSql) {
         try {
-          const turnCount = bumpTurnCount(learnSql, 'direct');
+          const turnCount = bumpTurnCount(learnSql, sdkWorkspace);
           await learnFromTurn(learnSql, {
-            workspaceId: 'direct',
+            workspaceId: sdkWorkspace,
             actorId,
             userText: text,
             assistantText: '',
@@ -677,6 +862,100 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     return null;
   }
 
+  private async handleApprovalDecision(request: Request, operationId: string): Promise<Response> {
+    const token = request.headers.get("x-agent-connection-token")?.trim();
+    const secret = this.env?.AGENT_DELEGATION_SECRET?.trim();
+    const actorId = request.headers.get("x-agent-actor")?.trim();
+    const workspaceId = request.headers.get("x-agent-workspace")?.trim();
+    const deviceId = request.headers.get("x-agent-device")?.trim();
+    if (!token || !secret || !actorId || !workspaceId || !deviceId) {
+      return Response.json({ code: "agent.approval_context_required" }, { status: 401 });
+    }
+    let body: { decision?: unknown; requestId?: unknown };
+    try {
+      body = await request.json() as { decision?: unknown; requestId?: unknown };
+    } catch {
+      return Response.json({ code: "agent.invalid_payload" }, { status: 400 });
+    }
+    const keys = Object.keys(body);
+    if (keys.some((key) => key !== "decision" && key !== "requestId") ||
+      (body.decision !== "confirm" && body.decision !== "cancel" && body.decision !== "retry") ||
+      typeof body.requestId !== "string" || body.requestId.trim() === "" || body.requestId.length > 128) {
+      return Response.json({ code: "agent.invalid_payload" }, { status: 400 });
+    }
+    const role = request.headers.get("x-agent-role") === "owner" ? "owner" : "member";
+    try {
+      const capabilities = body.decision === "cancel"
+        ? ["financial.approval.cancel"]
+        : body.decision === "retry"
+          ? ["financial.approval.retry", "financial.approval.execute"]
+          : ["financial.approval.confirm", "financial.approval.execute"];
+      const delegatedToken = await createDelegatedTurnToken({
+        actorId,
+        workspaceId,
+        role,
+        capabilities,
+        requestId: body.requestId.trim(),
+        deviceId,
+      }, secret);
+      const requestWithApprovalToken = async <T>(method: string, path: string, opts: Parameters<typeof requestPiApiJson>[2] = {}) =>
+        requestPiApiJson<T>(method, path, { ...opts, delegatedToken, apiOrigin: this.env?.API_ORIGIN });
+      const result = await new MutationExecutor({ request: requestWithApprovalToken }).decide({
+        operationId,
+        decision: body.decision as ApprovalDecision,
+        requestId: body.requestId.trim(),
+        delegatedToken,
+        identity: { workspaceId, actorId, deviceId },
+      });
+      return Response.json(result);
+    } catch {
+      return Response.json({ code: "agent.approval_failed", message: "Não foi possível concluir a decisão." }, { status: 502 });
+    }
+  }
+
+  /** Builds the sole V2 mutation plan used by every channel adapter. */
+  private mutationProposalPlan(input: TurnInput): TurnPlan | null {
+    const parsed = parseFinancialMutation(input.text);
+    const clearlyMutating = /\b(gastei|gasto|paguei|compra|despesa|recebi|ganhei|renda|sal[aá]rio|receita|lancei|lancar|lançamento|lancamento)\b/i.test(input.text);
+    if (parsed.kind === "none" || !clearlyMutating) return null;
+
+    const routed = routeIntent(input.text);
+    return {
+      version: "2",
+      mode: "mutation-proposal",
+      domain: "transactions",
+      skillNames: routed.skillNames.slice(0, 2),
+      requestedOperations: [{ name: parsed.kind === "income" ? "transactions.income.create" : "transactions.expense.create", kind: "mutation" }],
+      missingFields: [],
+      ambiguity: null,
+      confidence: routed.confidence,
+    };
+  }
+
+  /**
+   * Constructs the per-turn, approval-scoped transport injected into the
+   * canonical orchestrator. No browser-owned data crosses this boundary.
+   */
+  private async mutationApiClientForTurn(input: TurnInput, needsMutationClient: boolean): Promise<MutationApiClient | undefined> {
+    if (!needsMutationClient) return undefined;
+    const secret = this.env?.AGENT_DELEGATION_SECRET?.trim();
+    if (!secret || !input.deviceId) {
+      return undefined;
+    }
+
+    const delegatedToken = await createDelegatedTurnToken({
+      actorId: input.actorId,
+      workspaceId: input.workspaceId,
+      role: input.role,
+      capabilities: ["financial.approval.propose"],
+      requestId: input.intentionId,
+      deviceId: input.deviceId,
+    }, secret);
+    const request = async <T>(method: string, path: string, options: Parameters<typeof requestPiApiJson>[2] = {}) =>
+      requestPiApiJson<T>(method, path, { ...options, delegatedToken, apiOrigin: this.env?.API_ORIGIN });
+    return new MutationApiClient({ request });
+  }
+
   private async enqueueChat<T>(task: () => Promise<T>): Promise<T> {
     const prev = this.chatQueue ?? Promise.resolve();
     const next = prev.then(() => task(), () => task());
@@ -695,6 +974,10 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     if (url.pathname.startsWith("/rpc/")) {
       const bindingError = await this.assertConnectionBinding(request);
       if (bindingError) return bindingError;
+    }
+    const decisionMatch = url.pathname.match(/^\/rpc\/pending-operations\/([^/]+)\/decision$/);
+    if (decisionMatch && request.method === "POST") {
+      return this.handleApprovalDecision(request, decodeURIComponent(decisionMatch[1]!));
     }
     if (url.pathname === "/rpc/chat" && request.method === "POST") {
       const actorId = request.headers.get("x-agent-actor");
@@ -737,437 +1020,47 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         ? body.intentionId.trim()
         : `intent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-      return this.enqueueChat(async () => {
-        const snapshot = await this.resolveIntentionSnapshot(intentionId);
-        if (!snapshot) {
-          return Response.json({ code: "agent.provider_not_configured", message: "Nenhum provedor de IA ativo configurado." }, { status: 503 });
+      const restInput = normalizeRestTurn(
+        { ...body, text, intentionId, attachments: incomingAttachments },
+        {
+          actorId: identity.actorId,
+          workspaceId: identity.workspaceId,
+          role: identity.role,
+          deviceId,
+        } satisfies AuthenticatedIdentity,
+      );
+      if (typeof this.persistMessages !== 'function') {
+        return Response.json({ code: 'agent.persistence_unavailable', message: 'SDK persistence is not available' }, { status: 503 });
+      }
+      try {
+        const mutationPlan = this.mutationProposalPlan(restInput);
+        const mutationApiClient = await this.mutationApiClientForTurn(restInput, mutationPlan !== null);
+        const turnResult = await this.orchestratorForChannel({
+          ...(mutationPlan ? { plan: () => mutationPlan } : {}),
+          ...(mutationApiClient ? { mutationApiClient } : {}),
+        }).runTurn(restInput);
+        if (turnResult.response) {
+          const pendingOperation = turnResult.mutation
+            ? {
+                id: turnResult.mutation.operationId,
+                status: turnResult.mutation.status,
+                operation: turnResult.plan.requestedOperations[0]?.name,
+                summary: turnResult.response.text,
+              }
+            : undefined;
+          return Response.json({ status: "completed", output: turnResult.response.text, ...(pendingOperation ? { pendingOperation } : {}) });
         }
-
-        // H-03: epoch + rollout/canary re-verified per turn before any
-        // attempt — a bumped epoch aborts (stream cancel), `disabled`
-        // blocks, canary non-cohort promotes the fallback pair.
-        let activeSnapshot: IntentionSnapshotRow;
-        try {
-          activeSnapshot = await this.authorizeTurn(snapshot, { workspaceId: identity.workspaceId, actorId: identity.actorId, intentionId });
-        } catch (turnErr) {
-          const turnCode = (turnErr as { code?: string })?.code;
-          if (turnCode === 'agent.security_epoch_changed') {
-            return Response.json(
-              { code: 'agent.security_epoch_changed', message: 'Configuração de IA revogada durante o turno. Tente de novo.' },
-              { status: 409 },
-            );
-          }
-          return Response.json({ code: "agent.provider_not_configured", message: "Nenhum provedor de IA ativo configurado." }, { status: 503 });
+      } catch (error) {
+        const status = (error as { status?: unknown }).status;
+        const code = (error as { code?: unknown }).code;
+        if (typeof status === 'number' && status >= 400 && status < 600) {
+          return Response.json({ code: typeof code === 'string' ? code : 'agent.inference_error', message: redactTranscript((error as Error).message) }, { status });
         }
+        return Response.json({ code: 'agent.inference_error', message: 'Falha ao processar a solicitação.' }, { status: 502 });
+      }
 
-        if (this.state?.storage?.sql) {
-          const budgetCheck = checkUsageLimit(this.state.storage.sql, identity.actorId, estimateTokens(text));
-          if (!budgetCheck.allowed) {
-            return Response.json({ code: "agent.usage_limit", message: budgetCheck.reason }, { status: 429 });
-          }
-        }
+      return Response.json({ code: 'agent.no_response', message: 'Não foi possível produzir uma resposta segura.' }, { status: 502 });
 
-        // Persist User message (redacted) BEFORE relay inference
-        const userCreatedAt = new Date().toISOString();
-        const userMsg: UIMessage = {
-          id: `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          role: "user",
-          parts: [{ type: "text", text }],
-          metadata: {
-            actorId: identity.actorId,
-            workspaceId: identity.workspaceId,
-            createdAt: userCreatedAt,
-            ...(incomingAttachments.length > 0 ? { attachments: incomingAttachments } : {}),
-          },
-        } as unknown as UIMessage;
-
-        if (typeof this.persistMessages !== "function") {
-          return Response.json(
-            { code: "agent.persistence_unavailable", message: "SDK persistence is not available" },
-            { status: 503 },
-          );
-        }
-        await this.persistMessages([userMsg]);
-
-        try {
-          const relayOrigin = this.env?.API_ORIGIN ?? "https://api.synkroo.com.br";
-          const adminToken = this.env?.AGENT_RUNTIME_ADMIN_TOKEN ?? "";
-
-          // --- Contexto da conversa: resgatar turnos anteriores para dar continuidade ao diálogo ---
-          const allTurns = this.sdkTurns();
-          const priorTurns = allTurns.slice(0, -1).slice(-8);
-          let historyContext = "";
-          if (priorTurns.length > 0) {
-            historyContext = "=== Histórico recente da conversa ===\n" +
-              priorTurns.map((t) => `${t.role === 'assistant' ? 'TED' : 'Usuário'}: ${t.content}`).join("\n\n") +
-              "\n=== Fim do histórico recente ===\n\n";
-          }
-          let enrichedPrompt = `${historyContext}Mensagem atual do Usuário: ${text}`;
-          try {
-            const delegationSecret = this.env?.AGENT_DELEGATION_SECRET;
-            if (delegationSecret) {
-              // Criar token delegado workspace-isolado para chamadas de ferramentas.
-              // C-03 least-privilege: o enriquecimento do relay executa
-              // SOMENTE leituras (get_balance, extratos, metas, orçamentos,
-              // faturas); sem financial.write a API nega qualquer escrita
-              // (fail-closed via auth.delegation_scope_forbidden).
-              // C-06: actor/workspace/role vêm da identidade efetiva (nunca
-              // do body do cliente); H-12: deviceId quando o gateway o
-              // carimbou (ver x-agent-device).
-              const delegatedToken = await createDelegatedTurnToken(
-                {
-                  actorId: identity.actorId,
-                  workspaceId: identity.workspaceId,
-                  role: identity.role,
-                  capabilities: ["financial.read"],
-                  requestId: intentionId,
-                },
-                delegationSecret,
-              );
-              setGlobalApiContext({ delegatedToken, apiOrigin: relayOrigin });
-
-              // Heurística contextual para chamar ferramentas relevantes antes do LLM
-              const lower = text.toLowerCase();
-              const isConfirmation = isExplicitConfirmation(text);
-              const isAskingBalance = /(saldo|balance|quanto tenho|extrato)/i.test(lower) || (!isConfirmation && /(quanto|dinheiro)/i.test(lower));
-
-              const toolCalls: Array<{ name: string; params: Record<string, unknown> }> = [];
-              if (isAskingBalance || /(conta|accounts)/i.test(lower)) {
-                toolCalls.push({ name: "list_accounts", params: { householdId: identity.workspaceId } });
-              }
-              if (/(transa[çc][aã]o|extrato|gastos|despesa|receita|transactions)/i.test(lower)) {
-                toolCalls.push({ name: "list_recent_transactions", params: { householdId: identity.workspaceId, limit: 10 } });
-              }
-              if (/(meta|goal)/i.test(lower)) {
-                toolCalls.push({ name: "list_goals", params: { householdId: identity.workspaceId } });
-              }
-              if (/(or[çc]amento|budget)/i.test(lower)) {
-                toolCalls.push({ name: "list_budgets", params: { householdId: identity.workspaceId } });
-              }
-              if (/(cart[aã]o|fatura|statement|cartao)/i.test(lower)) {
-                toolCalls.push({ name: "list_statements", params: { householdId: identity.workspaceId } });
-              }
-              if (isConfirmation || /(gastei|gasto|despesa|receita|compra|lan[çc])/i.test(lower)) {
-                if (!toolCalls.some((c) => c.name === "list_accounts")) {
-                  toolCalls.push({ name: "list_accounts", params: { householdId: identity.workspaceId } });
-                }
-                toolCalls.push({ name: "list_categories", params: { householdId: identity.workspaceId } });
-              }
-              if (toolCalls.length === 0) {
-                // Fornecer contas como referência de contexto
-                toolCalls.push({ name: "list_accounts", params: { householdId: identity.workspaceId } });
-              }
-
-              // Executar até 2 ferramentas para não estourar tempo
-              for (const call of toolCalls.slice(0, 2)) {
-                const tool = generatedHttpTools.find((t) => t.name === call.name);
-                if (!tool) continue;
-                try {
-                  const result = await (tool.execute as unknown as (p: Record<string, unknown>) => Promise<unknown>)(call.params);
-                  let snippet = JSON.stringify(result).slice(0, 1500);
-
-                  // Cálculos determinísticos para saldo e proteção contra alucinação
-                  if (call.name === 'list_accounts' && result && typeof result === 'object') {
-                    const accList = (result as { items?: Array<{ id: string; name: string; balanceCents?: number; status?: string }> })?.items;
-                    if (Array.isArray(accList)) {
-                      if (accList.length === 0) {
-                        snippet += `\n[Nota do sistema: O usuário não possui nenhuma conta cadastrada neste workspace ativo (${identity.workspaceId}). Diga claramente que não há contas cadastradas e NÃO invente valores nem contas.]`;
-                      } else {
-                        const activeAccs = accList.filter((a) => a.status === 'active');
-                        const totalCents = activeAccs.reduce((sum, a) => sum + (typeof a.balanceCents === 'number' ? a.balanceCents : 0), 0);
-                        const totalBrl = (totalCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-                        if (isAskingBalance) {
-                          snippet += `\n[Saldo total consolidado calculado das contas ativas: ${totalBrl}. Use exatamente este valor como saldo total.]`;
-                        } else {
-                          snippet += `\n[Contas ativas disponíveis no workspace: ${activeAccs.map((a) => `"${a.name}" (id: "${a.id}", saldo: ${(((a.balanceCents ?? 0)) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })})`).join(', ')}]`;
-                        }
-                      }
-                    }
-                  }
-
-                  // Enriquecer prompt com resultado da ferramenta (isolado por workspace)
-                  enrichedPrompt += `\n\n[Dados da ferramenta ${call.name} (workspace ${identity.workspaceId}): ${snippet}]`;
-                } catch (toolErr) {
-                  console.warn(`[finance-chat-agent] Pre-fetch ${call.name} failed:`, (toolErr as Error)?.message);
-                  enrichedPrompt += `\n\n[Aviso interno: Não foi possível obter os dados da ferramenta ${call.name} no momento. Informe educadamente ao usuário que não foi possível carregar os dados agora e NUNCA invente números ou contas inexistentes.]`;
-                }
-              }
-            }
-          } catch {
-            // fail-open para enriquecimento
-          }
-
-          // H-02: buffered leg runs inside the SAME attempts executor as the
-          // direct leg — concrete upstream pairs (bare names, never row ids),
-          // one primary + one distinct fallback, retryable-only failover and
-          // a sanitized composite error when both legs fail.
-          //
-          // Cognitive layer for the relay leg too: persona + skills +
-          // playbook + workspace memory travel as the system prompt (the
-          // relay has no tool loop, so the enriched prompt keeps carrying
-          // workspace data).
-          const relaySql = this.memorySql();
-          const relayMemoryContext = relaySql ? this.loadMemoryContext(identity.workspaceId, identity.actorId, text) : null;
-          const cognition = assembleCognition(text, {
-            webEnv: (this.env ?? {}) as Record<string, string | undefined>,
-            ...(relayMemoryContext ? { hooks: { memoryContext: relayMemoryContext } } : {}),
-          });
-          const todayDate = new Date().toISOString().slice(0, 10);
-          enrichedPrompt += `\n\n[Instrução de execução do sistema: Data atual de referência: ${todayDate}.
-Ao registrar ou confirmar uma despesa ou receita (como quando o usuário diz "confirmo", "sim", "pode fazer" ou solicita um lançamento com todos os dados):
-1. Responda confirmando com clareza o que foi registrado (valor, descrição e conta).
-2. Se você tiver os dados necessários (conta com id, valor em centavos, descrição), inclua EXATAMENTE uma linha ao final com a ação a ser executada em formato JSON:
-[EXEC_ACTION: {"tool": "create_expense", "params": {"accountId": "<id-da-conta>", "amountCents": <valor-em-centavos>, "description": "<descrição>", "categoryId": "<id-da-categoria-se-houver>", "date": "${todayDate}"}}]]`;
-          const runBufferedLeg = async (
-            target: { providerId: string; modelName: string },
-            attempt: 'primary' | 'fallback',
-            signal?: AbortSignal,
-          ): Promise<string> => {
-            if (isCodexProviderId(target.providerId)) {              // Codex executes via the private broker (browser-session
-              // auth), never via relay HTTP. Broker errors already carry
-              // { code, status } for the shared classification below.
-              return runCodexBrokerText((this.env ?? {}) as CodexBrokerEnv, {
-                model: target.modelName,
-                prompt: enrichedPrompt,
-                system: cognition.system,
-                requestId: attempt === 'primary' ? intentionId : `${intentionId}:fallback`,
-                intentionId,
-                workspaceId: identity.workspaceId,
-                actorId: identity.actorId,
-              });
-            }
-            const relayRes = await fetch(`${relayOrigin.replace(/\/$/, "")}/internal/agent/llm-relay`, {
-              method: "POST",
-              headers: {
-                "content-type": "application/json",
-                "x-agent-runtime-admin-token": adminToken,
-              },
-              // H-14: abortable — a revocation detected post-inference
-              // cancels the in-flight relay call.
-              ...(signal ? { signal } : {}),
-              body: JSON.stringify({
-                provider: target.providerId,
-                model: target.modelName,
-                prompt: enrichedPrompt.length > 15000 ? enrichedPrompt.slice(0, 15000) : enrichedPrompt,
-                system: cognition.system.length > 7900 ? cognition.system.slice(0, 7900) : cognition.system,
-              }),
-            });
-            const relayRaw = await relayRes.text().catch(() => "");
-            let relayBody: { text?: string; code?: string; message?: string };
-            try { relayBody = JSON.parse(relayRaw || "{}") as { text?: string; code?: string; message?: string }; } catch { relayBody = {}; }
-            if (!relayRes.ok || typeof relayBody.text !== "string" || !relayBody.text) {
-              throw Object.assign(
-                new Error(redactTranscript(relayBody.message ?? `HTTP ${relayRes.status}`).slice(0, 200)),
-                { status: relayRes.status, code: relayBody.code ?? `http_${relayRes.status}` },
-              );
-            }
-            return relayBody.text;
-          };
-
-          let attemptOutcome: Awaited<ReturnType<typeof executeLlmAttempts<string>>>;
-          // H-14: per-turn abort scope — a post-inference revocation aborts
-          // the in-flight relay HTTP and blocks publication below.
-          const turnAbort = new AbortController();
-          try {
-            attemptOutcome = await executeLlmAttempts<string>({
-              snapshot: activeSnapshot,
-              intentionId,
-              runLeg: (target, attempt) => runBufferedLeg(target, attempt, turnAbort.signal),
-            });
-          } catch (attemptErr) {
-            const attemptCode = (attemptErr as { code?: string })?.code;
-            if (attemptCode === 'agent.provider_not_configured') {
-              return Response.json(
-                { code: 'agent.provider_not_configured', message: 'Nenhum provedor de IA ativo configurado.' },
-                { status: 503 },
-              );
-            }
-            const rawStatus = (attemptErr as { status?: number })?.status;
-            const status = typeof rawStatus === 'number' && rawStatus >= 400 && rawStatus < 600 ? rawStatus : 502;
-            const safeMessage = redactTranscript((attemptErr as Error)?.message ?? 'Falha ao processar a inferência.');
-            return Response.json(
-              {
-                code: attemptCode ?? 'agent.inference_error',
-                message: safeMessage,
-                provider: activeSnapshot.provider_id,
-                model: activeSnapshot.model_id,
-                ...((attemptErr as { primaryReason?: string })?.primaryReason
-                  ? { primaryReason: (attemptErr as { primaryReason?: string }).primaryReason }
-                  : {}),
-                ...((attemptErr as { fallbackReason?: string })?.fallbackReason
-                  ? { fallbackReason: (attemptErr as { fallbackReason?: string }).fallbackReason }
-                  : {}),
-              },
-              { status },
-            );
-          }
-
-          // H-14: epoch/version are compared AGAIN after inference, before
-          // anything is persisted or published. A bump, a `disabled`
-          // rollout or an unreachable authority aborts the turn: the revoked
-          // output is never persisted and never returned. (The
-          // pre-inference user message stays — it was authorized when
-          // written and contains no model output.)
-          try {
-            await this.authorizeTurn(activeSnapshot, { workspaceId: identity.workspaceId, actorId: identity.actorId, intentionId });
-          } catch (postErr) {
-            turnAbort.abort();
-            if ((postErr as { code?: string })?.code === 'agent.security_epoch_changed') {
-              return Response.json(
-                { code: 'agent.security_epoch_changed', message: 'Configuração de IA revogada durante o turno. Tente de novo.' },
-                { status: 409 },
-              );
-            }
-            return Response.json({ code: "agent.provider_not_configured", message: "Nenhum provedor de IA ativo configurado." }, { status: 503 });
-          }
-
-          const usedFallback = attemptOutcome.usedFallback;
-          const effectiveProvider = usedFallback
-            ? (activeSnapshot.fallback_provider_id ?? activeSnapshot.provider_id)
-            : snapshot.provider_id;
-          const effectiveModel = usedFallback
-            ? (activeSnapshot.fallback_model_id ?? activeSnapshot.model_id)
-            : snapshot.model_id;
-
-          // Structured failover metric (no secrets).
-          logFailoverEvent(
-            {
-              intentionId,
-              primaryProviderId: attemptOutcome.primary.providerId,
-              primaryModelId: attemptOutcome.primary.modelName,
-              fallbackProviderId: attemptOutcome.fallback?.providerId ?? activeSnapshot.fallback_provider_id,
-              fallbackModelId: attemptOutcome.fallback?.modelName ?? activeSnapshot.fallback_model_id,
-            },
-            attemptOutcome,
-          );
-
-          let output = redactTranscript(attemptOutcome.result);
-
-          // Executar ação estruturada se o modelo emitiu [EXEC_ACTION: ...]
-          const actionMatch = attemptOutcome.result.match(/\[EXEC_ACTION:\s*(\{.*?\})\]/s);
-          if (actionMatch && actionMatch[1]) {
-            output = output.replace(/(\n|^)\s*(Ação executada:?)?\s*\[EXEC_ACTION:\s*\{.*?\}\]\s*/s, "").trim();
-            try {
-              const action = JSON.parse(actionMatch[1]) as { tool?: string; params?: Record<string, unknown> };
-              const delegationSecret = this.env?.AGENT_DELEGATION_SECRET;
-              if (action.tool && action.params && delegationSecret) {
-                const writeToken = await createDelegatedTurnToken(
-                  {
-                    actorId: identity.actorId,
-                    workspaceId: identity.workspaceId,
-                    role: identity.role,
-                    capabilities: ["financial.read", "financial.write"],
-                    requestId: `mut-${intentionId}`,
-                    deviceId: deviceId ?? "agent_pwa_session",
-                  },
-                  delegationSecret,
-                );
-                setGlobalApiContext({ delegatedToken: writeToken, apiOrigin: relayOrigin });
-                const toolToExec = generatedHttpTools.find((t) => t.name === action.tool);
-                if (toolToExec) {
-                  if (!action.params.householdId) {
-                    action.params.householdId = identity.workspaceId;
-                  }
-                  if (action.tool === "create_expense" && !action.params.categoryId) {
-                    try {
-                      const listCat = generatedHttpTools.find((t) => t.name === "list_categories");
-                      if (listCat) {
-                        const cats = await (listCat.execute as unknown as (p: Record<string, unknown>) => Promise<{ items?: Array<{ id: string; kind?: string }> }>)({ householdId: identity.workspaceId });
-                        const defaultCat = cats?.items?.find((c) => c.kind === "expense") ?? cats?.items?.[0];
-                        if (defaultCat?.id) {
-                          action.params.categoryId = defaultCat.id;
-                        }
-                      }
-                    } catch {
-                      // best effort category
-                    }
-                  }
-                  if (action.tool === "create_expense" && typeof action.params.amountCents === "number") {
-                    action.params.amountCents = Math.round(action.params.amountCents);
-                  }
-                  await (toolToExec.execute as unknown as (
-                    params: Record<string, unknown>,
-                    p2?: unknown,
-                    p3?: unknown,
-                    p4?: unknown,
-                    ctx?: unknown
-                  ) => Promise<unknown>)(
-                    action.params,
-                    undefined,
-                    undefined,
-                    undefined,
-                    { mutationApproved: true, approvedTool: action.tool },
-                  );
-                }
-              }
-            } catch (actionErr) {
-              console.warn(`[finance-chat-agent] Falha ao executar ação estruturada:`, (actionErr as Error)?.message);
-            }
-          }
-
-          if (this.state?.storage?.sql) {
-            recordUsage(this.state.storage.sql, identity.actorId, intentionId, estimateTokens(text), estimateTokens(output));
-          }
-
-          // Persist Assistant TED message (redacted) AFTER relay response
-          const assistantCreatedAt = new Date().toISOString();
-          const assistantMsg: UIMessage = {
-            id: `msg-asst-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            role: "assistant",
-            parts: [{ type: "text", text: output }],
-            metadata: {
-              actorId: "ted",
-              workspaceId: identity.workspaceId,
-              provider: effectiveProvider,
-              model: effectiveModel,
-              fallback: usedFallback,
-              createdAt: assistantCreatedAt,
-            },
-          };
-
-          if (typeof this.persistMessages !== "function") {
-            return Response.json(
-              { code: "agent.persistence_unavailable", message: "SDK persistence is not available" },
-              { status: 503 },
-            );
-          }
-          await this.persistMessages([assistantMsg]);
-
-          // Part B: post-turn learning (heuristic only on the relay leg —
-          // no extra inference cost). New learnings ride the response so
-          // the PWA can toast "TED memorizou: ...".
-          let memorized: string[] = [];
-          if (relaySql) {
-            try {
-              const turnCount = bumpTurnCount(relaySql, identity.workspaceId);
-              const learned = await learnFromTurn(relaySql, {
-                workspaceId: identity.workspaceId,
-                actorId: identity.actorId,
-                userText: text,
-                assistantText: output,
-                turnCount,
-              });
-              memorized = learned.map((item) => item.content);
-            } catch {
-              // Learning is best-effort.
-            }
-          }
-
-          return Response.json({
-            turnId: intentionId,
-            intentionId,
-            status: "completed",
-            output,
-            workspaceId,
-            provider: activeSnapshot.provider_id,
-            model: activeSnapshot.model_id,
-            memorized,
-          });
-        } catch (err) {
-          const message = (err as Error)?.message ?? "Erro desconhecido ao processar inferência.";
-          return Response.json({ code: "agent.inference_error", message: redactTranscript(message) }, { status: 502 });
-        }
-      });
     }
 
     // Part B: memory privacy toggle (workspace-scoped, ON by default).

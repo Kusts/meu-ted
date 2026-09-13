@@ -54,7 +54,7 @@ describe("snapshot-store wrapper — v2 canonical API", () => {
   });
 
   it("migrateV1toV2 removes the v1 source after a successful migration", async () => {
-    seedV1(TEST_TOKEN, { accounts: [{ id: "a1", name: "Seed" }] });
+    seedV1(TEST_TOKEN, { accounts: [{ id: "a1", name: "Seed", kind: "bank" as const, balanceCents: 0 }] });
 
     await migrateV1toV2(TEST_TOKEN);
 
@@ -65,7 +65,7 @@ describe("snapshot-store wrapper — v2 canonical API", () => {
   });
 
   it("migrateV1toV2 preserves v1 when it belongs to another token", async () => {
-    seedV1("other-token", { accounts: [{ id: "a1" }] });
+    seedV1("other-token", { accounts: [{ id: "a1", name: "Seed", kind: "bank" as const, balanceCents: 0 }] });
 
     await migrateV1toV2(TEST_TOKEN);
 

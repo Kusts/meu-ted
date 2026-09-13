@@ -5,7 +5,7 @@
 //
 //   initialGzipKB       — framework- + main- + polyfills- (the initial-load set)
 //   totalGzipKB         — every .js chunk under static/chunks/ (all chunks; informational)
-//   frameworkGzipKB     — Next.js framework chunks (currently 89973f52-*, 510-*)
+//   frameworkGzipKB     — Next.js framework chunks (currently 2262cfa8-*, 208-*)
 //   appLevelGzipKB      — lazy route chunks under static/chunks/app/
 //   equivalentSetGzipKB — total minus the evidenced Next.js framework chunks
 //
@@ -36,7 +36,12 @@ const INITIAL_PREFIXES = ["framework-", "main-", "polyfills-"];
 // 510- (Next deployment-id runtime). These ids are deterministic per Next
 // minor; a Next upgrade that renames them MUST fail the manifest check
 // below so the exclusion is consciously re-evidenced, never silent.
-const FRAMEWORK_PREFIXES = ["89973f52-", "510-"];
+// 16.3.5 era (2026-09-13, after next 16.2.12 -> 16.3.5 bump): rootMainFiles
+// lists 2262cfa8-72f5ba4627fa80fd.js (React error decoder: contains
+// `https://react.dev/errors/` minified string builder) and
+// 208-0a7f8fec9aae1919.js (Next deployment-id runtime: contains
+// `getDeploymentId()` + `x-deployment-id` header wiring).
+const FRAMEWORK_PREFIXES = ["2262cfa8-", "208-"];
 
 // Build-manifest candidates (relative to the app root / cwd). The .next manifest is
 // the authoritative evidence source in this repo, so prefer it; .open-next is only a

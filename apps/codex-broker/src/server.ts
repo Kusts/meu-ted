@@ -1,4 +1,5 @@
-import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import { fileURLToPath } from 'node:url';
 import { AuthCacheManager } from './auth-status.js';
 import { BrowserLoginManager, LoginBeginSchema, LoginCallbackSchema, type CodeExchangeResult } from './browser-login.js';
 import { CodexRuntimeAdapter, ChatCompletionRequestSchema, ALLOWLISTED_MODELS } from './runtime-adapter.js';
@@ -232,3 +233,20 @@ export const buildCodexBrokerApp = (opts: ServerOptions): FastifyInstance => {
 
   return app;
 };
+
+/** Start the broker only when this module is the container entrypoint. */
+const isDirectExecution = process.argv[1] === fileURLToPath(import.meta.url);
+if (isDirectExecution) {
+  const app = buildCodexBrokerApp({
+    authCachePath: process.env.CODEX_AUTH_CACHE_PATH ?? '/var/lib/codex-auth/auth.json',
+    signingKey: process.env.CODEX_SIGNING_KEY ?? 'local-development-signing-key-change-me',
+    cfAccessClientId: process.env.CF_ACCESS_CLIENT_ID,
+    cfAccessClientSecret: process.env.CF_ACCESS_CLIENT_SECRET,
+  });
+  const port = Number(process.env.PORT ?? 3005);
+  const host = process.env.HOST ?? '0.0.0.0';
+  app.listen({ port, host }).catch((error: unknown) => {
+    app.log.error(error);
+    process.exitCode = 1;
+  });
+}
