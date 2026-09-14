@@ -87,7 +87,7 @@ import { createInMemoryLlmConfigStore } from "../agent/llm-config-memory.js";
 import type { LlmConfigStore } from "../agent/llm-config-store.js";
 import { createInMemoryAgentReplayStore, type AgentReplayStore } from "../auth/agent-connection-token-replay.js";
 import { registerWorkspaceAliasRoutes } from "../auth/workspace-alias.js";
-import { createExpenseInputSchema, createIncomeInputSchema } from "../writes/types.js";
+import { requireApprovalToolContract } from "../approvals/tool-registry.js";
 
 export type RouteDeps = {
   store: ReadModelStore;
@@ -152,21 +152,13 @@ export type RouteDeps = {
  * first attempt's transaction instead of booking a second one.
  */
 export const createPendingOperationV2Executor = (writes: WriteStore): PendingExecutor => async (operation) => {
-  const args = operation.normalizedArgs;
-  const idempotency = { idempotencyKey: operation.idempotencyKey };
-  if (operation.tool === 'transactions.expense.create') {
-    const parsed = createExpenseInputSchema.safeParse(args);
-    if (!parsed.success) throw new Error('validation.invalid_expense_arguments');
-    const transaction = await writes.createExpense(operation.workspaceId, parsed.data, idempotency);
-    return { status: 'succeeded' as const, operationId: transaction.id };
-  }
-  if (operation.tool === 'transactions.income.create') {
-    const parsed = createIncomeInputSchema.safeParse(args);
-    if (!parsed.success) throw new Error('validation.invalid_income_arguments');
-    const transaction = await writes.createIncome(operation.workspaceId, parsed.data, idempotency);
-    return { status: 'succeeded' as const, operationId: transaction.id };
-  }
-  throw new Error('tool.not_allowed');
+  const contract = requireApprovalToolContract(operation.tool);
+  return contract.executor({
+    writes,
+    workspaceId: operation.workspaceId,
+    args: operation.normalizedArgs,
+    idempotencyKey: operation.idempotencyKey,
+  });
 };
 
 
