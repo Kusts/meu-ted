@@ -33,6 +33,10 @@ WORKDIR /monorepo/apps/api
 COPY --from=builder /runtime/package.json ./package.json
 COPY --from=builder /runtime/node_modules ./node_modules
 COPY --from=builder /monorepo/apps/api/dist ./dist
+# Migration job resolves .sql files next to its compiled module
+# (MIGRATIONS_DIR = dirname(dist/read-models/sql/migrate.js)); tsc does not
+# copy .sql assets, so ship them explicitly.
+COPY --from=builder /monorepo/apps/api/src/read-models/sql/ ./dist/read-models/sql/
 
 # pnpm deploy --prod keeps better-auth's optional framework peers (next) and
 # next's optional native dep (sharp): neither is ever imported by this fastify
