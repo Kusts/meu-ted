@@ -113,6 +113,16 @@ describe("analytics-filters store", () => {
     expect(screen.getByTestId("state").textContent).toContain("acc-9");
   });
 
+  it("não sobrescreve filtros persistidos com defaults durante o mount", () => {
+    window.localStorage.setItem(KEY_A, JSON.stringify({ version: ANALYTICS_FILTERS_VERSION, filters: { period: "lastMonth" } }));
+    const setItem = vi.spyOn(window.localStorage, "setItem");
+
+    renderScoped("ws-a");
+
+    expect(setItem).toHaveBeenCalled();
+    expect(setItem.mock.calls[0]?.[1]).toContain('"period":"lastMonth"');
+  });
+
   it("isolates workspaces: B never sees A's filters, A→B→A restores each", () => {
     const first = renderScoped("ws-a");
     setFilters();

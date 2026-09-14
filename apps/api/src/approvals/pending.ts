@@ -52,7 +52,7 @@ const EXPIRATION_MS = 30 * 60 * 1000;
 
 export const createPostgresPendingOperationStore = (pool: Pool): PendingOperationStore => {
   const read = async (client: PoolClient, id: string, householdId: string): Promise<PendingOperation> => {
-    const result = await client.query<PendingRow>('SELECT * FROM pending_operations WHERE id = $1 AND workspace_id = $2', [id, householdId]);
+    const result = await client.query<PendingRow>('SELECT * FROM pending_operations WHERE id = $1 AND workspace_id = $2 AND protocol_version IS NULL', [id, householdId]);
     if (!result.rows[0]) throw domainErrors.approvalNotFound();
     return mapPending(result.rows[0]);
   };
@@ -69,7 +69,7 @@ export const createPostgresPendingOperationStore = (pool: Pool): PendingOperatio
     return mapPending(result.rows[0]!);
   },
   async get(id, householdId) {
-    const result = await pool.query<PendingRow>('SELECT * FROM pending_operations WHERE id = $1 AND workspace_id = $2', [id, householdId]);
+    const result = await pool.query<PendingRow>('SELECT * FROM pending_operations WHERE id = $1 AND workspace_id = $2 AND protocol_version IS NULL', [id, householdId]);
     if (!result.rows[0]) throw domainErrors.approvalNotFound();
     return mapPending(result.rows[0]);
   },
@@ -78,7 +78,7 @@ export const createPostgresPendingOperationStore = (pool: Pool): PendingOperatio
     const statusClause = status ? ' AND status = $2' : '';
     const expiryClause = status === 'pending' ? ' AND expires_at > NOW()' : '';
     if (status) values.push(status);
-    const result = await pool.query<PendingRow>(`SELECT * FROM pending_operations WHERE workspace_id = $1${statusClause}${expiryClause} ORDER BY created_at ASC`, values);
+    const result = await pool.query<PendingRow>(`SELECT * FROM pending_operations WHERE workspace_id = $1 AND protocol_version IS NULL${statusClause}${expiryClause} ORDER BY created_at ASC`, values);
     return result.rows.map(mapPending);
   },
   async approve(id, householdId, actorId, execute) {
@@ -88,7 +88,7 @@ export const createPostgresPendingOperationStore = (pool: Pool): PendingOperatio
       if (current.status === 'approved') return current;
       if (current.status !== 'pending' || Date.parse(current.expiresAt) <= Date.now()) throw domainErrors.approvalNotPending();
       const result = await client.query<PendingRow>(
-        "UPDATE pending_operations SET status = 'approved', approved_at = NOW() WHERE id = $1 AND workspace_id = $2 AND requester_id = $3 AND status = 'pending' AND expires_at > NOW() RETURNING *",
+        "UPDATE pending_operations SET status = 'approved', approved_at = NOW() WHERE id = $1 AND workspace_id = $2 AND requester_id = $3 AND protocol_version IS NULL AND status = 'pending' AND expires_at > NOW() RETURNING *",
         [id, householdId, actorId],
       );
       let row: PendingRow | undefined = result.rows[0];
@@ -114,7 +114,7 @@ export const createPostgresPendingOperationStore = (pool: Pool): PendingOperatio
       if (current.requesterId !== actorId) throw domainErrors.approvalRequesterOnly();
       if (current.status !== 'pending' || Date.parse(current.expiresAt) <= Date.now()) throw domainErrors.approvalNotPending();
       const result = await client.query<PendingRow>(
-        "UPDATE pending_operations SET status = 'rejected' WHERE id = $1 AND workspace_id = $2 AND requester_id = $3 AND status = 'pending' AND expires_at > NOW() RETURNING *",
+        "UPDATE pending_operations SET status = 'rejected' WHERE id = $1 AND workspace_id = $2 AND requester_id = $3 AND protocol_version IS NULL AND status = 'pending' AND expires_at > NOW() RETURNING *",
         [id, householdId, actorId],
       );
       if (!result.rows[0]) throw domainErrors.approvalNotPending();
@@ -125,6 +125,7 @@ export const createPostgresPendingOperationStore = (pool: Pool): PendingOperatio
     const result = await pool.query<PendingRow>(
       `SELECT * FROM pending_operations
        WHERE workspace_id = $1
+         AND protocol_version IS NULL
          AND chat_id = $2
          AND status = 'pending'
          AND expires_at > NOW()
@@ -204,3 +205,7 @@ export const createInMemoryPendingOperationStore = (): PendingOperationStore => 
     }
   };
 };
+
+// V2 is intentionally exposed from the approval boundary without changing the
+// legacy store contract used by existing routes during the rollout window.
+export * from './pending-v2.js';

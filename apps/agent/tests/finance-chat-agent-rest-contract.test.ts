@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 import type { UIMessage } from "agents/ai-chat-agent";
 import { FinanceChatAgent } from "../src/finance-chat-agent.js";
 import worker from "../src/worker.js";
 import { createAgentConnectionToken } from "../../api/src/auth/agent-connection-token.js";
+import { decodeDelegatedTurnToken } from "../src/delegated-token.js";
 
 type WorkerEnv = Parameters<typeof worker.fetch>[1];
 
@@ -82,6 +84,31 @@ const snapshotBody = () => ({
 describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("does not retain an unreachable legacy relay after the canonical REST runTurn", async () => {
+    const source = await readFile(new URL("../src/finance-chat-agent.ts", import.meta.url), "utf8");
+    const chatStart = source.indexOf('if (url.pathname === "/rpc/chat" && request.method === "POST")');
+    const memoryStart = source.indexOf('if (url.pathname === "/rpc/memory/prefs" && request.method === "POST")');
+    expect(chatStart).toBeGreaterThanOrEqual(0);
+    expect(memoryStart).toBeGreaterThan(chatStart);
+
+    const restHandler = source.slice(chatStart, memoryStart);
+    expect(restHandler).not.toContain("return this.enqueueChat(async () => {");
+    expect(restHandler).not.toContain("/internal/agent/llm-relay");
+    expect(restHandler).not.toContain("generatedHttpTools.find");
+  });
+
+  it("routes REST mutation proposals through the same canonical orchestrator", async () => {
+    const source = await readFile(new URL("../src/finance-chat-agent.ts", import.meta.url), "utf8");
+    const chatStart = source.indexOf('if (url.pathname === "/rpc/chat" && request.method === "POST")');
+    const memoryStart = source.indexOf('if (url.pathname === "/rpc/memory/prefs" && request.method === "POST")');
+    const restHandler = source.slice(chatStart, memoryStart);
+
+    expect(source).not.toContain("tryV2MutationProposal");
+    expect(restHandler).toContain("this.orchestratorForChannel(");
+    expect(restHandler).toContain("mutationApiClient");
+    expect(restHandler).not.toContain("new ConversationOrchestrator");
   });
 
   it("(1) POST /rpc/chat returns 401 when x-agent-actor or x-agent-workspace is missing", async () => {
@@ -183,6 +210,65 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     expect(assistantMessage.role).toBe("assistant");
     const assistantText = assistantMessage.parts?.[0]?.text;
     expect(assistantText).toBe("Seu saldo atual é R$ 1.500,00.");
+  });
+
+  it("POST /rpc/chat creates a V2 proposal through the Agent and returns only the safe pending DTO", async () => {
+    const { agent } = createTestAgent();
+    const secret = "agent-test-secret";
+    Object.defineProperty(agent, "env", {
+      value: {
+        API_ORIGIN: "https://api.test.local",
+        AGENT_DELEGATION_SECRET: secret,
+      },
+      writable: true,
+      configurable: true,
+    });
+    let proposalRequest: Request | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input).includes("/pending-operations/v2/propose")) {
+        proposalRequest = new Request(String(input), init);
+        return new Response(JSON.stringify({ id: "pending-v2-1" }), { status: 200 });
+      }
+      throw new Error(`unexpected upstream request: ${String(input)}`);
+    });
+
+    const res = await agent.fetch(new Request("https://agent.test.local/rpc/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-agent-actor": "actor-v2",
+        "x-agent-workspace": "workspace-v2",
+        "x-agent-device": "device-v2",
+      },
+      body: JSON.stringify({
+        text: "gastei R$ 12,34 no mercado na categoria 00000000-0000-4000-8000-000000000001",
+        intentionId: "intent-v2-proposal",
+      }),
+    }));
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body).toEqual(expect.objectContaining({ status: "completed" }));
+    expect(body).not.toHaveProperty("attestation");
+    expect(body).not.toHaveProperty("bindings");
+    expect(body).not.toHaveProperty("normalizedArgs");
+    expect(body.pendingOperation).toEqual({
+      id: "pending-v2-1",
+      status: "proposed",
+      operation: "transactions.expense.create",
+      summary: expect.any(String),
+    });
+
+    expect(proposalRequest).toBeDefined();
+    const proposalBody = await proposalRequest!.json() as Record<string, unknown>;
+    expect(proposalBody.tool).toBe("transactions.expense.create");
+    expect(proposalBody).not.toHaveProperty("actorId");
+    expect(proposalBody).not.toHaveProperty("workspaceId");
+    expect(proposalBody).not.toHaveProperty("deviceId");
+    const auth = proposalRequest!.headers.get("authorization");
+    expect(auth).toMatch(/^Bearer /);
+    const claims = await decodeDelegatedTurnToken(auth!.slice("Bearer ".length), secret);
+    expect(claims.capabilities).toEqual(["financial.approval.propose"]);
   });
 
   it("(3) GET /rpc/history returns persisted messages with isOwn derived by comparing authenticated actor to server metadata", async () => {

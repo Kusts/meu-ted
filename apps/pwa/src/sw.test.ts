@@ -26,7 +26,9 @@ describe("sw request matcher", () => {
   });
 
   // ── Rejected: API paths ──────────────────────────────────
-  it.each(["/api/accounts","/api/auth/devices/me","/api/transactions?limit=10"])("rejects API path: %s", (p) => {
+  // ADR-011: same-origin proxy responses are private (no-store) — the SW must
+  // never cache them, including the canonical /api/backend + /api/agent bases.
+  it.each(["/api/accounts","/api/auth/devices/me","/api/transactions?limit=10","/api/backend/workspaces","/api/backend/auth/session","/api/agent/agents/finance-chat-agent/ws-1/rpc/history","/api/agent/agents/finance-chat-agent/ws-1/rpc/chat"])("rejects API path: %s", (p) => {
     expect(matchRequest(asset(`${ORIGIN}${p}`)).permit).toBe(false);
   });
 

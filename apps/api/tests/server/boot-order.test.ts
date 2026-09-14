@@ -1,31 +1,30 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-// Regression contract: better-auth caches its boot-time schema verdict, so
-// migrations must complete BEFORE createBetterAuth in the DATABASE_URL path.
-// Static source-order test: booting the real server in a test is expensive,
-// but the ordering invariant is fully captured by call order in index.ts.
+// API-002 regression contract: the web process never mutates schema. It must
+// verify the schema before Better-Auth caches its boot-time verdict; migrations
+// are a separate locked job.
 const source = readFileSync(new URL('../../src/server/index.ts', import.meta.url), 'utf8');
 
-describe('server boot order: migrations before better-auth', () => {
-  it('awaits runMigrations before the first createBetterAuth call', () => {
-    expect(source.indexOf('await runMigrations')).toBeGreaterThanOrEqual(0);
-    expect(source.indexOf('await runMigrations')).toBeLessThan(source.indexOf('createBetterAuth({'));
+describe('server boot order: verify-only schema before better-auth', () => {
+  it('awaits verifySchema before the first createBetterAuth call', () => {
+    expect(source.indexOf('await verifySchema')).toBeGreaterThanOrEqual(0);
+    expect(source.indexOf('await verifySchema')).toBeLessThan(source.indexOf('createBetterAuth({'));
   });
 
-  it('runs migrations exactly once in the DATABASE_URL path', () => {
-    // A single awaited call site (legacyOnly decided by DB_SCHEMA).
-    expect(source.match(/await runMigrations\(/g)).toHaveLength(1);
-    expect(source).toContain('} from "../read-models/sql/migrate.js"');
+  it('never applies migrations in the web process', () => {
+    expect(source).not.toContain('runMigrations');
+    expect(source).toContain('verifySchema');
   });
 
-  it('preserves the existing observability log messages', () => {
-    expect(source).toContain('legacy-safe migrations applied');
-    expect(source).toContain('using postgres stores');
+  it('publishes readiness only after bootstrap', () => {
+    expect(source).toContain("app.get('/ready'");
+    expect(source.indexOf("app.get('/ready'")).toBeGreaterThan(source.indexOf('registerRoutes(app'));
   });
 
-  it('leaves the in-memory path (no DATABASE_URL) without migrations', () => {
+  it('leaves the in-memory path without schema migration or verification', () => {
     const inMemoryPath = source.slice(source.indexOf('no DATABASE_URL'));
     expect(inMemoryPath).not.toContain('runMigrations');
+    expect(inMemoryPath).not.toContain('verifySchema');
   });
 });

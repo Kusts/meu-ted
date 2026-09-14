@@ -3,8 +3,9 @@ import { render, screen, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import WorkspaceManagerPage from "../WorkspaceManagerPage";
 import { ApiError } from "@/lib/api/client";
+import type { WorkspaceContextValue } from "@/lib/auth/workspace-context";
 
-const context = vi.hoisted(() => ({
+const context: WorkspaceContextValue = vi.hoisted(() => ({
   workspaces: [
     { id: "ws-1", name: "Minhas Finanças", kind: "personal" as const, role: "owner" as const, status: "active" as const },
     { id: "ws-2", name: "Empresa LTDA", kind: "shared" as const, role: "owner" as const, status: "archived" as const },
@@ -82,8 +83,8 @@ describe("WorkspaceManagerPage", () => {
     const user = userEvent.setup();
     context.activeWorkspace = { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "owner", status: "active" };
     context.members = [
-      { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner" },
-      { userId: "user-2", name: "Bob Member", email: "bob@example.com", role: "member" },
+      { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner", status: "active" },
+      { userId: "user-2", name: "Bob Member", email: "bob@example.com", role: "member", status: "active" },
     ];
     context.pendingInvites = [
       { id: "inv-1", householdId: "ws-2", email: "convidado@example.com", role: "member", expiresAt: "2026-09-07T12:00:00.000Z" },
@@ -155,7 +156,7 @@ describe("WorkspaceManagerPage", () => {
     const user = userEvent.setup();
     context.activeWorkspace = { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "member", status: "active" };
     context.members = [
-      { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner" },
+      { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner", status: "active" },
     ];
     context.pendingInvites = [];
     context.ownershipTransfers = [];
@@ -172,7 +173,7 @@ describe("WorkspaceManagerPage", () => {
     const user = userEvent.setup();
     context.activeWorkspace = { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "owner", status: "active" };
     context.members = [
-      { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner" },
+      { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner", status: "active" },
     ];
     context.pendingInvites = [];
     context.ownershipTransfers = [];
@@ -187,10 +188,10 @@ describe("WorkspaceManagerPage", () => {
 
    it("shows clear error when member invites and backend returns invite_forbidden", async () => {
      const user = userEvent.setup();
-     context.activeWorkspace = { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "member", status: "active" };
-     context.members = [
-       { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner" },
-     ];
+      context.activeWorkspace = { id: "ws-2", name: "Empresa LTDA", kind: "shared", role: "member", status: "active" };
+      context.members = [
+        { userId: "user-1", name: "Alice Owner", email: "alice@example.com", role: "owner", status: "active" },
+      ];
      context.pendingInvites = [];
      context.ownershipTransfers = [];
      context.inviteMember = vi.fn().mockRejectedValue(new ApiError(403, "auth.invite_forbidden", "invite creation is not authorized"));

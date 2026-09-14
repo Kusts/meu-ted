@@ -16,6 +16,8 @@ function defaultState(): AppState {
     debts: [], subscriptions: [], loading: false, error: null,
     addTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(), cancelPayable: vi.fn(), createPayable: vi.fn(), createBudget: vi.fn(), updateBudget: vi.fn(), createGoal: vi.fn(), contributeToGoal: vi.fn(), cancelGoal: vi.fn(),
     cardStatements: [], writeError: null, clearWriteError: vi.fn(),
+    profile: null, dashboardSummary: null,
+    saveProfile: vi.fn(), refreshProfile: vi.fn(), refreshDashboardSummary: vi.fn(),
     sync: {
       accounts: { source: "mock", syncedAt: null },
       categories: { source: "mock", syncedAt: null },
@@ -30,6 +32,11 @@ function defaultState(): AppState {
     addAccount: vi.fn(), addCategory: vi.fn(), addCard: vi.fn(), updateCard: vi.fn(),
     addSubscription: vi.fn(), cancelSubscription: vi.fn(),
     createTransfer: vi.fn(), payStatement: vi.fn(), createInstallments: vi.fn(),
+    createCardPurchase: vi.fn(), updateTransaction: vi.fn(), updatePayable: vi.fn(),
+    undoPayablePayment: vi.fn(), updateGoal: vi.fn(), updateAccount: vi.fn(),
+    deactivateAccount: vi.fn(), updateCategory: vi.fn(), deactivateCategory: vi.fn(),
+    deleteCategory: vi.fn(), applyCategoryDefaults: vi.fn(), updateSubscription: vi.fn(),
+    refreshSubscriptions: vi.fn(), refreshDomains: vi.fn(),
   };
 }
 function mockState(o: Partial<AppState>): AppState { return { ...defaultState(), ...o }; }
@@ -534,9 +541,9 @@ describe("CardsPage", () => {
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(
         mockState({
           accounts: [
-            { id: "cx1", name: "Sem Campos", kind: "credit_card" },
-            { id: "cx2", name: "Cor Estranha", kind: "credit_card", color: "#123456", creditLimitCents: 100000, closingDay: 5, dueDay: 10 },
-            { id: "ck1", name: "Nubank", kind: "checking" },
+            { id: "cx1", name: "Sem Campos", kind: "credit_card", balanceCents: 0 },
+            { id: "cx2", name: "Cor Estranha", kind: "credit_card", balanceCents: 0, color: "#123456", creditLimitCents: 100000, closingDay: 5, dueDay: 10 },
+            { id: "ck1", name: "Nubank", kind: "checking", balanceCents: 0 },
           ],
           transactions: [
             { id: "t1", accountId: "cx1", kind: "expense", amountCents: 1000, date: "2026-06-01", description: "Compra Estranha", categoryId: "cat-inexistente" },
@@ -550,7 +557,7 @@ describe("CardsPage", () => {
 
     it("shows empty state when there are no credit cards", () => {
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(
-        mockState({ accounts: [{ id: "ck1", name: "Nubank", kind: "checking" }] }),
+        mockState({ accounts: [{ id: "ck1", name: "Nubank", kind: "checking", balanceCents: 0 }] }),
       );
       render(<CardsPage />);
       expect(screen.getByText(/Nenhum cartão/i)).toBeInTheDocument();
@@ -594,8 +601,8 @@ describe("CardsPage", () => {
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(
         mockState({
           accounts: [
-            { id: "acc4", name: "Nubank Crédito", kind: "credit_card", color: "#820AD1", creditLimitCents: 0, closingDay: 10, dueDay: 15 },
-            { id: "acc1", name: "Nubank", kind: "checking" },
+            { id: "acc4", name: "Nubank Crédito", kind: "credit_card", balanceCents: 0, color: "#820AD1", creditLimitCents: 0, closingDay: 10, dueDay: 15 },
+            { id: "acc1", name: "Nubank", kind: "checking", balanceCents: 0 },
           ],
           updateCard: vi.fn(),
         }),
@@ -634,8 +641,8 @@ describe("CardsPage", () => {
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(
         mockState({
           accounts: [
-            { id: "acc4", name: "Nubank Crédito", kind: "credit_card", color: "#820AD1", creditLimitCents: 0, closingDay: 10, dueDay: 15 },
-            { id: "acc1", name: "Nubank", kind: "checking" },
+            { id: "acc4", name: "Nubank Crédito", kind: "credit_card", balanceCents: 0, color: "#820AD1", creditLimitCents: 0, closingDay: 10, dueDay: 15 },
+            { id: "acc1", name: "Nubank", kind: "checking", balanceCents: 0 },
           ],
         }),
       );
@@ -651,7 +658,7 @@ describe("CardsPage", () => {
       vi.spyOn(endpoints, "fetchStatementDetail").mockResolvedValue({ id: "s1", accountId: "acc4", cycleYearMonth: "2026-06", closingDate: "2026-06-15", dueDate: "2026-06-25", totalCents: 1000, paidCents: 0, status: "open", purchases: [] });
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(
         mockState({
-          accounts: [{ id: "acc4", name: "Nubank Crédito", kind: "credit_card", color: "#820AD1", creditLimitCents: 100000, closingDay: 10, dueDay: 15 }],
+          accounts: [{ id: "acc4", name: "Nubank Crédito", kind: "credit_card", balanceCents: 0, color: "#820AD1", creditLimitCents: 100000, closingDay: 10, dueDay: 15 }],
           cardStatements: [{ id: "s1", accountId: "acc4", cycleYearMonth: "2026-06", closingDate: "2026-06-15", dueDate: "2026-06-25", totalCents: 1000, paidCents: 0, status: "open" }],
         }),
       );
@@ -671,8 +678,8 @@ describe("CardsPage", () => {
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(
         mockState({
           accounts: [
-            { id: "acc4", name: "Nubank Crédito", kind: "credit_card", color: "#820AD1", creditLimitCents: 100000, closingDay: 10, dueDay: 15 },
-            { id: "acc1", name: "Nubank", kind: "checking" },
+            { id: "acc4", name: "Nubank Crédito", kind: "credit_card", balanceCents: 0, color: "#820AD1", creditLimitCents: 100000, closingDay: 10, dueDay: 15 },
+            { id: "acc1", name: "Nubank", kind: "checking", balanceCents: 0 },
           ],
           cardStatements: [{ id: "s1", accountId: "acc4", cycleYearMonth: "2026-06", closingDate: "2026-06-15", dueDate: "2026-06-25", totalCents: 1000, paidCents: 0, status: "open" }],
         }),
@@ -691,8 +698,8 @@ describe("CardsPage", () => {
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(
         mockState({
           accounts: [
-            { id: "acc4", name: "Nubank Crédito", kind: "credit_card", color: "#820AD1", creditLimitCents: 100000, closingDay: 10, dueDay: 15 },
-            { id: "acc1", name: "Nubank", kind: "checking" },
+            { id: "acc4", name: "Nubank Crédito", kind: "credit_card", balanceCents: 0, color: "#820AD1", creditLimitCents: 100000, closingDay: 10, dueDay: 15 },
+            { id: "acc1", name: "Nubank", kind: "checking", balanceCents: 0 },
           ],
           cardStatements: [
             { id: "s1", accountId: "acc4", cycleYearMonth: "2026-06", closingDate: "2026-06-15", dueDate: "2026-06-25", totalCents: 1000, paidCents: 0, status: "open" },
@@ -718,9 +725,9 @@ describe("CardsPage", () => {
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(
         mockState({
           accounts: [
-            { id: "acc4", name: "Nubank Crédito", kind: "credit_card", color: "#820AD1", creditLimitCents: 100000, closingDay: 10, dueDay: 15 },
-            { id: "acc5", name: "Inter Mastercard", kind: "credit_card", color: "#EC7000", creditLimitCents: 100000, closingDay: 5, dueDay: 10 },
-            { id: "acc1", name: "Nubank", kind: "checking" },
+            { id: "acc4", name: "Nubank Crédito", kind: "credit_card", balanceCents: 0, color: "#820AD1", creditLimitCents: 100000, closingDay: 10, dueDay: 15 },
+            { id: "acc5", name: "Inter Mastercard", kind: "credit_card", balanceCents: 0, color: "#EC7000", creditLimitCents: 100000, closingDay: 5, dueDay: 10 },
+            { id: "acc1", name: "Nubank", kind: "checking", balanceCents: 0 },
           ],
           cardStatements: [
             { id: "sa", accountId: "acc4", cycleYearMonth: "2026-06", closingDate: "2026-06-15", dueDate: "2026-06-25", totalCents: 1000, paidCents: 0, status: "open" },
@@ -737,7 +744,7 @@ describe("CardsPage", () => {
     describe("purchase edit coverage", () => {
       it("opens purchase edit with a category and exercises field branches", async () => {
         const user = userEvent.setup();
-        vi.spyOn(endpoints, "updateCardPurchase").mockResolvedValue(undefined);
+        vi.spyOn(endpoints, "updateCardPurchase").mockResolvedValue({ id: "s1", accountId: "acc4", cycleYearMonth: "2026-06", closingDate: "2026-06-15", dueDate: "2026-06-25", totalCents: 1000, paidCents: 0, status: "open", purchases: [] });
         vi.spyOn(appStateModule, "useAppState").mockReturnValue(
           mockState({
             transactions: [
@@ -771,11 +778,11 @@ describe("CardsPage", () => {
 
       it("opens purchase edit with an undefined category (?? fallback)", async () => {
         const user = userEvent.setup();
-        vi.spyOn(endpoints, "updateCardPurchase").mockResolvedValue(undefined);
+        vi.spyOn(endpoints, "updateCardPurchase").mockResolvedValue({ id: "s1", accountId: "acc4", cycleYearMonth: "2026-06", closingDate: "2026-06-15", dueDate: "2026-06-25", totalCents: 1000, paidCents: 0, status: "open", purchases: [] });
         vi.spyOn(appStateModule, "useAppState").mockReturnValue(
           mockState({
             transactions: [
-              { id: "t-nocat", accountId: "acc4", kind: "expense", amountCents: 500, date: "2026-06-02", description: "SemCat", categoryId: undefined },
+              { id: "t-nocat", accountId: "acc4", kind: "expense", amountCents: 500, date: "2026-06-02", description: "SemCat", categoryId: undefined as unknown as string },
             ],
           }),
         );

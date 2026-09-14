@@ -14,6 +14,8 @@ export type BrokerEnvelope = {
   bodySha256: string;
 };
 
+import { validateProviderOutput } from '../orchestration/provider-adapter.js';
+
 const encoder = new TextEncoder();
 
 export const computeSha256 = async (str: string): Promise<string> => {
@@ -95,10 +97,29 @@ export const executeBrokerCompletion = async (
     throw new Error(`Codex Broker error HTTP ${res.status}: ${errText}`);
   }
 
-  return (await res.json()) as {
+  const decoded: unknown = await res.json();
+  if (!decoded || typeof decoded !== 'object') {
+    throw Object.assign(new Error('Broker returned invalid output'), { code: 'agent.invalid_provider_output', status: 502 });
+  }
+  const completion = decoded as {
     id: string;
     model: string;
     choices: Array<{ message: { role: string; content: string }; finish_reason: string }>;
     usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
   };
+  const content = completion.choices?.[0]?.message?.content;
+  // Structured Broker output is validated at this boundary. Plain text is
+  // retained for compatibility with the OpenAI completion transport; it is
+  // still advisory and never carries mutation authority.
+  if (typeof content !== 'string' || !content) {
+    throw Object.assign(new Error('Broker returned empty output'), { code: 'agent.invalid_provider_output', status: 502 });
+  }
+  if (content.trimStart().startsWith('{')) {
+    try { validateProviderOutput({ broker: completion }); }
+    catch { throw Object.assign(new Error('Broker returned invalid structured output'), { code: 'agent.invalid_provider_output', status: 502 }); }
+  }
+  // The broker is only a provider transport. The canonical turn is consumed
+  // by ConversationOrchestrator before this adapter is invoked; this boundary
+  // never grants mutation authority or carries an attestation.
+  return completion;
 };

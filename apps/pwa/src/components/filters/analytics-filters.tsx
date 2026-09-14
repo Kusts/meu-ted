@@ -121,12 +121,17 @@ export function AnalyticsFiltersProvider({
   actorId?: string | null;
 }) {
   const scopeKey = scopedAnalyticsFiltersKey(workspaceId ? { workspaceId, actorId } : null);
-  const [filters, setFilters] = useState<AnalyticsFilters>(DEFAULT_ANALYTICS_FILTERS);
+  return (
+    <ScopedAnalyticsFiltersProvider key={scopeKey ?? "logged-out"} scopeKey={scopeKey}>
+      {children}
+    </ScopedAnalyticsFiltersProvider>
+  );
+}
 
-  // Reload whenever the scope changes: workspace switch A→B→A restores
-  // each scope's own filters; logout (null) falls back to defaults.
+function ScopedAnalyticsFiltersProvider({ children, scopeKey }: { children: ReactNode; scopeKey: string | null }) {
+  const [filters, setFilters] = useState<AnalyticsFilters>(() => loadStored(scopeKey));
+
   useEffect(() => {
-    setFilters(loadStored(scopeKey));
     if (scopeKey === null) clearStoredAnalyticsFilters();
   }, [scopeKey]);
 

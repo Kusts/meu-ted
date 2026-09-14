@@ -43,18 +43,9 @@ const readStored = (storageKey: string): unknown => {
 };
 
 export function useBlockLayout(storageKey: string, defaultOrder: string[]) {
-  const [layout, setLayout] = useState<BlockLayout>(() => ({
-    order: [...defaultOrder],
-    hidden: [],
-  }));
+  const [layout, setLayout] = useState<BlockLayout>(() => clampLayout(readStored(storageKey), defaultOrder));
   const [editing, setEditing] = useState(false);
-  const [hydrated, setHydrated] = useState(false);
-
-  useEffect(() => {
-    setLayout(clampLayout(readStored(storageKey), defaultOrder));
-    setHydrated(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageKey]);
+  const [hydrated] = useState(true);
 
   useEffect(() => {
     if (!hydrated) return;

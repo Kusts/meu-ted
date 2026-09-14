@@ -45,8 +45,8 @@ vi.mock("@/lib/auth/workspace-context", () => ({
 }));
 
 // Mock audit logs endpoint
-vi.mock("@/lib/api/endpoints", async (orig) => {
-  const actual = await orig();
+vi.mock("@/lib/api/endpoints", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/endpoints")>();
   return {
     ...actual,
     fetchAuditLogs: vi.fn().mockResolvedValue({

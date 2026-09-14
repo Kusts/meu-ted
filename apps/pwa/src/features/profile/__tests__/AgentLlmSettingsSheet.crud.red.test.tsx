@@ -11,8 +11,8 @@ describe("AgentLlmSettingsSheet CRUD with selectors (RED -> GREEN)", () => {
     vi.clearAllMocks();
     vi.spyOn(adminLlmConfig, "fetchAdminLlmConfig").mockResolvedValue({
       providers: [
-        { id: "opencode-zen", name: "OpenCode Zen", baseUrl: "https://zen.opencode.ai/v1", secretAlias: "OPENCODE_ZEN_API_KEY", eligibility: "approved", enabled: true },
-        { id: "openai-api", name: "OpenAI API", baseUrl: "https://api.openai.com/v1", secretAlias: "OPENAI_API_KEY", eligibility: "approved", enabled: true },
+        { id: "opencode-zen", name: "OpenCode Zen", baseUrl: "https://zen.opencode.ai/v1", secretAlias: "OPENCODE_ZEN_API_KEY", eligibility: "approved", enabled: true, kind: "opencode-zen", transport: "direct", authMode: "api-key" },
+        { id: "openai-api", name: "OpenAI API", baseUrl: "https://api.openai.com/v1", secretAlias: "OPENAI_API_KEY", eligibility: "approved", enabled: true, kind: "openai-api", transport: "direct", authMode: "api-key" },
       ],
       models: [
         { id: "opencode-zen:zen-mini", providerId: "opencode-zen", modelId: "zen-mini", protocol: "chat-completions", privacyClass: "training_prohibited", retention: null, enabled: true },
@@ -20,18 +20,20 @@ describe("AgentLlmSettingsSheet CRUD with selectors (RED -> GREEN)", () => {
         { id: "openai-api:gpt-4o", providerId: "openai-api", modelId: "gpt-4o", protocol: "chat-completions", privacyClass: "training_prohibited", retention: null, enabled: true },
       ],
       runtime: {
-        id: 1,
+        singleton: "active" as const,
         version: 2,
         activeProviderId: "opencode-zen",
         activeModelId: "zen-mini",
         activeProtocol: "chat-completions",
         activeRolloutPercentage: 100,
+        activeRolloutMode: "all",
+        canaryAllowlist: [],
         securityEpoch: 1,
         updatedBy: "admin@test.com",
         updatedAt: "2026-08-27T10:00:00Z",
         fallbackProviderId: "openai-api",
         fallbackModelId: "gpt-4o",
-      } as unknown as adminLlmConfig.AgentRuntimeConfig,
+      },
     });
   });
 
@@ -58,7 +60,7 @@ describe("AgentLlmSettingsSheet CRUD with selectors (RED -> GREEN)", () => {
   it("allows registering a new provider via form", async () => {
     const user = userEvent.setup();
     const createSpy = vi.spyOn(adminLlmConfig, "createProvider").mockResolvedValue({
-      provider: { id: "new-provider", name: "New", baseUrl: "https://example.com", secretAlias: "SEC", eligibility: "approved", enabled: true },
+      provider: { id: "new-provider", name: "New", baseUrl: "https://example.com", secretAlias: "SEC", eligibility: "approved", enabled: true, kind: "openai-api", transport: "direct", authMode: "api-key" },
     });
     render(<AgentLlmSettingsSheet open={true} onClose={onCloseMock} />);
     await screen.findByLabelText("Provedor");

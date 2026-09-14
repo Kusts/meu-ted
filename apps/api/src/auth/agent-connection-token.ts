@@ -45,7 +45,9 @@ export const createAgentConnectionToken = async (
     sub: input.sub,
     workspace: input.workspace,
     role: input.role,
-    capabilities: input.capabilities ?? ['financial.read', 'financial.write'],
+    // Connection tokens are advisory/read-only by default. Mutation
+    // capability is intentionally not granted by this boundary.
+    capabilities: input.capabilities ?? ['financial.read'],
     jti: input.jti ?? randomUUID(),
     ...(input.deviceId !== undefined ? { deviceId: input.deviceId.trim() } : {}),
     iat,

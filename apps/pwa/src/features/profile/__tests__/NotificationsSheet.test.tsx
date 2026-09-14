@@ -2,7 +2,8 @@ import { render, screen } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import NotificationsSheet from "../NotificationsSheet";
 import * as appStateModule from "@/lib/state/app-state-context";
-import type { AppState, Account, Transaction, CardStatement } from "@/lib/state/types";
+import type { AppState } from "@/lib/state/app-state-context";
+import type { Account, Transaction, CardStatement } from "@/lib/state/types";
 
 vi.mock("../PushNotificationsCard", () => ({
   default: ({ workspaceId }: { workspaceId?: string }) => (
@@ -25,17 +26,21 @@ function baseState(): AppState {
   return {
     accounts: [], categories: [], transactions: [],
     payables: [], budgets: [], goals: [], debts: [], subscriptions: [],
-    cardStatements: [], profile: null, loading: false, error: null,
-    saveProfile: vi.fn(), refreshProfile: vi.fn(),
+    cardStatements: [], profile: null, dashboardSummary: null, loading: false, error: null,
+    saveProfile: vi.fn(), refreshProfile: vi.fn(), refreshDashboardSummary: vi.fn(),
     addTransaction: vi.fn(), updateTransaction: vi.fn(), deleteTransaction: vi.fn(),
-    markPayablePaid: vi.fn(), cancelPayable: vi.fn(), createPayable: vi.fn(),
+    markPayablePaid: vi.fn(), cancelPayable: vi.fn(), updatePayable: vi.fn(),
+    undoPayablePayment: vi.fn(), createPayable: vi.fn(),
     createBudget: vi.fn(), updateBudget: vi.fn(),
-    createGoal: vi.fn(), contributeToGoal: vi.fn(), cancelGoal: vi.fn(),
+    createGoal: vi.fn(), contributeToGoal: vi.fn(), cancelGoal: vi.fn(), updateGoal: vi.fn(),
     addAccount: vi.fn(), updateAccount: vi.fn(), deactivateAccount: vi.fn(),
     addCategory: vi.fn(), updateCategory: vi.fn(), deactivateCategory: vi.fn(),
+    deleteCategory: vi.fn(), applyCategoryDefaults: vi.fn(),
     addCard: vi.fn(), updateCard: vi.fn(),
-    addSubscription: vi.fn(), cancelSubscription: vi.fn(), refreshSubscriptions: vi.fn(),
+    addSubscription: vi.fn(), cancelSubscription: vi.fn(), updateSubscription: vi.fn(),
+    refreshSubscriptions: vi.fn(),
     createTransfer: vi.fn(), payStatement: vi.fn(), createInstallments: vi.fn(),
+    createCardPurchase: vi.fn(), refreshDomains: vi.fn(),
     writeError: null, clearWriteError: vi.fn(),
     sync: {
       accounts: { source: "mock", syncedAt: null },

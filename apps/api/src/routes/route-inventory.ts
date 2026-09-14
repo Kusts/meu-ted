@@ -8,12 +8,15 @@ export type RouteInventoryEntry = {
   path: string;
   auth: RouteAuth;
   ownership: RouteOwnership;
+  /** Legacy route kept for compatibility; new clients must not adopt it. */
+  deprecated?: boolean;
 };
 
 /** Canonical authz inventory. Add a test ID whenever a route is added. */
 export const ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
   { id: 'auth-provider', method: 'ALL', path: '/auth/*', auth: 'public', ownership: 'none' },
-  { id: 'auth-bridge-context', method: 'POST', path: '/auth/bridge-context', auth: 'public', ownership: 'none' },
+  // deprecated: legacy bridge route (P2 wildcard remediation); mints read-only scope only.
+  { id: 'auth-bridge-context', method: 'POST', path: '/auth/bridge-context', auth: 'public', ownership: 'none', deprecated: true },
   { id: 'auth-invites-create', method: 'POST', path: '/auth/invites', auth: 'session', ownership: 'owner' },
   { id: 'auth-invites-accept', method: 'POST', path: '/auth/invites/accept', auth: 'session', ownership: 'none' },
   { id: 'auth-reconnect', method: 'POST', path: '/auth/reconnect', auth: 'public', ownership: 'none' },

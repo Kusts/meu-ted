@@ -10,9 +10,7 @@ import { usePullToRefresh, PullToRefreshIndicator } from "@/lib/ui/use-pull-to-r
 import NotificationsSheet from "@/features/profile/NotificationsSheet";
 import { useEffectiveProfile } from "@/features/profile/hooks";
 import { dashboardSummaryGate } from "@/features/dashboard-summary-gate";
-import { fetchPendingOperations } from "@/lib/api/endpoints";
 import { routeCompromissos, routePatrimonio } from "@/lib/routes";
-import { isApiConfigured } from "@/lib/api/client";
 import { useMonthDeltas } from "./hooks/useMonthDeltas";
 import { useCategoryBreakdown } from "./hooks/useCategoryBreakdown";
 import { useFallbackInsights } from "./hooks/useFallbackInsights";
@@ -50,28 +48,12 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   const profile = useEffectiveProfile();
   const router = useRouter();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [pendingCount, setPendingCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!dashboardSummary && refreshDashboardSummary) {
       refreshDashboardSummary();
     }
   }, [dashboardSummary, refreshDashboardSummary]);
-
-  useEffect(() => {
-    if (!isApiConfigured()) return;
-    let cancelled = false;
-    fetchPendingOperations("pending")
-      .then((items) => {
-        if (!cancelled) setPendingCount(items.length);
-      })
-      .catch(() => {
-        if (!cancelled) setPendingCount(0);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const handleNew = (kind: NewTxKind) => {
     if (onNewTransaction) onNewTransaction(kind);
@@ -156,7 +138,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
         <PullToRefreshIndicator state={pull} />
         <HeroSection
           profile={profile}
-          pendingCount={pendingCount}
+          pendingCount={null}
           totalBalance={totalBalance}
           totalIncome={totalIncome}
           totalExpenses={totalExpenses}
@@ -174,23 +156,6 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
         {/* ── Content area ── */}
         {/* pb-24: respiro p/ CTAs finais não colidirem com o FAB do TED (fixed bottom-88px) */}
         <div className="px-5 pb-24 pt-4 sm:px-8 lg:px-12">
-          {pendingCount !== null && pendingCount > 0 && (
-            <button
-              type="button"
-              onClick={() => router.push(routeCompromissos("pendencias"))}
-              data-testid="pending-banner"
-              className="mb-[14px] flex w-full items-center justify-between rounded-[16px] border border-warning/40 bg-warning-tint px-4 py-3 text-left shadow-card transition-all hover:bg-warning-tint/80"
-            >
-              <span className="flex items-center gap-2.5 text-[13px] font-bold text-warning">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-warning text-white text-[11px] font-bold">
-                  {pendingCount}
-                </span>
-                {pendingCount} operação{pendingCount !== 1 ? "ões" : ""} pendente{pendingCount !== 1 ? "s" : ""} — requer aprovação
-              </span>
-              <span className="text-[11px] font-bold text-warning">Ver →</span>
-            </button>
-          )}
-
           <DeltaCards incomeDeltaPct={incomeDeltaPct} expenseDeltaPct={expenseDeltaPct} />
 
           <AccountsCard

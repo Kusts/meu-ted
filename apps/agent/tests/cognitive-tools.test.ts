@@ -68,7 +68,7 @@ describe('mutation gating (first enforcement of safety utils)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('asks for explicit confirmation on approval tools, then executes', async () => {
+  it('blocks approval tools until MutationExecutor V2 exists', async () => {
     const realFetch = globalThis.fetch;
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }),
@@ -80,19 +80,20 @@ describe('mutation gating (first enforcement of safety utils)', () => {
         lastUserMessage: 'quero pagar a fatura',
       });
       const asked = (await (pending['pay_statement'] as { execute: (p: unknown) => Promise<unknown> }).execute({})) as {
-        needsApproval?: boolean;
+        blocked?: boolean;
       };
-      expect(asked.needsApproval).toBe(true);
+      expect(asked.blocked).toBe(true);
       expect(fetchMock).not.toHaveBeenCalled();
 
       const confirmed = buildExposedTools(['pay_statement'], {
         ...baseCtx,
         lastUserMessage: 'sim, pode pagar a fatura',
       });
-      await (confirmed['pay_statement'] as { execute: (p: unknown) => Promise<unknown> }).execute({
+      const result = await (confirmed['pay_statement'] as { execute: (p: unknown) => Promise<unknown> }).execute({
         statementId: '00000000-0000-4000-8000-000000000001',
       });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ blocked: true });
+      expect(fetchMock).not.toHaveBeenCalled();
       expect(buildApprovalRequest('pay_statement').needsApproval).toBe(true);
     } finally {
       globalThis.fetch = realFetch;

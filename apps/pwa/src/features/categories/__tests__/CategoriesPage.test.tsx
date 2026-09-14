@@ -12,6 +12,8 @@ function defaultState(): AppState {
     debts: [], subscriptions: [], loading: false, error: null,
     addTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(), cancelPayable: vi.fn(), createPayable: vi.fn(), createBudget: vi.fn(), updateBudget: vi.fn(), createGoal: vi.fn(), contributeToGoal: vi.fn(), cancelGoal: vi.fn(),
     cardStatements: [], writeError: null, clearWriteError: vi.fn(),
+    profile: null, dashboardSummary: null,
+    saveProfile: vi.fn(), refreshProfile: vi.fn(), refreshDashboardSummary: vi.fn(),
     sync: {
       accounts: { source: "mock", syncedAt: null },
       categories: { source: "mock", syncedAt: null },
@@ -28,6 +30,10 @@ function defaultState(): AppState {
     addCard: vi.fn(), updateCard: vi.fn(),
     addSubscription: vi.fn(), cancelSubscription: vi.fn(),
     createTransfer: vi.fn(), payStatement: vi.fn(), createInstallments: vi.fn(),
+    createCardPurchase: vi.fn(), updateTransaction: vi.fn(), updatePayable: vi.fn(),
+    undoPayablePayment: vi.fn(), updateGoal: vi.fn(), deleteCategory: vi.fn(),
+    applyCategoryDefaults: vi.fn(), updateSubscription: vi.fn(), refreshSubscriptions: vi.fn(),
+    refreshDomains: vi.fn(),
   };
 }
 function mockState(o: Partial<AppState>): AppState { return { ...defaultState(), ...o }; }
@@ -222,8 +228,8 @@ describe("CategoriesPage", () => {
     it("renders singular label with exactly one category of each kind", () => {
       vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({
         categories: [
-          { id: "c1", name: "Alimentação", kind: "expense" as any, subcategories: [] }, // eslint-disable-line @typescript-eslint/no-explicit-any
-          { id: "c2", name: "Salário", kind: "income" as any }, // eslint-disable-line @typescript-eslint/no-explicit-any
+          { id: "c1", name: "Alimentação", kind: "expense" as any, icon: "🍽", subcategories: [] }, // eslint-disable-line @typescript-eslint/no-explicit-any
+          { id: "c2", name: "Salário", kind: "income" as any, icon: "💰" }, // eslint-disable-line @typescript-eslint/no-explicit-any
         ],
       }));
       render(<CategoriesPage />);

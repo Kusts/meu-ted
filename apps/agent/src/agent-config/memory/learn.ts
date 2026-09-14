@@ -57,6 +57,9 @@ export type LearnTurnInput = {
 
 export const learnFromTurn = async (sql: MemorySql, input: LearnTurnInput): Promise<MemoryItem[]> => {
   if (!isMemoryEnabled(sql, input.workspaceId)) return [];
+  // A failed/empty assistant turn is not an actual response and must not
+  // teach durable memory from an uncompleted interaction.
+  if (typeof input.assistantText !== 'string' || input.assistantText.trim().length === 0) return [];
   const learned: MemoryItem[] = [];
   const persist = (candidate: LearningCandidate): void => {
     const result = rememberFact(sql, {

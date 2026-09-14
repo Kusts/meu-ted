@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, createElement } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, createElement } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import BottomSheet from "@/components/BottomSheet";
@@ -10,14 +10,13 @@ import { StaleBanner } from "@/components/StaleBanner";
 import { ConfirmActionDialog } from "@/components/ConfirmActionDialog";
 import { useAppState } from "@/lib/state/app-state-context";
 import type { Category } from "@/lib/state/types";
-import { Plus, Search, X, Check, Sparkles, Tag, ChevronDown, ChevronRight, Trash2, LayoutTemplate } from "lucide-react";
-import * as LucideIcons from "lucide-react";
-import { ICON_GROUPS, COLOR_PALETTE, getCategoryIconName, searchIconGroups } from "./category-constants";
+import { Activity, Armchair, ArrowLeftRight, Award, Baby, BadgeDollarSign, Banknote, BedDouble, Beer, Bell, Bike, Bone, BookHeart, BookOpen, Brain, Briefcase, Building2, Bus, CakeSlice, Calculator, CalendarClock, Camera, Car, CarFront, Cat, ChefHat, Check, ChevronDown, ChevronRight, CircleDollarSign, Clapperboard, ClipboardList, Coffee, Coins, CreditCard, Cross, Dices, Dog, DollarSign, DoorOpen, Droplets, Dumbbell, Fence, FileText, Film, Flag, Flame, Flower2, Fuel, Gamepad2, Gift, Glasses, GraduationCap, Hammer, HandCoins, Heart, HeartHandshake, HeartPulse, KeyRound, Lamp, Landmark, Languages, Laptop, LayoutTemplate, Library, Lightbulb, LineChart, Mail, MapPin, Martini, Milestone, Moon, Music, Palette, PartyPopper, PawPrint, PenLine, Percent, Phone, PiggyBank, Pill, Pizza, Plane, Plug, Plus, Popcorn, Presentation, Receipt, RotateCcw, Salad, Sandwich, Scale, Search, ShieldPlus, Shirt, ShoppingBag, ShoppingBasket, Smartphone, Smile, Sofa, Sparkles, Sprout, SquareParking, Star, Stethoscope, Store, Sun, Syringe, Tag, Target, Ticket, ToyBrick, Train, Trash2, TrendingDown, TrendingUp, Tv, Umbrella, Users, UtensilsCrossed, Vault, Wallet, Watch, Wifi, Wrench, X, Zap } from "lucide-react";
+import { COLOR_PALETTE, getCategoryIconName, searchIconGroups } from "./category-constants";
+
+const CATEGORY_ICONS: Record<string, typeof Tag> = { Activity, Armchair, ArrowLeftRight, Award, Baby, BadgeDollarSign, Banknote, BedDouble, Beer, Bell, Bike, Bone, BookHeart, BookOpen, Brain, Briefcase, Building2, Bus, CakeSlice, Calculator, CalendarClock, Camera, Car, CarFront, Cat, ChefHat, Check, ChevronDown, ChevronRight, CircleDollarSign, Clapperboard, ClipboardList, Coffee, Coins, CreditCard, Cross, Dices, Dog, DollarSign, DoorOpen, Droplets, Dumbbell, Fence, FileText, Film, Flag, Flame, Flower2, Fuel, Gamepad2, Gift, Glasses, GraduationCap, Hammer, HandCoins, Heart, HeartHandshake, HeartPulse, KeyRound, Lamp, Landmark, Languages, Laptop, LayoutTemplate, Library, Lightbulb, LineChart, Mail, MapPin, Martini, Milestone, Moon, Music, Palette, PartyPopper, PawPrint, PenLine, Percent, Phone, PiggyBank, Pill, Pizza, Plane, Plug, Popcorn, Presentation, Receipt, RotateCcw, Salad, Sandwich, Scale, ShieldPlus, Shirt, ShoppingBag, ShoppingBasket, Smartphone, Smile, Sofa, Sparkles, Sprout, SquareParking, Star, Stethoscope, Store, Sun, Syringe, Tag, Target, Ticket, ToyBrick, Train, TrendingDown, TrendingUp, Tv, Umbrella, Users, UtensilsCrossed, Vault, Wallet, Watch, Wifi, Wrench, Zap };
 
 function getIconComponent(name: string) {
-  const key = name as keyof typeof LucideIcons;
-  const Comp = (LucideIcons as unknown as Record<string, React.ComponentType<{ size?: number; className?: string }>>)[key];
-  return Comp ?? Tag;
+  return CATEGORY_ICONS[name] ?? Tag;
 }
 
 function IconPicker({
@@ -417,17 +416,17 @@ function CategoryEditSheet({
   const [color, setColor] = useState<string | null>(null);
   const [iconTouched, setIconTouched] = useState(false);
   const [colorTouched, setColorTouched] = useState(false);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!open || !category) return;
+    // The edit sheet must be populated before the opening paint so its existing
+    // category values are immediately available to callers and assistive tech.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (category) {
       setName(category.name);
       setIcon((category.icon as string | undefined) ?? null);
       setColor((category.color as string | undefined) ?? null);
       setIconTouched(false);
       setColorTouched(false);
-    }
-  }, [category]);
+  }, [open, category]);
 
   async function handleSave() {
     if (!category || !name.trim()) return;

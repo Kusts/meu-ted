@@ -1,0 +1,64 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  ConversationOrchestrator,
+  normalizeRestTurn,
+  type AuthenticatedIdentity,
+} from '../../src/orchestration/conversation-orchestrator.js';
+import { MutationApiClient } from '../../src/mutations/mutation-api-client.js';
+
+const identity: AuthenticatedIdentity = {
+  actorId: 'actor-authenticated',
+  workspaceId: 'workspace-authenticated',
+  role: 'member',
+  deviceId: 'device-authenticated',
+};
+
+const plan = (mode: 'mutation-proposal' | 'confirmation') => ({
+  version: '2' as const,
+  mode,
+  domain: 'transactions' as const,
+  skillNames: ['transactions'],
+  requestedOperations: [{ name: 'create_expense', kind: 'mutation' as const }],
+  missingFields: [],
+  ambiguity: null,
+  confidence: 1,
+});
+
+describe('T2.4 mutation integration', () => {
+  it('routes proposal and confirmation through V2 API and renders only an API success', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce({ id: 'pending-1' })
+      .mockResolvedValueOnce({ id: 'pending-1', attestation: 'a'.repeat(32) })
+      .mockResolvedValueOnce({ status: 'succeeded', operationId: 'pending-1' });
+    const api = new MutationApiClient({ request });
+    const planner = vi.fn()
+      .mockReturnValueOnce(plan('mutation-proposal'))
+      .mockReturnValueOnce(plan('confirmation'));
+    const orchestrator = new ConversationOrchestrator({ mutationApiClient: api, plan: planner });
+
+    const proposed = await orchestrator.runTurn(normalizeRestTurn({ text: 'gastei R$ 12,34 no mercado na categoria 00000000-0000-4000-8000-000000000001', intentionId: 'intent-1' }, identity));
+    expect(proposed.mutation?.operationId).toBe('pending-1');
+    expect(proposed.response?.text).toMatch(/confirma/i);
+
+    const confirmed = await orchestrator.runTurn(normalizeRestTurn({ text: 'confirmo', intentionId: 'intent-1', pendingOperationIds: ['pending-1'] }, identity));
+    expect(confirmed.response?.text).toMatch(/registrad|sucesso/i);
+    expect(request).toHaveBeenNthCalledWith(1, 'POST', '/pending-operations/v2/propose', expect.objectContaining({
+      body: expect.not.objectContaining({ actorId: expect.anything(), workspaceId: expect.anything(), deviceId: expect.anything() }),
+    }));
+    expect(request).toHaveBeenNthCalledWith(2, 'POST', '/pending-operations/v2/pending-1/confirm', expect.anything());
+    expect(request).toHaveBeenNthCalledWith(3, 'POST', '/pending-operations/v2/pending-1/execute', expect.objectContaining({ body: { attestation: 'a'.repeat(32) } }));
+    expect(planner).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not use success wording when API execution is incomplete', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce({ id: 'pending-2', attestation: 'b'.repeat(32) })
+      .mockResolvedValueOnce({ status: 'failed', operationId: 'pending-2' });
+    const api = new MutationApiClient({ request });
+    const orchestrator = new ConversationOrchestrator({ mutationApiClient: api, plan: () => plan('confirmation') });
+
+    const result = await orchestrator.runTurn(normalizeRestTurn({ text: 'confirmo', intentionId: 'intent-2', pendingOperationIds: ['pending-2'] }, identity));
+    expect(result.response?.text).not.toMatch(/registrad|sucesso|concluíd/i);
+    expect(result.response?.text).toMatch(/falha|não foi possível|erro/i);
+  });
+});

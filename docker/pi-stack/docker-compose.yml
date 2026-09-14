@@ -25,7 +25,10 @@ services:
       - host.docker.internal:host-gateway
     ports:
       - "3945:3945"
-    command: ["bash", "-lc", "pnpm --filter @pi-financeiro/whatsapp-bridge start"]
+    # 2026-09-14: comando do bridge desativado (apps/whatsapp-bridge removido
+    # em P3 f640e84). Serviço aposentado — ver nota no Dockerfile. Não reativar
+    # sem restaurar o pacote.
+    # command: ["bash", "-lc", "pnpm --filter @pi-financeiro/whatsapp-bridge start"]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3945/health"]
       interval: 10s
@@ -51,7 +54,9 @@ services:
     working_dir: /workspace
     extra_hosts:
       - host.docker.internal:host-gateway
-    command: ["bash", "-lc", "pnpm --filter @pi-financeiro/whatsapp-bridge watchdog"]
+    # 2026-09-14: watchdog do bridge desativado (pacote removido em P3 f640e84).
+    # Serviço aposentado — ver nota no Dockerfile.
+    # command: ["bash", "-lc", "pnpm --filter @pi-financeiro/whatsapp-bridge watchdog"]
     restart: unless-stopped
     depends_on:
       pi-stack:

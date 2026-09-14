@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const images = ['pi-finance-api:ci', 'pi-finance-pi-stack:ci'];
+const images = ['pi-finance-api:ci', 'pi-finance-codex-broker:ci'];
 const repoPath = process.cwd();
 const hasIgnore = fs.existsSync(path.join(repoPath, '.trivyignore'));
 

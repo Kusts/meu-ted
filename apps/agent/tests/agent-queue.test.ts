@@ -113,20 +113,15 @@ describe("WorkspaceAgent durable turn queue", () => {
     const created = await agent.fetch(new Request("https://agent.test/message", { method: "POST", headers: { "x-agent-actor": "user-a" }, body: JSON.stringify({ content: "race" }) }));
     const { turnId } = await created.json() as { turnId: string };
     await agent.alarm();
-    const process = await agent.fetch(new Request(`https://agent.test/message/${turnId}/process`, { method: "POST", headers: { "x-agent-actor": "user-a" } }));
+    const process = await agent.processTurn(turnId, "user-a");
     expect((await process.json()).output).toBe("race");
   });
 
-  it("retries within the global attempt budget and rejects exhausted retries", async () => {
+  it("rejects legacy public retry endpoint with 410", async () => {
     const { agent } = makeAgent({ id: "retry", actor_id: "user-a", status: "failed", attempts: 2, input_json: JSON.stringify({ messageId: "retry", content: "run" }) });
     const retried = await agent.fetch(new Request("https://agent.test/message/retry/retry", { method: "POST", headers: { "x-agent-actor": "user-a" } }));
-    expect(retried.status).toBe(200);
-    expect((await retried.json()).attempts).toBe(2);
-    expect((await agent.processTurn("retry", "user-a")).status).toBe(200);
-
-    const exhausted = makeAgent({ id: "retry-exhausted", actor_id: "user-a", status: "failed", attempts: 3, input_json: JSON.stringify({ messageId: "retry-exhausted", content: "stop" }) });
-    const rejected = await exhausted.agent.fetch(new Request("https://agent.test/message/retry-exhausted/retry", { method: "POST", headers: { "x-agent-actor": "user-a" } }));
-    expect(rejected.status).toBe(409);
+    expect(retried.status).toBe(410);
+    expect((await retried.json()).code).toBe("agent.legacy_mutation_path_removed");
   });
 
   it("drains multiple queued turns from one Durable Object alarm", async () => {
@@ -171,7 +166,7 @@ describe("WorkspaceAgent durable turn queue", () => {
     expect(delegatedToken).toBeDefined();
     expect(JSON.stringify(processorInput)).not.toContain(delegatedToken!);
     expect(bindings.map((values) => JSON.stringify(values)).join("\n")).not.toContain(delegatedToken!);
-    await expect(decodeDelegatedTurnToken(delegatedToken!, "test-secret")).resolves.toMatchObject({ workspace: "workspace-a", sub: "user-a", role: "owner", request: turnId, capabilities: ["financial.read", "financial.write"] });
+    await expect(decodeDelegatedTurnToken(delegatedToken!, "test-secret")).resolves.toMatchObject({ workspace: "workspace-a", sub: "user-a", role: "owner", request: turnId, capabilities: ["financial.read"] });
   });
 
   it("rejects delegated tokens returned by a processor before transcript persistence", async () => {
@@ -237,7 +232,7 @@ describe("WorkspaceAgent durable turn queue", () => {
     expect(recovered.queries.some((query) => query.includes("attempts < 3"))).toBe(true);
   });
 
-  it("persists one intention ID and reuses it when a turn is regenerated", async () => {
+  it("persists one intention ID on creation", async () => {
     const { agent, bindings } = makeAgent();
     const created = await agent.fetch(new Request("https://agent.test/message", {
       method: "POST",
@@ -249,17 +244,5 @@ describe("WorkspaceAgent durable turn queue", () => {
 
     const firstInput = JSON.parse(String(bindings.find((values) => values.length === 6)?.[3]));
     expect(firstInput.intentionId).toBe(first.intentionId);
-
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await agent.processTurn(first.turnId, "user-a", async (input) => {
-        expect(input.intentionId).toBe(first.intentionId);
-        throw new Error("transient");
-      });
-    }
-    const retried = await agent.fetch(new Request(`https://agent.test/message/${first.turnId}/retry`, {
-      method: "POST",
-      headers: { "x-agent-actor": "user-a" },
-    }));
-    expect((await retried.json()).intentionId).toBe(first.intentionId);
   });
 });

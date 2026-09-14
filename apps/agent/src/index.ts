@@ -28,7 +28,7 @@ type ActionRow = { id: string; actor_id: string; action_type: string; payload_js
 type AccessLogRow = { id: number; actor_id: string; action: string; record_count: number; created_at: string };
 export type TurnProcessor = (input: { messageId: string; intentionId: string; content: string; role?: DelegatedRole; capabilities?: string[] }, signal: AbortSignal, delegatedToken?: string) => Promise<string>;
 
-const DEFAULT_TURN_CAPABILITIES = ['financial.read', 'financial.write'];
+const DEFAULT_TURN_CAPABILITIES = ['financial.read'];
 
 const parsePositiveLimit = (raw: string | undefined, fallback: number): number => {
   const parsed = Number(raw);
@@ -153,8 +153,12 @@ export class WorkspaceAgent extends DurableObject<AgentRuntimeEnv> {
     if (path === "/history/access-log" && request.method === "GET") return this.readAccessLog(actorId, historyRole);
     if (path.includes("/message/stream/")) return this.streamTurn(path.split("/message/stream/")[1]!, actorId, request);
     if (path.includes("/message/") && path.endsWith("/abort")) return this.abortTurn(path.split("/message/")[1]!.replace(/\/abort$/, ""), actorId);
-    if (path.includes("/message/") && path.endsWith("/process")) return this.processTurn(path.split("/message/")[1]!.replace(/\/process$/, ""), actorId);
-    if (path.includes("/message/") && path.endsWith("/retry")) return this.retryTurn(path.split("/message/")[1]!.replace(/\/retry$/, ""), actorId);
+    // Legacy HTTP execution endpoints are deliberately retired. Queue draining
+    // remains internal (`alarm` -> processTurn), but no request can revive a
+    // second public answer/write pipeline beside FinanceChatAgent V2.
+    if (path.includes("/message/") && (path.endsWith("/process") || path.endsWith("/retry"))) {
+      return Response.json({ code: "agent.legacy_mutation_path_removed" }, { status: 410 });
+    }
     if (!path.endsWith("/message")) return Response.json({ code: "agent.not_found" }, { status: 404 });
     if (request.method === "GET") return this.readHistory();
     if (request.method !== "POST") return Response.json({ code: "agent.method_not_allowed" }, { status: 405 });
@@ -600,7 +604,7 @@ const worker = {
       headers.set("x-agent-actor", authorization.actorId);
       headers.set("x-agent-role", authorization.role);
       headers.set("x-agent-workspace", authorization.workspaceId);
-      headers.set("x-agent-capabilities", "financial.read,financial.write");
+      headers.set("x-agent-capabilities", "financial.read");
       // C-05: the DO is ALWAYS named by the authorized canonical id, never
       // by the raw path id (which may be an alias).
       return getAgentByName(env.AGENT, authorization.workspaceId).fetch(new Request(request, { headers }));

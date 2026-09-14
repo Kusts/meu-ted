@@ -1,4 +1,5 @@
 import type { LlmFailoverEvent } from './provider-registry.js';
+import { emitSanitizedEvent } from '../observability/events.js';
 
 export type FailoverAttempt<T> = () => Promise<T>;
 
@@ -34,7 +35,7 @@ export const isRetryableLlmError = (err: unknown): boolean => {
     return false;
   }
   const code = typeof e.code === 'string' ? e.code : '';
-  if (/^(agent\.rate_limited|agent\.provider_timeout|agent\.provider_error|agent\.provider_auth|ETIMEDOUT|ECONNRESET|ENOTFOUND|fetch_failed|network_error|timeout)$/i.test(code)) {
+  if (/^(agent\.rate_limited|agent\.provider_timeout|agent\.provider_error|agent\.provider_auth|agent\.invalid_provider_output|ETIMEDOUT|ECONNRESET|ENOTFOUND|fetch_failed|network_error|timeout)$/i.test(code)) {
     return true;
   }
   const message = typeof e.message === 'string' ? e.message : '';
@@ -110,5 +111,19 @@ export const logFailoverEvent = (
     failoverReason: outcome.failoverReason,
   };
   log(`llm.failover intention=${event.intentionId} primary=${event.primaryProviderId}/${event.primaryModelId} fallback=${event.fallbackProviderId ?? '-'}/${event.fallbackModelId ?? '-'} used=${event.usedFallback ? '1' : '0'} reason=${event.failoverReason ?? '-'}`);
+  // AGENT-010: sanitized provider.fallback lifecycle event — routing
+  // metadata only (provider/model ids, fallback flag, sanitized reason).
+  // Never prompts, transcripts, or financial payloads.
+  try {
+    emitSanitizedEvent('provider.fallback', {
+      provider: event.primaryProviderId,
+      model: event.primaryModelId,
+      fallback: event.usedFallback,
+      status: event.usedFallback ? 'fallback_used' : 'primary',
+      ...(event.failoverReason ? { reason: event.failoverReason } : { reason: 'none' }),
+    }, log);
+  } catch {
+    // Observability must never break the turn.
+  }
   return event;
 };

@@ -303,13 +303,13 @@ describe("WorkspaceProvider + AppStateProvider — workspace switch remount (P1-
 
   it("re-bootstraps and replaces previous workspace data on selectWorkspace", async () => {
     const user = userEvent.setup();
-    const w1Tx = { id: "tx-w1", description: "Compra W1", amountCents: 1000, date: "2026-09-01", kind: "expense", categoryId: "c1", accountId: "acc-w1" };
-    const w2Tx = { id: "tx-w2", description: "Compra W2", amountCents: 2000, date: "2026-09-02", kind: "expense", categoryId: "c1", accountId: "acc-w2" };
+    const w1Tx = { id: "tx-w1", description: "Compra W1", amountCents: 1000, date: "2026-09-01", kind: "expense" as const, categoryId: "c1", accountId: "acc-w1" };
+    const w2Tx = { id: "tx-w2", description: "Compra W2", amountCents: 2000, date: "2026-09-02", kind: "expense" as const, categoryId: "c1", accountId: "acc-w2" };
     // Fixtures are keyed by the active workspace (mirroring the real API,
     // which returns data for the workspace in the X-Workspace-Id header) so
     // the assertions are independent of how many times the provider boots.
-    const w1 = { account: { id: "acc-w1", name: "Conta W1", kind: "checking", balanceCents: 100, status: "active" }, tx: w1Tx, profileName: "User W1" };
-    const w2 = { account: { id: "acc-w2", name: "Conta W2", kind: "checking", balanceCents: 200, status: "active" }, tx: w2Tx, profileName: "User W2" };
+    const w1 = { account: { id: "acc-w1", name: "Conta W1", kind: "checking" as const, balanceCents: 100, status: "active" }, tx: w1Tx, profileName: "User W1" };
+    const w2 = { account: { id: "acc-w2", name: "Conta W2", kind: "checking" as const, balanceCents: 200, status: "active" }, tx: w2Tx, profileName: "User W2" };
     const byWorkspace = <T,>(w1Value: T, w2Value: T) => () =>
       Promise.resolve(clientState.active === "workspace-2" ? w2Value : w1Value);
     const fetchAccounts = vi.spyOn(endpoints, "fetchAccounts")
@@ -323,7 +323,10 @@ describe("WorkspaceProvider + AppStateProvider — workspace switch remount (P1-
     vi.spyOn(endpoints, "fetchStatements").mockResolvedValue([] as never);
     vi.spyOn(endpoints, "fetchCards").mockResolvedValue([] as never);
     vi.spyOn(endpoints, "fetchProfile")
-      .mockImplementation(byWorkspace({ householdId: "h1", name: w1.profileName }, { householdId: "h1", name: w2.profileName }));
+      .mockImplementation(byWorkspace(
+        { householdId: "h1", name: w1.profileName, email: "user-w1@example.com", phone: "", avatarColor: "#0ea5e9", greetingStyle: "auto" as const, updatedAt: "2026-09-01T00:00:00.000Z" },
+        { householdId: "h1", name: w2.profileName, email: "user-w2@example.com", phone: "", avatarColor: "#0ea5e9", greetingStyle: "auto" as const, updatedAt: "2026-09-02T00:00:00.000Z" },
+      ));
     vi.spyOn(endpoints, "fetchQuickInsights").mockResolvedValue([] as never);
 
     function AppStateProbe() {

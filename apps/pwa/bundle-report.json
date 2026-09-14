@@ -1,93 +1,93 @@
 {
-  "generatedAt": "2026-09-06T02:07:01.301Z",
+  "generatedAt": "2026-09-14T01:24:04.442Z",
   "manifest": ".next/build-manifest.json",
   "manifestVerified": true,
-  "chunks": 49,
-  "initialGzipKB": 136.05,
-  "totalGzipKB": 619.13,
-  "frameworkGzipKB": 124.09,
-  "appLevelGzipKB": 100.66,
-  "equivalentSetGzipKB": 495.04,
+  "chunks": 45,
+  "initialGzipKB": 136.8,
+  "totalGzipKB": 465.98,
+  "frameworkGzipKB": 129.76,
+  "appLevelGzipKB": 119.03,
+  "equivalentSetGzipKB": 336.21,
   "topChunks": [
     {
-      "path": "chunks/573-f8147807c60f8788.js",
-      "kb": 157.31
+      "path": "chunks/474-f4ff971a4446e816.js",
+      "kb": 66.38
     },
     {
-      "path": "chunks/89973f52-cdab712dca2a9cf0.js",
-      "kb": 61.27
+      "path": "chunks/2262cfa8-72f5ba4627fa80fd.js",
+      "kb": 61.68
     },
     {
-      "path": "chunks/510-abf218878bab7e84.js",
-      "kb": 61.12
-    },
-    {
-      "path": "chunks/framework-503a4148301f470c.js",
+      "path": "chunks/framework-93d5048c5fbed43b.js",
       "kb": 58.43
     },
     {
-      "path": "chunks/bbd755e1-8e25e21942ce255d.js",
-      "kb": 40.14
-    },
-    {
-      "path": "chunks/main-43bfb1fe1fe9dc00.js",
-      "kb": 38.8
+      "path": "chunks/main-bb905d49a38ac8c4.js",
+      "kb": 39.55
     },
     {
       "path": "chunks/polyfills-42372ed130431b0a.js",
       "kb": 38.59
     },
     {
-      "path": "chunks/587-227d0d44c3096215.js",
-      "kb": 16.85
+      "path": "chunks/710-9fdb512dc6beeada.js",
+      "kb": 20.53
     },
     {
-      "path": "chunks/260-cf70f9df9d0bf370.js",
-      "kb": 12.64
+      "path": "chunks/76-b5e5a3999eb1841d.js",
+      "kb": 18.09
     },
     {
-      "path": "chunks/454-1569f3f96f2b4e86.js",
-      "kb": 12.33
+      "path": "patrimonio/page-bc60d162b4439f9d.js",
+      "kb": 14.66
     },
     {
-      "path": "cartoes/page-527d93fcc40ea31e.js",
-      "kb": 9.29
+      "path": "chunks/462-f59ba73e026bc12e.js",
+      "kb": 13.22
     },
     {
-      "path": "perfil/page-f05c8436f28bb171.js",
-      "kb": 8.72
+      "path": "perfil/page-ccfc18bd167f5ada.js",
+      "kb": 13.12
     },
     {
-      "path": "workspaces/page-338b49d30c03c1e5.js",
-      "kb": 7.77
+      "path": "planejamento/page-09ca2e23e8a019b8.js",
+      "kb": 12.05
     },
     {
-      "path": "chunks/103-4fb0a5db562d07f7.js",
-      "kb": 7.11
+      "path": "relatorios/page-6785aa6d31616261.js",
+      "kb": 11.61
     },
     {
-      "path": "app/page-2f44da2dfbfdc0e3.js",
-      "kb": 6.84
+      "path": "categorias/page-8b03b7da7c1d8b9c.js",
+      "kb": 11.45
     },
     {
-      "path": "contas/page-8161be0a426852a1.js",
-      "kb": 6.26
+      "path": "app/page-b25e0aa4005b44ac.js",
+      "kb": 11.42
     },
     {
-      "path": "registros/page-a72849c3b5168d02.js",
-      "kb": 5.88
+      "path": "chunks/804-5ce2d5571440ca1e.js",
+      "kb": 10.35
     },
     {
-      "path": "categorias/page-642f1e5928dd56f9.js",
-      "kb": 5.56
+      "path": "compromissos/page-5acdb89f66d8f310.js",
+      "kb": 8.47
     },
     {
-      "path": "patrimonio/page-2806a606895aa441.js",
-      "kb": 5.54
+      "path": "workspaces/page-92d5e25666e8828d.js",
+      "kb": 8.13
     },
     {
-      "path": "metas/page-6d687c5774819424.js",
-      "kb": 5.45
+      "path": "registros/page-0344945779f2f4d8.js",
+      "kb": 8.07
+    },
+    {
+      "path": "chunks/422-a385ac37659066d0.js",
+      "kb": 6.79
+    },
+    {
+      "path": "app/layout-426ea6d67cf1194d.js",
+      "kb": 5.55
     }
   ]
 }

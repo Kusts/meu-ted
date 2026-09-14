@@ -8,18 +8,18 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export const VAL_GATES = [
   { id: "VAL.1", name: "Reproducible Frozen Install", command: "git diff --exit-code -- pnpm-lock.yaml" },
-  { id: "VAL.2", name: "Lint & Code Quality", command: "pnpm docs:lint" },
-
-
+  { id: "VAL.2", name: "Lint & Documentation", command: "pnpm lint && pnpm docs:lint" },
   { id: "VAL.3", name: "TypeScript Compilation", command: "pnpm typecheck" },
-  { id: "VAL.4", name: "Unit & Contract Tests", command: "pnpm --filter meu-ted-api test && pnpm --filter @pi-financeiro/whatsapp-bridge test && pnpm --filter pi-finance-agent test" },
-  { id: "VAL.5", name: "Coverage & Safety Boundaries", command: "node scripts/check-write-policy.mjs" },
-
-  { id: "VAL.6", name: "PostgreSQL & Monotonic Migrations", command: "npx tsx scripts/cutover-check.ts" },
-  { id: "VAL.7", name: "E2E Critical Flows & Authz", command: "node --test scripts/canonical-docs-contract.test.mjs" },
-  { id: "VAL.8", name: "Builds & Distribution Artifacts", command: "pnpm build:all" },
-  { id: "VAL.9", name: "Security Secrets & Deps", command: "pnpm security:check" },
-  { id: "VAL.10", name: "Production Smoke Contract", command: "pnpm production:smoke:contract" },
+  { id: "VAL.4", name: "API Unit & Contract Tests", command: "pnpm --filter meu-ted-api --fail-if-no-match test" },
+  { id: "VAL.5", name: "Agent Tests & Deterministic Evals", command: "pnpm --filter pi-finance-agent --fail-if-no-match test && pnpm --filter pi-finance-agent --fail-if-no-match eval:ted-v2" },
+  { id: "VAL.6", name: "Codex Broker", command: "pnpm --filter pi-finance-codex-broker --fail-if-no-match typecheck && pnpm --filter pi-finance-codex-broker --fail-if-no-match test && pnpm --filter pi-finance-codex-broker --fail-if-no-match build" },
+  { id: "VAL.7", name: "PWA Unit & Contract Tests", command: "pnpm --filter pwa --fail-if-no-match test" },
+  { id: "VAL.8", name: "Architecture Invariants", command: "pnpm architecture:check" },
+  { id: "VAL.9", name: "Capabilities, Write Policy & Governance", command: "pnpm capabilities:check && pnpm write-policy:check && pnpm governance:check" },
+  { id: "VAL.10", name: "Canonical Documentation Contracts", command: "node --test scripts/canonical-docs-contract.test.mjs scripts/documentation-facts-contract.test.mjs" },
+  { id: "VAL.11", name: "Builds & Distribution Artifacts", command: "pnpm build:all" },
+  { id: "VAL.12", name: "Security & Container Smoke", command: "pnpm security:check && pnpm container:smoke" },
+  { id: "VAL.13", name: "Production Smoke Contract", command: "pnpm production:smoke:contract" },
 ];
 
 export function executeValidationGate(gate, executor = execFileSync) {
@@ -85,7 +85,7 @@ export function runFinalValidation(gates = VAL_GATES, executor = execFileSync) {
 }
 
 export function generateFinalValidationMarkdown(report) {
-  return `# Final Project Validation Report (VAL.1–VAL.10)
+  return `# Final Project Validation Report (VAL.1–VAL.13)
 
 **Evaluated At:** ${report.evaluatedAt}  
 **Status:** ${report.allPassed ? "PASSED ✅" : "FAILED ❌"}  
@@ -112,14 +112,14 @@ ${report.results
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
-  console.log("=== Running Project Final Validation (VAL.1–VAL.10) ===");
+  console.log("=== Running Project Final Validation (VAL.1–VAL.13) ===");
   const report = runFinalValidation();
   const reportsDir = path.join(ROOT, "docs", "reports");
   if (!fs.existsSync(reportsDir)) {
     fs.mkdirSync(reportsDir, { recursive: true });
   }
-  const jsonPath = path.join(reportsDir, "2026-08-16-final-validation.json");
-  const mdPath = path.join(reportsDir, "2026-08-16-final-validation.md");
+  const jsonPath = path.join(reportsDir, "2026-09-13-final-validation.json");
+  const mdPath = path.join(reportsDir, "2026-09-13-final-validation.md");
 
 
   fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2) + "\n", "utf8");

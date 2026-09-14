@@ -31,6 +31,19 @@ export type DeleteCategoryResult = {
   softDeletedTransactions: number;
 };
 
+/**
+ * P1 (audit item 7): key-idempotent execution for V2 pending operations.
+ *
+ * When present, the mutation executes AT MOST ONCE per
+ * (household, idempotencyKey): the first call executes and records
+ * (key → result); concurrent or repeated calls with the same key and
+ * payload return the recorded result without re-executing. Same key
+ * with a different payload conflicts (409 idempotency.conflict).
+ */
+export type WriteIdempotencyOptions = {
+  idempotencyKey?: string;
+};
+
 export type WriteStore = {
   // accounts
   createAccount(householdId: string, input: CreateAccountInput): Promise<Account>;
@@ -56,8 +69,8 @@ export type WriteStore = {
   applyCategoryDefaults(householdId: string): Promise<ApplyDefaultsResult>;
 
   // transactions
-  createExpense(householdId: string, input: CreateExpenseInput): Promise<Transaction>;
-  createIncome(householdId: string, input: CreateIncomeInput): Promise<Transaction>;
+  createExpense(householdId: string, input: CreateExpenseInput, options?: WriteIdempotencyOptions): Promise<Transaction>;
+  createIncome(householdId: string, input: CreateIncomeInput, options?: WriteIdempotencyOptions): Promise<Transaction>;
   createTransfer(householdId: string, input: CreateTransferInput): Promise<Transaction>;
   updateTransaction(householdId: string, id: string, patch: UpdateTransactionInput): Promise<Transaction>;
   softDeleteTransaction(householdId: string, id: string): Promise<Transaction>;

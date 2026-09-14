@@ -120,7 +120,7 @@ describe("PWA State Snapshot DB — snapshot-db.ts", () => {
     });
 
     it("2.4 migrateV1toV2 ignores v1 snapshot if token does not match", async () => {
-      seedV1("other-owner-token", "accounts", [{ id: "other-a1" }]);
+      seedV1("other-owner-token", "accounts", [{ id: "other-a1", name: "Other" }]);
       await migrateV1toV2(TEST_TOKEN);
 
       const loaded = await readV2Snapshot(TEST_TOKEN, "accounts");

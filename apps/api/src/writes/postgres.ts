@@ -16,6 +16,7 @@ import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors, DomainError } from './errors.js';
 import { buildIdempotencyKey } from './idempotency.js';
+import { runKeyedMutation } from './pending-idempotency.js';
 import type { WriteStore } from './store.js';
 import { resolveApplicationUserId } from '../auth/resolve-user-id.js';
 import { resolveHouseholdId } from '../auth/resolve-household-id.js';
@@ -295,6 +296,95 @@ export const applyDefaultsInTx = async (
   return { created, skipped };
 };
 
+/**
+ * Client-bound expense mutation (no transaction handling): shared by the
+ * plain path (own tx) and the V2 key-idempotent path (record + mutation
+ * in the SAME tx, see pending-idempotency.ts).
+ */
+const createExpenseInTx = async (
+  client: import('pg').PoolClient,
+  householdId: string,
+  input: CreateExpenseInput,
+): Promise<Transaction> => {
+  const acc = await findAccountInHousehold(client, input.accountId, householdId);
+  if (acc.status !== 'active') throw domainErrors.notFound('Conta');
+  // H-01: card purchases must flow through the CardStore (statements,
+  // limits, invoice semantics) — never as plain balance expenses.
+  if (acc.kind === 'credit_card') {
+    throw new DomainError('validation.invalid', 'compra no cartão deve usar /cards/purchases.', 422);
+  }
+  const cat = await findCategoryInHousehold(client, input.categoryId, householdId);
+  if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
+  if (input.subcategoryId !== undefined) {
+    await resolveSubcategoryInTx(client, householdId, input.subcategoryId, 'expense', input.categoryId);
+  }
+  const txRes = await client.query<Row>(
+    `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id, subcategory_id, notes)
+     VALUES (gen_random_uuid(), $1, 'expense', $2, $3, $4, $5, $6, $7, $8)
+     RETURNING ${TRANSACTION_COLUMNS}`,
+    [
+      householdId,
+      input.description,
+      input.amountCents,
+      input.date,
+      input.accountId,
+      input.categoryId,
+      input.subcategoryId ?? null,
+      input.notes ?? null,
+    ],
+  );
+  await client.query(
+    `UPDATE accounts
+        SET balance_cents = GREATEST(0, balance_cents - $2)
+      WHERE id = $1 AND household_id = $3`,
+    [input.accountId, input.amountCents, householdId],
+  );
+
+  return mapTransaction(txRes.rows[0]!);
+};
+
+/**
+ * Client-bound income mutation (no transaction handling): shared by the
+ * plain path and the V2 key-idempotent path.
+ */
+const createIncomeInTx = async (
+  client: import('pg').PoolClient,
+  householdId: string,
+  input: CreateIncomeInput,
+): Promise<Transaction> => {
+  const acc = await findAccountInHousehold(client, input.accountId, householdId);
+  if (acc.status !== 'active') throw domainErrors.notFound('Conta');
+  // H-01: income on a credit card is rejected (422), not silently booked.
+  if (acc.kind === 'credit_card') {
+    throw new DomainError('validation.invalid', 'receita não pode usar cartão de crédito.', 422);
+  }
+  const cat = await findCategoryInHousehold(client, input.categoryId, householdId);
+  if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
+  if (input.subcategoryId !== undefined) {
+    await resolveSubcategoryInTx(client, householdId, input.subcategoryId, 'income', input.categoryId);
+  }
+  const txRes = await client.query<Row>(
+    `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id, subcategory_id, notes)
+     VALUES (gen_random_uuid(), $1, 'income', $2, $3, $4, $5, $6, $7, $8)
+     RETURNING ${TRANSACTION_COLUMNS}`,
+    [
+      householdId,
+      input.description,
+      input.amountCents,
+      input.date,
+      input.accountId,
+      input.categoryId,
+      input.subcategoryId ?? null,
+      input.notes ?? null,
+    ],
+  );
+  await client.query(
+    `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
+    [input.accountId, input.amountCents, householdId],
+  );
+  return mapTransaction(txRes.rows[0]!);
+};
+
 export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
   const { pool } = opts;
 
@@ -539,81 +629,34 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
       return withTransaction(pool, async (client) => applyDefaultsInTx(client, householdId));
     },
 
-    async createExpense(householdId, input) {
+    async createExpense(householdId, input, options) {
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
-      return withTransaction(pool, async (client) => {
-        const acc = await findAccountInHousehold(client, input.accountId, householdId);
-        if (acc.status !== 'active') throw domainErrors.notFound('Conta');
-        // H-01: card purchases must flow through the CardStore (statements,
-        // limits, invoice semantics) — never as plain balance expenses.
-        if (acc.kind === 'credit_card') {
-          throw new DomainError('validation.invalid', 'compra no cartão deve usar /cards/purchases.', 422);
-        }
-        const cat = await findCategoryInHousehold(client, input.categoryId, householdId);
-        if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
-        if (input.subcategoryId !== undefined) {
-          await resolveSubcategoryInTx(client, householdId, input.subcategoryId, 'expense', input.categoryId);
-        }
-        const txRes = await client.query<Row>(
-          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id, subcategory_id, notes)
-           VALUES (gen_random_uuid(), $1, 'expense', $2, $3, $4, $5, $6, $7, $8)
-           RETURNING ${TRANSACTION_COLUMNS}`,
-          [
-            householdId,
-            input.description,
-            input.amountCents,
-            input.date,
-            input.accountId,
-            input.categoryId,
-            input.subcategoryId ?? null,
-            input.notes ?? null,
-          ],
-        );
-        await client.query(
-          `UPDATE accounts
-              SET balance_cents = GREATEST(0, balance_cents - $2)
-            WHERE id = $1 AND household_id = $3`,
-          [input.accountId, input.amountCents, householdId],
-        );
-
-        return mapTransaction(txRes.rows[0]!);
+      if (options?.idempotencyKey === undefined) {
+        return withTransaction(pool, async (client) => createExpenseInTx(client, householdId, input));
+      }
+      // P1: V2 execution records (key → transaction) in the SAME tx as the
+      // mutation, so a retry after partial failure replays instead of
+      // duplicating.
+      return runKeyedMutation({
+        pool,
+        householdId,
+        idempotencyKey: options.idempotencyKey,
+        payload: input,
+        mutate: (client) => createExpenseInTx(client, householdId, input),
       });
     },
 
-    async createIncome(householdId, input) {
+    async createIncome(householdId, input, options) {
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
-      return withTransaction(pool, async (client) => {
-        const acc = await findAccountInHousehold(client, input.accountId, householdId);
-        if (acc.status !== 'active') throw domainErrors.notFound('Conta');
-        // H-01: income on a credit card is rejected (422), not silently booked.
-        if (acc.kind === 'credit_card') {
-          throw new DomainError('validation.invalid', 'receita não pode usar cartão de crédito.', 422);
-        }
-        const cat = await findCategoryInHousehold(client, input.categoryId, householdId);
-        if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
-        if (input.subcategoryId !== undefined) {
-          await resolveSubcategoryInTx(client, householdId, input.subcategoryId, 'income', input.categoryId);
-        }
-        const txRes = await client.query<Row>(
-          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id, subcategory_id, notes)
-           VALUES (gen_random_uuid(), $1, 'income', $2, $3, $4, $5, $6, $7, $8)
-           RETURNING ${TRANSACTION_COLUMNS}`,
-          [
-            householdId,
-            input.description,
-            input.amountCents,
-            input.date,
-            input.accountId,
-            input.categoryId,
-            input.subcategoryId ?? null,
-            input.notes ?? null,
-          ],
-        );
-        await client.query(
-          `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
-          [input.accountId, input.amountCents, householdId],
-        );
-        return mapTransaction(txRes.rows[0]!);
+      if (options?.idempotencyKey === undefined) {
+        return withTransaction(pool, async (client) => createIncomeInTx(client, householdId, input));
+      }
+      return runKeyedMutation({
+        pool,
+        householdId,
+        idempotencyKey: options.idempotencyKey,
+        payload: input,
+        mutate: (client) => createIncomeInTx(client, householdId, input),
       });
     },
 

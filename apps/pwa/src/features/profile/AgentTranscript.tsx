@@ -4,12 +4,8 @@ import { useEffect, useState } from "react";
 import BottomSheet from "@/components/BottomSheet";
 import {
   fetchAgentHistory,
-  fetchPendingOperations,
-  approvePendingOperation,
-  rejectPendingOperation,
   sendAgentMessage,
   type AgentMessage,
-  type PendingOperation,
 } from "@/lib/api/agent-client";
 
 export interface AgentTranscriptProps {
@@ -20,7 +16,6 @@ export interface AgentTranscriptProps {
 
 export function AgentTranscript({ open, workspaceId, onClose = () => {} }: AgentTranscriptProps) {
   const [messages, setMessages] = useState<AgentMessage[]>([]);
-  const [pendingOps, setPendingOps] = useState<PendingOperation[]>([]);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -40,12 +35,6 @@ export function AgentTranscript({ open, workspaceId, onClose = () => {} }: Agent
         setMessages([]);
         setHistoryError("Não foi possível carregar o histórico.");
       });
-    fetchPendingOperations(workspaceId)
-      .then((ops) => {
-        if (!cancelled) setPendingOps(ops);
-      })
-      .catch(() => {});
-
     return () => {
       cancelled = true;
     };
@@ -59,12 +48,8 @@ export function AgentTranscript({ open, workspaceId, onClose = () => {} }: Agent
 
     try {
       await sendAgentMessage(workspaceId, text);
-      const [history, ops] = await Promise.all([
-        fetchAgentHistory(workspaceId),
-        fetchPendingOperations(workspaceId).catch(() => []),
-      ]);
+      const history = await fetchAgentHistory(workspaceId);
       setMessages(history);
-      setPendingOps(ops);
     } catch {
       try {
         const history = await fetchAgentHistory(workspaceId);
@@ -79,32 +64,8 @@ export function AgentTranscript({ open, workspaceId, onClose = () => {} }: Agent
     }
   };
 
-  const handleApprove = async (opId: string) => {
-    await approvePendingOperation(workspaceId, opId);
-    setPendingOps((prev) => prev.filter((o) => o.id !== opId));
-  };
-
-  const handleReject = async (opId: string) => {
-    await rejectPendingOperation(workspaceId, opId);
-    setPendingOps((prev) => prev.filter((o) => o.id !== opId));
-  };
-
   return (
     <BottomSheet open={open} onClose={onClose} title="Histórico do Assistente">
-      {pendingOps.map((op) => (
-        <div key={op.id} className="p-3 mb-2 bg-amber-500/10 rounded-lg border border-amber-500/20">
-          <p className="font-semibold text-sm">Aprovação necessária</p>
-          <div className="flex gap-2 mt-2">
-            <button onClick={() => handleApprove(op.id)} className="px-3 py-1 bg-primary text-white text-xs rounded cursor-pointer">
-              Aprovar
-            </button>
-            <button onClick={() => handleReject(op.id)} className="px-3 py-1 bg-surface text-xs rounded cursor-pointer">
-              Rejeitar
-            </button>
-          </div>
-        </div>
-      ))}
-
       {historyError && (
         <p role="alert" className="rounded-[10px] bg-danger-tint px-3 py-2 text-[12px] font-semibold text-danger">
           {historyError}

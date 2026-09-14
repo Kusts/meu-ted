@@ -1,8 +1,23 @@
 /**
- * API Client — fetches from pi-finance-api when NEXT_PUBLIC_PI_FINANCE_API_BASE_URL
- * is set. Falls back to undefined (caller uses mock data) when env is absent.
+ * API Client — canonical browser transport is the same-origin proxy
+ * `/api/backend` (ADR-011: browser → /api/backend, HttpOnly cookie session
+ * via Set-Cookie passthrough, allowlisted headers, Origin check, upstream
+ * timeout, `no-store` responses).
  *
- * Token priority: explicit token option > NEXT_PUBLIC_PI_FINANCE_API_DEVICE_TOKEN env > localStorage ("pi-finance:token")
+ * `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL`, when explicitly set, overrides the
+ * proxy — transient compatibility for test/development environments only
+ * (ADR-011 "Decisão": compatibilidade transitória). It is never a silent
+ * production default: without it, production origins use the proxy and any
+ * other origin stays unconfigured (fail closed).
+ *
+ * Auth transport (ADR-011 compat window): the proxy forwards `cookie` (plus
+ * `authorization`/`x-device-token` when present) with `credentials: "include"`,
+ * so same-origin requests authenticate via the HttpOnly cookie and MUST NOT
+ * require localStorage tokens. Bearer/device headers from localStorage remain
+ * as fallback for origins where the Secure cookie is not persisted (localhost).
+ *
+ * TODO(ADR-011, review 2026-12-01): remove the localStorage session/device
+ * fallback once the compat window closes — see ADR-011 "Decisão".
  *
  * All env reads happen at call-time, allowing tests to use vi.stubEnv.
  */
@@ -22,7 +37,8 @@ export const responseSchema = z
   );
 
 const PRODUCTION_PWA_HOST = "pi-finance-pwa.walissonead.workers.dev";
-const PRODUCTION_API_BASE_URL = "https://api.synkroo.com.br";
+/** Canonical same-origin proxy base (ADR-011) — never a cross-origin default. */
+const SAME_ORIGIN_BACKEND_PROXY = "/api/backend";
 
 let activeWorkspaceId: string | undefined;
 
@@ -38,7 +54,7 @@ function baseUrl(): string | undefined {
   if (configured) return configured;
 
   if (typeof window !== "undefined" && window.location.hostname === PRODUCTION_PWA_HOST) {
-    return PRODUCTION_API_BASE_URL;
+    return SAME_ORIGIN_BACKEND_PROXY;
   }
 
   return undefined;
@@ -48,7 +64,12 @@ export function isApiConfigured(): boolean {
   return baseUrl() !== undefined;
 }
 
-/** Returns the session token from localStorage (safe for client-side only) */
+/**
+ * Returns the session token from localStorage (safe for client-side only).
+ * ADR-011 compat fallback: the same-origin proxy authenticates via the
+ * HttpOnly cookie first — this Bearer is only a fallback for origins where
+ * the Secure cookie is not persisted. See the TODO(ADR-011) in the header.
+ */
 export function getSessionToken(): string | undefined {
   try {
     return localStorage.getItem("pi-finance:session-token") ?? undefined;
@@ -57,7 +78,10 @@ export function getSessionToken(): string | undefined {
   }
 }
 
-/** Returns the auth token from localStorage (safe for client-side only) */
+/**
+ * Returns the auth token from localStorage (safe for client-side only).
+ * ADR-011 compat fallback — see getSessionToken / header TODO(ADR-011).
+ */
 export function getAuthToken(): string | undefined {
   try {
     return localStorage.getItem("pi-finance:token") ?? undefined;
@@ -117,6 +141,9 @@ export async function apiFetch<T>(
   const resolvedToken = token ?? getAuthToken();
   const sessionToken = getSessionToken();
 
+  // ADR-011: cookie session (credentials: "include" below) is primary on the
+  // same-origin proxy path; localStorage headers are compat fallback only and
+  // are omitted entirely when absent — the proxy MUST NOT require them.
   const requestHeaders: Record<string, string> = {
     Accept: "application/json",
     ...(rest.body ? { "Content-Type": "application/json" } : {}),

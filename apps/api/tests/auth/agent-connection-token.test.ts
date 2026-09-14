@@ -27,7 +27,7 @@ describe('Agent Connection Token (Task 3)', () => {
       sub: 'user-uuid-1',
       workspace: 'household-uuid-1',
       role: 'owner',
-      capabilities: ['financial.read', 'financial.write'],
+      capabilities: ['financial.read'],
       iat: Math.floor(now / 1000),
       exp: Math.floor(now / 1000) + 120,
     });

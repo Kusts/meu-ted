@@ -1,25 +1,44 @@
-# Meu Ted — Arquitetura Alvo
+# Meu Ted — Arquitetura alvo
 
-**Last verified:** 2026-08-23  
-**Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)  
+**Last verified:** 2026-09-13
+**Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)
 
-## 1. Estado Alvo Pós-Transição
+## Estado alvo consolidado
 
-A arquitetura alvo consolida a remoção completa do bridge de mensageria intermediário e centraliza toda a experiência do usuário na PWA canônica (Cloudflare Pages) e no assistente financeiro AI TED (Cloudflare Agent Worker com Durable Objects), consumindo diretamente a API autoritativa na VPS.
+O destino do projeto é uma superfície única composta por PWA, API autoritativa
+e TED Agent V2. O browser fala apenas com a origem da PWA; a API da VPS segue
+como única autoridade financeira. Não há runtime WhatsApp/Bridge nem extensão
+Pi como caminho operacional.
 
 ```mermaid
-graph TD
-    User([Usuário]) --> PWA[PWA Web/Mobile<br/>Cloudflare Pages / OpenNext]
-    PWA --> AgentWorker[Cloudflare Agent Worker<br/>Durable Objects Chat & State]
-    PWA --> API[Fastify API Autoritativa<br/>Hostinger VPS]
-    AgentWorker --> API
-    API --> Postgres[(PostgreSQL 16 DB<br/>Hostinger VPS)]
+graph LR
+    Browser --> PWA[PWA same-origin]
+    PWA --> Agent[TED V2]
+    PWA --> API[API autoritativa]
+    Agent --> API
+    API --> DB[(PostgreSQL)]
+    Agent -. opcional, sem write .-> Broker[Codex Broker]
 ```
 
-## 2. Metas de Convergência & Modernização
+## Propriedades de convergência
 
-1. **Zero Dependência do WhatsApp e Legado:** Transição de 100% das operações diárias para a PWA e chat nativo na Cloudflare, eliminando o container do `whatsapp-bridge` e adapters de schema antigo.
-2. **Autenticação e Multi-Tenancy Unificados:** Acesso seguro via Better-Auth (email/senha e convites administrativos) com governança de workspaces server-side.
-3. **Observabilidade e Auditoria Unificadas:** Monitoramento consolidado de latência, saúde do banco e auditoria imutável de transações financeiras.
-4. **Isolamento de Borda e Dados:** Computação de borda ultrarrápida para interface e IA conversacional na Cloudflare combinada com persistência transacional ACID isolada na VPS.
+1. Um `ConversationOrchestrator` normaliza REST, SDK e Broker em um contrato
+   único e fail-closed.
+2. Respostas financeiras usam evidência atual da API; memória só fornece
+   contexto não autoritativo.
+3. Provedores são adaptadores de texto/ferramenta e nunca são uma fonte de
+   identidade, capability, aprovação ou valor financeiro.
+4. Uma mutação passa por proposta V2, confirmação exata e execução
+   idempotente na API. A PWA recebe apenas DTOs seguros de estado.
+5. CI executa API, Agent, Broker, PWA, Postgres descartável, containers,
+   segurança, documentação e invariantes arquiteturais. Deploys PWA/Agent só
+   são elegíveis após conclusão `success` do workflow `CI` no SHA aprovado.
 
+## Rollout e rollback
+
+O rollout começa por fixtures e CI, seguido de leituras e propostas. Execução
+confirmada requer auditoria e métricas operacionais. O rollback só pode alterar
+roteamento de leitura ou versão de aplicação; migrations V2 permanecem
+compatíveis e pending operations V2 continuam canceláveis/expiráveis. Nenhum
+rollback pode reintroduzir `[EXEC_ACTION]`, atestação no browser ou write sem
+confirmação.

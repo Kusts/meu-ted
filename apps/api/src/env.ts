@@ -68,13 +68,26 @@ export type AppConfig = {
   inviteAcceptUrl: string | null;
 };
 
-export const loadConfig = (): AppConfig => {
-  const port = Number(process.env.PORT ?? 3001);
-  const host = process.env.HOST ?? '0.0.0.0';
-  const databaseUrl = process.env.DATABASE_URL?.trim() || null;
-  const defaultHouseholdId = process.env.DEFAULT_HOUSEHOLD_ID?.trim() || '11111111-1111-4111-8111-111111111111';
-  const betterAuthSecret = process.env.BETTER_AUTH_SECRET?.trim() || 'pi-financeiro-dev-secret-at-least-32-chars!';
-  const betterAuthUrl = process.env.BETTER_AUTH_URL?.trim() || process.env.API_BASE_URL?.trim() || (process.env.NODE_ENV === 'production' ? 'https://api.synkroo.com.br' : `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
+export const loadConfig = (source: NodeJS.ProcessEnv = process.env): AppConfig => {
+  const production = source.NODE_ENV === 'production';
+  const requiredProduction = (name: string): string => {
+    const value = source[name]?.trim();
+    if (!value) throw new Error(`FATAL: ${name} is required in production; refusing to start with unsafe defaults.`);
+    return value;
+  };
+  const requiredProductionSecret = (name: string): string => {
+    const value = requiredProduction(name);
+    if (value.length < 32 || /^dev[-_]/i.test(value)) {
+      throw new Error(`FATAL: ${name} must be a non-development secret of at least 32 characters in production.`);
+    }
+    return value;
+  };
+  const port = Number(source.PORT ?? 3001);
+  const host = source.HOST ?? '0.0.0.0';
+  const databaseUrl = production ? requiredProduction('DATABASE_URL') : (source.DATABASE_URL?.trim() || null);
+  const defaultHouseholdId = production ? requiredProduction('DEFAULT_HOUSEHOLD_ID') : (source.DEFAULT_HOUSEHOLD_ID?.trim() || '11111111-1111-4111-8111-111111111111');
+  const betterAuthSecret = production ? requiredProductionSecret('BETTER_AUTH_SECRET') : (source.BETTER_AUTH_SECRET?.trim() || 'pi-financeiro-dev-secret-at-least-32-chars!');
+  const betterAuthUrl = source.BETTER_AUTH_URL?.trim() || source.API_BASE_URL?.trim() || (production ? requiredProduction('BETTER_AUTH_URL') : `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
   const defaultOrigins = [
     'https://pi-finance-pwa.walissonead.workers.dev',
     'http://localhost:3000',
@@ -82,11 +95,21 @@ export const loadConfig = (): AppConfig => {
     'http://localhost:3001',
     'http://127.0.0.1:3001',
   ];
-  const envOrigins = process.env.TRUSTED_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean);
-  const trustedOrigins = envOrigins && envOrigins.length > 0 ? envOrigins : defaultOrigins;
-  const disableSignUp = process.env.DISABLE_SIGN_UP !== 'false';
-  const disableDeviceRegistration = process.env.DISABLE_DEVICE_REGISTRATION !== 'false';
-  const adminEmails = (process.env.ADMIN_EMAILS ?? 'walissonead@gmail.com')
+  const envOrigins = source.TRUSTED_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean);
+  const trustedOrigins = production ? (envOrigins && envOrigins.length > 0 ? envOrigins : (() => { throw new Error('FATAL: TRUSTED_ORIGINS is required in production; refusing to start.'); })()) : (envOrigins && envOrigins.length > 0 ? envOrigins : defaultOrigins);
+  if (production) {
+    for (const origin of trustedOrigins) {
+      let parsed: URL;
+      try { parsed = new URL(origin); } catch { throw new Error(`FATAL: invalid trusted origin in production: ${origin}`); }
+      if (parsed.protocol !== 'https:' || /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(parsed.hostname)) {
+        throw new Error(`FATAL: insecure trusted origin in production: ${origin}`);
+      }
+    }
+    if (new URL(betterAuthUrl).protocol !== 'https:') throw new Error('FATAL: BETTER_AUTH_URL must use HTTPS in production.');
+  }
+  const disableSignUp = source.DISABLE_SIGN_UP !== 'false';
+  const disableDeviceRegistration = source.DISABLE_DEVICE_REGISTRATION !== 'false';
+  const adminEmails = (production ? requiredProduction('ADMIN_EMAILS') : (source.ADMIN_EMAILS ?? 'walissonead@gmail.com'))
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
@@ -113,13 +136,13 @@ export const loadConfig = (): AppConfig => {
     disableSignUp,
     disableDeviceRegistration,
     adminEmails,
-    agentConnectionSecret: process.env.AGENT_CONNECTION_TOKEN_SECRET?.trim() || 'dev-agent-connection-secret-at-least-32-chars!',
-    agentConfigToken: process.env.AGENT_CONFIG_TOKEN?.trim() || 'dev-agent-config-token-32-chars-minimum!',
-    agentAuthServiceToken: process.env.AGENT_AUTH_SERVICE_TOKEN?.trim() || 'dev-agent-auth-service-token-32-chars!',
-    agentRuntimeOrigin: process.env.AGENT_RUNTIME_ORIGIN?.trim() || 'https://pi-finance-agent.walissonead.workers.dev',
-    agentRuntimeAdminToken: process.env.AGENT_RUNTIME_ADMIN_TOKEN?.trim() || 'dev-agent-runtime-admin-token-32-chars!',
-    inviteDeliveryUrl: process.env.INVITE_DELIVERY_URL?.trim() || null,
-    inviteDeliveryToken: process.env.INVITE_DELIVERY_TOKEN?.trim() || null,
+    agentConnectionSecret: production ? requiredProductionSecret('AGENT_CONNECTION_TOKEN_SECRET') : (source.AGENT_CONNECTION_TOKEN_SECRET?.trim() || 'dev-agent-connection-secret-at-least-32-chars!'),
+    agentConfigToken: production ? requiredProductionSecret('AGENT_CONFIG_TOKEN') : (source.AGENT_CONFIG_TOKEN?.trim() || 'dev-agent-config-token-32-chars-minimum!'),
+    agentAuthServiceToken: production ? requiredProductionSecret('AGENT_AUTH_SERVICE_TOKEN') : (source.AGENT_AUTH_SERVICE_TOKEN?.trim() || 'dev-agent-auth-service-token-32-chars!'),
+    agentRuntimeOrigin: production ? requiredProduction('AGENT_RUNTIME_ORIGIN') : (source.AGENT_RUNTIME_ORIGIN?.trim() || 'https://pi-finance-agent.walissonead.workers.dev'),
+    agentRuntimeAdminToken: production ? requiredProductionSecret('AGENT_RUNTIME_ADMIN_TOKEN') : (source.AGENT_RUNTIME_ADMIN_TOKEN?.trim() || 'dev-agent-runtime-admin-token-32-chars!'),
+    inviteDeliveryUrl: source.INVITE_DELIVERY_URL?.trim() || null,
+    inviteDeliveryToken: source.INVITE_DELIVERY_TOKEN?.trim() || null,
     smtpHost,
     smtpPort,
     smtpUser,

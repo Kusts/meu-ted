@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 describe("same-origin backend proxy", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -62,6 +62,50 @@ describe("same-origin backend proxy", () => {
     const [, init] = upstream.mock.calls[0] ?? [];
     const headers = init?.headers as Headers;
     expect(headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
+  });
+
+  it("rejects a foreign browser origin for state-changing requests", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const response = await POST(new Request("https://pwa.example/api/backend/payables", {
+      method: "POST", headers: { origin: "https://attacker.example", "content-type": "application/json" }, body: "{}",
+    }), { params: Promise.resolve({ path: ["payables"] }) });
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized request bodies before contacting the upstream", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const response = await POST(new Request("https://pwa.example/api/backend/payables", {
+      method: "POST", headers: { origin: "https://pwa.example", "content-type": "application/json", "content-length": String(1_048_577) }, body: "{}",
+    }), { params: Promise.resolve({ path: ["payables"] }) });
+    expect(response.status).toBe(413);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("marks private API responses as non-cacheable", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const response = await GET(new Request("https://pwa.example/api/backend/me"), { params: Promise.resolve({ path: ["me"] }) });
+    expect(response.headers.get("cache-control")).toContain("no-store");
+  });
+
+  it("proxies cookie-only requests without requiring Authorization or device tokens (ADR-011 cookie precedence)", async () => {
+    const upstream = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await GET(new Request("https://pwa.example/api/backend/workspaces", {
+      headers: { cookie: "better-auth.session_token=abc" },
+    }), { params: Promise.resolve({ path: ["workspaces"] }) });
+
+    expect(response.status).toBe(200);
+    const [, init] = upstream.mock.calls[0] ?? [];
+    const headers = init?.headers as Headers;
+    expect(headers.get("cookie")).toBe("better-auth.session_token=abc");
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("x-device-token")).toBeNull();
   });
 });
 

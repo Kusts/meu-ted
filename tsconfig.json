@@ -1,7 +1,6 @@
 {
   "files": [],
   "references": [
-    { "path": "apps/whatsapp-bridge" },
     { "path": "apps/api" },
     { "path": "apps/pwa" }
   ]

@@ -18,7 +18,7 @@ export type MemoryToolContext = {
 
 export const buildMemoryTools = (ctx: MemoryToolContext): Record<string, ReturnType<typeof tool>> => ({
   remember_fact: tool({
-    description: 'Guarda um fato, preferência ou aprendizado durável sobre a pessoa (com o consentimento implícito do pedido).',
+    description: 'Guarda um fato, preferência ou aprendizado durável sobre a pessoa (com o consentimento implícito do pedido). Nunca use para saldos, valores atuais, faturas ou extratos — valores financeiros atuais nunca são duráveis e serão recusados.',
     inputSchema: jsonSchema({
       type: 'object',
       properties: {

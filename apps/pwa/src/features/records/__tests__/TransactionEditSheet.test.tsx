@@ -2,7 +2,8 @@ import { render, screen, fireEvent, waitFor } from "@/lib/test-utils";
 import { TransactionEditSheet } from "../components/TransactionEditSheet";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories } from "@/lib/state/mock-data";
-import type { AppState, Transaction } from "@/lib/state/types";
+import type { AppState } from "@/lib/state/app-state-context";
+import type { Transaction } from "@/lib/state/types";
 
 const accounts = [...mockAccounts];
 const categories = [...mockCategories];
@@ -23,8 +24,8 @@ const transferTx: Transaction = {
   description: "PIX",
   amountCents: 10000,
   date: "2026-06-02",
-  fromAccountId: "acc1",
-  toAccountId: "acc2",
+  categoryId: "cat1",
+  accountId: "acc1",
 };
 
 function mockState(overrides: Partial<AppState> = {}): AppState {
@@ -84,7 +85,7 @@ describe("TransactionEditSheet", () => {
 
   it("saves without categoryId/accountId when not present", () => {
     const updateSpy = vi.fn();
-    const bare: Transaction = { id: "tx3", kind: "expense", description: "Outra", amountCents: 100, date: "2026-06-03" };
+    const bare: Transaction = { id: "tx3", kind: "expense", description: "Outra", amountCents: 100, date: "2026-06-03", categoryId: "", accountId: "" };
     vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ updateTransaction: updateSpy }));
     render(<TransactionEditSheet open onClose={vi.fn()} transaction={bare} />);
     fireEvent.click(screen.getByText("Salvar"));
@@ -113,7 +114,7 @@ describe("TransactionEditSheet", () => {
   it("renders nothing when transaction is null", () => {
     vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState());
     const { container } = render(<TransactionEditSheet open onClose={vi.fn()} transaction={null} />);
-    expect(container).toBeEmptyDOMElement();
+    expect(container).toBeEmpty();
   });
 
   it("updates amount, category and account before saving", () => {

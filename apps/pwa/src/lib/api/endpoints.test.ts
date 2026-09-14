@@ -112,17 +112,17 @@ describe("endpoints — writes", () => {
     expect(methodOf()).toBe("PATCH");
   });
   it("updateCardPurchase PATCH /cards/purchases/:id", async () => {
-    await endpoints.updateCardPurchase("st1", 2, 100);
+    await endpoints.updateCardPurchase("st1", { description: "d", amountCents: 100 });
     expect(pathOf()).toBe("/cards/purchases/st1");
     expect(methodOf()).toBe("PATCH");
   });
   it("payStatement POST /cards/statements/:id/pay", async () => {
-    await endpoints.payStatement("st1", 5000, "acc1");
+    await endpoints.payStatement("st1", { amountCents: 5000, fromAccountId: "acc1" });
     expect(pathOf()).toBe("/cards/statements/st1/pay");
     expect(methodOf()).toBe("POST");
   });
   it("createInstallments POST /cards/installments", async () => {
-    await endpoints.createInstallments({ accountId: "a", description: "d", totalAmountCents: 100, installmentsCount: 3, firstDueDate: "2026-01-01" });
+    await endpoints.createInstallments({ accountId: "a", description: "d", totalAmountCents: 100, installmentsTotal: 3, purchaseDate: "2026-01-01" });
     expect(pathOf()).toBe("/cards/installments");
     expect(methodOf()).toBe("POST");
   });
@@ -132,12 +132,12 @@ describe("endpoints — writes", () => {
     expect(methodOf()).toBe("POST");
   });
   it("createTransfer POST /transfers", async () => {
-    await endpoints.createTransfer({ fromAccountId: "a", amountCents: 1, description: "d", date: "2026-01-01" });
+    await endpoints.createTransfer({ fromAccountId: "a", toAccountId: "b", amountCents: 1, description: "d", date: "2026-01-01" });
     expect(pathOf()).toBe("/transfers");
     expect(methodOf()).toBe("POST");
   });
   it("addAccount POST /accounts", async () => {
-    await endpoints.addAccount({ name: "n", initialBalanceCents: 0 });
+    await endpoints.addAccount({ name: "n", kind: "bank", initialBalanceCents: 0 });
     expect(pathOf()).toBe("/accounts");
     expect(methodOf()).toBe("POST");
   });
@@ -222,7 +222,7 @@ describe("endpoints — writes", () => {
     expect(methodOf()).toBe("POST");
   });
   it("updateBudget PATCH /budgets/:id", async () => {
-    await endpoints.updateBudget("b1", { name: "n" });
+    await endpoints.updateBudget("b1", { amountCents: 1 });
     expect(pathOf()).toBe("/budgets/b1");
     expect(methodOf()).toBe("PATCH");
   });
@@ -232,7 +232,7 @@ describe("endpoints — writes", () => {
     expect(methodOf()).toBe("POST");
   });
   it("contributeToGoal POST /goals/:id/contribute", async () => {
-    await endpoints.contributeToGoal("g1", 500);
+    await endpoints.contributeToGoal("g1", { amountCents: 500 });
     expect(pathOf()).toBe("/goals/g1/contribute");
     expect(methodOf()).toBe("POST");
   });
@@ -247,7 +247,7 @@ describe("endpoints — writes", () => {
     expect(methodOf()).toBe("PATCH");
   });
   it("patchProfile PATCH /profile", async () => {
-    await endpoints.patchProfile({ displayName: "n" });
+    await endpoints.patchProfile({ name: "n" });
     expect(pathOf()).toBe("/profile");
     expect(methodOf()).toBe("PATCH");
   });

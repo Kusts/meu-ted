@@ -363,7 +363,7 @@ describe("PullToRefreshIndicator (spec AGY §3)", () => {
         state={{ pullDistance: 0, isRefreshing: false, refreshing: false }}
       />,
     );
-    expect(container).toBeEmptyDOMElement();
+    expect(container).toBeEmpty();
   });
 
   it("cápsula 36px com arco esmeralda 2.5px e tokens de superfície", () => {
@@ -486,7 +486,7 @@ describe("PullToRefreshIndicator (spec AGY §3)", () => {
       act(() => {
         vi.advanceTimersByTime(200);
       });
-      expect(container).toBeEmptyDOMElement();
+      expect(container).toBeEmpty();
     });
 
     it("sob reduced-motion some imediatamente, sem retração", () => {
@@ -501,7 +501,7 @@ describe("PullToRefreshIndicator (spec AGY §3)", () => {
           state={{ pullDistance: 0, isRefreshing: false, refreshing: false }}
         />,
       );
-      expect(container).toBeEmptyDOMElement();
+      expect(container).toBeEmpty();
     });
   });
 });

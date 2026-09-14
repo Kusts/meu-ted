@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { middleware } from "../middleware";
 import { SECURITY_HEADERS } from "../proxy-utils";
 
-function mockRequest(url = "https://example.com/"): Request {
-  return new Request(url);
+function mockRequest(url = "https://example.com/"): NextRequest {
+  return new NextRequest(url);
 }
 
 describe("middleware", () => {

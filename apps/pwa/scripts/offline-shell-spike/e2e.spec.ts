@@ -127,7 +127,7 @@ test.describe("Kill Switch", () => {
       const names = await caches.keys();
       return { hasOther: names.includes("other-cache"), hasPi: names.some(n => n.startsWith("pi-finance")), names };
     });
-    expect(remaining.hasOther).toBe(true, "non-pi cache survives");
-    expect(remaining.hasPi).toBe(false, "pi-finance caches deleted");
+    expect(remaining.hasOther).toBe(true); // non-pi cache survives
+    expect(remaining.hasPi).toBe(false); // pi-finance caches deleted
   });
 });

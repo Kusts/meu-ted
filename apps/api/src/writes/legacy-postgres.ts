@@ -15,7 +15,8 @@ import type { Account, Category, Transaction } from '../types/domain.js';
 import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors, DomainError } from './errors.js';
-import type { WriteStore } from './store.js';
+import { runKeyedMutation } from './pending-idempotency.js';
+import type { WriteIdempotencyOptions, WriteStore } from './store.js';
 import type {
   CreateAccountInput, CreateCategoryInput, CreateExpenseInput, CreateIncomeInput,
   CreateTransferInput, DeleteCategoryInput, UpdateAccountInput, UpdateCategoryInput, UpdateTransactionInput,
@@ -196,6 +197,47 @@ const findActiveCategoryByKey = async (
   );
   if ((found.rowCount ?? 0) === 0) return null;
   return { id: found.rows[0]!['id'] as string };
+};
+
+/**
+ * Client-bound legacy expense mutation (no transaction handling): shared
+ * by the plain path and the V2 key-idempotent path (record + mutation in
+ * the SAME tx, see pending-idempotency.ts). The production VPS runs this
+ * legacy schema, so the P1 fix must cover it too.
+ */
+const createExpenseLegacyInTx = async (
+  client: PoolClient,
+  householdId: string,
+  input: CreateExpenseInput,
+): Promise<Transaction> => {
+  await assertNotCreditCardLegacy(client, householdId, input.accountId, 'compra no cartão deve usar /cards/purchases.');
+  if (input.subcategoryId !== undefined) {
+    await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'expense', input.categoryId);
+  }
+  const res = await client.query<Row>(
+    `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, subcategory_id, notes)
+     VALUES (gen_random_uuid(), $1, 'expense', $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, category_id, subcategory_id, notes`,
+    [householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId, input.subcategoryId ?? null, input.notes ?? null]);
+  return mapTransaction(res.rows[0]!);
+};
+
+/** Client-bound legacy income mutation (no transaction handling). */
+const createIncomeLegacyInTx = async (
+  client: PoolClient,
+  householdId: string,
+  input: CreateIncomeInput,
+): Promise<Transaction> => {
+  await assertNotCreditCardLegacy(client, householdId, input.accountId, 'receita não pode usar cartão de crédito.');
+  if (input.subcategoryId !== undefined) {
+    await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'income', input.categoryId);
+  }
+  const res = await client.query<Row>(
+    `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, to_account_id, category_id, subcategory_id, notes)
+     VALUES (gen_random_uuid(), $1, 'income', $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, household_id, kind, description, amount_cents, date, to_account_id, category_id, subcategory_id, notes`,
+    [householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId, input.subcategoryId ?? null, input.notes ?? null]);
+  return mapTransaction(res.rows[0]!);
 };
 
 export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
@@ -380,34 +422,30 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
       return withTransaction(pool, async (client: PoolClient) => applyDefaultsLegacyInTx(client, householdId));
     },
 
-    async createExpense(householdId: string, input: CreateExpenseInput) {
+    async createExpense(householdId: string, input: CreateExpenseInput, options?: WriteIdempotencyOptions) {
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
-      return withTransaction(pool, async (client: PoolClient) => {
-        await assertNotCreditCardLegacy(client, householdId, input.accountId, 'compra no cartão deve usar /cards/purchases.');
-        if (input.subcategoryId !== undefined) {
-          await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'expense', input.categoryId);
-        }
-        const res = await client.query<Row>(
-          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, subcategory_id, notes)
-           VALUES (gen_random_uuid(), $1, 'expense', $2, $3, $4, $5, $6, $7, $8)
-           RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, category_id, subcategory_id, notes`,
-          [householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId, input.subcategoryId ?? null, input.notes ?? null]);
-        return mapTransaction(res.rows[0]!);
+      if (options?.idempotencyKey === undefined) {
+        return withTransaction(pool, async (client: PoolClient) => createExpenseLegacyInTx(client, householdId, input));
+      }
+      return runKeyedMutation({
+        pool,
+        householdId,
+        idempotencyKey: options.idempotencyKey,
+        payload: input,
+        mutate: (client) => createExpenseLegacyInTx(client, householdId, input),
       });
     },
-    async createIncome(householdId: string, input: CreateIncomeInput) {
+    async createIncome(householdId: string, input: CreateIncomeInput, options?: WriteIdempotencyOptions) {
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
-      return withTransaction(pool, async (client: PoolClient) => {
-        await assertNotCreditCardLegacy(client, householdId, input.accountId, 'receita não pode usar cartão de crédito.');
-        if (input.subcategoryId !== undefined) {
-          await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'income', input.categoryId);
-        }
-        const res = await client.query<Row>(
-          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, to_account_id, category_id, subcategory_id, notes)
-           VALUES (gen_random_uuid(), $1, 'income', $2, $3, $4, $5, $6, $7, $8)
-           RETURNING id, household_id, kind, description, amount_cents, date, to_account_id, category_id, subcategory_id, notes`,
-          [householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId, input.subcategoryId ?? null, input.notes ?? null]);
-        return mapTransaction(res.rows[0]!);
+      if (options?.idempotencyKey === undefined) {
+        return withTransaction(pool, async (client: PoolClient) => createIncomeLegacyInTx(client, householdId, input));
+      }
+      return runKeyedMutation({
+        pool,
+        householdId,
+        idempotencyKey: options.idempotencyKey,
+        payload: input,
+        mutate: (client) => createIncomeLegacyInTx(client, householdId, input),
       });
     },
     async createTransfer(householdId: string, input: CreateTransferInput) {

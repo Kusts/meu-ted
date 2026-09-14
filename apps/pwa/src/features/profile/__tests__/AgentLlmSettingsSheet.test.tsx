@@ -19,6 +19,9 @@ describe("AgentLlmSettingsSheet Component (Task 11)", () => {
           secretAlias: "OPENCODE_ZEN_API_KEY",
           eligibility: "approved",
           enabled: true,
+          kind: "opencode-zen",
+          transport: "direct",
+          authMode: "api-key",
         },
       ],
       models: [
@@ -33,12 +36,16 @@ describe("AgentLlmSettingsSheet Component (Task 11)", () => {
         },
       ],
       runtime: {
-        id: 1,
+        singleton: "active" as const,
         version: 1,
         activeProviderId: "opencode-zen",
         activeModelId: "gpt-4o",
         activeProtocol: "chat-completions",
         activeRolloutPercentage: 100,
+        activeRolloutMode: "all",
+        canaryAllowlist: [],
+        fallbackProviderId: null,
+        fallbackModelId: null,
         securityEpoch: 1,
         updatedBy: "admin@test.com",
         updatedAt: "2026-08-27T10:00:00Z",
@@ -66,6 +73,9 @@ describe("AgentLlmSettingsSheet Component (Task 11)", () => {
         secretAlias: "OPENCODE_ZEN_API_KEY",
         eligibility: "approved",
         enabled: false,
+        kind: "opencode-zen",
+        transport: "direct",
+        authMode: "api-key",
       },
     });
 

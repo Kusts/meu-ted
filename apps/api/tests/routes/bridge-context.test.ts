@@ -64,6 +64,26 @@ describe("Bridge Context Identity Resolution HTTP Route", () => {
     expect(claims.workspace).toBe(WORKSPACE_1);
     expect(claims.role).toBe("owner");
     expect(claims.request).toBe("whatsapp:msg-12345");
+    // P2 remediation: least-privilege read-only allowlist, never a wildcard.
+    expect(claims.capabilities).toEqual(["financial.read"]);
+  });
+
+  it("never mints a wildcard capability", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/bridge-context",
+      payload: {
+        phone: "+55 (11) 99999-1111",
+        chatId: "5511999991111@s.whatsapp.net",
+        providerMessageId: "msg-allowlist",
+        requestId: "whatsapp:msg-allowlist",
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const claims = await verifyDelegatedTurnToken(res.json().delegatedToken, SECRET);
+    expect(claims.capabilities).not.toContain("*");
+    expect(claims.capabilities).toEqual(["financial.read"]);
   });
 
   it("returns 404 when phone is not bound to any user", async () => {

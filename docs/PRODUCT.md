@@ -1,30 +1,37 @@
-# Meu Ted — Visão de Produto
+# Meu Ted — Visão de produto
 
-**Last verified:** 2026-08-26  
-**Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)  
+**Last verified:** 2026-09-13
+**Reference:** [`runtime-facts.json`](architecture/runtime-facts.json)
 
-## 1. Propósito e Visão
+## Propósito
 
-O **Meu Ted** é uma plataforma de gestão financeira pessoal e familiar projetada para fornecer controle financeiro completo e confiável, unificando uma experiência PWA moderna, responsiva e instalável com um assistente conversacional inteligente (TED).
+Meu Ted ajuda pessoas e famílias a organizar contas, transações, cartões,
+orçamentos e metas. A PWA é a interface canônica; a API autoritativa preserva
+integridade, auditoria e isolamento por workspace.
 
-## 2. Personas e Acesso
+## Usuários e acesso
 
-- **Membro do Workspace:** Registra receitas e despesas, consulta extrato em tempo real, gerencia contas a pagar, acompanha faturas e limites de cartão de crédito.
-- **Administrador de Workspace:** Gerencia contas, cartões, categorias, metas, emite convites para novos membros via email com credenciais gerenciadas e define políticas operacionais.
-- **Assistente TED (AI):** Co-piloto financeiro conversacional integrado ao ecossistema, operando via Cloudflare Agents SDK para responder dúvidas, projetar despesas e executar operações financeiras com segurança.
+- **Membro:** consulta dados e prepara operações dentro do seu workspace.
+- **Owner/administrador:** administra o workspace e convites conforme as
+  permissões da API.
+- **TED:** co-piloto conversacional. Ele pode explicar dados atuais e preparar
+  propostas, mas não ganha autoridade financeira própria.
 
-## 3. Autenticação e Segurança do Usuário
+## TED V2
 
-- **Autenticação por Email e Senha:** Sessões autenticadas gerenciadas via Better-Auth, eliminando o antigo modelo de registro aberto de dispositivo.
-- **Onboarding Controlado por Convite:** Novos usuários e acessos a workspaces são provisionados através de convites administrativos com senhas seguras.
-- **Controle de Sessão e Dispositivos:** Emissão de credenciais de dispositivo estritamente subordinadas à sessão autenticada do usuário.
+O TED recebe uma mensagem autenticada, a normaliza no pipeline V2 e usa
+evidências atuais da API. Para uma mutação, ele apresenta uma proposta e a PWA
+envia somente a decisão para o Agent. A API confirma e executa a operação
+vinculada; a interface informa sucesso exclusivamente após `succeeded`.
 
-## 4. Principais Recursos e Módulos
+Memória conversacional melhora contexto, mas nunca substitui saldos, extratos,
+identidade ou permissões atuais. Na ausência de evidência, confirmação ou
+capability, o TED falha fechado e pede esclarecimento.
 
-1. **Gestão de Contas & Saldos:** Controle de contas correntes, investimentos, dinheiro e cartões com valores representados em centavos inteiros (BRL).
-2. **Cartões de Crédito, Faturas & Cancelamento:** Gerenciamento de faturas abertas e fechadas, parcelamentos, compras pontuais e suporte a cancelamento de lançamentos.
-3. **Contas a Pagar & Notificações Push:** Controle de liquidação, agendamento de vencimentos e lembretes proativos via Web Push Notification.
-4. **Metas & Orçamentos por Categoria:** Definição de limites orçamentários por categoria e acompanhamento de metas financeiras familiares.
-5. **Auditoria & Registro Imutável:** Rastreabilidade estrita de cada mutação financeira por ator, workspace e chave de idempotência com capacidade de reversão.
-6. **TED Chat Global (Agents SDK):** Widget flutuante global por workspace (fullscreen em iPhone, painel em desktop) sobre `FinanceChatAgent extends AIChatAgent`, com configuração LLM global (OpenCode Zen/Go, OpenAI API + candidato Codex subscription `experimental_blocked`) administrada exclusivamente por `ADMIN_EMAILS`.
+## Recursos
 
+1. Contas, saldos, receitas, despesas e transferências em centavos inteiros.
+2. Cartões, faturas, parcelamentos e contas a pagar.
+3. Orçamentos, metas, alertas e auditoria de mutações.
+4. TED em painel/global chat com proposta, confirmação, cancelamento e estado
+   seguro de pending operation.
