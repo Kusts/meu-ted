@@ -5,6 +5,7 @@ import type { AuthResolver } from './auth.js';
 import { DomainError, domainErrors } from '../writes/errors.js';
 import { requireIdempotencyKey } from '../writes/idempotency.js';
 import { computePendingOperationV2Hash, type PendingOperationV2 } from '@pi-finance/llm-contracts';
+import { validateApprovalToolArgs } from '../approvals/tool-registry.js';
 import { PendingOperationV2Error, type PendingExecutor, type PendingOperationExecutor, type PendingOperationStore, type PendingOperationV2Store } from '../approvals/pending.js';
 import type { UndoService } from '../approvals/undo.js';
 
@@ -40,7 +41,11 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
       }
       return reply.code(error.statusCode).send({ code: error.code, message: error.message });
     }
-    if (error instanceof PendingOperationV2Error) return reply.code(error.statusCode).send({ code: error.code, message: error.message });
+    if (error instanceof PendingOperationV2Error) {
+      const body: Record<string, unknown> = { code: error.code, message: error.message };
+      if (error.details !== undefined) body.details = error.details;
+      return reply.code(error.statusCode).send(body);
+    }
     throw error;
   };
 
@@ -56,19 +61,28 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
       }
       return true;
     };
-    app.post('/pending-operations/v2/propose', async (req, reply) => {
+    const proposeV2 = async (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => {
       if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.propose)) return;
       let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); }
       try {
         const key = requireIdempotencyKey(req.headers as Record<string, unknown>);
         const body = z.object({ tool: z.string().min(1), normalizedArgs: z.record(z.unknown()), expiresAt: z.string().datetime({ offset: true }).optional() }).strict().safeParse(req.body ?? {});
         if (!body.success) return reply.code(400).send({ code: 'validation.error', issues: body.error.issues });
-        const base = { version: 2 as const, ...identity(ctx), tool: body.data.tool, normalizedArgs: body.data.normalizedArgs as PendingOperationV2['normalizedArgs'], proposalHash: '', idempotencyKey: key, createdAt: new Date().toISOString(), expiresAt: body.data.expiresAt ?? new Date(Date.now() + 30 * 60_000).toISOString(), bindings: identity(ctx) };
+        // SPEC §7.4: validate against the registry contract for the requested
+        // tool BEFORE persisting (the store re-validates as defense-in-depth).
+        const checked = validateApprovalToolArgs(body.data.tool, body.data.normalizedArgs);
+        if (!checked.success && checked.code === 'tool.not_allowed') return reply.code(403).send({ code: 'tool.not_allowed', message: 'Ferramenta não permitida no protocolo de aprovação.' });
+        if (!checked.success) return reply.code(422).send({ code: 'approval.invalid_args', message: 'Argumentos inválidos para a ferramenta de aprovação.', details: checked.issues });
+        const base = { version: 2 as const, ...identity(ctx), tool: body.data.tool, normalizedArgs: checked.data as PendingOperationV2['normalizedArgs'], proposalHash: '', idempotencyKey: key, createdAt: new Date().toISOString(), expiresAt: body.data.expiresAt ?? new Date(Date.now() + 30 * 60_000).toISOString(), bindings: identity(ctx) };
         const operation = { ...base, proposalHash: await computePendingOperationV2Hash(base) };
-        return reply.code(201).send(await v2Store.propose(operation));
+        const result = await v2Store.propose(operation);
+        // SPEC §7.7: same key + same payload replays the existing operation.
+        if (result.existing) return reply.code(200).send(result);
+        return reply.code(201).send(result);
       } catch (error) { return handleError(error, reply); }
-    });
-    app.post('/pending-operations/v2', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.propose)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } try { const key = requireIdempotencyKey(req.headers as Record<string, unknown>); const body = z.object({ tool: z.string().min(1), normalizedArgs: z.record(z.unknown()), expiresAt: z.string().datetime({ offset: true }).optional() }).strict().safeParse(req.body ?? {}); if (!body.success) return reply.code(400).send({ code: 'validation.error', issues: body.error.issues }); const base = { version: 2 as const, ...identity(ctx), tool: body.data.tool, normalizedArgs: body.data.normalizedArgs as PendingOperationV2['normalizedArgs'], proposalHash: '', idempotencyKey: key, createdAt: new Date().toISOString(), expiresAt: body.data.expiresAt ?? new Date(Date.now() + 30 * 60_000).toISOString(), bindings: identity(ctx) }; return reply.code(201).send(await v2Store.propose({ ...base, proposalHash: await computePendingOperationV2Hash(base) })); } catch (error) { return handleError(error, reply); } });
+    };
+    app.post('/pending-operations/v2/propose', proposeV2);
+    app.post('/pending-operations/v2', proposeV2);
     const confirm = async (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.confirm)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.confirm(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } };
     app.post('/pending-operations/v2/:id/confirm', confirm);
     app.get('/pending-operations/v2/:id', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.read)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.get(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } });

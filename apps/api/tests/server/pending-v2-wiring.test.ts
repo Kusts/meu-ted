@@ -71,7 +71,7 @@ describe('pending V2 bootstrap wiring', () => {
     const accepted = await app.inject({
       method: 'POST', url: '/pending-operations/v2/propose',
       headers: { 'idempotency-key': 'wiring-test-key-2' },
-      payload: { tool: 'transactions.create', normalizedArgs: { amountCents: 1 } },
+      payload: { tool: 'transactions.expense.create', normalizedArgs: { description: 'Mercado', amountCents: 100, date: '2026-09-13', accountId: '00000000-0000-4000-8000-000000000001', categoryId: '00000000-0000-4000-8000-000000000002' } },
     });
     expect(accepted.statusCode).toBe(201);
     expect(accepted.json().workspaceId).toBe('workspace-auth');

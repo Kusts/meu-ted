@@ -7,6 +7,7 @@ import {
   verifyPendingOperationV2Hash,
   type PendingOperationV2,
 } from '@pi-finance/llm-contracts';
+import { validateApprovalToolArgs } from './tool-registry.js';
 
 export type PendingOperationV2Status = 'proposed' | 'confirmed' | 'executing' | 'succeeded' | 'failed' | 'cancelled' | 'expired';
 export type PendingIdentity = Pick<PendingOperationV2, 'workspaceId' | 'actorId' | 'deviceId'>;
@@ -15,17 +16,36 @@ export type PendingOperationV2Record = PendingOperationV2 & {
   status: PendingOperationV2Status;
   attestation?: string;
   execution?: unknown;
+  /**
+   * Set only on propose() results: true when the call deduplicated onto an
+   * already-persisted operation (same idempotency key + same proposal hash),
+   * false when a new row was created. Never persisted; absent on get/confirm.
+   */
+  existing?: boolean;
 };
 export type PendingAuditEvent = { operationId: string; event: 'propose' | 'confirm' | 'execute' | 'cancel' | 'expire' | 'fail'; actorId: string; at: string };
 export type PendingExecutor = (operation: PendingOperationV2) => Promise<unknown>;
 
 export class PendingOperationV2Error extends Error {
-  constructor(readonly code: string, message: string, readonly statusCode = 409) { super(message); this.name = 'PendingOperationV2Error'; }
+  constructor(readonly code: string, message: string, readonly statusCode = 409, readonly details?: unknown) { super(message); this.name = 'PendingOperationV2Error'; }
 }
 
 const identityMatches = (a: PendingIdentity, b: PendingIdentity): boolean =>
   a.workspaceId === b.workspaceId && a.actorId === b.actorId && a.deviceId === b.deviceId;
 const attestation = (): string => randomBytes(32).toString('base64url');
+
+/**
+ * SPEC §7.4: no pending operation the executor would reject may reach the DB.
+ * Validates normalizedArgs against the registry inputSchema for the requested
+ * tool BEFORE persisting. Defense-in-depth alongside the propose route, which
+ * rejects earlier with the same codes for a richer HTTP shape.
+ */
+const assertCanonicalArgs = (fail: (code: string, message: string, statusCode?: number, details?: unknown) => never, operation: PendingOperationV2): void => {
+  const checked = validateApprovalToolArgs(operation.tool, operation.normalizedArgs);
+  if (checked.success) return;
+  if (checked.code === 'tool.not_allowed') fail('tool.not_allowed', 'Ferramenta não permitida no protocolo de aprovação.', 403);
+  fail('approval.invalid_args', 'Argumentos inválidos para a ferramenta de aprovação.', 422, checked.issues);
+};
 const nowIso = (): string => new Date().toISOString();
 
 export type PendingOperationV2Store = {
@@ -68,11 +88,13 @@ export const createPostgresPendingOperationV2Store = (pool: Pool): PendingOperat
     get audit() { return events; },
     async propose(operation) {
       if (!pendingOperationV2Schema.safeParse(operation).success || !(await verifyPendingOperationV2Hash(operation))) fail('approval.invalid_hash', 'Proposta V2 inválida ou hash divergente.', 400);
-      const result = await pool.query<PendingV2Row>(`INSERT INTO pending_operations (workspace_id, requester_id, operation, payload, reason, idempotency_key, status, expires_at, protocol_version, actor_id, device_id, tool, normalized_args, proposal_hash, execution_status) VALUES ($1,$2,$3,$4::jsonb,'high_value',$5,'pending',$6,$7,$8,$9,$10,$11::jsonb,$12,'proposed') ON CONFLICT (workspace_id,idempotency_key) WHERE protocol_version = 2 AND workspace_id IS NOT NULL AND idempotency_key IS NOT NULL DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING *`, [operation.workspaceId, operation.actorId, operation.tool, JSON.stringify(operation.normalizedArgs), operation.idempotencyKey, operation.expiresAt, 2, operation.actorId, operation.deviceId, operation.tool, JSON.stringify(operation.normalizedArgs), operation.proposalHash]);
+      assertCanonicalArgs(fail, operation);
+      const result = await pool.query<PendingV2Row>(`INSERT INTO pending_operations (workspace_id, requester_id, operation, payload, reason, idempotency_key, status, expires_at, protocol_version, actor_id, device_id, tool, normalized_args, proposal_hash, execution_status) VALUES ($1,$2,$3,$4::jsonb,'high_value',$5,'pending',$6,$7,$8,$9,$10,$11::jsonb,$12,'proposed') ON CONFLICT (workspace_id,idempotency_key) WHERE protocol_version = 2 AND workspace_id IS NOT NULL AND idempotency_key IS NOT NULL DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING *, (xmax = 0) AS is_insert`, [operation.workspaceId, operation.actorId, operation.tool, JSON.stringify(operation.normalizedArgs), operation.idempotencyKey, operation.expiresAt, 2, operation.actorId, operation.deviceId, operation.tool, JSON.stringify(operation.normalizedArgs), operation.proposalHash]);
       const row = result.rows[0]!;
       if (String(row.proposal_hash) !== operation.proposalHash) fail('idempotency.conflict', 'Chave de idempotência já utilizada com proposta diferente.');
+      const existing = row.is_insert === false;
       events.push({ operationId: String(row.id), event: 'propose', actorId: operation.actorId, at: nowIso() });
-      return mapV2(row);
+      return { ...mapV2(row), existing };
     },
     async get(id, identity) { return mapV2(await read({ query: pool.query.bind(pool) } as unknown as PoolClient, id, identity)); },
     async confirm(id, identity) { return withTransaction(pool, async (client) => { const row = await read(client, id, identity, true); const status = String(row.execution_status); if (Date.parse(String(row.expires_at)) <= Date.now()) { await client.query("UPDATE pending_operations SET execution_status='expired' WHERE id=$1", [id]); events.push({ operationId: id, event: 'expire', actorId: identity.actorId, at: nowIso() }); return fail('approval.expired', 'A proposta expirou.'); } if (status === 'confirmed') return mapV2(row); if (status !== 'proposed') return fail('approval.not_pending', 'A operação não está pendente.'); const token = attestation(); const updated = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_status='confirmed', attestation_hash=$2 WHERE id=$1 RETURNING *", [id, hashAttestation(token)]); events.push({ operationId: id, event: 'confirm', actorId: identity.actorId, at: nowIso() }); return mapV2(updated.rows[0]!, token); }); },
@@ -108,15 +130,16 @@ export const createInMemoryPendingOperationV2Store = (): PendingOperationV2Store
     get audit() { return events; },
     async propose(operation) {
       if (!pendingOperationV2Schema.safeParse(operation).success || !(await verifyPendingOperationV2Hash(operation))) fail('approval.invalid_hash', 'Proposta V2 inválida ou hash divergente.', 400);
+      assertCanonicalArgs(fail, operation);
       const existing = [...records.values()].find((r) => r.workspaceId === operation.workspaceId && r.idempotencyKey === operation.idempotencyKey);
       if (existing) {
         if (existing.proposalHash !== operation.proposalHash) fail('idempotency.conflict', 'Chave de idempotência já utilizada com proposta diferente.');
-        return existing;
+        return { ...existing, existing: true };
       }
       const record: PendingOperationV2Record = { ...operation, id: randomUUID(), status: 'proposed' };
       records.set(record.id, record);
       events.push({ operationId: record.id, event: 'propose', actorId: record.actorId, at: nowIso() });
-      return record;
+      return { ...record, existing: false };
     },
     async get(id, identity) { return resolve(id, identity); },
     async confirm(id, identity) {

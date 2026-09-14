@@ -1,15 +1,25 @@
 import { describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { computePendingOperationV2Hash, type PendingOperationV2 } from '@pi-finance/llm-contracts';
 import {
   createInMemoryPendingOperationV2Store,
   PendingOperationV2Error,
 } from '../../src/approvals/pending-v2.js';
 
+const canonicalExpenseArgs = (overrides: Record<string, unknown> = {}) => ({
+  description: 'Team lunch with client',
+  amountCents: 1250,
+  date: '2026-09-14',
+  accountId: randomUUID(),
+  categoryId: randomUUID(),
+  ...overrides,
+});
+
 const proposal = async (overrides: Partial<PendingOperationV2> = {}): Promise<PendingOperationV2> => {
   const base = {
     version: 2 as const,
     workspaceId: 'workspace-1', actorId: 'actor-1', deviceId: 'device-1',
-    tool: 'transactions.expense.create', normalizedArgs: { amountCents: 1250 },
+    tool: 'transactions.expense.create', normalizedArgs: canonicalExpenseArgs(),
     proposalHash: '', idempotencyKey: 'idem-1',
     createdAt: new Date(Date.now()).toISOString(),
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -26,12 +36,16 @@ describe('authoritative pending operation V2', () => {
     const saved = await store.propose(p);
     await expect(store.confirm(saved.id, { workspaceId: p.workspaceId, actorId: p.actorId, deviceId: 'other-device' }))
       .rejects.toMatchObject({ code: 'approval.binding_mismatch' });
-    const altered = await proposal({ idempotencyKey: 'idem-altered', normalizedArgs: { amountCents: 1251 } });
+    const altered = await proposal({ idempotencyKey: 'idem-altered', normalizedArgs: canonicalExpenseArgs({ amountCents: 1251 }) });
     altered.proposalHash = p.proposalHash;
     await expect(store.propose(altered))
       .rejects.toMatchObject({ code: 'approval.invalid_hash' });
-    const expired = await store.propose(await proposal({ idempotencyKey: 'idem-expired' }));
-    expired.expiresAt = new Date(Date.now() - 1).toISOString();
+    const expiredProposal = await proposal({
+      idempotencyKey: 'idem-expired',
+      createdAt: new Date(Date.now() - 120_000).toISOString(),
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const expired = await store.propose(expiredProposal);
     await expect(store.confirm(expired.id, { workspaceId: p.workspaceId, actorId: p.actorId, deviceId: p.deviceId }))
       .rejects.toMatchObject({ code: 'approval.expired' });
   });
@@ -63,7 +77,29 @@ describe('authoritative pending operation V2', () => {
     const retried = await store.retry(first.id, p);
     expect(retried.attestation).toBeTruthy();
     expect(retried.attestation).not.toBe(firstAttestation);
-    await expect(store.propose(await proposal({ idempotencyKey: p.idempotencyKey, normalizedArgs: { amountCents: 2 } })))
+    await expect(store.propose(await proposal({ idempotencyKey: p.idempotencyKey, normalizedArgs: canonicalExpenseArgs({ amountCents: 2 }) })))
       .rejects.toBeInstanceOf(PendingOperationV2Error);
+  });
+
+  it('rejects non-canonical args and unknown tools before persisting (SPEC §7.4)', async () => {
+    const store = createInMemoryPendingOperationV2Store();
+    const before = store.audit.length;
+    await expect(store.propose(await proposal({ idempotencyKey: 'idem-empty', normalizedArgs: {} })))
+      .rejects.toMatchObject({ code: 'approval.invalid_args' });
+    await expect(store.propose(await proposal({ idempotencyKey: 'idem-legacy', normalizedArgs: { description: 'x', amountCents: 1, date: '2026-09-14', accountId: randomUUID(), categoryQuery: 'food' } })))
+      .rejects.toMatchObject({ code: 'approval.invalid_args' });
+    await expect(store.propose(await proposal({ idempotencyKey: 'idem-unknown', tool: 'transactions.transfer.create' })))
+      .rejects.toMatchObject({ code: 'tool.not_allowed' });
+    expect(store.audit.length).toBe(before);
+  });
+
+  it('marks idempotent dedup hits as existing', async () => {
+    const store = createInMemoryPendingOperationV2Store();
+    const p = await proposal();
+    const first = await store.propose(p);
+    expect(first.existing).not.toBe(true);
+    const second = await store.propose(p);
+    expect(second.id).toBe(first.id);
+    expect(second.existing).toBe(true);
   });
 });
