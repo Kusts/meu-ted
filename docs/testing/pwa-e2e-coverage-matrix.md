@@ -146,6 +146,14 @@ Every ID is atomic: one visible action, required state, expected UI/API effect, 
 | SMOKE-02 | `/registros` | opt-in | direct load `/registros` → registration shell renders | no auth | production-smoke |
 | SMOKE-03 | `/contas` | opt-in | direct load `/contas` → registration shell renders | no auth | production-smoke |
 | SMOKE-04 | `/cartoes` | opt-in | direct load `/cartoes` → registration shell renders | no auth | production-smoke |
+| PAYSTMT-01 | `/cartoes` (statement detail) | M | pay invoice in full → `POST /cards/statements/:id/pay` | wrong id 404 path | card-statement-payment |
+| PAYSTMT-02 | `/cartoes` (statement detail) | M | paid invoice shows "Paga" badge and disabled pay CTA after reload | unpaid state keeps CTA | card-statement-payment |
+| TRF-01 | `/registros` (quick menu) | M | transfer via quick menu → `POST /transfers` | missing field aborts | transfer-record |
+| TRF-02 | `/registros` (records list) | M | recorded transfer carries description, amount, origin and destination | mutated row rejected | transfer-record |
+| REDIRECT-01 | `/a-pagar` (legacy) | M,D | legacy route lands on `/compromissos?aba=a-pagar` | unknown query dropped | navigation |
+| REDIRECT-02 | `/contas` (legacy) | M,D | legacy route lands on `/hub/patrimonio?aba=contas` | unknown query dropped | navigation |
+| REDIRECT-03 | `/cartoes?cardId=` (legacy) | M,D | legacy route preserves the card detail param | absent id → list | navigation |
+| REDIRECT-04 | `/pending` (legacy) | M,D | legacy route lands on `/compromissos?aba=pendencias` | unknown query dropped | navigation |
 
 ## Contract-only coverage
 `manifest.webmanifest`, `/pwa-control`, RUM route, not-found, headers and static assets remain dedicated Vitest/contract tests; they are not application pages.

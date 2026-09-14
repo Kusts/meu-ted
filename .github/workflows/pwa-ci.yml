@@ -48,6 +48,9 @@ jobs:
       - name: Lint PWA
         run: pnpm --dir apps/pwa lint
 
+      - name: Build shared contracts (workspace exports resolve dist)
+        run: pnpm --filter @pi-finance/llm-contracts build
+
       - name: Build PWA (Cloudflare)
         run: pnpm --dir apps/pwa build:cloudflare
 
