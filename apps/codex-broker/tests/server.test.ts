@@ -16,6 +16,9 @@ describe('Codex Broker Server (Task 5A)', () => {
 
   beforeEach(() => {
     testAuthPath = join(tmpdir(), `test-auth-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+    // AuthCacheManager enforces 0600 on POSIX (production cache is owner-only),
+    // so the fixture must be written with the same mode or every authed path
+    // 401s/503s on Linux CI while passing on Windows (mode check bypassed).
     writeFileSync(
       testAuthPath,
       JSON.stringify({
@@ -23,7 +26,7 @@ describe('Codex Broker Server (Task 5A)', () => {
         expiresAt: Date.now() + 3600_000,
         email: 'subscriber@example.com',
       }),
-      'utf8',
+      { encoding: 'utf8', mode: 0o600 },
     );
 
     app = buildCodexBrokerApp({

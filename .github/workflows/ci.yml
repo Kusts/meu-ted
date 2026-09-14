@@ -109,6 +109,8 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      - name: Build shared contracts (workspace exports resolve dist)
+        run: pnpm --filter @pi-finance/llm-contracts build
       - run: pnpm --dir apps/pwa build:cloudflare
       - run: pnpm --dir apps/pwa exec vitest run src/headers.test.ts
       - name: Check initial JS gzip <=200KB
