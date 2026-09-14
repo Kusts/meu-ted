@@ -27,6 +27,8 @@ jobs:
         with:
           script: |
             const sha = process.env.HEAD_SHA;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
             const { data } = await github.rest.actions.listWorkflowRunsForRepo({
               owner,
               repo,
