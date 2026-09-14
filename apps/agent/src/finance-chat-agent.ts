@@ -62,7 +62,8 @@ import { emitSanitizedEvent } from "./observability/events.js";
 import { routeIntent } from "./orchestration/intent-router.js";
 import { createChannelGrounding } from "./orchestration/channel-evidence.js";
 import type { EvidenceEnvelope } from "./evidence/evidence-envelope.js";
-import { parseFinancialMutation } from "./mutations/financial-parser.js";
+import { parseFinancialMutation, isClearlyMutating } from "./mutations/financial-parser.js";
+import { createRequestEntityReader, type EntityReader } from "./mutations/entity-resolver.js";
 import { MutationApiClient } from "./mutations/mutation-api-client.js";
 import { MutationExecutor, type ApprovalDecision } from "./mutations/mutation-executor.js";
 
@@ -589,6 +590,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
 
   private orchestratorForChannel(dependencies: {
     mutationApiClient?: MutationApiClient;
+    entityReader?: EntityReader;
     plan?: (input: TurnInput) => TurnPlan;
     evidenceProvider?: (input: TurnInput, plan: TurnPlan) => Promise<EvidenceEnvelope | null>;
     correctionProvider?: (input: TurnInput, plan: TurnPlan, unsupportedClaims: readonly string[]) => Promise<string | null>;
@@ -616,6 +618,20 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       evidenceProvider: dependencies.evidenceProvider ?? grounding.evidenceProvider,
       correctionProvider: dependencies.correctionProvider ?? grounding.correctionProvider,
     });
+  }
+
+  /**
+   * Authoritative entity lists for SPEC §7.2/§7.3 resolution: the same
+   * `GET /accounts` + `GET /categories` reads the evidence layer uses,
+   * scoped by the turn's `financial.read` delegation. Unreadable lists fail
+   * closed downstream (clarification, never a proposal).
+   */
+  private async entityReaderForTurn(input: TurnInput): Promise<EntityReader> {
+    const delegatedToken = await this.mintReadToken(input);
+    const apiOrigin = this.env?.API_ORIGIN;
+    const request = <T>(method: string, path: string, options: Parameters<typeof requestPiApiJson>[2] = {}) =>
+      requestPiApiJson<T>(method, path, { ...options, delegatedToken, ...(apiOrigin !== undefined ? { apiOrigin } : {}) });
+    return createRequestEntityReader(request);
   }
 
   override async onChatMessage(messagePayload: unknown, ..._rest: unknown[]): Promise<unknown> {
@@ -969,8 +985,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
   /** Builds the sole V2 mutation plan used by every channel adapter. */
   private mutationProposalPlan(input: TurnInput): TurnPlan | null {
     const parsed = parseFinancialMutation(input.text);
-    const clearlyMutating = /\b(gastei|gasto|paguei|compra|despesa|recebi|ganhei|renda|sal[aá]rio|receita|lancei|lancar|lançamento|lancamento)\b/i.test(input.text);
-    if (parsed.kind === "none" || !clearlyMutating) return null;
+    if (parsed.kind === "none" || !isClearlyMutating(input.text)) return null;
 
     const routed = routeIntent(input.text);
     return {
@@ -979,7 +994,9 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       domain: "transactions",
       skillNames: routed.skillNames.slice(0, 2),
       requestedOperations: [{ name: parsed.kind === "income" ? "transactions.income.create" : "transactions.expense.create", kind: "mutation" }],
-      missingFields: [],
+      // SPEC §7.6: canonical IDs are never resolved at plan time — the
+      // orchestrator resolves them against authoritative reads (§7.2/§7.3).
+      missingFields: ["accountId", "categoryId"],
       ambiguity: null,
       confidence: routed.confidence,
     };
@@ -1115,9 +1132,11 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       try {
         const mutationPlan = this.mutationProposalPlan(restInput);
         const mutationApiClient = await this.mutationApiClientForTurn(restInput, mutationPlan !== null);
+        const entityReader = mutationPlan ? await this.entityReaderForTurn(restInput) : undefined;
         const turnResult = await this.orchestratorForChannel({
           ...(mutationPlan ? { plan: () => mutationPlan } : {}),
           ...(mutationApiClient ? { mutationApiClient } : {}),
+          ...(entityReader ? { entityReader } : {}),
         }).runTurn(restInput);
         if (turnResult.response) {
           // Persist the FINAL grounded/deterministic response (never the raw

@@ -95,8 +95,11 @@ describe('onChatMessage cognitive wiring (Part A)', () => {
       AGENT_CONFIG_TOKEN: 'config-token-test',
       OPENCODE_ZEN_API_KEY: 'zen-key-test',
     };
+    // Amount-less on purpose: a parseable mutation attempt takes the
+    // authoritative approval pipeline (SPEC §7, device-bound), not the
+    // provider path — curation itself is what this test guards.
     await agent.onChatMessage({
-      text: 'Lança um gasto de 50 reais no mercado hoje',
+      text: 'Lança um gasto no mercado hoje',
       intentionId: 'intent-wiring-2',
       actorId: 'actor-1',
     });

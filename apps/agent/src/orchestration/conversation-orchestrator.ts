@@ -1,5 +1,6 @@
 import { scrubForPersistence } from '../privacy/dlp.js';
 import { parseFinancialMutation } from '../mutations/financial-parser.js';
+import { resolveMutationEntities, type EntityReader } from '../mutations/entity-resolver.js';
 import { resolveConfirmation } from '../mutations/confirmation-resolver.js';
 import type { MutationApiClient, MutationIdentity } from '../mutations/mutation-api-client.js';
 import { emitSanitizedEvent } from '../observability/events.js';
@@ -52,6 +53,8 @@ export type TurnResult = Readonly<{
   plan: TurnPlan;
   policy: MutationPolicy;
   mutation?: Readonly<{ operationId: string; status: 'proposed' | 'succeeded' }>;
+  /** Explicit clarification outcome (SPEC §7.8-ready): no proposal exists. */
+  clarification?: Readonly<{ missingFields: readonly string[]; text: string }>;
   response?: Readonly<{ text: string }>;
 }>;
 export type TurnResponseProvider = (input: TurnInput, plan: TurnPlan) => Promise<string>;
@@ -107,6 +110,8 @@ export class ConversationOrchestrator {
   constructor(private readonly dependencies: {
     plan?: (input: TurnInput) => TurnPlan;
     mutationApiClient?: MutationApiClient;
+    /** Authoritative entity lists (accounts/categories). Absent = fail closed. */
+    entityReader?: EntityReader;
     responseProvider?: TurnResponseProvider;
     /** Read-path evidence source (EvidenceCollector). Absent = legacy pass-through. */
     evidenceProvider?: (input: TurnInput, plan: TurnPlan) => Promise<EvidenceEnvelope | null>;
@@ -201,9 +206,29 @@ export class ConversationOrchestrator {
     if (plan.mode === 'mutation-proposal' && client) {
       const parsed = parseFinancialMutation(input.text);
       if (parsed.kind === 'none') {
+        // SPEC §7.6: missing amount/date is a real missing field, never [].
+        const missing = parsed.reason === 'missing_amount' ? ['amount'] : [...plan.missingFields];
+        const blockedPlan = freeze({ ...plan, missingFields: freeze([...missing]) });
+        const text = parsed.reason === 'missing_amount'
+          ? 'Não identifiquei o valor a registrar. Informe o valor e a descrição.'
+          : 'Não foi possível preparar a mutação com segurança. Esclareça valor e descrição.';
         this.emit('mutation.blocked', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'blocked' });
         this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
-        return freeze({ ...result, response: freeze({ text: 'Não foi possível preparar a mutação com segurança. Esclareça valor e descrição.' }) });
+        return freeze({ ...result, plan: blockedPlan, clarification: freeze({ missingFields: blockedPlan.missingFields, text }), response: freeze({ text }) });
+      }
+      // SPEC §7.1/§7.2/§7.3 (H-01): resolve accountId/categoryId against
+      // authoritative reads BEFORE any proposal. Incomplete args clarify;
+      // no pending operation is created on this path (T1.3 persists drafts).
+      const reader = this.dependencies.entityReader ?? {
+        listAccounts: async (): Promise<never> => { throw new Error('agent.entity_reader_missing'); },
+        listCategories: async (): Promise<never> => { throw new Error('agent.entity_reader_missing'); },
+      };
+      const resolution = await resolveMutationEntities(parsed, input.text, reader);
+      if (!resolution.complete) {
+        const incompletePlan = freeze({ ...plan, missingFields: freeze([...resolution.missingFields]) });
+        this.emit('mutation.blocked', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'blocked' });
+        this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
+        return freeze({ ...result, plan: incompletePlan, clarification: freeze({ missingFields: incompletePlan.missingFields, text: resolution.clarification }), response: freeze({ text: resolution.clarification }) });
       }
       const identity: MutationIdentity = { workspaceId: input.workspaceId, actorId: input.actorId, deviceId: input.deviceId ?? (() => { throw new Error('mutation.device_required'); })() };
       const proposal = await client.propose({
@@ -212,9 +237,8 @@ export class ConversationOrchestrator {
           amountCents: parsed.amountCents,
           description: parsed.description,
           date: parsed.date,
-          ...(parsed.categoryQuery ? (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(parsed.categoryQuery)
-            ? { categoryId: parsed.categoryQuery }
-            : { categoryQuery: parsed.categoryQuery }) : {}),
+          accountId: resolution.accountId,
+          categoryId: resolution.categoryId,
         },
         summary: parsed.description,
         identity,

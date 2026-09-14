@@ -229,6 +229,14 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
         proposalRequest = new Request(String(input), init);
         return new Response(JSON.stringify({ id: "pending-v2-1" }), { status: 200 });
       }
+      // SPEC §7.2/§7.3 authoritative entity reads: single account
+      // auto-resolves; the UUID category is verified against the real list.
+      if (String(input).includes("/accounts")) {
+        return new Response(JSON.stringify({ items: [{ id: "00000000-0000-4000-8000-0000000000a1", name: "Nubank" }] }), { status: 200 });
+      }
+      if (String(input).includes("/categories")) {
+        return new Response(JSON.stringify({ items: [{ id: "00000000-0000-4000-8000-000000000001", name: "Mercado" }] }), { status: 200 });
+      }
       throw new Error(`unexpected upstream request: ${String(input)}`);
     });
 
@@ -265,6 +273,13 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     expect(proposalBody).not.toHaveProperty("actorId");
     expect(proposalBody).not.toHaveProperty("workspaceId");
     expect(proposalBody).not.toHaveProperty("deviceId");
+    // SPEC §7 (H-01): only canonical, fully-resolved args reach propose.
+    expect(proposalBody.normalizedArgs).toMatchObject({
+      amountCents: 1234,
+      accountId: "00000000-0000-4000-8000-0000000000a1",
+      categoryId: "00000000-0000-4000-8000-000000000001",
+    });
+    expect(proposalBody.normalizedArgs).not.toHaveProperty("categoryQuery");
     const auth = proposalRequest!.headers.get("authorization");
     expect(auth).toMatch(/^Bearer /);
     const claims = await decodeDelegatedTurnToken(auth!.slice("Bearer ".length), secret);

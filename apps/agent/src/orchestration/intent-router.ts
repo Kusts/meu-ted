@@ -1,4 +1,5 @@
 import type { PlannedOperation } from './conversation-orchestrator.js';
+import { parseFinancialMutation, isClearlyMutating } from '../mutations/financial-parser.js';
 import { findSkillsFor, toolsForSkills } from './skill-inventory.js';
 import { validateTurnPlan, type TurnPlanV2 } from './turn-plan.js';
 
@@ -49,6 +50,25 @@ export const routeIntent = (text: string): TurnPlanV2 => {
   const fastPath = classifyFastPath(normalized);
   if (fastPath.kind === 'confirm') return makePlan('confirmation', 'general', [], [], ['conversation']);
   if (fastPath.kind === 'cancel') return makePlan('cancel', 'general', [], [], ['conversation']);
+  // SPEC §7.6: a parseable mutation attempt carries its real missing fields
+  // from the start — accountId/categoryId always pending authoritative
+  // resolution (§7.2/§7.3). Never []. Amount-less or negated utterances keep
+  // the legacy read/unsupported routing below (no proposal either way).
+  if (isClearlyMutating(text)) {
+    const parsed = parseFinancialMutation(text);
+    if (parsed.kind !== 'none') {
+      const tool = parsed.kind === 'income' ? 'transactions.income.create' : 'transactions.expense.create';
+      const skills = findSkillsFor('transactions').slice(0, 2).map((skill) => skill.name);
+      return makePlan(
+        'mutation-proposal',
+        'transactions',
+        [{ name: tool, kind: 'mutation' }],
+        skills,
+        undefined,
+        ['accountId', 'categoryId'],
+      );
+    }
+  }
   const operations: PlannedOperation[] = [];
   let domain: TurnPlanV2['domain'] = 'general';
   if (/\b(saldo|quanto tenho|quanto eu tenho)\b/.test(normalized)) { domain = 'accounts'; operations.push(operation('get_balance')); }
@@ -60,8 +80,8 @@ export const routeIntent = (text: string): TurnPlanV2 => {
   return makePlan('read', domain, operations.slice(0, 4), skills);
 };
 
-const makePlan = (mode: TurnPlanV2['mode'], domain: TurnPlanV2['domain'], requestedOperations: readonly PlannedOperation[], skillNames: readonly string[], requestedTools?: readonly string[]): TurnPlanV2 => {
-  const plan: TurnPlanV2 = { version: '2', mode, domain, skillNames, requestedOperations, requestedTools: requestedTools ?? toolsForSkills(skillNames).slice(0, 8), missingFields: [], ambiguity: null, confidence: requestedOperations.length ? 0.95 : 1, correctionCount: 0 };
+const makePlan = (mode: TurnPlanV2['mode'], domain: TurnPlanV2['domain'], requestedOperations: readonly PlannedOperation[], skillNames: readonly string[], requestedTools?: readonly string[], missingFields: readonly string[] = []): TurnPlanV2 => {
+  const plan: TurnPlanV2 = { version: '2', mode, domain, skillNames, requestedOperations, requestedTools: requestedTools ?? toolsForSkills(skillNames).slice(0, 8), missingFields: [...missingFields], ambiguity: null, confidence: requestedOperations.length ? 0.95 : 1, correctionCount: 0 };
   const result = validateTurnPlan(plan);
   return result.success ? result.plan : fallbackPlan();
 };

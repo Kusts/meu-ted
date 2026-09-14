@@ -33,3 +33,7 @@ export const parseFinancialMutation = (text: string, options: { now?: Date; time
 
 export const parseMoneyToCents = (value: string): number => cents(value.replace(/^r\$\s*/i, '').trim());
 export const parseMutationRequest = parseFinancialMutation;
+
+/** Shared mutation-utterance signal (SPEC §7.6): one definition for router + plan builder. */
+export const isClearlyMutating = (text: string): boolean =>
+  /\b(gastei|gasto|paguei|compra|despesa|recebi|ganhei|renda|sal[aá]rio|receita|lancei|lancar|lançamento|lancamento)\b/i.test(text);

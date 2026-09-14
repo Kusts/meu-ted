@@ -47,6 +47,7 @@ import { resolveConfirmation } from '../src/mutations/confirmation-resolver.js';
 import { MutationApiClient } from '../src/mutations/mutation-api-client.js';
 import { MutationExecutor } from '../src/mutations/mutation-executor.js';
 import { resolveEntity, EntityResolutionError } from '../src/tools/entity-resolution.js';
+import type { EntityReader } from '../src/mutations/entity-resolver.js';
 import { createEvidenceEnvelope, isCurrentEvidence } from '../src/evidence/evidence-envelope.js';
 import { collectEvidence } from '../src/evidence/evidence-collector.js';
 import { validateGroundedClaims } from '../src/evidence/grounding-validator.js';
@@ -366,7 +367,25 @@ const runOrchPropose = async (scenario: BehavioralScenario): Promise<string> => 
   const utterances = (exec.utterances ?? (exec.utterance !== undefined ? [exec.utterance] : [])) as string[];
   const api = createFakePendingApi();
   const client = new MutationApiClient({ request: api.request as never, events: silent });
-  const orchestrator = new ConversationOrchestrator({ plan: () => mutationPlan('mutation-proposal'), mutationApiClient: client, events: silent });
+  // SPEC §7.2/§7.3: authoritative entity lists come from exec.entities, so
+  // resolution is exercised against deterministic fakes, never guesses.
+  const entities = (exec.entities ?? {}) as { accounts?: { id: string; name: string }[]; categories?: { id: string; name: string }[] };
+  const entityReader: EntityReader = {
+    listAccounts: async () => entities.accounts ?? [{ id: '00000000-0000-4000-8000-0000000000a1', name: 'Conta eval' }],
+    listCategories: async () => entities.categories ?? [],
+  };
+  const orchestrator = new ConversationOrchestrator({ plan: () => mutationPlan('mutation-proposal'), mutationApiClient: client, entityReader, events: silent });
+  // SPEC §7 (H-01): incomplete canonical args clarify with zero proposals.
+  if (expect.clarified === true) {
+    const result = await orchestrator.runTurn(normalizeRestTurn({ text: utterances[0] ?? '', intentionId: `${id}-intent-0` }, identity));
+    ok(result.mutation === undefined, 'no proposal while canonical args are incomplete', id);
+    ok(result.clarification !== undefined && result.response !== undefined, 'explicit clarification outcome', id);
+    eq(api.calls.propose, 0, 'zero propose calls', id);
+    if (expect.missingFields !== undefined) {
+      eq(JSON.stringify(result.plan.missingFields), JSON.stringify(expect.missingFields), 'real missingFields', id);
+    }
+    return `clarified missing=${JSON.stringify(result.plan.missingFields)}`;
+  }
   try {
     const operationIds: string[] = [];
     for (let index = 0; index < utterances.length; index += 1) {
@@ -422,8 +441,13 @@ const runOrchIdempotency = async (scenario: BehavioralScenario): Promise<string>
   const identity = (exec.identity ?? DEFAULT_IDENTITY) as AuthenticatedIdentity;
   const api = createFakePendingApi();
   const client = new MutationApiClient({ request: api.request as never, events: silent });
+  const entities = (exec.entities ?? {}) as { accounts?: { id: string; name: string }[]; categories?: { id: string; name: string }[] };
+  const entityReader: EntityReader = {
+    listAccounts: async () => entities.accounts ?? [{ id: '00000000-0000-4000-8000-0000000000a1', name: 'Conta eval' }],
+    listCategories: async () => entities.categories ?? [],
+  };
   const proposePlan = () => mutationPlan('mutation-proposal');
-  const proposeTurn = new ConversationOrchestrator({ plan: proposePlan, mutationApiClient: client, events: silent });
+  const proposeTurn = new ConversationOrchestrator({ plan: proposePlan, mutationApiClient: client, entityReader, events: silent });
   const first = await proposeTurn.runTurn(normalizeRestTurn({ text: String(exec.utterance ?? ''), intentionId: `${id}-idem` }, identity));
   const second = await proposeTurn.runTurn(normalizeRestTurn({ text: String(exec.utterance ?? ''), intentionId: `${id}-idem` }, identity));
   if (expect.sameOperation === true) eq(first.mutation?.operationId, second.mutation?.operationId, 'stable idempotency key', id);
