@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
-const tedChatPath = "D:/projetos/pi-financeiro/apps/pwa/src/features/ted/TedChat.tsx";
-const financeChatPath = "D:/projetos/pi-financeiro/apps/agent/src/finance-chat-agent.ts";
+// Test lives at apps/pwa/src/features/ted/__tests__/ → TedChat is one level up,
+// the agent source is reached through the repo root (five levels up).
+const tedChatPath = join(__dirname, "..", "TedChat.tsx");
+const financeChatPath = join(__dirname, "..", "..", "..", "..", "..", "agent", "src", "finance-chat-agent.ts");
 
 describe("TedChat – isolamento de histórico por workspace", () => {
   it("limpa histórico ao trocar de workspace (prevWorkspaceIdRef e useEffect)", () => {

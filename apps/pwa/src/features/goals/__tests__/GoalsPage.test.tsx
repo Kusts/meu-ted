@@ -1,4 +1,4 @@
-import { render, screen, within, fireEvent, waitForElementToBeRemoved } from "@/lib/test-utils";
+import { render, screen, within, fireEvent, waitFor, waitForElementToBeRemoved } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import GoalsPage from "../GoalsPage";
 import * as appStateModule from "@/lib/state/app-state-context";
@@ -110,8 +110,9 @@ describe("GoalsPage", () => {
       // Close via the bottom sheet's outside-click overlay.
       await user.keyboard("{Escape}");
       await user.click(document.body);
-      // Exit animation must finish before reopening.
-      await waitForElementToBeRemoved(() => screen.queryByRole("dialog"));
+      // Exit animation must finish before reopening. Two sheets can coexist
+      // briefly during unmount; wait until NO dialog remains.
+      await waitFor(() => expect(screen.queryAllByRole("dialog")).toHaveLength(0));
 
       // Reopen — amount must be empty.
       const addBtns2 = screen.getAllByRole("button", { name: /^Adicionar$/ });
@@ -133,8 +134,10 @@ describe("GoalsPage", () => {
 
       // Close via Escape.
       await user.keyboard("{Escape}");
-      // Exit animation must finish before reopening.
-      await waitForElementToBeRemoved(() => screen.queryByRole("dialog"));
+      // Exit animation must finish before reopening. During the unmount
+      // window two sheets can coexist briefly, so wait until NO dialog
+      // remains instead of removing a single element.
+      await waitFor(() => expect(screen.queryAllByRole("dialog")).toHaveLength(0));
 
       // Reopen — both fields must be empty.
       await user.click(screen.getByText("Nova"));
