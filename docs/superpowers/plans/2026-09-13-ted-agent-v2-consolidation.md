@@ -2,7 +2,7 @@
 
 **Goal:** Implementar a SPEC `MEU-TED-SPEC-CONSOLIDACAO-E-AGENTE-V2.md` por incrementos verificáveis, preservando a API como autoridade financeira e eliminando qualquer caminho de escrita autorizado por texto de LLM.
 
-**Status:** APROVADO PARA EXECUÇÃO — código ainda não iniciado.
+**Status:** EXECUTADO (2026-09-13/14) — implementação concluída na branch `ted-agent-v2-consolidation`; `pnpm validate:final` VAL.1–VAL.13 verde (ledger em `docs/reports/2026-09-13-final-validation.md`); relatório em `docs/reports/agent-v2-implementation-report.md`. Pendente: merge na `main`, auditoria pós-implementação (SPEC §18) e exercício real de deploy.
 
 **Baseline verificada:** `main@6bf7cfe69ba1a36cd7bbcfc1219e7c2bd388a315` em 2026-09-13. `HEAD` e `origin/main` coincidem exatamente com a baseline da SPEC; não há divergência de commits. O único item não rastreado é a própria SPEC. O registro de working tree em `AGENTS.md` que aponta `98cfc99` está desatualizado.
 
