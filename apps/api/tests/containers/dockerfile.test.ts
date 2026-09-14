@@ -12,7 +12,8 @@ describe('API canonical container', () => {
     expect(dockerfile).toMatch(/FROM node:22-alpine AS builder/);
     expect(dockerfile).toContain('COPY packages packages');
     expect(dockerfile).toContain('pnpm --filter @pi-finance/llm-contracts build');
-    expect(dockerfile).toContain('COPY --from=builder /monorepo/apps/api/node_modules ./node_modules');
+    expect(dockerfile).toContain('pnpm deploy --legacy --filter meu-ted-api --prod /runtime');
+    expect(dockerfile).toContain('COPY --from=builder /runtime/node_modules ./node_modules');
     expect(dockerfile).toContain('USER appuser');
     expect(dockerfile).toContain('HEALTHCHECK');
     expect(dockerfile).toContain('/health');

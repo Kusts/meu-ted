@@ -20,6 +20,9 @@ COPY apps/api apps/api
 RUN pnpm --filter @pi-finance/llm-contracts build
 WORKDIR /monorepo/apps/api
 RUN pnpm build
+# Ship only api prod deps (excludes root dev/peer-only subtrees like next/sharp
+# pulled in via better-auth's optional framework peers at monorepo install time).
+RUN pnpm deploy --legacy --filter meu-ted-api --prod /runtime
 
 FROM node:22-alpine AS runner
 
@@ -27,11 +30,16 @@ RUN apk update && apk upgrade --no-cache libcrypto3 libssl3
 RUN addgroup -g 10001 -S appgroup && adduser -u 10001 -S appuser -G appgroup
 WORKDIR /monorepo/apps/api
 
-COPY --from=builder /monorepo/node_modules /monorepo/node_modules
-COPY --from=builder /monorepo/packages /monorepo/packages
-COPY --from=builder /monorepo/apps/api/package.json ./package.json
-COPY --from=builder /monorepo/apps/api/node_modules ./node_modules
+COPY --from=builder /runtime/package.json ./package.json
+COPY --from=builder /runtime/node_modules ./node_modules
 COPY --from=builder /monorepo/apps/api/dist ./dist
+
+# pnpm deploy --prod keeps better-auth's optional framework peers (next) and
+# next's optional native dep (sharp): neither is ever imported by this fastify
+# runtime (no `next`/`sharp` import in apps/api/src; better-auth is used via its
+# core + plugins + memory adapter only). Prune those peer-only subtrees so they
+# don't ship their CVEs in the image. React peers are kept (harmless, tiny).
+RUN rm -rf node_modules/.pnpm/next@* node_modules/.pnpm/sharp@* node_modules/.pnpm/@img+* node_modules/next node_modules/sharp
 
 USER appuser:appgroup
 
