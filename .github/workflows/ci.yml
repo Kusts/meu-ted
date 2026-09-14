@@ -26,6 +26,8 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      - name: Build shared contracts (workspace exports resolve dist)
+        run: pnpm --filter @pi-finance/llm-contracts build
       - run: pnpm --filter meu-ted-api --fail-if-no-match lint
       - run: pnpm --filter meu-ted-api --fail-if-no-match typecheck
       - run: pnpm --filter meu-ted-api --fail-if-no-match test
@@ -46,6 +48,8 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      - name: Build shared contracts (workspace exports resolve dist)
+        run: pnpm --filter @pi-finance/llm-contracts build
       - run: pnpm --filter pi-finance-agent --fail-if-no-match typecheck
       - run: pnpm --filter pi-finance-agent --fail-if-no-match test
       - run: pnpm --filter pi-finance-agent --fail-if-no-match eval:ted-v2
@@ -86,6 +90,8 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      - name: Build shared contracts (workspace exports resolve dist)
+        run: pnpm --filter @pi-finance/llm-contracts build
       - run: pnpm --filter pwa --fail-if-no-match typecheck
       - run: pnpm --filter pwa --fail-if-no-match lint
       - run: pnpm --filter pwa --fail-if-no-match build
@@ -171,6 +177,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
