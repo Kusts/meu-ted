@@ -128,4 +128,33 @@ describe("Agent Next.js Proxy Route (/api/agent/[...path])", () => {
     const response = await GET(new Request("https://pwa.example/api/agent/history"), { params: Promise.resolve({ path: ["history"] }) });
     expect(response.headers.get("cache-control")).toContain("no-store");
   });
+
+  it("canonical same-origin POST forwards cookie + connection token and stays no-store (ADR-011)", async () => {
+    let capturedUpstreamRequest: Request | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      capturedUpstreamRequest = new Request(input as string, init);
+      return new Response(JSON.stringify({ turnId: "t1", status: "completed" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const req = new Request("https://pwa.example/api/agent/agents/finance-chat-agent/ws-1/rpc/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: "better-auth.session_token=abc",
+        "x-agent-connection-token": "conn-1",
+        "x-workspace-id": "ws-1",
+        origin: "https://pwa.example",
+      },
+      body: JSON.stringify({ text: "oi" }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ path: ["agents", "finance-chat-agent", "ws-1", "rpc", "chat"] }) });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toContain("no-store");
+    expect(capturedUpstreamRequest!.headers.get("cookie")).toBe("better-auth.session_token=abc");
+    expect(capturedUpstreamRequest!.headers.get("x-agent-connection-token")).toBe("conn-1");
+  });
 });

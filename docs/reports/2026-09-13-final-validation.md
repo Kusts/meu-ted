@@ -1,6 +1,6 @@
 # Final Project Validation Report (VAL.1–VAL.13)
 
-**Evaluated At:** 2026-09-14T01:50:06.122Z  
+**Evaluated At:** 2026-09-14T11:20:07.432Z  
 **Status:** PASSED ✅  
 **Total Gates:** 13 | **Passed:** 13 | **Failed:** 0  
 
@@ -26,66 +26,66 @@
 
 ### VAL.1 — Reproducible Frozen Install
 - **Command:** `git diff --exit-code -- pnpm-lock.yaml`
-- **Duration:** 2026-09-14T01:40:05.300Z → 2026-09-14T01:40:05.365Z
+- **Duration:** 2026-09-14T11:08:05.731Z → 2026-09-14T11:08:05.869Z
 - **Result:** Execution completed successfully with exit code 0
 
 ### VAL.2 — Lint & Documentation
 - **Command:** `pnpm lint && pnpm docs:lint`
-- **Duration:** 2026-09-14T01:40:05.365Z → 2026-09-14T01:40:47.520Z
+- **Duration:** 2026-09-14T11:08:05.869Z → 2026-09-14T11:08:36.237Z
 - **Result:** Execution completed successfully with exit code 0
 
 ### VAL.3 — TypeScript Compilation
 - **Command:** `pnpm typecheck`
-- **Duration:** 2026-09-14T01:40:47.520Z → 2026-09-14T01:41:08.098Z
+- **Duration:** 2026-09-14T11:08:36.237Z → 2026-09-14T11:08:54.848Z
 - **Result:** Execution completed successfully with exit code 0
 
 ### VAL.4 — API Unit & Contract Tests
 - **Command:** `pnpm --filter meu-ted-api --fail-if-no-match test`
-- **Duration:** 2026-09-14T01:41:08.098Z → 2026-09-14T01:44:28.101Z
+- **Duration:** 2026-09-14T11:08:54.848Z → 2026-09-14T11:12:47.433Z
 - **Result:** Execution completed successfully with exit code 0
 
 ### VAL.5 — Agent Tests & Deterministic Evals
 - **Command:** `pnpm --filter pi-finance-agent --fail-if-no-match test && pnpm --filter pi-finance-agent --fail-if-no-match eval:ted-v2`
-- **Duration:** 2026-09-14T01:44:28.101Z → 2026-09-14T01:44:57.783Z
+- **Duration:** 2026-09-14T11:12:47.433Z → 2026-09-14T11:13:21.031Z
 - **Result:** Execution completed successfully with exit code 0
 
 ### VAL.6 — Codex Broker
 - **Command:** `pnpm --filter pi-finance-codex-broker --fail-if-no-match typecheck && pnpm --filter pi-finance-codex-broker --fail-if-no-match test && pnpm --filter pi-finance-codex-broker --fail-if-no-match build`
-- **Duration:** 2026-09-14T01:44:57.783Z → 2026-09-14T01:45:03.986Z
+- **Duration:** 2026-09-14T11:13:21.031Z → 2026-09-14T11:13:29.335Z
 - **Result:** Execution completed successfully with exit code 0
 
 ### VAL.7 — PWA Unit & Contract Tests
 - **Command:** `pnpm --filter pwa --fail-if-no-match test`
-- **Duration:** 2026-09-14T01:45:03.986Z → 2026-09-14T01:48:20.930Z
+- **Duration:** 2026-09-14T11:13:29.335Z → 2026-09-14T11:16:51.526Z
 - **Result:** Execution completed successfully with exit code 0
 
 ### VAL.8 — Architecture Invariants
 - **Command:** `pnpm architecture:check`
-- **Duration:** 2026-09-14T01:48:20.930Z → 2026-09-14T01:48:21.652Z
+- **Duration:** 2026-09-14T11:16:51.526Z → 2026-09-14T11:16:52.034Z
 - **Result:** Execution completed successfully with exit code 0
 
 ### VAL.9 — Capabilities, Write Policy & Governance
 - **Command:** `pnpm capabilities:check && pnpm write-policy:check && pnpm governance:check`
-- **Duration:** 2026-09-14T01:48:21.652Z → 2026-09-14T01:48:23.442Z
+- **Duration:** 2026-09-14T11:16:52.034Z → 2026-09-14T11:16:53.822Z
 - **Result:** Execution completed successfully with exit code 0
 
 ### VAL.10 — Canonical Documentation Contracts
 - **Command:** `node --test scripts/canonical-docs-contract.test.mjs scripts/documentation-facts-contract.test.mjs`
-- **Duration:** 2026-09-14T01:48:23.442Z → 2026-09-14T01:48:23.655Z
+- **Duration:** 2026-09-14T11:16:53.822Z → 2026-09-14T11:16:54.026Z
 - **Result:** Execution completed successfully with exit code 0
 
 ### VAL.11 — Builds & Distribution Artifacts
 - **Command:** `pnpm build:all`
-- **Duration:** 2026-09-14T01:48:23.655Z → 2026-09-14T01:49:18.013Z
+- **Duration:** 2026-09-14T11:16:54.026Z → 2026-09-14T11:19:24.563Z
 - **Result:** Execution completed successfully with exit code 0
 
 ### VAL.12 — Security & Container Smoke
 - **Command:** `pnpm security:check && pnpm container:smoke`
-- **Duration:** 2026-09-14T01:49:18.013Z → 2026-09-14T01:50:05.544Z
+- **Duration:** 2026-09-14T11:19:24.563Z → 2026-09-14T11:20:06.695Z
 - **Result:** Execution completed successfully with exit code 0
 
 ### VAL.13 — Production Smoke Contract
 - **Command:** `pnpm production:smoke:contract`
-- **Duration:** 2026-09-14T01:50:05.544Z → 2026-09-14T01:50:06.122Z
+- **Duration:** 2026-09-14T11:20:06.695Z → 2026-09-14T11:20:07.432Z
 - **Result:** Execution completed successfully with exit code 0
 

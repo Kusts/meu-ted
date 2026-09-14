@@ -8,10 +8,8 @@ vi.mock("@/lib/api/agent-client", () => ({
   sendAgentMessage: vi.fn(),
   exportAgentHistory: vi.fn(),
   deleteAgentHistory: vi.fn(),
-  processAgentTurn: vi.fn(),
-  reconnectAgentTurn: vi.fn(),
   cancelAgentTurn: vi.fn(),
-  retryAgentTurn: vi.fn(),
+  reconnectAgentTurn: vi.fn(),
 }));
 
 describe("AgentTranscript – Canonical REST Contract & Display Sanitization", () => {
@@ -87,7 +85,7 @@ describe("AgentTranscript – Canonical REST Contract & Display Sanitization", (
     expect(screen.queryByRole("button", { name: /excluir meu histórico/i })).not.toBeInTheDocument();
   });
 
-  it("sends message and reloads canonical history without calling process/reconnect/retry turn helpers", async () => {
+  it("sends message and reloads canonical history without calling the reconnect turn helper", async () => {
     vi.mocked(agentClient.sendAgentMessage).mockResolvedValue({ turnId: "t1", status: "completed", output: "Resposta do agente" });
 
     render(<AgentTranscript open workspaceId="workspace-shared" />);
@@ -101,10 +99,9 @@ describe("AgentTranscript – Canonical REST Contract & Display Sanitization", (
       expect(agentClient.fetchAgentHistory).toHaveBeenCalledTimes(2);
     });
 
-    // Proves that processAgentTurn, reconnectAgentTurn and retryAgentTurn are NOT called
-    expect(agentClient.processAgentTurn).not.toHaveBeenCalled();
+    // Proves that the legacy turn helpers (removed: process/retry → 410) are gone
+    // and the reconnect stream helper is NOT used by the transcript path
     expect(agentClient.reconnectAgentTurn).not.toHaveBeenCalled();
-    expect(agentClient.retryAgentTurn).not.toHaveBeenCalled();
   });
 
   it("does not expose legacy approval actions in the profile transcript", async () => {

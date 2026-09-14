@@ -87,6 +87,26 @@ describe("same-origin backend proxy", () => {
     const response = await GET(new Request("https://pwa.example/api/backend/me"), { params: Promise.resolve({ path: ["me"] }) });
     expect(response.headers.get("cache-control")).toContain("no-store");
   });
+
+  it("proxies cookie-only requests without requiring Authorization or device tokens (ADR-011 cookie precedence)", async () => {
+    const upstream = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await GET(new Request("https://pwa.example/api/backend/workspaces", {
+      headers: { cookie: "better-auth.session_token=abc" },
+    }), { params: Promise.resolve({ path: ["workspaces"] }) });
+
+    expect(response.status).toBe(200);
+    const [, init] = upstream.mock.calls[0] ?? [];
+    const headers = init?.headers as Headers;
+    expect(headers.get("cookie")).toBe("better-auth.session_token=abc");
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("x-device-token")).toBeNull();
+  });
 });
 
 /**

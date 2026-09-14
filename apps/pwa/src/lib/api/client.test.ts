@@ -248,6 +248,7 @@ describe("apiFetch error, timeout and edge handling", () => {
 });
 
 describe("central 401 handling (UNAUTHORIZED_EVENT)", () => {
+
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
@@ -277,5 +278,95 @@ describe("central 401 handling (UNAUTHORIZED_EVENT)", () => {
     await expect(apiFetch("/me")).rejects.toBeInstanceOf(ApiError);
     expect(handler).not.toHaveBeenCalled();
     window.removeEventListener(UNAUTHORIZED_EVENT, handler);
+  });
+});
+
+describe("canonical same-origin base (ADR-011)", () => {
+  const PRODUCTION_HOST = "pi-finance-pwa.walissonead.workers.dev";
+  const originalLocation = window.location;
+
+  function stubHostname(hostname: string) {
+    Object.defineProperty(window, "location", {
+      value: { ...originalLocation, hostname, origin: `https://${hostname}` },
+      writable: true,
+      configurable: true,
+    });
+  }
+
+  afterEach(() => {
+    Object.defineProperty(window, "location", {
+      value: originalLocation,
+      writable: true,
+      configurable: true,
+    });
+    localStorage.clear();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("uses the same-origin /api/backend proxy on the production host without explicit env", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "");
+    stubHostname(PRODUCTION_HOST);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await apiFetch("/workspaces");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/backend/workspaces",
+      expect.objectContaining({ credentials: "include" }),
+    );
+    expect(isApiConfigured()).toBe(true);
+  });
+
+  it("never defaults to the direct cross-origin API URL in production", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "");
+    stubHostname(PRODUCTION_HOST);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await apiFetch("/workspaces");
+
+    const calledUrl = String(fetchMock.mock.calls[0]?.[0] ?? "");
+    expect(calledUrl).not.toContain("api.synkroo.com.br");
+    expect(calledUrl.startsWith("/api/backend/")).toBe(true);
+  });
+
+  it("keeps the explicitly configured URL as transient test-env override", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    stubHostname(PRODUCTION_HOST);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await apiFetch("/workspaces");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.com/workspaces",
+      expect.anything(),
+    );
+  });
+
+  it("stays fail-closed off the production host without explicit env", () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "");
+    stubHostname("localhost");
+    expect(isApiConfigured()).toBe(false);
+  });
+
+  it("sends cookie-only same-origin requests without requiring localStorage tokens", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "");
+    stubHostname(PRODUCTION_HOST);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await apiFetch("/workspaces");
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBeUndefined();
+    expect(headers["x-device-token"]).toBeUndefined();
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ credentials: "include" });
   });
 });

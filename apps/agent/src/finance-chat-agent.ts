@@ -24,6 +24,7 @@ import {
   buildMemoryTools,
   bumpTurnCount,
   rememberFact,
+  isProhibitedFinancialMemory,
   setMemoryEnabled,
   currentSession,
   endSession,
@@ -57,7 +58,10 @@ import {
   type TurnInput,
   type TurnPlan,
 } from "./orchestration/conversation-orchestrator.js";
+import { emitSanitizedEvent } from "./observability/events.js";
 import { routeIntent } from "./orchestration/intent-router.js";
+import { createChannelGrounding } from "./orchestration/channel-evidence.js";
+import type { EvidenceEnvelope } from "./evidence/evidence-envelope.js";
 import { parseFinancialMutation } from "./mutations/financial-parser.js";
 import { MutationApiClient } from "./mutations/mutation-api-client.js";
 import { MutationExecutor, type ApprovalDecision } from "./mutations/mutation-executor.js";
@@ -437,6 +441,13 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
    * Canonical response provider used by every conversational adapter.  The
    * provider receives only the normalized, DLP-scrubbed turn and its plan;
    * identity is used for scoping reads, never for granting write authority.
+   *
+   * AGENT-005: relay (`pwa-rest`) and `streamText` (SDK) model text is raw
+   * provider output — it becomes user-visible ONLY through the
+   * ConversationOrchestrator read path, which routes evidence-backed turns
+   * through `createGroundedResponseWithRetry` (deterministic renderers or
+   * validated text, safe fallback otherwise). Never publish this return
+   * value for a read turn without that grounding step.
    */
   private async provideUnifiedResponse(input: TurnInput, _plan: TurnPlan): Promise<string> {
     const snapshot = await this.resolveIntentionSnapshot(input.intentionId);
@@ -576,10 +587,25 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
   private orchestratorForChannel(dependencies: {
     mutationApiClient?: MutationApiClient;
     plan?: (input: TurnInput) => TurnPlan;
+    evidenceProvider?: (input: TurnInput, plan: TurnPlan) => Promise<EvidenceEnvelope | null>;
+    correctionProvider?: (input: TurnInput, plan: TurnPlan, unsupportedClaims: readonly string[]) => Promise<string | null>;
   } = {}): ConversationOrchestrator {
+    // AGENT-005 production grounding: every channel (pwa-rest, sdk, broker)
+    // reads through the same evidence provider over the canonical read
+    // tools, scoped by the turn's authenticated workspace via a per-turn
+    // `financial.read` delegation (device-bound when the channel carries a
+    // verified device, read-only otherwise). Callers may override the pair
+    // (tests); the response provider always stays unified.
+    const grounding = createChannelGrounding({
+      respond: (input, plan) => this.provideUnifiedResponse(input, plan),
+      apiOrigin: this.env?.API_ORIGIN,
+      readToken: (input) => this.mintReadToken(input),
+    });
     return new ConversationOrchestrator({
       ...dependencies,
       responseProvider: (input, plan) => this.provideUnifiedResponse(input, plan),
+      evidenceProvider: dependencies.evidenceProvider ?? grounding.evidenceProvider,
+      correctionProvider: dependencies.correctionProvider ?? grounding.correctionProvider,
     });
   }
 
@@ -702,14 +728,14 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             const transcript = turns.map((turn) => `${turn.role === 'user' ? 'Usuário' : 'TED'}: ${turn.content}`).join('\n');
             const summary = await generateText({
               model: modelInstance.model,
-              system: 'Resuma a conversa abaixo em até 500 caracteres, em pt-BR, preservando fatos, valores e decisões.',
+              system: 'Resuma a conversa abaixo em até 500 caracteres, em pt-BR, preservando preferências e decisões duráveis. NUNCA inclua saldos, valores atuais, faturas, limites ou extratos como fatos: valores financeiros atuais nunca são duráveis.',
               prompt: transcript,
               maxOutputTokens: 400,
             });
             return summary.text;
           },
         });
-        if (compaction.compacted && sql && compaction.summary) {
+        if (compaction.compacted && sql && compaction.summary && !isProhibitedFinancialMemory(compaction.summary)) {
           try {
             rememberFact(sql, {
               workspaceId: memoryWorkspace,
@@ -907,6 +933,24 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         delegatedToken,
         identity: { workspaceId, actorId, deviceId },
       });
+      // AGENT-010: sanitized approval lifecycle events (status only — never
+      // operation payloads, tokens, or financial values).
+      try {
+        if (result.status === 'succeeded') {
+          emitSanitizedEvent('approval.confirmed', { status: 'confirmed' });
+          emitSanitizedEvent('mutation.executed', { status: 'succeeded' });
+        } else if (result.status === 'cancelled') {
+          emitSanitizedEvent('approval.rejected', { status: 'rejected' });
+        } else if (result.status === 'expired') {
+          emitSanitizedEvent('approval.expired', { status: 'expired' });
+        } else if (result.status === 'failed') {
+          emitSanitizedEvent('mutation.blocked', { status: 'blocked' });
+        } else {
+          emitSanitizedEvent('approval.confirmed', { status: result.status });
+        }
+      } catch {
+        // Observability must never break the approval response.
+      }
       return Response.json(result);
     } catch {
       return Response.json({ code: "agent.approval_failed", message: "Não foi possível concluir a decisão." }, { status: 502 });
@@ -954,6 +998,33 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     const request = async <T>(method: string, path: string, options: Parameters<typeof requestPiApiJson>[2] = {}) =>
       requestPiApiJson<T>(method, path, { ...options, delegatedToken, apiOrigin: this.env?.API_ORIGIN });
     return new MutationApiClient({ request });
+  }
+
+  /**
+   * Per-turn read delegation for the production evidence provider. Mirrors
+   * `mutationApiClientForTurn` but with the narrow `financial.read`
+   * capability the API requires on GETs; the workspace/actor scoping the
+   * API enforces comes from these claims (generated tools never send
+   * `context` params on the wire). Device-bound when the channel carries a
+   * verified device, read-only otherwise. Absent without a secret — reads
+   * then fail closed into `error` evidence, exactly like today's
+   * unauthenticated model-tool reads.
+   */
+  private async mintReadToken(input: TurnInput): Promise<string | undefined> {
+    const secret = this.env?.AGENT_DELEGATION_SECRET?.trim();
+    if (!secret) return undefined;
+    try {
+      return await createDelegatedTurnToken({
+        actorId: input.actorId,
+        workspaceId: input.workspaceId,
+        role: input.role,
+        capabilities: ['financial.read'],
+        requestId: input.intentionId,
+        ...(input.deviceId ? { deviceId: input.deviceId } : {}),
+      }, secret);
+    } catch {
+      return undefined;
+    }
   }
 
   private async enqueueChat<T>(task: () => Promise<T>): Promise<T> {

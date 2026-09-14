@@ -3,7 +3,8 @@
  *
  * Rendered by RootProviders when `isApiConfigured()` is false: no app content,
  * no mock financial data and no auth surface is exposed on such origins
- * (the production host keeps its API fallback in lib/api/client.ts).
+ * (the production host uses the same-origin `/api/backend` proxy per ADR-011,
+ * so it is always configured; other origins need the explicit env below).
  */
 export function ApiUnconfiguredScreen() {
   return (

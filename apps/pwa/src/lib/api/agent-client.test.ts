@@ -175,6 +175,7 @@ describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
   });
 
   it("legacy helpers remain available for backwards compatibility", async () => {
+
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify({ version: 1, exportedAt: "now", turns: [], messages: [], actions: [], events: [] }), { status: 200 }))
@@ -182,6 +183,23 @@ describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
 
     await expect(exportAgentHistory("w1")).resolves.toMatchObject({ version: 1 });
     await expect(deleteAgentHistory("w1")).resolves.toEqual({ deleted: true, recordCount: 2 });
+  });
+
+  it("defaults to the same-origin /api/agent proxy (ADR-011 canonical) without explicit env", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+    let capturedUrl = "";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      capturedUrl = String(url);
+      return new Response(JSON.stringify({ turnId: "t1", status: "completed", output: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    await sendAgentMessage("ws-1", "oi");
+
+    expect(capturedUrl).toBe("/api/agent/agents/finance-chat-agent/ws-1/rpc/chat");
   });
 
 });

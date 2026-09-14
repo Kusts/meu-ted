@@ -146,19 +146,24 @@ export type RouteDeps = {
  * The API-owned V2 executor is the only bridge from a canonical pending tool
  * to financial WriteStore methods. It deliberately accepts only the two TED
  * transaction tool ids and never trusts identity fields from normalizedArgs.
+ *
+ * P1 (audit item 7): every mutation executes with the pending operation's
+ * persisted idempotencyKey, so a retry after partial failure replays the
+ * first attempt's transaction instead of booking a second one.
  */
 export const createPendingOperationV2Executor = (writes: WriteStore): PendingExecutor => async (operation) => {
   const args = operation.normalizedArgs;
+  const idempotency = { idempotencyKey: operation.idempotencyKey };
   if (operation.tool === 'transactions.expense.create') {
     const parsed = createExpenseInputSchema.safeParse(args);
     if (!parsed.success) throw new Error('validation.invalid_expense_arguments');
-    const transaction = await writes.createExpense(operation.workspaceId, parsed.data);
+    const transaction = await writes.createExpense(operation.workspaceId, parsed.data, idempotency);
     return { status: 'succeeded' as const, operationId: transaction.id };
   }
   if (operation.tool === 'transactions.income.create') {
     const parsed = createIncomeInputSchema.safeParse(args);
     if (!parsed.success) throw new Error('validation.invalid_income_arguments');
-    const transaction = await writes.createIncome(operation.workspaceId, parsed.data);
+    const transaction = await writes.createIncome(operation.workspaceId, parsed.data, idempotency);
     return { status: 'succeeded' as const, operationId: transaction.id };
   }
   throw new Error('tool.not_allowed');

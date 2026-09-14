@@ -2,7 +2,7 @@ name: Agent Deploy
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CI", "PWA CI"]
     types: [completed]
     branches: [main]
 
@@ -11,8 +11,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  gate:
+    name: Gate — CI + PWA CI green for SHA
     if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require CI and PWA CI success for the deployed SHA
+        uses: actions/github-script@v7
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          script: |
+            const sha = process.env.HEAD_SHA;
+            const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+              owner,
+              repo,
+              head_sha: sha,
+              per_page: 50,
+            });
+            for (const name of ['CI', 'PWA CI']) {
+              const runs = data.workflow_runs.filter((r) => r.name === name);
+              if (runs.length === 0) {
+                // No run for this SHA (e.g. PWA CI path filters unmatched):
+                // nothing to enforce; the CI workflow's own pwa job still ran.
+                core.info(`No ${name} runs for ${sha} — skipping that requirement.`);
+                continue;
+              }
+              const latest = runs.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+              core.info(`${name}: latest run #${latest.run_number} conclusion=${latest.conclusion}`);
+              if (latest.conclusion !== 'success') {
+                core.setFailed(`Deploy blocked: ${name} latest conclusion for ${sha} is '${latest.conclusion}'.`);
+                return;
+              }
+            }
+            core.info(`Deploy gate passed for ${sha}.`);
+
+  deploy:
+    needs: [gate]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -35,3 +74,26 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  smoke:
+    name: Post-deploy smoke (read-only)
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      AGENT_PROD_URL: https://pi-finance-agent.walissonead.workers.dev
+      API_PROD_URL: https://api.synkroo.com.br
+    steps:
+      - name: Checkout deployed SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Agent worker health (public GET only)
+        run: |
+          curl -fsS "$AGENT_PROD_URL/health" | grep -q '"status":"ready"'
+          curl -fsS "$AGENT_PROD_URL/health/agent" | grep -q '"status":"ready"'
+      - name: API health (public GET only)
+        run: |
+          curl -fsS "$API_PROD_URL/health"

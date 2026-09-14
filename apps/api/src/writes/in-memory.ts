@@ -14,6 +14,8 @@ import { randomUUID } from 'node:crypto';
 import type { Account, Category, Transaction } from '../types/domain.js';
 import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';
 import { domainErrors, DomainError } from './errors.js';
+import { hashIdempotencyPayload } from './idempotency.js';
+import { namespacedPendingV2Key } from './pending-idempotency.js';
 import type { ApplyDefaultsResult, DeleteCategoryResult, WriteStore } from './store.js';
 import type {
   CreateAccountInput,
@@ -158,6 +160,111 @@ export const createInMemoryWriteStore = (state: InMemoryState): WriteStore => {
     if (!e) return;
     if ('deletedAt' in e && e.deletedAt) throw domainErrors.notFound('Lançamento');
     if (e.status === 'inactive') throw domainErrors.notFound('Conta');
+  };
+
+  // P1 (audit item 7): key-idempotent V2 execution records. First call
+  // executes and records (key → transaction); concurrent or repeated
+  // calls with the same key + payload replay without re-executing.
+  const idemRecords = new Map<string, { payloadHash: string; transaction: Transaction }>();
+  const idemFlights = new Map<string, { payloadHash: string; promise: Promise<Transaction> }>();
+  const runKeyed = async (
+    householdId: string,
+    idempotencyKey: string,
+    payload: unknown,
+    producer: () => Promise<Transaction>,
+  ): Promise<Transaction> => {
+    const composite = `${householdId}::${namespacedPendingV2Key(idempotencyKey)}`;
+    const payloadHash = hashIdempotencyPayload(payload);
+    const hit = idemRecords.get(composite);
+    if (hit) {
+      if (hit.payloadHash !== payloadHash) throw domainErrors.idempotencyConflict();
+      return hit.transaction;
+    }
+    const flight = idemFlights.get(composite);
+    if (flight) {
+      if (flight.payloadHash !== payloadHash) throw domainErrors.idempotencyConflict();
+      return flight.promise;
+    }
+    let resolveFlight!: (tx: Transaction) => void;
+    let rejectFlight!: (err: unknown) => void;
+    const promise = new Promise<Transaction>((res, rej) => {
+      resolveFlight = res;
+      rejectFlight = rej;
+    });
+    promise.catch(() => undefined);
+    idemFlights.set(composite, { payloadHash, promise });
+    try {
+      const tx = await producer();
+      idemRecords.set(composite, { payloadHash, transaction: tx });
+      resolveFlight(tx);
+      return tx;
+    } catch (err) {
+      rejectFlight(err);
+      throw err;
+    } finally {
+      idemFlights.delete(composite);
+    }
+  };
+
+  const createExpenseUnkeyed = async (householdId: string, input: CreateExpenseInput): Promise<Transaction> => {
+    const acc = findAccount(input.accountId, householdId);
+    assertNotDeleted(acc);
+    // H-01: card purchases must flow through the CardStore (statements,
+    // limits, invoice semantics) — never as plain balance expenses.
+    if (acc.kind === 'credit_card') {
+      throw new DomainError('validation.invalid', 'compra no cartão deve usar /cards/purchases.', 422);
+    }
+    const cat = findCategory(input.categoryId, householdId);
+    assertNotDeleted(cat);
+    if (input.subcategoryId !== undefined) {
+      resolveSubcategory(state, householdId, input.subcategoryId, 'expense', input.categoryId);
+    }
+    if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
+    const tx: Transaction = {
+      id: randomUUID(),
+      householdId,
+      kind: 'expense',
+      description: input.description,
+      amountCents: input.amountCents,
+      date: input.date,
+      accountId: input.accountId,
+      categoryId: input.categoryId,
+      ...(input.subcategoryId !== undefined ? { subcategoryId: input.subcategoryId } : {}),
+      ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    };
+    state.transactions.push(tx);
+    acc.balanceCents = Math.max(0, acc.balanceCents - input.amountCents);
+    return tx;
+  };
+
+  const createIncomeUnkeyed = async (householdId: string, input: CreateIncomeInput): Promise<Transaction> => {
+    const acc = findAccount(input.accountId, householdId);
+    assertNotDeleted(acc);
+    // H-01: income on a credit card is rejected (422), not silently booked.
+    if (acc.kind === 'credit_card') {
+      throw new DomainError('validation.invalid', 'receita não pode usar cartão de crédito.', 422);
+    }
+    const cat = findCategory(input.categoryId, householdId);
+    assertNotDeleted(cat);
+    if (input.subcategoryId !== undefined) {
+      resolveSubcategory(state, householdId, input.subcategoryId, 'income', input.categoryId);
+    }
+    if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
+    const tx: Transaction = {
+      id: randomUUID(),
+      householdId,
+      kind: 'income',
+      description: input.description,
+      amountCents: input.amountCents,
+      date: input.date,
+      accountId: input.accountId,
+      categoryId: input.categoryId,
+      ...(input.subcategoryId !== undefined ? { subcategoryId: input.subcategoryId } : {}),
+      ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    };
+    state.transactions.push(tx);
+    acc.balanceCents += input.amountCents;
+    return tx;
   };
 
   return {
@@ -319,65 +426,18 @@ async createAccount(householdId, input) {
       return applyDefaultsToState(state, householdId);
     },
 
-    async createExpense(householdId, input) {
-      const acc = findAccount(input.accountId, householdId);
-      assertNotDeleted(acc);
-      // H-01: card purchases must flow through the CardStore (statements,
-      // limits, invoice semantics) — never as plain balance expenses.
-      if (acc.kind === 'credit_card') {
-        throw new DomainError('validation.invalid', 'compra no cartão deve usar /cards/purchases.', 422);
+    async createExpense(householdId, input, options) {
+      if (options?.idempotencyKey !== undefined) {
+        return runKeyed(householdId, options.idempotencyKey, input, () => createExpenseUnkeyed(householdId, input));
       }
-      const cat = findCategory(input.categoryId, householdId);
-      assertNotDeleted(cat);
-      if (input.subcategoryId !== undefined) {
-        resolveSubcategory(state, householdId, input.subcategoryId, 'expense', input.categoryId);
-      }
-      if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
-      const tx: Transaction = {
-        id: randomUUID(),
-        householdId,
-        kind: 'expense',
-        description: input.description,
-        amountCents: input.amountCents,
-        date: input.date,
-        accountId: input.accountId,
-        categoryId: input.categoryId,
-        ...(input.subcategoryId !== undefined ? { subcategoryId: input.subcategoryId } : {}),
-        ...(input.notes !== undefined ? { notes: input.notes } : {}),
-      };
-      state.transactions.push(tx);
-      acc.balanceCents = Math.max(0, acc.balanceCents - input.amountCents);
-      return tx;
+      return createExpenseUnkeyed(householdId, input);
     },
 
-    async createIncome(householdId, input) {
-      const acc = findAccount(input.accountId, householdId);
-      assertNotDeleted(acc);
-      // H-01: income on a credit card is rejected (422), not silently booked.
-      if (acc.kind === 'credit_card') {
-        throw new DomainError('validation.invalid', 'receita não pode usar cartão de crédito.', 422);
+    async createIncome(householdId, input, options) {
+      if (options?.idempotencyKey !== undefined) {
+        return runKeyed(householdId, options.idempotencyKey, input, () => createIncomeUnkeyed(householdId, input));
       }
-      const cat = findCategory(input.categoryId, householdId);
-      assertNotDeleted(cat);
-      if (input.subcategoryId !== undefined) {
-        resolveSubcategory(state, householdId, input.subcategoryId, 'income', input.categoryId);
-      }
-      if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
-      const tx: Transaction = {
-        id: randomUUID(),
-        householdId,
-        kind: 'income',
-        description: input.description,
-        amountCents: input.amountCents,
-        date: input.date,
-        accountId: input.accountId,
-        categoryId: input.categoryId,
-        ...(input.subcategoryId !== undefined ? { subcategoryId: input.subcategoryId } : {}),
-        ...(input.notes !== undefined ? { notes: input.notes } : {}),
-      };
-      state.transactions.push(tx);
-      acc.balanceCents += input.amountCents;
-      return tx;
+      return createIncomeUnkeyed(householdId, input);
     },
 
     async createTransfer(householdId, input) {

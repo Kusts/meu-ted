@@ -17,6 +17,17 @@ export interface BridgeContextRouteOptions {
   now?: () => number;
 }
 
+/**
+ * Minimal read-only scope minted by this route (P2 wildcard remediation:
+ * never mint `["*"]` here again).
+ */
+export const BRIDGE_CONTEXT_CAPABILITIES: string[] = ["financial.read"];
+
+/**
+ * @deprecated Legacy compatibility route for the removed WhatsApp bridge
+ * (P3 f640e84). New clients must use the workspace-scoped auth flow instead.
+ * Kept public only so legacy callers fail closed with a scoped token.
+ */
 export const registerBridgeContextRoutes = (
   app: FastifyInstance,
   options: BridgeContextRouteOptions,
@@ -42,7 +53,7 @@ export const registerBridgeContextRoutes = (
           actorId: resolution.userId,
           workspaceId: resolution.workspaceId,
           role: resolution.role,
-          capabilities: ["*"],
+          capabilities: [...BRIDGE_CONTEXT_CAPABILITIES],
           requestId: parsed.data.requestId,
         },
         options.delegationSecret,

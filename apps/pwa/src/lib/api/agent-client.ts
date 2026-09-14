@@ -34,6 +34,9 @@ const historySchema = z.object({
 export type AgentMessage = z.infer<typeof historyItemSchema>;
 
 function agentBaseUrl(): string {
+  // ADR-011: canonical browser transport is the same-origin proxy /api/agent.
+  // An explicitly configured direct URL is transient test-env compatibility
+  // only — never a silent production default.
   const direct = process.env.NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL?.replace(/\/$/, "");
   if (direct) return direct;
   // Fallback seguro ao proxy Next.js /api/agent quando a URL direta não estiver configurada.
@@ -259,20 +262,6 @@ export async function renewAgentSession(workspaceId: string): Promise<AgentSessi
 
 export async function cancelAgentTurn(workspaceId: string, turnId: string): Promise<AgentTurn> {
   const response = await fetch(agentRequestUrl(workspaceId, `/${encodeURIComponent(turnId)}/abort`), {
-    method: "POST", credentials: "include", headers: { "X-Workspace-Id": workspaceId },
-  });
-  return parseJson<AgentTurn>(response);
-}
-
-export async function retryAgentTurn(workspaceId: string, turnId: string): Promise<AgentTurn> {
-  const response = await fetch(agentRequestUrl(workspaceId, `/${encodeURIComponent(turnId)}/retry`), {
-    method: "POST", credentials: "include", headers: { "X-Workspace-Id": workspaceId },
-  });
-  return parseJson<AgentTurn>(response);
-}
-
-export async function processAgentTurn(workspaceId: string, turnId: string): Promise<AgentTurn> {
-  const response = await fetch(agentRequestUrl(workspaceId, `/${encodeURIComponent(turnId)}/process`), {
     method: "POST", credentials: "include", headers: { "X-Workspace-Id": workspaceId },
   });
   return parseJson<AgentTurn>(response);

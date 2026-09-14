@@ -172,8 +172,12 @@ describe("E2E API -> Agent (Fase 3 item 5)", () => {
   it("happy: snapshot servido pela API vira inferência do agent via fake upstream", async () => {
     await seedActivePair();
     const agent = makeAgent();
+    // Non-read utterance on purpose: balance/statement reads now render
+    // deterministically from production evidence without reaching inference
+    // (see tests/orchestration/channel-grounding.test.ts), so the
+    // snapshot→inference premise is exercised with a general question.
     const out = (await agent.onChatMessage({
-      text: "Qual o meu saldo?",
+      text: "Olá, como você pode me ajudar?",
       intentionId: "e2e-happy-1",
     })) as unknown as ChatResult;
     await expect(readText(out)).resolves.toContain("E2E ok");
