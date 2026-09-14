@@ -9,10 +9,11 @@
 // budget.json.totalGzipKB is the equivalent-set baseline (re-baselined
 // 2026-09-06 to 495.04 KB; the 2026-07-15 280.7 KB line is kept as historical
 // reference in budget.json notes and in the HISTORICAL fixture below).
-// Next.js framework chunks (currently 2262cfa8-*/474-*, evidenced via
-// build-manifest.json#rootMainFiles) are NOT application code and are excluded
+// Next.js framework chunks (derived per-build from
+// build-manifest.json#rootMainFiles — chunk ids vary by build environment,
+// so they are never pinned) are NOT application code and are excluded
 // from the equivalent set. App/ lazy route chunks ARE part of the equivalent
-// set â€” they are included, not excluded merely because lazy. The equivalent
+// set — they are included, not excluded merely because lazy. The equivalent
 // set is therefore "all chunks minus the evidenced framework chunks".
 //
 // The regression gate is ONE-SIDED (upper bound): current <= baseline * 1.05.
@@ -28,8 +29,9 @@ import {
   isAppLevel,
   summarize,
   passesBudget,
-  verifyFrameworkPrefixesAgainstManifest,
-  FRAMEWORK_PREFIXES,
+  validateFrameworkSet,
+  frameworkBasesFromManifest,
+  EXPECTED_FRAMEWORK_CHUNK_COUNT,
 } from "../../scripts/measure-bundle.mjs";
 
 const APP_ROOT = path.resolve(__dirname, "..", "..");
@@ -131,6 +133,9 @@ describe("bundle measure â€” fixture proofs", () => {
     rows.map(([p, kb]) => ({ path: p, kb }));
 
   it("counts app/ lazy chunks and KEEPS them in the equivalent set (not excluded)", () => {
+    // Framework membership is manifest-derived evidence, passed in as a set —
+    // never inferred from pinned chunk ids (ids vary by build environment).
+    const bases = new Set(["2262cfa8-xyz.js", "474-q.js"]);
     const r = summarize(
       E([
         ["framework-abc.js", 10],
@@ -140,6 +145,7 @@ describe("bundle measure â€” fixture proofs", () => {
         ["app/settings/page.js", 5], // app lazy
         ["136-aaa.js", 40], // unknown/other -> included
       ]),
+      bases,
     );
     expect(r.appLevelGzipKB).toBeCloseTo(35, 5); // 30 + 5
     // total = 206.69, framework = 121.69 -> equivalent = 85
@@ -153,14 +159,27 @@ describe("bundle measure â€” fixture proofs", () => {
   it("treats unknown chunks conservatively (included in equivalent set, never excluded)", () => {
     const r = summarize(
       E([
-        ["mystery-chunk-9.js", 50], // matches no known prefix
+        ["mystery-chunk-9.js", 50], // matches no known framework member
         ["2262cfa8-xyz.js", 100], // framework -> subtracted
       ]),
+      new Set(["2262cfa8-xyz.js"]),
     );
     // total = 150, framework = 100 -> equivalent = 50 (mystery MUST stay)
     expect(r.equivalentSetGzipKB).toBeCloseTo(50, 5);
     expect(r.frameworkGzipKB).toBeCloseTo(100, 5);
-    expect(classifyChunk("mystery-chunk-9.js")).toBe("other");
+    expect(classifyChunk("mystery-chunk-9.js", new Set(["2262cfa8-xyz.js"]))).toBe("other");
+  });
+
+  it("treats every chunk as included when there is no manifest-derived evidence", () => {
+    // Fail-closed direction: without evidence nothing is subtracted.
+    const r = summarize(
+      E([
+        ["2262cfa8-xyz.js", 100],
+        ["mystery-chunk-9.js", 50],
+      ]),
+    );
+    expect(r.frameworkGzipKB).toBe(0);
+    expect(r.equivalentSetGzipKB).toBeCloseTo(150, 5);
   });
 
   it("gate: 294.735 KB passes, anything above fails (one-sided, baseline 280.7, +5%)", () => {
@@ -189,29 +208,45 @@ describe("bundle measure â€” fixture proofs", () => {
     expect(passesBudget(max + 0.01, baseline, limit / 100)).toBe(false);
   });
 
-  it("pinned FRAMEWORK_PREFIXES are the currently evidenced Next.js ids", () => {
-    // Fase 3 R4: script and fixtures must name the same framework chunk ids.
-    // 624-/3896037c- (Next 16.2.9 era) were superseded by 89973f52-/510-
-    // (16.2.12 era), themselves superseded by 2262cfa8-/474- (Next 16.3.5 era)
-    // (see measure-bundle.mjs history note). A Next upgrade that renames
-    // them must update the script AND this pin together.
-    expect([...FRAMEWORK_PREFIXES]).toEqual(["2262cfa8-", "474-"]);
-    const manifest = {
+  it("derives the framework set from the manifest on any build environment (no pinned ids)", () => {
+    // 2026-09-14 regression: chunk ids embed platform-dependent module paths —
+    // identical source+lockfile yields Windows ids on dev and Linux ids on CI,
+    // so committed id pins tripped on environment instead of on Next upgrades.
+    // The derivation below must accept EITHER naming while the gate still
+    // trips on a changed framework SET SHAPE (see the count test below).
+    // Windows-evidenced naming (dev):
+    const winBases = frameworkBasesFromManifest({
       json: {
         rootMainFiles: [
-          "static/chunks/webpack-1ea83a7bda9eb7a6.js",
-          "static/chunks/2262cfa8-cdab712dca2a9cf0.js",
-          "static/chunks/474-abf218878bab7e84.js",
-          "static/chunks/main-app-8cb15600dee149a8.js",
+          "static/chunks/webpack-a99ec310e4c880af.js",
+          "static/chunks/2262cfa8-72f5ba4627fa80fd.js",
+          "static/chunks/474-f4ff971a4446e816.js",
+          "static/chunks/main-app-23dfa4e4d4967482.js",
         ],
       },
-    };
-    const v = verifyFrameworkPrefixesAgainstManifest(FRAMEWORK_PREFIXES, manifest);
-    expect(v.verified).toBe(true);
-    expect(v.missing).toEqual([]);
+    });
+    // Linux-evidenced naming (CI — node:22 and node:26 container builds):
+    const linuxBases = frameworkBasesFromManifest({
+      json: {
+        rootMainFiles: [
+          "static/chunks/webpack-7a9cf1af2145492c.js",
+          "static/chunks/d398ea7c-4fa0cd156bf532c6.js",
+          "static/chunks/899-da5d9f31a26d4e2d.js",
+          "static/chunks/main-app-4f23a680e7a3a6c3.js",
+        ],
+      },
+    });
+    for (const bases of [winBases, linuxBases]) {
+      expect(bases.size).toBe(EXPECTED_FRAMEWORK_CHUNK_COUNT);
+      // webpack runtime + 2 framework chunks; initial/main-app never excluded
+      expect([...bases].some((b) => b.startsWith("webpack-"))).toBe(true);
+      expect([...bases].some((b) => b.startsWith("main-app-"))).toBe(false);
+    }
+    expect(winBases).not.toEqual(linuxBases); // the ids really differ by env
   });
 
   it("equivalent-set membership is stable across repeated classification", () => {
+    const bases = new Set(["2262cfa8-xyz.js", "474-q.js"]);
     const entries = E([
       ["framework-abc.js", 10],
       ["2262cfa8-xyz.js", 100],
@@ -219,51 +254,74 @@ describe("bundle measure â€” fixture proofs", () => {
       ["app/dashboard/index.js", 30],
       ["136-aaa.js", 40],
     ]);
-    const a = summarize(entries);
-    const b = summarize(entries);
+    const a = summarize(entries, bases);
+    const b = summarize(entries, bases);
     expect(a).toEqual(b);
-    // same name always classifies identically
-    expect(classifyChunk("2262cfa8-cdab712dca2a9cf0.js")).toBe("framework");
-    expect(classifyChunk("474-abf218878bab7e84.js")).toBe("framework");
-    expect(classifyChunk("app/foo/page.js")).toBe("other");
-    expect(classifyChunk("mystery-1.js")).toBe("other");
-    expect(classifyChunk("framework-9.js")).toBe("initial");
-    expect(classifyChunk("main-7.js")).toBe("initial");
+    // same name always classifies identically against the same evidence
+    expect(classifyChunk("2262cfa8-cdab712dca2a9cf0.js", new Set(["2262cfa8-cdab712dca2a9cf0.js"]))).toBe("framework");
+    expect(classifyChunk("474-abf218878bab7e84.js", new Set(["474-abf218878bab7e84.js"]))).toBe("framework");
+    expect(classifyChunk("app/foo/page.js", bases)).toBe("other");
+    expect(classifyChunk("mystery-1.js", bases)).toBe("other");
+    expect(classifyChunk("framework-9.js", bases)).toBe("initial");
+    expect(classifyChunk("main-7.js", bases)).toBe("initial");
   });
 
-  it("verifies framework prefixes against build-manifest.json#rootMainFiles when present", () => {
-    // Canonical evidence: Next.js lists 2262cfa8-* and 474-* as framework root files.
-    const manifest = {
-      json: {
-        rootMainFiles: [
-          "static/chunks/webpack-1ea83a7bda9eb7a6.js",
-          "static/chunks/2262cfa8-cdab712dca2a9cf0.js",
-          "static/chunks/474-abf218878bab7e84.js",
-          "static/chunks/main-app-8cb15600dee149a8.js",
-        ],
-      },
-    };
-    const v = verifyFrameworkPrefixesAgainstManifest(["2262cfa8-", "474-"], manifest);
-    expect(v.verified).toBe(true);
-    expect(v.missing).toEqual([]);
-  });
-
-  it("hard-fails verification if a pinned prefix is NOT in the framework manifest", () => {
-    const manifest = { json: { rootMainFiles: ["static/chunks/webpack-x.js"] } };
-    const v = verifyFrameworkPrefixesAgainstManifest(["2262cfa8-", "474-"], manifest);
-    expect(v.verified).toBe(false);
-    expect(v.missing).toEqual(["2262cfa8-", "474-"]);
+  it("validates the derived framework set fail-closed (shape, presence, location)", () => {
+    const files = new Map([
+      ["webpack-x.js", ["webpack-x.js"]],
+      ["fw-a.js", ["fw-a.js"]],
+      ["fw-b.js", ["fw-b.js"]],
+    ]);
+    const manifest = (rootMainFiles: string[]) => ({ json: { rootMainFiles } });
+    // happy path: webpack runtime + 2 framework chunks, all on disk
+    const ok = validateFrameworkSet(
+      manifest(["static/chunks/webpack-x.js", "static/chunks/fw-a.js", "static/chunks/fw-b.js", "static/chunks/main-app-w.js"]),
+      files,
+    );
+    expect(ok.ok).toBe(true);
+    expect(ok.frameworkBases).toEqual(new Set(["webpack-x.js", "fw-a.js", "fw-b.js"]));
+    // no manifest -> no evidence -> fail
+    expect(validateFrameworkSet(null, files).ok).toBe(false);
+    // changed framework set shape (Next upgrade adds a root file) -> fail
+    const shape = validateFrameworkSet(
+      manifest(["static/chunks/webpack-x.js", "static/chunks/fw-a.js", "static/chunks/fw-b.js", "static/chunks/fw-c.js", "static/chunks/main-app-w.js"]),
+      new Map([...files, ["fw-c.js", ["fw-c.js"]]]),
+    );
+    expect(shape.ok).toBe(false);
+    expect(shape.reason).toMatch(/re-evidence/);
+    // derived member missing on disk -> fail
+    const missing = validateFrameworkSet(
+      manifest(["static/chunks/webpack-x.js", "static/chunks/fw-a.js", "static/chunks/fw-b.js", "static/chunks/main-app-w.js"]),
+      new Map([["webpack-x.js", ["webpack-x.js"]], ["fw-a.js", ["fw-a.js"]]]),
+    );
+    expect(missing.ok).toBe(false);
+    expect(missing.reason).toMatch(/not on disk/);
+    // derived member living under app/ (route code) is never excludable -> fail
+    const routeCode = validateFrameworkSet(
+      manifest(["static/chunks/webpack-x.js", "static/chunks/fw-a.js", "static/chunks/fw-b.js", "static/chunks/main-app-w.js"]),
+      new Map([["webpack-x.js", ["webpack-x.js"]], ["fw-a.js", ["fw-a.js"]], ["fw-b.js", ["app/fw-b.js"]]]),
+    );
+    expect(routeCode.ok).toBe(false);
+    expect(routeCode.reason).toMatch(/under app\//);
   });
 });
 
 describe("bundle measure â€” fail-closed manifest check and composition report", () => {
   const makeFakeBuild = (rootMainFiles: string[]) => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "bundle-measure-"));
-    fs.mkdirSync(path.join(cwd, ".open-next", "assets", "_next", "static", "chunks"), { recursive: true });
+    const chunksDir = path.join(cwd, ".open-next", "assets", "_next", "static", "chunks");
+    fs.mkdirSync(chunksDir, { recursive: true });
     fs.writeFileSync(
-      path.join(cwd, ".open-next", "assets", "_next", "static", "chunks", "app-page.js"),
+      path.join(chunksDir, "app-page.js"),
       "// fake app chunk for measurement",
     );
+    // Every manifest-derived framework member must exist on disk for the
+    // exclusion to be evidenced — mirror exactly the derived framework set
+    // (not initial/main-app entries) as fake chunks.
+    const derived = frameworkBasesFromManifest({ json: { rootMainFiles } });
+    for (const base of derived) {
+      fs.writeFileSync(path.join(chunksDir, base), `// fake ${base} for measurement`);
+    }
     fs.mkdirSync(path.join(cwd, ".next"), { recursive: true });
     fs.writeFileSync(
       path.join(cwd, ".next", "build-manifest.json"),
@@ -272,8 +330,17 @@ describe("bundle measure â€” fail-closed manifest check and composition rep
     return cwd;
   };
 
-  it("exits non-zero when the manifest cannot evidence the pinned framework prefixes", () => {
+  it("exits non-zero when the framework set shape cannot be evidenced", () => {
+    // Only webpack + main-app -> derived set has 1 member, expected 3.
     const cwd = makeFakeBuild(["static/chunks/webpack-x.js", "static/chunks/main-app-y.js"]);
+    expect(() =>
+      execFileSync("node", [MEASURE_PATH], { cwd, encoding: "utf-8", stdio: "pipe" }),
+    ).toThrow();
+  });
+
+  it("exits non-zero when no build manifest exists at all", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "bundle-measure-"));
+    fs.mkdirSync(path.join(cwd, ".open-next", "assets", "_next", "static", "chunks"), { recursive: true });
     expect(() =>
       execFileSync("node", [MEASURE_PATH], { cwd, encoding: "utf-8", stdio: "pipe" }),
     ).toThrow();
@@ -298,10 +365,10 @@ describe("bundle measure â€” fail-closed manifest check and composition rep
     };
     expect(typeof report.generatedAt).toBe("string");
     expect(report.manifestVerified).toBe(true);
-    expect(report.chunks).toBe(1);
+    expect(report.chunks).toBe(4);
     expect(report.equivalentSetGzipKB).toBeGreaterThan(0);
-    expect(report.topChunks).toHaveLength(1);
-    expect(report.topChunks[0]?.path).toContain("app-page.js");
+    expect(report.topChunks).toHaveLength(4);
+    expect(report.topChunks.some((t) => t.path.includes("app-page.js"))).toBe(true);
     expect(typeof report.topChunks[0]?.kb).toBe("number");
   });
 });

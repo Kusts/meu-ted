@@ -5,18 +5,28 @@
 //
 //   initialGzipKB       — framework- + main- + polyfills- (the initial-load set)
 //   totalGzipKB         — every .js chunk under static/chunks/ (all chunks; informational)
-//   frameworkGzipKB     — Next.js framework chunks (currently 2262cfa8-*, 208-*)
+//   frameworkGzipKB     — Next.js framework chunks (derived per-build from the
+//                         build manifest — see below, never pinned by id)
 //   appLevelGzipKB      — lazy route chunks under static/chunks/app/
 //   equivalentSetGzipKB — total minus the evidenced Next.js framework chunks
 //
-// WHY the pinned framework prefixes are subtracted (PROVEN, not asserted):
-//   Next.js's own build manifest (.next/build-manifest.json#rootMainFiles) lists the
-//   files loaded for EVERY route — the framework runtime set. The pinned ids appear
-//   in rootMainFiles, i.e. they are Next.js framework chunks, NOT application/route
-//   code (they are also not under static/chunks/app/). The exclusion is
-//   cross-checked against rootMainFiles at runtime: if a pinned prefix is absent
-//   from the manifest, the script FAILS (no silent, evidence-free exclusion).
-//   See budget.json notes and bundle-budget.test.ts.
+// WHY the framework set is derived per-build, never pinned by chunk id
+// (PROVEN 2026-09-14, fail-closed kept):
+//   Next.js webpack chunk ids/hashes embed platform-dependent module paths:
+//   identical source + lockfile yields e.g. 2262cfa8-/474- on Windows but
+//   d398ea7c-/899- on Linux (verified with Linux node:22 + node:26 container
+//   builds vs a Windows/Node 26 build — same manifest shape, different ids).
+//   Committed id pins therefore trip on ENVIRONMENT, not on Next.js upgrades,
+//   and can never be re-evidenced to a value valid in both dev and CI.
+//   The exclusion stays evidenced, not asserted: the framework set is derived
+//   from Next.js's own manifest (.next/build-manifest.json#rootMainFiles minus
+//   the initial + main-app entries — i.e. the framework runtime Next.js loads
+//   for EVERY route, which is definitionally not application/route code), and
+//   the derivation is validated fail-closed: the manifest must exist, the
+//   derived set must have exactly EXPECTED_FRAMEWORK_CHUNK_COUNT members, and
+//   every member must exist on disk under static/chunks/ outside app/.
+//   A Next.js upgrade that changes the framework set SHAPE still trips the
+//   gate for conscious re-evidence — an environment change no longer does.
 //
 // The 5% regression gate (CI, bundle-budget.test.ts) compares equivalentSetGzipKB to
 // budget.json.totalGzipKB. Exit code 0 always (informational); the wrapper test asserts
@@ -29,23 +39,13 @@ import zlib from "node:zlib";
 
 const dir = ".open-next/assets/_next/static/chunks";
 const INITIAL_PREFIXES = ["framework-", "main-", "polyfills-"];
-// Next.js framework chunk ids, PROVEN via build-manifest.json#rootMainFiles
-// (see verifyFrameworkPrefixesAgainstManifest + the runtime cross-check in main()).
-// History: 624-/3896037c- (Next 16.2.9 era) were superseded by 89973f52-
-// (React error decoder: contains react.dev/errors minified strings) and
-// 510- (Next deployment-id runtime). These ids are deterministic per Next
-// minor; a Next upgrade that renames them MUST fail the manifest check
-// below so the exclusion is consciously re-evidenced, never silent.
-// 16.3.5 era (2026-09-13, after next 16.2.12 -> 16.3.5 bump): rootMainFiles
-// lists 2262cfa8-72f5ba4627fa80fd.js (React error decoder: contains
-// `https://react.dev/errors/` minified string builder) and the Next
-// deployment-id runtime chunk (`getDeploymentId()` + `x-deployment-id`
-// header wiring). The React UUID prefix is stable across 16.3.5 builds,
-// but the numeric deployment-id chunk id tracks build content
-// (208-0a7f8fec9aae1919.js pre security-overrides -> 474-f4ff971a4446e816.js
-// after the 2026-09-14 transitive CVE overrides) and must be re-evidenced
-// whenever the manifest check trips.
-const FRAMEWORK_PREFIXES = ["2262cfa8-", "474-"];
+// Expected SHAPE of the manifest-derived framework set: currently the webpack
+// runtime + 2 framework chunks (rootMainFiles minus initial/main-app). This
+// count is environment-independent (proven identical on Linux node:22/26 and
+// Windows/Node 26 — only the ids/hashes vary). A Next.js upgrade that adds or
+// removes framework root files MUST trip the validation below so the new
+// shape is consciously re-evidenced, never silently absorbed.
+const EXPECTED_FRAMEWORK_CHUNK_COUNT = 3;
 
 // Build-manifest candidates (relative to the app root / cwd). The .next manifest is
 // the authoritative evidence source in this repo, so prefer it; .open-next is only a
@@ -59,9 +59,16 @@ export function gzipSize(buf) {
   return zlib.gzipSync(buf, { level: 9 }).length;
 }
 
-export function classifyChunk(baseName) {
+/**
+ * @param {string} baseName
+ * @param {Set<string> | null} [frameworkBases] manifest-derived evidence; without it nothing is framework
+ */
+export function classifyChunk(baseName, frameworkBases = null) {
   if (INITIAL_PREFIXES.some((p) => baseName.startsWith(p))) return "initial";
-  if (FRAMEWORK_PREFIXES.some((p) => baseName.startsWith(p))) return "framework";
+  // Framework membership comes ONLY from the manifest-derived set (never from
+  // pinned ids — chunk ids vary by build environment). Without that evidence
+  // a chunk is conservatively "other" (included in the equivalent set).
+  if (frameworkBases ? frameworkBases.has(baseName) : false) return "framework";
   return "other";
 }
 
@@ -70,6 +77,10 @@ export function isAppLevel(relPath) {
 }
 
 // entries: Array<{ path: string; kb: number }>  (kb already gzip KB)
+/**
+ * @param {Array<{ path: string, kb: number }>} entries
+ * @param {Set<string> | null} [frameworkBases] manifest-derived evidence; without it nothing is subtracted
+ */
 export function summarize(entries, frameworkBases = null) {
   let initialKB = 0;
   let totalKB = 0;
@@ -78,9 +89,9 @@ export function summarize(entries, frameworkBases = null) {
   for (const e of entries) {
     totalKB += e.kb;
     const base = path.basename(e.path);
-    const cls = classifyChunk(base);
+    const cls = classifyChunk(base, frameworkBases);
     if (cls === "initial") initialKB += e.kb;
-    else if (frameworkBases ? frameworkBases.has(base) : cls === "framework") frameworkKB += e.kb;
+    else if (cls === "framework") frameworkKB += e.kb;
     if (isAppLevel(e.path)) appKB += e.kb;
   }
   const equivalentKB = totalKB - frameworkKB;
@@ -114,16 +125,45 @@ export function loadBuildManifest(candidates = MANIFEST_CANDIDATES) {
   return null;
 }
 
-// Prove the pinned framework prefixes are Next.js framework (rootMainFiles).
-// Returns { verified, rootFiles, missing }. If manifest is null, verified=false and
-// every prefix is reported missing (could not be evidenced).
-export function verifyFrameworkPrefixesAgainstManifest(prefixes, manifest) {
-  if (!manifest) return { verified: false, rootFiles: [], missing: [...prefixes] };
-  const rootBases = (manifest.json.rootMainFiles || []).map((f) => path.basename(f));
-  const missing = prefixes.filter(
-    (p) => !rootBases.some((b) => b.startsWith(p)),
-  );
-  return { verified: missing.length === 0, rootFiles: rootBases, missing };
+// Prove the framework exclusion against Next.js's own manifest evidence.
+// Returns { ok, reason, frameworkBases }. Fail-closed (Fase 2 item 4): any
+// exclusion the manifest cannot evidence must never silently shrink the
+// equivalent set. `chunkFiles` maps walked chunk basenames to their relative
+// paths (used to prove every derived member exists on disk, outside app/).
+/**
+ * @param {{ json: { rootMainFiles?: string[] } } | null} manifest
+ * @param {Map<string, string[]>} chunkFiles
+ * @returns {{ ok: boolean, reason: string, frameworkBases: Set<string> | null }}
+ */
+export function validateFrameworkSet(manifest, chunkFiles) {
+  if (!manifest) {
+    return { ok: false, reason: "no build-manifest.json found", frameworkBases: null };
+  }
+  const frameworkBases = frameworkBasesFromManifest(manifest);
+  const members = [...frameworkBases];
+  if (members.length === 0) {
+    return { ok: false, reason: "derived framework set is empty", frameworkBases: null };
+  }
+  if (members.length !== EXPECTED_FRAMEWORK_CHUNK_COUNT) {
+    return {
+      ok: false,
+      reason:
+        `derived framework set has ${members.length} member(s) [${members.join(", ")}], ` +
+        `expected ${EXPECTED_FRAMEWORK_CHUNK_COUNT} — re-evidence the framework ` +
+        `chunk set shape after the Next.js upgrade and update EXPECTED_FRAMEWORK_CHUNK_COUNT`,
+      frameworkBases: null,
+    };
+  }
+  for (const base of members) {
+    const rels = chunkFiles.get(base) || [];
+    if (rels.length === 0) {
+      return { ok: false, reason: `framework chunk ${base} is not on disk under ${dir}`, frameworkBases: null };
+    }
+    if (rels.some((r) => isAppLevel(r))) {
+      return { ok: false, reason: `framework chunk ${base} lives under app/ — refusing to exclude route code`, frameworkBases: null };
+    }
+  }
+  return { ok: true, reason: "", frameworkBases };
 }
 
 function walk(p) {
@@ -137,8 +177,12 @@ function walk(p) {
   return out;
 }
 
-function frameworkBasesFromManifest(manifest) {
-  if (!manifest) return null;
+/**
+ * @param {{ json: { rootMainFiles?: string[] } } | null} manifest
+ * @returns {Set<string>} rootMainFiles basenames minus initial/main-app entries (empty when no manifest)
+ */
+export function frameworkBasesFromManifest(manifest) {
+  if (!manifest) return new Set();
   const rootBases = (manifest.json.rootMainFiles || []).map((f) => path.basename(f));
   const bases = rootBases.filter(
     (b) => !INITIAL_PREFIXES.some((p) => b.startsWith(p)) && !b.startsWith("main-app-"),
@@ -151,41 +195,32 @@ function main() {
   // Cross-check the framework exclusion against Next.js's own manifest evidence.
   // Fail-closed (Fase 2 item 4): an exclusion the manifest cannot evidence
   // must never silently shrink the equivalent set.
-  const manifest = loadBuildManifest();
-  const v = verifyFrameworkPrefixesAgainstManifest(FRAMEWORK_PREFIXES, manifest);
-  const frameworkBases = frameworkBasesFromManifest(manifest);
-  if (!manifest) {
-    console.error(
-      `WARN: no build-manifest.json found (looked in ${MANIFEST_CANDIDATES.join(
-        ", ",
-      )}). Framework prefixes ${FRAMEWORK_PREFIXES.join(
-        ",",
-      )} are pinned by their Next.js 16.2.9 framework chunk ids but could NOT be ` +
-        `cross-checked against a manifest.`,
-    );
-  } else if (!v.verified) {
-    console.error(
-      `ERROR: framework prefix(es) ${JSON.stringify(
-        v.missing,
-      )} are not listed in ${manifest.path}#rootMainFiles. Refusing to ` +
-        `exclude unevidenced chunks from the equivalent set — re-evidence the ` +
-        `framework chunk ids after the Next.js upgrade and update FRAMEWORK_PREFIXES.`,
-    );
-    process.exit(1);
-  } else {
-    console.error(
-      `Evidence: framework prefixes ${FRAMEWORK_PREFIXES.join(
-        ",",
-      )} verified against ${manifest.path}#rootMainFiles (Next.js framework set).`,
-    );
-  }
-
   if (!fs.existsSync(dir)) {
     console.error(`No build output at ${dir}. Run pnpm run build:cloudflare first.`);
     process.exit(2);
   }
 
   const files = walk(dir);
+  const chunkFiles = new Map();
+  for (const fp of files) {
+    const base = path.basename(fp);
+    if (!chunkFiles.has(base)) chunkFiles.set(base, []);
+    chunkFiles.get(base).push(path.relative(dir, fp));
+  }
+  const manifest = loadBuildManifest();
+  const v = validateFrameworkSet(manifest, chunkFiles);
+  if (!v.ok) {
+    console.error(
+      `ERROR: cannot evidence the Next.js framework chunk exclusion${manifest ? ` (${manifest.path}#rootMainFiles)` : ""}: ${v.reason}. ` +
+        `Refusing to exclude unevidenced chunks from the equivalent set.`,
+    );
+    process.exit(1);
+  }
+  console.error(
+    `Evidence: framework set [${[...v.frameworkBases].join(", ")}] derived from ` +
+      `${manifest.path}#rootMainFiles (Next.js framework set).`,
+  );
+  const frameworkBases = v.frameworkBases;
   const entries = files.map((fp) => ({
     path: fp,
     kb: gzipSize(fs.readFileSync(fp)) / 1024,
@@ -210,7 +245,7 @@ function main() {
     const composition = {
       generatedAt: new Date().toISOString(),
       manifest: manifest ? manifest.path : null,
-      manifestVerified: manifest ? v.verified : false,
+      manifestVerified: v.ok,
       ...report,
       topChunks,
     };
@@ -224,4 +259,4 @@ const isMain =
   path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
 if (isMain) main();
 
-export { INITIAL_PREFIXES, FRAMEWORK_PREFIXES, MANIFEST_CANDIDATES };
+export { INITIAL_PREFIXES, MANIFEST_CANDIDATES, EXPECTED_FRAMEWORK_CHUNK_COUNT };
