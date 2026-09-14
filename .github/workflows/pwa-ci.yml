@@ -3,11 +3,8 @@ name: PWA CI
 on:
   push:
     branches: [main]
-    paths:
-      - "apps/pwa/**"
-      - "scripts/pwa-audit*"
-      - "package.json"
-      - "pnpm-lock.yaml"
+    # No path filters: the deploy gate (agent-deploy/pwa-deploy) requires a
+    # PWA CI run for EVERY main SHA — a filtered push would deadlock deploys.
   pull_request:
     branches: [main]
     paths:
