@@ -36,10 +36,14 @@ jobs:
             for (const name of ['CI', 'PWA CI']) {
               const runs = data.workflow_runs.filter((r) => r.name === name);
               if (runs.length === 0) {
-                // No run for this SHA (e.g. PWA CI path filters unmatched):
-                // nothing to enforce; the CI workflow's own pwa jobs still ran.
-                core.info(`No ${name} runs for ${sha} — skipping that requirement.`);
-                continue;
+                // Fail closed: a missing run for this SHA means the
+                // "CI + PWA CI must both succeed" requirement is NOT met
+                // (e.g. PWA CI path filters unmatched, or this gate fired on
+                // the other workflow's completion before this one finished).
+                // The remaining workflow's completion re-triggers this
+                // workflow, so the gate passes once both runs exist and are green.
+                core.setFailed(`Deploy blocked: no ${name} run found for ${sha}. Re-run ${name} for this SHA before deploying.`);
+                return;
               }
               const latest = runs.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
               core.info(`${name}: latest run #${latest.run_number} conclusion=${latest.conclusion}`);

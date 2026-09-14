@@ -467,17 +467,22 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       if (typeof this.persistMessages !== 'function') {
         throw Object.assign(new Error('agent.persistence_unavailable'), { code: 'agent.persistence_unavailable', status: 503 });
       }
-      const userMessage: UIMessage = {
-        id: `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        role: 'user',
-        parts: [{ type: 'text', text: input.text }],
-        metadata: {
-          actorId: input.actorId,
-          workspaceId: input.workspaceId,
-          createdAt: new Date().toISOString(),
-        },
-      } as unknown as UIMessage;
-      await this.persistMessages([userMessage]);
+      // Internal grounding retries reuse this provider with a correction
+      // marker: they must not pollute durable history with scaffolding turns.
+      const isCorrectionRetry = input.text.includes('[Correção de grounding:');
+      if (!isCorrectionRetry) {
+        const userMessage: UIMessage = {
+          id: `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: 'user',
+          parts: [{ type: 'text', text: input.text }],
+          metadata: {
+            actorId: input.actorId,
+            workspaceId: input.workspaceId,
+            createdAt: new Date().toISOString(),
+          },
+        } as unknown as UIMessage;
+        await this.persistMessages([userMessage]);
+      }
       const relayOrigin = this.env?.API_ORIGIN ?? 'https://api.synkroo.com.br';
       const response = await fetch(`${relayOrigin.replace(/\/$/, '')}/internal/agent/llm-relay`, {
         method: 'POST',
@@ -506,13 +511,11 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         actorId: input.actorId,
         intentionId: input.intentionId,
       });
-      const assistantMessage: UIMessage = {
-        id: `msg-asst-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        role: 'assistant',
-        parts: [{ type: 'text', text: output }],
-        metadata: { actorId: 'ted', workspaceId: input.workspaceId, createdAt: new Date().toISOString() },
-      } as unknown as UIMessage;
-      await this.persistMessages([assistantMessage]);
+      // NOTE: the raw relay text is deliberately NOT persisted here. It is
+      // ungrounded provider output; the /rpc/chat handler persists the FINAL
+      // grounded/deterministic response after `runTurn` completes, so
+      // /rpc/history can only ever serve validated text (never raw text that
+      // grounding later rejects or replaces).
       return output;
     }
 
@@ -589,6 +592,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     plan?: (input: TurnInput) => TurnPlan;
     evidenceProvider?: (input: TurnInput, plan: TurnPlan) => Promise<EvidenceEnvelope | null>;
     correctionProvider?: (input: TurnInput, plan: TurnPlan, unsupportedClaims: readonly string[]) => Promise<string | null>;
+    /** Sanitized lifecycle event sink, shared by the turn and its evidence reads. */
+    events?: (eventType: string, fields: Record<string, unknown>) => void;
   } = {}): ConversationOrchestrator {
     // AGENT-005 production grounding: every channel (pwa-rest, sdk, broker)
     // reads through the same evidence provider over the canonical read
@@ -600,6 +605,10 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       respond: (input, plan) => this.provideUnifiedResponse(input, plan),
       apiOrigin: this.env?.API_ORIGIN,
       readToken: (input) => this.mintReadToken(input),
+      // Evidence-read lifecycle events (tool.started/tool.completed,
+      // sanitized) flow into the turn's event sink when the caller supplies
+      // one (tests, observability); otherwise the sanitized global emitter.
+      events: dependencies.events ?? emitSanitizedEvent,
     });
     return new ConversationOrchestrator({
       ...dependencies,
@@ -1111,6 +1120,21 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           ...(mutationApiClient ? { mutationApiClient } : {}),
         }).runTurn(restInput);
         if (turnResult.response) {
+          // Persist the FINAL grounded/deterministic response (never the raw
+          // relay text: grounding may have rejected or replaced the provider
+          // output, and /rpc/history serves exactly what is persisted here).
+          // Mutation modes never reach the response provider (no user message
+          // was persisted for them either), so their historical
+          // non-persistence is preserved unchanged.
+          if (turnResult.plan.mode !== 'mutation-proposal' && turnResult.plan.mode !== 'confirmation' && turnResult.plan.mode !== 'cancel') {
+            const assistantMessage: UIMessage = {
+              id: `msg-asst-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              role: 'assistant',
+              parts: [{ type: 'text', text: turnResult.response.text }],
+              metadata: { actorId: 'ted', workspaceId: identity.workspaceId, createdAt: new Date().toISOString() },
+            } as unknown as UIMessage;
+            await this.persistMessages([assistantMessage]);
+          }
           const pendingOperation = turnResult.mutation
             ? {
                 id: turnResult.mutation.operationId,

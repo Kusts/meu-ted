@@ -15,6 +15,17 @@ export const setGlobalApiContext = (context: { delegatedToken?: string; apiOrigi
   if (context.apiOrigin !== undefined) globalApiOrigin = context.apiOrigin;
 };
 
+/**
+ * Test/turn-boundary helper: drops any token/origin left in the legacy
+ * module-global slot. Production evidence reads never rely on the global
+ * (they thread `delegatedToken` + `apiOrigin` explicitly per request), so a
+ * previous turn's credential can never become the next turn's.
+ */
+export const clearGlobalApiContext = (): void => {
+  globalDelegatedToken = undefined;
+  globalApiOrigin = 'https://api.synkroo.com.br';
+};
+
 export const getGlobalApiContext = () => ({
   delegatedToken: globalDelegatedToken,
   apiOrigin: globalApiOrigin,
@@ -26,9 +37,7 @@ export const requestPiApiJson = async <T = Record<string, unknown>>(
   opts: ApiRequestOptions = {},
 ): Promise<T> => {
   const origin = opts.apiOrigin ?? globalApiOrigin;
-  const url = new URL(path, origin);
-
-  if (opts.query) {
+  const url = new URL(path, origin);  if (opts.query) {
     for (const [k, v] of Object.entries(opts.query)) {
       if (v !== undefined) {
         url.searchParams.set(k, String(v));
@@ -36,7 +45,15 @@ export const requestPiApiJson = async <T = Record<string, unknown>>(
     }
   }
 
-  const token = opts.delegatedToken ?? globalDelegatedToken;
+  // Token isolation: callers that thread the per-turn credential pass an
+  // explicit `delegatedToken` key (even when its value is `undefined` for an
+  // unauthenticated read). An explicit key is authoritative — the legacy
+  // module-global is consulted ONLY when the caller omits the key entirely,
+  // so a previous turn's token can never leak into a later turn's request
+  // through the global fallback (fail-closed, never stale).
+  const token = Object.prototype.hasOwnProperty.call(opts, 'delegatedToken')
+    ? opts.delegatedToken
+    : globalDelegatedToken;
   const headers: Record<string, string> = {
     accept: 'application/json',
   };

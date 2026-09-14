@@ -67,9 +67,33 @@ test('deployment workflows gate on CI + PWA CI success and Node 22', () => {
     // Deploy gate: both workflows must be green for the deployed SHA.
     assert.match(deploy, /needs: \[gate\]/);
     assert.match(deploy, /listWorkflowRunsForRepo/);
+    // Strict gate: missing run for either workflow fails closed (no skip).
+    assert.match(deploy, /runs\.length === 0/);
+    assert.match(deploy, /Deploy blocked: no /);
+    assert.doesNotMatch(deploy, /skipping that requirement/);
+    assert.doesNotMatch(deploy, /\bcontinue;/);
+    // Failed run blocks; both green reaches the pass message.
+    assert.match(deploy, /latest\.conclusion !== 'success'/);
+    assert.match(deploy, /Deploy blocked: .*latest conclusion/);
+    assert.match(deploy, /Deploy gate passed/);
   }
   assert.doesNotMatch(pwaCi, /node-version:\s*\[20\]/);
   assert.match(pwaCi, /node-version:\s*\[22\]/);
+});
+
+test('deployment gate fails closed: missing/failed PWA CI blocks, both green allows', () => {
+  const pwaDeploy = fs.readFileSync('.github/workflows/pwa-deploy.yml', 'utf8');
+  const agentDeploy = fs.readFileSync('.github/workflows/agent-deploy.yml', 'utf8');
+  for (const deploy of [pwaDeploy, agentDeploy]) {
+    // Missing PWA CI run for the SHA → gate blocks (fail closed).
+    assert.match(deploy, /no \$\{name\} run found/);
+    assert.match(deploy, /Re-run \$\{name\} for this SHA/);
+    assert.match(deploy, /setFailed\(`Deploy blocked: no /);
+    // Failed PWA CI run → gate blocks.
+    assert.match(deploy, /setFailed\(`Deploy blocked: .*latest conclusion/);
+    // Both CI + PWA CI success → gate allows (pass message only after the loop).
+    assert.match(deploy, /Deploy gate passed for/);
+  }
 });
 
 test('deployment workflows chain an automatic read-only post-deploy smoke', () => {

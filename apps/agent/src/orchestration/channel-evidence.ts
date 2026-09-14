@@ -18,12 +18,18 @@
  */
 
 import { createEvidenceEnvelope, type EvidenceEnvelope, type EvidenceInput } from '../evidence/evidence-envelope.js';
-import { generatedHttpTools } from '../generated/http-tools.js';
-import { setGlobalApiContext } from '../tools/api-client.js';
+import { generatedHttpTools, type ToolRequestAuth } from '../generated/http-tools.js';
+import { emitSanitizedEvent } from '../observability/events.js';
 import type { TurnInput, TurnPlan } from './conversation-orchestrator.js';
 
-/** Callable canonical read: params in, projected API payload out. */
-export type ChannelReadFn = (params: Record<string, unknown>) => Promise<unknown>;
+/**
+ * Callable canonical read: params in, projected API payload out. The
+ * optional second argument carries the turn's request credential
+ * (`delegatedToken` + `apiOrigin`), threaded explicitly per invocation —
+ * never through module-global state, so concurrent turns from different
+ * workspaces cannot observe each other's token.
+ */
+export type ChannelReadFn = (params: Record<string, unknown>, auth?: ToolRequestAuth) => Promise<unknown>;
 
 /** Injectable read-tool seam (defaults bind the generated HTTP tools). */
 export type ChannelReadTools = {
@@ -40,7 +46,10 @@ export type ChannelReadTools = {
 const bindGenerated = (name: string): ChannelReadFn => {
   const tool = generatedHttpTools.find((candidate) => candidate.name === name);
   if (!tool) throw new Error(`agent.evidence_tool_missing:${name}`);
-  return (params) => tool.execute(params);
+  // The credential travels as the tool `ctx` (5th execute argument), which
+  // the generated client forwards explicitly per request — the legacy
+  // module-global fallback is never consulted for these calls.
+  return (params, auth) => tool.execute('evidence-read', params, undefined, undefined, auth ?? undefined);
 };
 
 export const defaultChannelReadTools = (): ChannelReadTools => ({
@@ -69,6 +78,13 @@ export type ChannelGroundingDeps = {
   readToken?: (input: TurnInput) => Promise<string | undefined>;
   /** Per-read budget; a slow read degrades to an `error` item, never a hang. */
   readTimeoutMs?: number;
+  /**
+   * Sanitized lifecycle event sink for evidence reads (defaults to
+   * `emitSanitizedEvent`). Receives `tool.started` / `tool.completed` with
+   * allowlisted fields only (tool name, status, latency) — never params,
+   * tokens, or payloads.
+   */
+  events?: (eventType: string, fields: Record<string, unknown>) => void;
 };
 
 export type ChannelGrounding = {
@@ -134,6 +150,18 @@ const READ_SOURCE: Record<ReadKind, string> = {
   budgets: 'api.budgets',
   goals: 'api.goals',
   categories: 'api.categories',
+};
+
+/** Generated tool name behind each read kind (used for lifecycle events). */
+const READ_TOOL_NAME: Record<ReadKind, string> = {
+  accounts: 'list_accounts',
+  transactions: 'list_recent_transactions',
+  'month-summary': 'get_month_summary',
+  statements: 'list_statements',
+  payables: 'list_accounts_payable',
+  budgets: 'list_budgets',
+  goals: 'list_goals',
+  categories: 'list_categories',
 };
 
 const selectReads = (plan: TurnPlan): readonly ReadKind[] => {
@@ -255,45 +283,72 @@ const mapSingleton = (kind: ReadKind, ref: string, result: unknown): EvidenceInp
 export const createChannelGrounding = (deps: ChannelGroundingDeps): ChannelGrounding => {
   const tools = deps.readTools ?? defaultChannelReadTools();
   const timeoutMs = deps.readTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS;
+  const emit = deps.events ?? emitSanitizedEvent;
 
   const evidenceProvider = async (input: TurnInput, plan: TurnPlan): Promise<EvidenceEnvelope | null> => {
     const kinds = selectReads(plan);
     if (kinds.length === 0) return null;
-    // Reads execute under the turn's API context (origin + per-turn
-    // delegation when available) — the same scoping the model-tool path
-    // uses. A missing/failed token stays unauthenticated and fails closed
-    // into `error` items below.
+    // Per-turn credential, threaded explicitly into every read below — the
+    // same scoping the model-tool path uses. This provider NEVER touches the
+    // legacy module-global token slot: concurrent turns from different
+    // workspaces each carry only their own token. A missing/failed token
+    // stays unauthenticated (explicit `delegatedToken: undefined` suppresses
+    // the global fallback) and fails closed into `error` items below.
     let readToken: string | undefined;
     try {
       readToken = await deps.readToken?.(input);
     } catch {
       readToken = undefined;
     }
-    setGlobalApiContext({
+    // Own `delegatedToken` key (even when undefined) is authoritative in
+    // `requestPiApiJson`: it suppresses the global fallback, so a mint
+    // failure can never resurrect a previous turn's stale token.
+    const auth: ToolRequestAuth = {
+      delegatedToken: typeof readToken === 'string' && readToken ? readToken : undefined,
       ...(deps.apiOrigin !== undefined ? { apiOrigin: deps.apiOrigin } : {}),
-      ...(typeof readToken === 'string' && readToken ? { delegatedToken: readToken } : {}),
-    });
+    };
     const householdId = input.workspaceId;
     const fetchers: Record<ReadKind, () => Promise<EvidenceInput[]>> = {
-      accounts: async () => mapAccounts(await tools.listAccounts({ householdId })),
-      transactions: async () => mapTransactions(await tools.listRecentTransactions({ householdId, limit: 20 })),
+      accounts: async () => mapAccounts(await tools.listAccounts({ householdId }, auth)),
+      transactions: async () => mapTransactions(await tools.listRecentTransactions({ householdId, limit: 20 }, auth)),
       'month-summary': async () => mapSingleton(
         'month-summary',
         'month-summary',
-        await tools.getMonthSummary({ householdId, yearMonth: new Date().toISOString().slice(0, 7) }),
+        await tools.getMonthSummary({ householdId, yearMonth: new Date().toISOString().slice(0, 7) }, auth),
       ),
-      statements: async () => mapSingleton('statements', 'statements', await tools.listStatements({ householdId })),
-      payables: async () => mapSingleton('payables', 'payables', await tools.listAccountsPayable({ householdId })),
-      budgets: async () => mapSingleton('budgets', 'budgets', await tools.listBudgets({ householdId })),
-      goals: async () => mapSingleton('goals', 'goals', await tools.listGoals({ householdId })),
-      categories: async () => mapSingleton('categories', 'categories', await tools.listCategories({ householdId })),
+      statements: async () => mapSingleton('statements', 'statements', await tools.listStatements({ householdId }, auth)),
+      payables: async () => mapSingleton('payables', 'payables', await tools.listAccountsPayable({ householdId }, auth)),
+      budgets: async () => mapSingleton('budgets', 'budgets', await tools.listBudgets({ householdId }, auth)),
+      goals: async () => mapSingleton('goals', 'goals', await tools.listGoals({ householdId }, auth)),
+      categories: async () => mapSingleton('categories', 'categories', await tools.listCategories({ householdId }, auth)),
     };
     const settled = await Promise.all(kinds.map(async (kind) => {
+      const toolName = READ_TOOL_NAME[kind];
+      const startedAt = Date.now();
+      // Sanitized lifecycle: name/status/latency only — never params,
+      // tokens, or financial payloads. Observability never breaks the turn.
       try {
-        return await withTimeout(fetchers[kind](), timeoutMs, kind);
+        emit('tool.started', { tool: toolName, status: 'started' });
       } catch {
+        // Best effort.
+      }
+      try {
+        const items = await withTimeout(fetchers[kind](), timeoutMs, kind);
+        try {
+          emit('tool.completed', { tool: toolName, status: 'completed', latencyMs: Date.now() - startedAt });
+        } catch {
+          // Best effort.
+        }
+        return items;
+      } catch (error) {
         // Fail-closed for the item: the orchestrator grounds against the
         // remaining evidence and falls back safe when nothing is usable.
+        const status = error instanceof Error && error.message.includes('agent.evidence_timeout:') ? 'timeout' : 'error';
+        try {
+          emit('tool.completed', { tool: toolName, status, latencyMs: Date.now() - startedAt, error });
+        } catch {
+          // Best effort.
+        }
         return [errorItem(kind, kind)];
       }
     }));

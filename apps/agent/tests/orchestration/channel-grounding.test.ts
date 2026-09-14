@@ -7,7 +7,6 @@ import {
   normalizeSdkTurn,
 } from '../../src/orchestration/conversation-orchestrator.js';
 import { decodeDelegatedTurnToken } from '../../src/delegated-token.js';
-import { getGlobalApiContext } from '../../src/tools/api-client.js';
 import * as apiClient from '../../src/tools/api-client.js';
 
 // H-14 authority snapshot shape (fail-closed when unreachable): the REST
@@ -109,10 +108,11 @@ describe('AGENT-005 production channel grounding (orchestratorForChannel)', () =
     }
     expect(respondSpy).not.toHaveBeenCalled();
     expect(requestSpy).toHaveBeenCalledWith('GET', '/accounts', expect.anything());
-    // Reads are scoped by the turn's authenticated workspace: the generated
-    // client omits `context` params from the wire by design, so scoping
-    // travels in the per-turn `financial.read` delegation claims.
-    const scopedToken = getGlobalApiContext().delegatedToken;
+    // Reads are scoped by the turn's authenticated workspace: the per-turn
+    // `financial.read` delegation travels explicitly per request (never via
+    // module-global state), so concurrent turns cannot cross-use tokens.
+    const scopedCall = requestSpy.mock.calls.at(-1)?.[2] as { delegatedToken?: string; apiOrigin?: string } | undefined;
+    const scopedToken = scopedCall?.delegatedToken;
     expect(typeof scopedToken).toBe('string');
     const claims = await decodeDelegatedTurnToken(scopedToken!, 'read-delegation-test-secret');
     expect(claims.capabilities).toEqual(['financial.read']);
