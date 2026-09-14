@@ -2,7 +2,7 @@
 
 **Goal:** Implementar a SPEC `MEU-TED-SPEC-CONSOLIDACAO-E-AGENTE-V2.md` por incrementos verificáveis, preservando a API como autoridade financeira e eliminando qualquer caminho de escrita autorizado por texto de LLM.
 
-**Status:** EXECUTADO (2026-09-13/14) — implementação concluída na branch `ted-agent-v2-consolidation`; `pnpm validate:final` VAL.1–VAL.13 verde (ledger em `docs/reports/2026-09-13-final-validation.md`); relatório em `docs/reports/agent-v2-implementation-report.md`. Pendente: merge na `main`, auditoria pós-implementação (SPEC §18) e exercício real de deploy.
+**Status:** EXECUTADO E MERGEADO (2026-09-14) — implementação concluída na branch `ted-agent-v2-consolidation` e mergeada na `main` (merge `f1f74be`, fixups pós-merge até `8541f19`); `pnpm validate:final` VAL.1–VAL.13 verde (ledger em `docs/reports/2026-09-13-final-validation.md`); relatório + adendo pós-merge em `docs/reports/agent-v2-implementation-report.md`. Auditoria SPEC §18 executada e deploy VPS da API concluído (imagem `pi-finance-api:main`, V050+V051 aplicadas, `/health`+`/ready` 200). Pendente: deploy Cloudflare PWA/Agent (bloqueado por billing do GitHub Actions) e evals com modelos reais.
 
 **Baseline verificada:** `main@6bf7cfe69ba1a36cd7bbcfc1219e7c2bd388a315` em 2026-09-13. `HEAD` e `origin/main` coincidem exatamente com a baseline da SPEC; não há divergência de commits. O único item não rastreado é a própria SPEC. O registro de working tree em `AGENTS.md` que aponta `98cfc99` está desatualizado.
 

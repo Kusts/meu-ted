@@ -119,3 +119,46 @@ Comando único: `pnpm validate:final` → **PASSED, 13/13 gates** (ledger anexo 
 ## 11. Conclusão
 
 Definition of Done da SPEC §16 atendida em código e gates, **com ressalva explícita**: nenhum item de deploy/produção foi executado (conforme instrução 9 da SPEC), e a auditoria da seção 18 é condição pendente para promoção. O estado entregue é o conteúdo integral da branch `ted-agent-v2-consolidation`, validado pelo ledger anexo.
+
+---
+
+## 12. Adendo pós-merge (2026-09-14)
+
+Este adendo registra o que aconteceu de fato **após** o fechamento do relatório acima. As seções 8 (implantação não executada) e 11 descrevem o estado pré-merge; este adendo as supersede. Claims de produção refletem o registro da sessão de deploy de 2026-09-14; claims de repositório são verificáveis no checkout atual.
+
+### 12.1 Auditoria SPEC §18 — executada (2 rodadas)
+
+Executada em 2 rodadas (security-reviewer + reviewer). Achados corrigidos com TDD (RED → GREEN):
+
+- **Idempotência ponta a ponta (P1):** gravação do registro de idempotência na mesma transação da escrita — `apps/api/src/writes/pending-idempotency.ts`.
+- **Grounding ponta a ponta:** isolamento de token por requisição (sem contexto global de API; fallback global suprimido — ver `extractRequestAuth` em `apps/agent/src/generated/http-tools.ts`) e histórico do agente somente com respostas grounded.
+- **Memória:** bloqueio de estado financeiro no momento da persistência (`isProhibitedFinancialMemory`/`isCurrentFinancialState`) + enquadramento do conteúdo lembrado como UNTRUSTED (`MEMORY_UNTRUSTED_PREAMBLE`).
+- **Observabilidade sanitizada**, incluindo leituras de evidence.
+- **Evals comportamentais:** 63 cenários executando comportamento, com os 6 mínimos funcionais da SPEC (`apps/agent/evals/`).
+- **Deploy gate estrito:** falha fechada (fail-closed) quando CI ou PWA CI estão ausentes para o SHA.
+- **Wildcard de bridge-context removido** (zero ocorrências em `apps/agent/src`).
+- **Cliente canônico same-origin na PWA:** `apps/pwa/src/lib/api/agent-client.ts`.
+
+### 12.2 Endurecimento de CI mergeado na `main`
+
+- `llm-contracts` compilado antes dos builds cloudflare da PWA (`2fb8752`, reforçado em `f4e22f7`).
+- PWA CI em todo push na `main`, sem filtros de caminho (`b7bb873`) — o deploy gate exige PWA CI por SHA.
+- Fix de contexto (owner/repo) nos scripts do deploy gate (`909b080`).
+- Fixture de auth do broker com modo `0600` (enforcement POSIX) (`2fb8752`).
+- Matriz e2e ampliada em +8 IDs (`f4e22f7`).
+- Framework set do bundle derivado do `build-manifest.json` — independente de plataforma, preservando o fail-closed (`8541f19`, HEAD atual da `main`).
+
+### 12.3 Deploy de produção na VPS — executado por runbook
+
+- Backup pré-migration: `pi-financeiro-pre-v2-f1f74be-20260914T115257Z`.
+- Migration job com advisory lock: V050 + V051 aplicadas. A verificação de schema era-aware exigiu correção — o verify do processo web estava mais estrito que o migration guard (`1df73ea`).
+- Imagem `pi-finance-api:main` construída da `main`; `/health` e `/ready` respondendo 200. Rollback disponível: tag `pi-finance-api:rollback-pre-v2` + o backup acima.
+- **Um crash-loop ocorreu durante o rollout:** faltava `BETTER_AUTH_SECRET` real em produção — o código antigo rodava sobre um default de dev hardcoded. Corrigido com a geração de um segredo real; usuários precisam autenticar-se novamente uma única vez (efeito esperado da troca de segredo).
+
+### 12.4 Cloudflare (PWA/Agent) — deploy PENDENTE
+
+Bloqueado por billing/spending limit do GitHub Actions: todos os jobs de Actions recusam iniciar (anotação capturada no run). Após resolver o billing: re-executar CI + PWA CI para o SHA `8541f19` (sem novo push necessário); os deploys e o smoke pós-deploy read-only rodam automaticamente.
+
+### 12.5 Evals com modelos reais — NÃO executadas
+
+Nenhuma execução de harness com modelos reais ocorreu nesta rodada. Continua pendente (ver seção 10, item 1).

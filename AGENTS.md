@@ -63,9 +63,13 @@
 5. **Gates de Verificação Contínua**:
    - Nenhum trabalho é dado como concluído sem a execução bem-sucedida de `pnpm docs:lint`, `pnpm typecheck`, `pnpm test` e `pnpm governance:check`.
 
-## Working Tree e Estado Atual (2026-08-26 `main@98cfc99`)
-- **Branch `main` pronta para uso:** `fase-0-preparo` 127 commits + `fase-1-features` 9 commits mergeados `98cfc99` — P0-P5 CONCLUÍDO, Fase 1 8 features paridade tripla (payment_score, installment_score, monthly_projection, pending_operations, undo_last_action, price-alerts, duplicate-detector, audit_logs) com TDD 815+ tests.
-- **Produção:** `apps/api` `pi-finance-api:main` em `deploy@187.77.249.47` `~/infra/pi-finance-api` (VPS), `apps/pwa` Cloudflare Pages `pi-finance-pwa.walissonead.workers.dev` (auto-deploy `main`), `apps/agent` Cloudflare Workers. `api.synkroo.com.br/health` 200 OK.
+## Working Tree e Estado Atual (2026-09-14 `main@8541f19`)
+- **Branch `main`:** consolidação TED Agent V2 mergeada de `ted-agent-v2-consolidation` (merge `f1f74be`, fixups pós-merge até `8541f19`). Arquitetura V2: um único `ConversationOrchestrator` (`apps/agent/src/orchestration/`), evidence tipada + grounding (`apps/agent/src/evidence/`, `apps/agent/src/responses/`), `MutationExecutor` com pending operations V2 autoritativas na API (`apps/agent/src/mutations/`, `apps/api/src/approvals/pending-v2.ts`, migration `V051` aplicada em produção), evals comportamentais (63 cenários, 6 mínimos funcionais da SPEC em `apps/agent/evals/`).
+- **Produção API (VPS `deploy@187.77.249.47` `~/infra/pi-finance-api`):** imagem `pi-finance-api:main` construída de `main@1df73ea+`, migration job aplicou V050+V051, `/health` e `/ready` 200. Rollback: tag `pi-finance-api:rollback-pre-v2` + backup DB `pi-financeiro-pre-v2-f1f74be-20260914T115257Z`. Secrets endurecidos: `BETTER_AUTH_SECRET` real gerado (default de dev removido em produção; sessões existentes invalidadas uma única vez, por design) e `AGENT_RUNTIME_ORIGIN` definido.
+- **Cloudflare (PWA/Agent):** ainda servindo o deploy ANTERIOR — deploy pendente, bloqueado por billing/spending limit do GitHub Actions. Depois de resolver o billing, re-executar CI + PWA CI para o SHA `8541f19` (sem novo push necessário); deploys + smoke read-only pós-deploy rodam automaticamente.
+- **CI:** `main` verde até o bloqueio de billing; workflows de deploy condicionados a CI + PWA CI por SHA, com smoke pós-deploy read-only automático.
+- **Política de migration:** processo web verify-only (verificação de schema era-aware alinhada ao migration guard, fix `1df73ea`); job de migration dedicado com advisory lock + marcadores de backup.
+- **Débitos conhecidos (seção honesta):** billing do GitHub Actions aguarda ação do owner; janela de compatibilidade localStorage com TODO 2026-12-01 (ADR-011, `apps/pwa/src/lib/api/client.ts`); `sharp@0.34.5` pinado até o `opennextjs` suportar 0.35 no Windows; `.trivyignore` expira 2026-12-31; ~20 avisos de lint pré-existentes na PWA CI; regeneração de `apps/agent/src/generated/http-tools.ts` exige portar o helper `extractRequestAuth` para o gerador (`scripts/generate-agent-tools.mjs`), pois o helper vive pós-geração dentro do arquivo AUTO-GENERATED.
 - **Proibição de Operações Destrutivas**: `git reset --hard`, `git clean -fd`, `git checkout -- .` exigem diff prévio e autorização.
 
 ## Idioma & Convenções
