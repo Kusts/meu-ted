@@ -1,17 +1,17 @@
 {
-  "generatedAt": "2026-09-13T22:26:04.133Z",
+  "generatedAt": "2026-09-14T01:24:04.442Z",
   "manifest": ".next/build-manifest.json",
   "manifestVerified": true,
   "chunks": 45,
-  "initialGzipKB": 136.9,
-  "totalGzipKB": 466.09,
-  "frameworkGzipKB": 129.77,
+  "initialGzipKB": 136.8,
+  "totalGzipKB": 465.98,
+  "frameworkGzipKB": 129.76,
   "appLevelGzipKB": 119.03,
-  "equivalentSetGzipKB": 336.32,
+  "equivalentSetGzipKB": 336.21,
   "topChunks": [
     {
-      "path": "chunks/208-0a7f8fec9aae1919.js",
-      "kb": 66.39
+      "path": "chunks/474-f4ff971a4446e816.js",
+      "kb": 66.38
     },
     {
       "path": "chunks/2262cfa8-72f5ba4627fa80fd.js",
@@ -22,8 +22,8 @@
       "kb": 58.43
     },
     {
-      "path": "chunks/main-6f6e1c6aa5cbbd33.js",
-      "kb": 39.66
+      "path": "chunks/main-bb905d49a38ac8c4.js",
+      "kb": 39.55
     },
     {
       "path": "chunks/polyfills-42372ed130431b0a.js",
@@ -38,7 +38,7 @@
       "kb": 18.09
     },
     {
-      "path": "patrimonio/page-64148415c60e072f.js",
+      "path": "patrimonio/page-bc60d162b4439f9d.js",
       "kb": 14.66
     },
     {
@@ -46,23 +46,23 @@
       "kb": 13.22
     },
     {
-      "path": "perfil/page-cd89d4c9bb929581.js",
+      "path": "perfil/page-ccfc18bd167f5ada.js",
       "kb": 13.12
     },
     {
-      "path": "planejamento/page-b28dca11636ce4b7.js",
+      "path": "planejamento/page-09ca2e23e8a019b8.js",
       "kb": 12.05
     },
     {
-      "path": "relatorios/page-7f54c4820069ae63.js",
+      "path": "relatorios/page-6785aa6d31616261.js",
       "kb": 11.61
     },
     {
-      "path": "categorias/page-2be18e4611841465.js",
+      "path": "categorias/page-8b03b7da7c1d8b9c.js",
       "kb": 11.45
     },
     {
-      "path": "app/page-ad61b409fafbfe09.js",
+      "path": "app/page-b25e0aa4005b44ac.js",
       "kb": 11.42
     },
     {
@@ -70,15 +70,15 @@
       "kb": 10.35
     },
     {
-      "path": "compromissos/page-eb000d0a34442b7b.js",
+      "path": "compromissos/page-5acdb89f66d8f310.js",
       "kb": 8.47
     },
     {
-      "path": "workspaces/page-6ca4b79546b4a6cb.js",
+      "path": "workspaces/page-92d5e25666e8828d.js",
       "kb": 8.13
     },
     {
-      "path": "registros/page-9484339d592e5874.js",
+      "path": "registros/page-0344945779f2f4d8.js",
       "kb": 8.07
     },
     {
@@ -86,7 +86,7 @@
       "kb": 6.79
     },
     {
-      "path": "app/layout-8ca2436a207c9e71.js",
+      "path": "app/layout-426ea6d67cf1194d.js",
       "kb": 5.55
     }
   ]

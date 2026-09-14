@@ -38,10 +38,14 @@ const INITIAL_PREFIXES = ["framework-", "main-", "polyfills-"];
 // below so the exclusion is consciously re-evidenced, never silent.
 // 16.3.5 era (2026-09-13, after next 16.2.12 -> 16.3.5 bump): rootMainFiles
 // lists 2262cfa8-72f5ba4627fa80fd.js (React error decoder: contains
-// `https://react.dev/errors/` minified string builder) and
-// 208-0a7f8fec9aae1919.js (Next deployment-id runtime: contains
-// `getDeploymentId()` + `x-deployment-id` header wiring).
-const FRAMEWORK_PREFIXES = ["2262cfa8-", "208-"];
+// `https://react.dev/errors/` minified string builder) and the Next
+// deployment-id runtime chunk (`getDeploymentId()` + `x-deployment-id`
+// header wiring). The React UUID prefix is stable across 16.3.5 builds,
+// but the numeric deployment-id chunk id tracks build content
+// (208-0a7f8fec9aae1919.js pre security-overrides -> 474-f4ff971a4446e816.js
+// after the 2026-09-14 transitive CVE overrides) and must be re-evidenced
+// whenever the manifest check trips.
+const FRAMEWORK_PREFIXES = ["2262cfa8-", "474-"];
 
 // Build-manifest candidates (relative to the app root / cwd). The .next manifest is
 // the authoritative evidence source in this repo, so prefer it; .open-next is only a
