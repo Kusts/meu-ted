@@ -22,7 +22,7 @@ describe("SidebarRail", () => {
 
   it("renders canonical navigation items (item 13)", () => {
     render(<SidebarRail onNewTransaction={vi.fn()} />);
-    for (const label of ["Início", "Extrato", "Minhas Contas", "Mais", "Contas e Cartões", "Metas e Orçamento", "Relatórios", "Avisos e Lembretes", "Organizar Gastos", "Configurações", "Meus Espaços"]) {
+    for (const label of ["Início", "Extrato", "Compromissos", "Mais", "Contas e Cartões", "Metas e Orçamento", "Relatórios", "Avisos e Lembretes", "Organizar Gastos", "Configurações", "Meus Espaços"]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
     expect(screen.getByRole("link", { name: "Contas e Cartões" })).toHaveAttribute("href", "/hub/patrimonio");

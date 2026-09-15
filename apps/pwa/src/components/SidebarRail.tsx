@@ -40,7 +40,7 @@ interface NavItemDef {
 const PRIMARY_NAV: NavItemDef[] = [
   { label: "Início", href: "/", icon: Home },
   { label: "Extrato", href: "/registros", icon: Receipt },
-  { label: "Minhas Contas", href: "/compromissos", icon: CalendarClock },
+  { label: "Compromissos", href: "/compromissos", icon: CalendarClock },
   { label: "Mais", href: "/hub", icon: LayoutGrid },
 ];
 

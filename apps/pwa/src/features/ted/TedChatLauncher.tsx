@@ -44,6 +44,10 @@ export function TedChatLauncher() {
         type="button"
         onClick={() => setOpen(true)}
         aria-label="Abrir assistente TED"
+        // §24: this FAB opens the TED chat dialog — announce the dialog
+        // instead of a menu pattern. aria-expanded is intentionally omitted:
+        // the button unmounts while the chat is open (see early return).
+        aria-haspopup="dialog"
         className="group fixed bottom-[88px] right-4 z-40 h-14 w-14 overflow-hidden rounded-full shadow-fab ring-1 ring-white/10 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-modal focus:outline-none focus-visible:ring-4 focus-visible:ring-primary/30 active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 lg:bottom-6 lg:right-6"
       >
         <Image

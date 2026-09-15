@@ -57,7 +57,7 @@ function defaultState(): AppState {
 
 async function openSheetViaFab(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByLabelText("Nova transação"));
-  await user.click(screen.getByRole("menuitem", { name: "Despesa" }));
+  await user.click(screen.getByRole("button", { name: "Despesa" }));
   expect(screen.getByRole("dialog")).toBeInTheDocument();
 }
 
@@ -136,10 +136,10 @@ describe("AppShell", () => {
       expectInactive("Início");
     });
 
-    it("highlights Minhas Contas for /compromissos", () => {
+    it("highlights Compromissos for /compromissos", () => {
       mockPath = "/compromissos";
       render(<AppShell><div>Content</div></AppShell>);
-      expectActive("Minhas Contas");
+      expectActive("Compromissos");
       expectInactive("Início");
     });
 
@@ -162,19 +162,19 @@ describe("AppShell", () => {
   });
 
   describe("sheet navigation", () => {
-    it("opens the quick menu when FAB is clicked", async () => {
+    it("opens the quick actions disclosure when FAB is clicked", async () => {
       const user = userEvent.setup();
       render(<AppShell><div>Content</div></AppShell>);
       await user.click(screen.getByLabelText("Nova transação"));
-      expect(screen.getByRole("menu", { name: "Novo lançamento" })).toBeInTheDocument();
+      expect(screen.getByRole("group", { name: "Novo lançamento" })).toBeInTheDocument();
       expect(screen.getByText("Despesa")).toBeInTheDocument();
     });
 
-    it("opens the preselected expense sheet from the FAB quick menu", async () => {
+    it("opens the preselected expense sheet from the FAB quick actions", async () => {
       const user = userEvent.setup();
       render(<AppShell><div>Content</div></AppShell>);
       await user.click(screen.getByLabelText("Nova transação"));
-      await user.click(screen.getByRole("menuitem", { name: "Despesa" }));
+      await user.click(screen.getByRole("button", { name: "Despesa" }));
       expect(screen.getByText("Nova despesa")).toBeInTheDocument();
     });
   });

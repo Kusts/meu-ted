@@ -118,7 +118,7 @@ function InlineForm({
         <button
           type="button"
           onClick={onCancel}
-          className="flex-1 rounded-[10px] border border-border bg-surface py-2.5 text-[12px] font-bold text-text-secondary"
+          className="flex min-h-[44px] flex-1 items-center justify-center rounded-[10px] border border-border bg-surface px-3 py-2 text-[12px] font-bold text-text-secondary"
         >
           Cancelar
         </button>
@@ -126,7 +126,7 @@ function InlineForm({
           type="button"
           onClick={handleInlineSave}
           aria-label={saveLabel}
-          className="flex-1 rounded-[10px] bg-primary py-2.5 text-[12px] font-bold text-white"
+          className="flex min-h-[44px] flex-1 items-center justify-center rounded-[10px] bg-primary px-3 py-2 text-[12px] font-bold text-white"
         >
           Salvar
         </button>
