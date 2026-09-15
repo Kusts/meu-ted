@@ -6,9 +6,11 @@ import {
   fetchAgentHistory,
   sendAgentMessage,
   renewAgentSession,
+  composeChatSend,
   type AgentMessage,
+  type PendingChatSend,
 } from "@/lib/api/agent-client";
-import { TedMessage } from "./TedMessage";
+import { TedMessage, type TedDeliveryState } from "./TedMessage";
 import { TedApprovalCard, type TedPendingOperation } from "./TedApprovalCard";
 import { useRecordingState } from "./use-recording-state";
 import { getChatAttachmentCapabilities } from "@/lib/capabilities";
@@ -22,6 +24,19 @@ import { Sparkles, X, Send, Mic, MicOff, Image as ImageIcon, FileText, Paperclip
 const HISTORY_LOAD_ERROR = "Não foi possível carregar o histórico. Tente novamente.";
 const MESSAGE_SEND_ERROR = "Não foi possível enviar a mensagem. Tente novamente.";
 
+/** SPEC §19.4: every connection status is user-facing pt-BR, never raw enum names. */
+type TedChatStatus = "connecting" | "ready" | "streaming" | "error";
+
+const CONNECTION_STATUS_LABELS: Readonly<Record<TedChatStatus, string>> = {
+  connecting: "conectando…",
+  ready: "online",
+  streaming: "escrevendo…",
+  error: "indisponível",
+};
+
+/** Local message with the §19.1 optimistic delivery lifecycle. */
+type ChatMessage = AgentMessage & { delivery?: TedDeliveryState };
+
 interface TedChatProps {
   open: boolean;
   onClose: () => void;
@@ -33,13 +48,13 @@ export function TedChat({ open, onClose }: TedChatProps) {
   const ws = useWorkspaceSafe();
   const activeWorkspace = ws?.activeWorkspace ?? null;
   const members = ws?.members ?? [];
-  const [messages, setMessages] = useState<AgentMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pendingOps, setPendingOps] = useState<TedPendingOperation[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [status, setStatus] = useState<"connecting" | "ready" | "streaming" | "error">("ready");
+  const [status, setStatus] = useState<TedChatStatus>("ready");
   const [attachments, setAttachments] = useState<TedAttachment[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -77,7 +92,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
     attachmentsRef.current = attachments;
   }, [attachments]);
 
-  const revokeAttachmentUrls = useCallback((list: readonly TedAttachment[]) => {
+  const revokeAttachmentUrls = useCallback((list: ReadonlyArray<{ url: string }>) => {
     for (const att of list) {
       try {
         URL.revokeObjectURL(att.url);
@@ -93,14 +108,27 @@ export function TedChat({ open, onClose }: TedChatProps) {
     setAttachments([]);
   }, [revokeAttachmentUrls]);
 
+  // SPEC §19.3: send drafts keyed by the stable messageId (SPEC §7.7) —
+  // retry reuses the SAME id, text and LIVE object URLs. Success consumes
+  // the draft; teardown paths that drop failed messages revoke their URLs
+  // first (INV-08) — failed messages are never silently discarded.
+  const draftsRef = useRef<Map<string, PendingChatSend>>(new Map());
+  const discardDrafts = useCallback(() => {
+    for (const draft of draftsRef.current.values()) {
+      revokeAttachmentUrls(draft.attachments ?? []);
+    }
+    draftsRef.current.clear();
+  }, [revokeAttachmentUrls]);
+
   // Unmount: revoga URLs restantes (cobre logout/expiração com rascunho
   // pendente — esses caminhos desmontam o chat sem passar pelo onClose).
   useEffect(() => {
     return () => {
       revokeAttachmentUrls(attachmentsRef.current);
       attachmentsRef.current = [];
+      discardDrafts();
     };
-  }, [revokeAttachmentUrls]);
+  }, [revokeAttachmentUrls, discardDrafts]);
 
   const flashNotice = useCallback((text: string) => {
     setNotice(text);
@@ -122,7 +150,13 @@ export function TedChat({ open, onClose }: TedChatProps) {
     try {
       setStatus("connecting");
       const history = await fetchAgentHistory(activeWorkspace.id);
-      setMessages(history);
+      setMessages((prev) => [
+        ...history,
+        // SPEC §19.1/§19.3: local optimistic sends not yet confirmed by the
+        // server survive authoritative reloads — failed messages are never
+        // silently discarded and in-flight ones keep their sending state.
+        ...prev.filter((m) => m.delivery === "sending" || m.delivery === "failed"),
+      ]);
       // SPEC §25.4 (browser reload during proposed/executing): rehydrate
       // in-flight approval cards from AUTHORITATIVE history only — never
       // local optimistic residue. Terminal states stay in the message log;
@@ -194,13 +228,16 @@ export function TedChat({ open, onClose }: TedChatProps) {
     if (prevWorkspaceIdRef.current !== null && prevWorkspaceIdRef.current !== newId) {
       cleanupRecordingMedia();
       clearAttachments();
+      // §19.3 teardown: workspace isolation drops local failed messages,
+      // so their draft object URLs are revoked here (never leaked).
+      discardDrafts();
       setMessages([]);
       setPendingOps([]);
       setError(null);
       setStatus("ready");
     }
     prevWorkspaceIdRef.current = newId;
-  }, [activeWorkspace?.id, cleanupRecordingMedia, clearAttachments]);
+  }, [activeWorkspace?.id, cleanupRecordingMedia, clearAttachments, discardDrafts]);
 
   useEffect(() => {
     if (open && activeWorkspace) {
@@ -293,46 +330,26 @@ export function TedChat({ open, onClose }: TedChatProps) {
     void recordingCtl.start();
   };
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const hasText = input.trim().length > 0;
-    const hasAttachments = attachments.length > 0;
-    if ((!hasText && !hasAttachments) || !activeWorkspace || loading) return;
-
-    const userText = input.trim() || (hasAttachments ? attachments.map((a) => `[${a.type}: ${a.name}]`).join(" ") : "");
-    // Otimista: criar mensagem local com attachments para render imediato
-    const localAttachments = attachments.map((a) => ({ type: a.type, url: a.url, name: a.name }));
-    if (hasAttachments && localAttachments.length > 0) {
-      const optimistic: AgentMessage = {
-        id: `local-${Date.now()}`,
-        actorId: "local",
-        role: "user",
-        content: userText,
-        createdAt: new Date().toISOString(),
-        isOwn: true,
-        attachments: localAttachments as unknown as never,
-      } as unknown as AgentMessage;
-      setMessages((prev) => [...prev, optimistic]);
-    }
-
-    setInput("");
-    // Manter attachments para envio, limpar após
-    const attachmentsToSend = [...attachments];
-    setAttachments([]);
+  // SPEC §19.1: the actual send lifecycle shared by first sends and §19.3
+  // retries. Success marks the optimistic bubble as sent and lets the
+  // authoritative history own the log; failure keeps the bubble visible as
+  // failed (never silently discarded) with the draft intact for retry.
+  const executeSend = async (send: PendingChatSend): Promise<void> => {
+    if (!activeWorkspace) return;
     setLoading(true);
     setError(null);
     setStatus("streaming");
-
     try {
-      // Enviar texto; anexos são enviados como contexto otimista e também via API se suportado
-      // For now, encode attachments info into text if backend doesn't support multipart
-      const textWithAttachments = attachmentsToSend.length > 0
-        ? `${userText} ${attachmentsToSend.map((a) => `[${a.type}: ${a.name}]`).join(" ")}`.trim()
-        : userText;
-      const turn =
-        attachmentsToSend.length > 0
-          ? await sendAgentMessage(activeWorkspace.id, textWithAttachments, { attachments: attachmentsToSend } as unknown as never)
-          : await sendAgentMessage(activeWorkspace.id, textWithAttachments);
+      const turn = await sendAgentMessage(
+        activeWorkspace.id,
+        send.content,
+        {
+          ...(send.attachments ? { attachments: [...send.attachments] } : {}),
+          // SPEC §7.7: retries pass the SAME messageId back — a lost HTTP
+          // response can never produce a second proposal.
+          messageId: send.messageId,
+        },
+      );
       if (turn.memorized && turn.memorized.length > 0) {
         flashNotice(`TED memorizou: ${turn.memorized.slice(0, 2).join(" · ")}`);
       }
@@ -350,18 +367,79 @@ export function TedChat({ open, onClose }: TedChatProps) {
           // Reconciliation failure surfaces as stale in app-state.
         }
       }
+      setMessages((prev) => prev.map((m) => (m.id === send.messageId ? { ...m, delivery: "sent" as const } : m)));
       await loadHistory();
+      // §19.3: success consumed the draft — the authoritative history
+      // replaced the bubble, so the local blob URLs can be revoked now.
+      draftsRef.current.delete(send.messageId);
+      revokeAttachmentUrls(send.attachments ?? []);
     } catch {
+      setMessages((prev) => prev.map((m) => (m.id === send.messageId ? { ...m, delivery: "failed" as const } : m)));
       setError(MESSAGE_SEND_ERROR);
       setStatus("error");
-      await loadHistory(true);
+      // No history reload on failure: it would wipe the failed bubble.
+      // The draft (messageId, content, live URLs) stays for retry.
     } finally {
-      // INV-08: o envio substitui a mensagem otimista pelo histórico do
-      // servidor (loadHistory acima), então as blob URLs locais podem ser
-      // revogadas aqui em ambos os caminhos.
-      revokeAttachmentUrls(attachmentsToSend);
       setLoading(false);
     }
+  };
+
+  const handleSend = (e: React.FormEvent) => {
+    e.preventDefault();
+    const hasText = input.trim().length > 0;
+    const hasAttachments = attachments.length > 0;
+    if ((!hasText && !hasAttachments) || !activeWorkspace || loading) return;
+
+    const userText = input.trim() || (hasAttachments ? attachments.map((a) => `[${a.type}: ${a.name}]`).join(" ") : "");
+    // §19.1: EVERY message renders immediately (optimistic), text included —
+    // not only messages carrying attachments.
+    const localAttachments = attachments.map((a) => ({ type: a.type, url: a.url, name: a.name }));
+    const textWithAttachments = hasAttachments
+      ? `${userText} ${localAttachments.map((a) => `[${a.type}: ${a.name}]`).join(" ")}`.trim()
+      : userText;
+    // SPEC §7.7: the send identity is minted ONCE at composition; retries
+    // reuse it via the draft record below.
+    const send = composeChatSend(textWithAttachments, localAttachments.length > 0 ? { attachments: localAttachments } : undefined);
+    draftsRef.current.set(send.messageId, send);
+
+    const optimistic: ChatMessage = {
+      id: send.messageId,
+      actorId: "local",
+      role: "user",
+      content: userText,
+      createdAt: new Date().toISOString(),
+      isOwn: true,
+      delivery: "sending",
+      ...(localAttachments.length > 0 ? { attachments: localAttachments } : {}),
+    };
+    setMessages((prev) => [...prev, optimistic]);
+
+    setInput("");
+    // The optimistic message now owns the object URLs — do NOT revoke here
+    // (§19.3 keeps them alive while the draft can still be retried).
+    setAttachments([]);
+    void executeSend(send);
+  };
+
+  // SPEC §19.3: retry resends the preserved draft — same text, same live
+  // attachments, SAME stable messageId. A retry that fails again returns
+  // the message to `failed` keeping the draft; success consumes it.
+  const handleRetry = (messageId: string) => {
+    if (!activeWorkspace || loading) return;
+    const failed = messages.find((m) => m.id === messageId && m.delivery === "failed");
+    if (!failed) return;
+    const stored = draftsRef.current.get(messageId);
+    const send: PendingChatSend =
+      stored ??
+      composeChatSend(failed.content, {
+        messageId,
+        ...(Array.isArray(failed.attachments) && failed.attachments.length > 0
+          ? { attachments: failed.attachments.map((a) => ({ type: a.type, url: a.url, name: a.name ?? "" })) }
+          : {}),
+      });
+    draftsRef.current.set(messageId, send);
+    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, delivery: "sending" as const } : m)));
+    void executeSend(send);
   };
 
   const handleNewSession = async () => {
@@ -370,6 +448,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
     // INV-08: nova sessão também descarta e revoga o rascunho pendente.
     cleanupRecordingMedia();
     clearAttachments();
+    discardDrafts();
     setError(null);
     try {
       await renewAgentSession(activeWorkspace.id);
@@ -410,7 +489,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
                 <span className="text-[14px] font-bold tracking-tight text-text-primary">TED</span>
                 <span className="rounded-full bg-primary-tint px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-primary">ASSISTENTE</span>
                 <span className="h-1 w-1 rounded-full bg-primary" />
-                <span className="text-[11px] font-semibold text-primary">{status === "ready" ? "online" : status === "streaming" ? "escrevendo…" : status}</span>
+                <span className="text-[11px] font-semibold text-primary">{CONNECTION_STATUS_LABELS[status]}</span>
               </div>
               <div className="text-[11px] font-medium leading-none text-text-muted">{activeWorkspace ? activeWorkspace.name : "Selecione um workspace"}</div>
             </div>
@@ -480,6 +559,8 @@ export function TedChat({ open, onClose }: TedChatProps) {
                 message={m}
                 isCurrentUser={isCurrentUser}
                 senderName={m.role === "assistant" ? "TED" : senderName}
+                delivery={m.delivery}
+                onRetry={m.delivery === "failed" ? () => handleRetry(m.id) : undefined}
               />
             );
           })}
@@ -599,7 +680,9 @@ export function TedChat({ open, onClose }: TedChatProps) {
               <Send size={15} />
             </button>
           </div>
-          <div className="mt-2 flex items-center justify-center gap-2 text-[10px] font-medium tracking-wide text-text-muted">
+          {/* §19.5/§24: keyboard hints assume a physical keyboard — they do
+              not occupy space on touch devices (hover:none + pointer:coarse). */}
+          <div className="mt-2 flex items-center justify-center gap-2 text-[10px] font-medium tracking-wide text-text-muted [@media(hover:none)_and_(pointer:coarse)]:hidden">
             <Paperclip size={10} />
             <span>Pressione Enter para enviar • Shift+Enter para nova linha</span>
           </div>
