@@ -11,6 +11,7 @@ import type { AuthResolver } from './auth.js';
 import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
+import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
 
 export const categoryQuerySchema = z.object({ kind: z.enum(['expense', 'income']).optional() });
 const querySchema = categoryQuerySchema;
@@ -81,7 +82,10 @@ export const registerCategoryRoutes = (
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     try {
       const result = await opts.writes.applyCategoryDefaults(ctx.householdId);
-      return reply.code(200).send({ ok: true, ...result });
+      // FIX-P1 (SPEC §15.1): template application creates categories →
+      // category.create receipt (bulk: no single entity). Never a
+      // PendingOperation for this normal write (no operationId).
+      return reply.code(200).send(attachMutationReceipt({ ok: true, ...result }, 'category.create'));
     } catch (e) { return handleError(e, reply); }
   });
 
@@ -89,7 +93,7 @@ export const registerCategoryRoutes = (
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const parsed = createCategoryInputSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    try { return reply.code(201).send(await runIdempotent(req, ctx.householdId, parsed.data, () => opts.writes.createCategory(ctx.householdId, parsed.data))); }
+    try { return reply.code(201).send(await runIdempotent(req, ctx.householdId, parsed.data, async () => { const created = await opts.writes.createCategory(ctx.householdId, parsed.data); return attachMutationReceipt(created, 'category.create', { type: 'category', id: created.id }); })); }
     catch (e) { return handleError(e, reply); }
   });
 
@@ -99,7 +103,7 @@ export const registerCategoryRoutes = (
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
     const parsed = updateCategoryInputSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id, ...parsed.data }, () => opts.writes.updateCategory(ctx.householdId, params.data.id, parsed.data))); }
+    try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id, ...parsed.data }, async () => { const updated = await opts.writes.updateCategory(ctx.householdId, params.data.id, parsed.data); return attachMutationReceipt(updated, 'category.update', { type: 'category', id: params.data.id }); })); }
     catch (e) { return handleError(e, reply); }
   });
 
@@ -119,7 +123,7 @@ export const registerCategoryRoutes = (
       });
       if (pending) return reply.code(pending.status).send(pending.body);
     }
-    try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id }, () => opts.writes.deactivateCategory(ctx.householdId, params.data.id))); }
+    try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id }, async () => { const deactivated = await opts.writes.deactivateCategory(ctx.householdId, params.data.id); return attachMutationReceipt(deactivated, 'category.delete', { type: 'category', id: params.data.id }); })); }
     catch (e) { return handleError(e, reply); }
   });
 
@@ -135,7 +139,7 @@ export const registerCategoryRoutes = (
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     try {
       const result = await opts.writes.deleteCategory(ctx.householdId, params.data.id, parsed.data);
-      return reply.code(200).send({ ok: true, ...result });
+      return reply.code(200).send(attachMutationReceipt({ ok: true, ...result }, 'category.delete', { type: 'category', id: params.data.id }));
     } catch (e) { return handleError(e, reply); }
   });
 };

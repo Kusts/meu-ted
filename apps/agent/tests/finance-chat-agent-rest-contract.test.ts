@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import type { UIMessage } from "agents/ai-chat-agent";
 import { FinanceChatAgent } from "../src/finance-chat-agent.js";
 import worker from "../src/worker.js";
+import * as apiClient from "../src/tools/api-client.js";
 import { createAgentConnectionToken } from "../../api/src/auth/agent-connection-token.js";
 import { decodeDelegatedTurnToken } from "../src/delegated-token.js";
 
@@ -153,6 +154,13 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
 
   it("(2) POST /rpc/chat with trusted headers and forged body actorId persists user message with header actor metadata, followed by relay assistant message", async () => {
     const { agent, persisted } = createTestAgent();
+    // T3.1 (SPEC §14): "Quanto gastei este mês?" is a finance-seeking read,
+    // so it requires evidence. Empty evidence keeps the grounded path: the
+    // relay text carries no financial claim and passes validation unchanged.
+    vi.spyOn(apiClient, "requestPiApiJson").mockResolvedValue({ transactions: [] });
+    // Claim-free relay text (no amounts/dates/names): grounded validation
+    // passes it through verbatim, preserving this test's attribution focus.
+    const RELAY_TEXT = "Aqui está o resumo das suas movimentações.";
     // Fresh Response per call: a Response body can only be consumed once,
     // and each turn performs 2+ fetches (H-03 authority re-verify + relay).
     // H-14: the authority URL serves a valid snapshot (fail-closed when
@@ -164,7 +172,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
           headers: { "content-type": "application/json" },
         });
       }
-      return new Response(JSON.stringify({ text: "Seu saldo atual é R$ 1.500,00." }), {
+      return new Response(JSON.stringify({ text: RELAY_TEXT }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -183,6 +191,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
         },
         body: JSON.stringify({
           text: "Quanto gastei este mês?",
+          intentionId: "intent-forged-actor-1",
           actorId: "attacker-spoofed-999",
           metadata: { actorId: "attacker-spoofed-999" },
         }),
@@ -192,7 +201,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { output?: string; status?: string };
     expect(body.status).toBe("completed");
-    expect(body.output).toBe("Seu saldo atual é R$ 1.500,00.");
+    expect(body.output).toBe(RELAY_TEXT);
 
     // Contract: Must call persistMessages with user message (attributed to trusted header actor, never body) and assistant message
     expect(agent.persistMessages).toHaveBeenCalled();
@@ -209,7 +218,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     const assistantMessage = persisted[1]!;
     expect(assistantMessage.role).toBe("assistant");
     const assistantText = assistantMessage.parts?.[0]?.text;
-    expect(assistantText).toBe("Seu saldo atual é R$ 1.500,00.");
+    expect(assistantText).toBe(RELAY_TEXT);
   });
 
   it("POST /rpc/chat creates a V2 proposal through the Agent and returns only the safe pending DTO", async () => {
@@ -228,6 +237,14 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
       if (String(input).includes("/pending-operations/v2/propose")) {
         proposalRequest = new Request(String(input), init);
         return new Response(JSON.stringify({ id: "pending-v2-1" }), { status: 200 });
+      }
+      // SPEC §7.2/§7.3 authoritative entity reads: single account
+      // auto-resolves; the UUID category is verified against the real list.
+      if (String(input).includes("/accounts")) {
+        return new Response(JSON.stringify({ items: [{ id: "00000000-0000-4000-8000-0000000000a1", name: "Nubank" }] }), { status: 200 });
+      }
+      if (String(input).includes("/categories")) {
+        return new Response(JSON.stringify({ items: [{ id: "00000000-0000-4000-8000-000000000001", name: "Mercado" }] }), { status: 200 });
       }
       throw new Error(`unexpected upstream request: ${String(input)}`);
     });
@@ -257,7 +274,20 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
       status: "proposed",
       operation: "transactions.expense.create",
       summary: expect.any(String),
+      // T3.4 (SPEC §16, INV-02): the card projection rides the same DTO,
+      // derived from the canonical args — never attestation material.
+      presentation: expect.objectContaining({
+        id: "pending-v2-1",
+        status: "proposed",
+        tool: "transactions.expense.create",
+        title: "Confirmar despesa",
+        amountCents: 1234,
+        account: { id: "00000000-0000-4000-8000-0000000000a1", label: "Nubank" },
+        category: { id: "00000000-0000-4000-8000-000000000001", label: "Mercado" },
+        warnings: [],
+      }),
     });
+    expect(JSON.stringify(body.pendingOperation)).not.toContain("attestation");
 
     expect(proposalRequest).toBeDefined();
     const proposalBody = await proposalRequest!.json() as Record<string, unknown>;
@@ -265,10 +295,27 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     expect(proposalBody).not.toHaveProperty("actorId");
     expect(proposalBody).not.toHaveProperty("workspaceId");
     expect(proposalBody).not.toHaveProperty("deviceId");
+    // SPEC §7 (H-01): only canonical, fully-resolved args reach propose.
+    expect(proposalBody.normalizedArgs).toMatchObject({
+      amountCents: 1234,
+      accountId: "00000000-0000-4000-8000-0000000000a1",
+      categoryId: "00000000-0000-4000-8000-000000000001",
+    });
+    expect(proposalBody.normalizedArgs).not.toHaveProperty("categoryQuery");
     const auth = proposalRequest!.headers.get("authorization");
     expect(auth).toMatch(/^Bearer /);
     const claims = await decodeDelegatedTurnToken(auth!.slice("Bearer ".length), secret);
-    expect(claims.capabilities).toEqual(["financial.approval.propose"]);
+    // T1.5 (SPEC §8.1): one decision-scoped token serves propose + the
+    // coordinator's confirm/cancel/retry/read — still narrowly approval-only,
+    // device-bound, and bound to this turn's requestId.
+    expect(claims.capabilities).toEqual([
+      "financial.approval.propose",
+      "financial.approval.read",
+      "financial.approval.confirm",
+      "financial.approval.execute",
+      "financial.approval.retry",
+      "financial.approval.cancel",
+    ]);
   });
 
   it("(3) GET /rpc/history returns persisted messages with isOwn derived by comparing authenticated actor to server metadata", async () => {
@@ -493,7 +540,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
           "x-agent-actor": "user-test-1",
           "x-agent-workspace": "ws-test-1",
         },
-        body: JSON.stringify({ text: userPromptWithSecret }),
+        body: JSON.stringify({ text: userPromptWithSecret, intentionId: "intent-redaction-1" }),
       }),
     );
 
@@ -626,7 +673,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
           "x-agent-actor": "user-test-1",
           "x-agent-workspace": "ws-test-1",
         },
-        body: JSON.stringify({ text: "Olá TED" }),
+        body: JSON.stringify({ text: "Olá TED", intentionId: "intent-no-persist-1" }),
       }),
     );
 

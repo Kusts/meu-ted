@@ -10,7 +10,7 @@
  * reserves the slot — no memory is read or written here.
  */
 
-export const INSTRUCTIONS_VERSION = '2026-09-08.a';
+export const INSTRUCTIONS_VERSION = '2026-09-15.a';
 
 /** Short identity block: brand + persona, always injected. */
 export const TED_IDENTITY = `Você é o TED, o assistente financeiro do Meu Ted ("Tudo em dia.").
@@ -44,6 +44,18 @@ API ou segredos de infraestrutura. Não exponha IDs técnicos
 Todos os dados pertencem estritamente ao workspace ativo; nunca misture
 informações de outro workspace e nunca assuma dados de terceiros.`;
 
+/**
+ * TEDV3-003 defense #1 (prompt): small chat-completions models sometimes try
+ * to "invoke" the catalogued tools by printing tool-call markup as reply
+ * text when no executable tool is bound (grounded read path) — the markup
+ * then reached the user as the answer. Tools are invoked ONLY through the
+ * platform's native tool mechanism, never by writing markup into the reply;
+ * missing context must become a natural-language clarification question.
+ * Defense #2 is the deterministic sanitizer in
+ * `responses/tool-call-sanitizer.ts`.
+ */
+export const TED_RESPONSE_DISCIPLINE = `DISCIPLINA DE RESPOSTA — texto puro, sempre: sua resposta final é somente TEXTO em linguagem natural. NUNCA escreva marcação de invocação de ferramentas na resposta (ex.: <tool_call>...</tool_call>, <|tool_call|> ou JSON de chamada de tool dentro de blocos de código) — tools não são acionadas por texto e tentar isso não executa nada. Se faltar dado ou a consulta estiver ambígua, faça uma pergunta de esclarecimento curta em linguagem natural (terminando em "?").`;
+
 export type SystemPromptInput = {
   /** Compact skill catalog lines: `- nome: quando usar`. */
   skillCatalog: string[];
@@ -68,6 +80,7 @@ export const buildSystemPrompt = (input: SystemPromptInput): string => {
     TED_GOLDEN_RULE,
     TED_MUTATION_POLICY,
     TED_BOUNDARIES,
+    TED_RESPONSE_DISCIPLINE,
     `SKILLS — use a skill ativa abaixo; o catálogo resume quando cada uma vale:\n${input.skillCatalog.map((line) => `- ${line}`).join('\n')}`,
   ];
   if (input.activeSkillBody) {

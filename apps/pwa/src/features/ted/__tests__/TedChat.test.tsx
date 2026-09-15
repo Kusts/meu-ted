@@ -110,7 +110,12 @@ describe("TedChat Component – Canonical FinanceChatAgent REST", () => {
     await user.type(input, "Quanto temos na poupança?");
     await user.click(screen.getByRole("button", { name: /enviar mensagem/i }));
 
-    expect(agentClient.sendAgentMessage).toHaveBeenCalledWith("ws-1", "Quanto temos na poupança?");
+    // SPEC §7.7/§19.3: every send carries a stable messageId (retry-safe).
+    expect(agentClient.sendAgentMessage).toHaveBeenCalledWith(
+      "ws-1",
+      "Quanto temos na poupança?",
+      expect.objectContaining({ messageId: expect.any(String) }),
+    );
 
     // Verifies loadHistory was called after sendAgentMessage to retrieve canonical server state
     await waitFor(() => {

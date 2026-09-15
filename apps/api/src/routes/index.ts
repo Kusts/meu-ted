@@ -87,7 +87,8 @@ import { createInMemoryLlmConfigStore } from "../agent/llm-config-memory.js";
 import type { LlmConfigStore } from "../agent/llm-config-store.js";
 import { createInMemoryAgentReplayStore, type AgentReplayStore } from "../auth/agent-connection-token-replay.js";
 import { registerWorkspaceAliasRoutes } from "../auth/workspace-alias.js";
-import { createExpenseInputSchema, createIncomeInputSchema } from "../writes/types.js";
+import { requireApprovalToolContract } from "../approvals/tool-registry.js";
+import { createUndoService } from "../approvals/undo.js";
 
 export type RouteDeps = {
   store: ReadModelStore;
@@ -152,21 +153,13 @@ export type RouteDeps = {
  * first attempt's transaction instead of booking a second one.
  */
 export const createPendingOperationV2Executor = (writes: WriteStore): PendingExecutor => async (operation) => {
-  const args = operation.normalizedArgs;
-  const idempotency = { idempotencyKey: operation.idempotencyKey };
-  if (operation.tool === 'transactions.expense.create') {
-    const parsed = createExpenseInputSchema.safeParse(args);
-    if (!parsed.success) throw new Error('validation.invalid_expense_arguments');
-    const transaction = await writes.createExpense(operation.workspaceId, parsed.data, idempotency);
-    return { status: 'succeeded' as const, operationId: transaction.id };
-  }
-  if (operation.tool === 'transactions.income.create') {
-    const parsed = createIncomeInputSchema.safeParse(args);
-    if (!parsed.success) throw new Error('validation.invalid_income_arguments');
-    const transaction = await writes.createIncome(operation.workspaceId, parsed.data, idempotency);
-    return { status: 'succeeded' as const, operationId: transaction.id };
-  }
-  throw new Error('tool.not_allowed');
+  const contract = requireApprovalToolContract(operation.tool);
+  return contract.executor({
+    writes,
+    workspaceId: operation.workspaceId,
+    args: operation.normalizedArgs,
+    idempotencyKey: operation.idempotencyKey,
+  });
 };
 
 
@@ -175,6 +168,15 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   const contextReplayGuard = deps.contextReplayGuard ?? createInMemoryContextTokenReplayGuard();
   const idempotency = deps.idempotency ?? createInMemoryIdempotencyStore();
   const pendingStore = deps.pendingStore ?? createInMemoryPendingOperationStore();
+  // FIX-P1-UNDO-BOOTSTRAP: nenhum bootstrap de produção injetava
+  // `undoService`, então POST /audit/undo respondia `unsupported` em runtime
+  // apesar dos testes de rota injetarem o serviço. Fallback autoritativo com
+  // deps reais — a mesma instância serve /audit/undo e
+  // /pending-operations/undo. `deps.undoService` explícito tem precedência.
+  // FIX-P1-UNDO-IDEMPOTENCY: o fallback compartilha o MESMO IdempotencyStore
+  // dos writes (nada de cache paralelo por instância).
+  const auditLogs = deps.auditLogs ?? createInMemoryAuditLogStore();
+  const undoService = deps.undoService ?? createUndoService({ auditLogs, writes: deps.writes, idempotency });
   const resolveToken: AuthResolver = async (token) => tokenStore.resolve(token);
   const clock = deps.clock ?? (() => new Date());
 
@@ -413,7 +415,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     store: deps.pendingStore ?? createInMemoryPendingOperationStore(),
     resolveToken,
     ...(deps.pendingExecutor ? { executor: deps.pendingExecutor } : {}),
-    ...(deps.undoService ? { undoService: deps.undoService } : {}),
+    undoService,
   });
   registerAdoptionRoutes(app, {
     store: deps.adoptionStore ?? createInMemoryAdoptionStore(),
@@ -553,9 +555,9 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     resolveToken,
   });
   registerAuditRoutes(app, {
-    auditLogs: deps.auditLogs ?? createInMemoryAuditLogStore(),
+    auditLogs,
     resolveToken,
-    ...(deps.undoService ? { undoService: deps.undoService } : {}),
+    undoService,
   });
   registerDuplicateDetectRoutes(app, { resolveToken });
   if (deps.ownershipTransferStore) {

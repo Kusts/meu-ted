@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decidePendingOperation,
   deleteAgentHistory,
+  describePendingOperationStatus,
   exportAgentHistory,
   fetchAgentHistory,
+  formatCentsToBRL,
+  formatDateToBR,
   sendAgentMessage,
 } from "./agent-client";
 import * as agentAuth from "./agent-auth";
@@ -60,7 +63,11 @@ describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
     expect(capturedUrl).toBe("https://agent.example.test/agents/finance-chat-agent/workspace-123/rpc/chat");
     expect(capturedInit?.method).toBe("POST");
     expect((capturedInit?.headers as Record<string, string>)["x-agent-connection-token"]).toBe("signed-token-123");
-    expect(capturedInit?.body).toBe(JSON.stringify({ text: "Quanto gastei?" }));
+    // SPEC §7.7: the send carries a stable intentionId (PWA messageId).
+    const sentBody = JSON.parse(String(capturedInit?.body)) as { text?: string; intentionId?: string };
+    expect(sentBody.text).toBe("Quanto gastei?");
+    expect(typeof sentBody.intentionId).toBe("string");
+    expect(sentBody.intentionId!.length).toBeGreaterThan(0);
     expect(result.output).toBe("Seu saldo é R$ 1.000,00.");
   });
 
@@ -200,6 +207,268 @@ describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
     await sendAgentMessage("ws-1", "oi");
 
     expect(capturedUrl).toBe("/api/agent/agents/finance-chat-agent/ws-1/rpc/chat");
+  });
+
+  it("T3.4 RED: sendAgentMessage forwards the canonical presentation (Valor/Conta/Categoria/Data) untouched", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          turnId: "t1",
+          status: "completed",
+          output: "Proposta: Mercado. Confirma?",
+          pendingOperation: {
+            id: "pending-v2-1",
+            status: "proposed",
+            operation: "transactions.expense.create",
+            summary: "Mercado",
+            presentation: {
+              id: "pending-v2-1",
+              status: "proposed",
+              tool: "transactions.expense.create",
+              title: "Confirmar despesa",
+              amountCents: 85000,
+              description: "Mercado",
+              date: "2026-09-14",
+              account: { id: "acc-1", label: "Nubank" },
+              category: { id: "cat-1", label: "Alimentação" },
+              expiresAt: "2026-09-14T13:00:00.000Z",
+              warnings: [],
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const turn = await sendAgentMessage("ws-1", "gastei 850 no mercado");
+    expect(turn.pendingOperation?.presentation?.amountCents).toBe(85000);
+    expect(turn.pendingOperation?.presentation?.account).toEqual({ id: "acc-1", label: "Nubank" });
+    expect(turn.pendingOperation?.presentation?.category).toEqual({ id: "cat-1", label: "Alimentação" });
+    expect(turn.pendingOperation?.presentation?.title).toBe("Confirmar despesa");
+  });
+
+  it("T3.4 RED: presentation carrying attestation is stripped before reaching the card", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          turnId: "t1",
+          status: "completed",
+          output: "ok",
+          pendingOperation: {
+            id: "op-1",
+            status: "proposed",
+            operation: "transactions.expense.create",
+            presentation: {
+              id: "op-1",
+              status: "proposed",
+              tool: "transactions.expense.create",
+              title: "Confirmar despesa",
+              expiresAt: "2026-09-14T13:00:00.000Z",
+              warnings: [],
+              attestation: "must-never-reach-browser",
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const turn = await sendAgentMessage("ws-1", "oi");
+    expect(JSON.stringify(turn)).not.toContain("attestation");
+  });
+
+  it("T3.4 RED: visible-states contract maps every operation status to pt-BR (SPEC §16)", () => {
+    expect(describePendingOperationStatus("proposed")).toMatch(/aguardando aprova/i);
+    expect(describePendingOperationStatus("executing")).toMatch(/processando/i);
+    expect(describePendingOperationStatus("succeeded")).toMatch(/conclu/i);
+    expect(describePendingOperationStatus("failed")).toMatch(/falhou/i);
+    expect(describePendingOperationStatus("cancelled")).toMatch(/cancelad/i);
+    expect(describePendingOperationStatus("expired")).toMatch(/expirad/i);
+  });
+
+  it("T3.4 RED: formats currency and date in pt-BR for the card", () => {
+    expect(formatCentsToBRL(85000)).toBe("R$ 850,00");
+    expect(formatDateToBR("2026-09-14")).toBe("14/09/2026");
+  });
+
+  it("T6.1 (§25.4): history items carry the authoritative pending operation for reload rehydration", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "msg-1",
+              actorId: "user-1",
+              role: "user",
+              content: "gastei 850 no mercado",
+              isOwn: true,
+            },
+            {
+              id: "msg-2",
+              actorId: "ted",
+              role: "assistant",
+              content: "Proposta: Mercado. Confirma?",
+              isOwn: false,
+              pendingOperation: {
+                id: "pending-v2-1",
+                status: "proposed",
+                operation: "transactions.expense.create",
+                summary: "Mercado",
+                // Unknown top-level keys never cross into the card.
+                attestation: "must-never-reach-card",
+                presentation: {
+                  id: "pending-v2-1",
+                  status: "proposed",
+                  tool: "transactions.expense.create",
+                  title: "Confirmar despesa",
+                  amountCents: 85000,
+                  description: "Mercado",
+                  date: "2026-09-14",
+                  account: { id: "acc-1", label: "Nubank" },
+                  category: { id: "cat-1", label: "Alimentação" },
+                  expiresAt: "2026-09-14T13:00:00.000Z",
+                  warnings: [],
+                },
+              },
+            },
+          ],
+          total: 2,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const items = await fetchAgentHistory("workspace-123");
+    expect(items).toHaveLength(2);
+    expect(items[0]!.pendingOperation).toBeUndefined();
+    expect(items[1]!.pendingOperation?.id).toBe("pending-v2-1");
+    expect(items[1]!.pendingOperation?.presentation?.amountCents).toBe(85000);
+    expect(JSON.stringify(items[1])).not.toContain("attestation");
+  });
+
+  it("T6.1 (§25.4): invalid pending operation on a history item collapses to no card — history still parses", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "msg-1",
+              actorId: "user-1",
+              role: "user",
+              content: "oi",
+              isOwn: true,
+              pendingOperation: { id: "op-bad", status: "invented-status", operation: "x" },
+            },
+          ],
+          total: 1,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const items = await fetchAgentHistory("workspace-123");
+    expect(items).toHaveLength(1);
+    expect(items[0]!.content).toBe("oi");
+    expect(items[0]!.pendingOperation).toBeUndefined();
+  });
+
+  describe("T3.3 execution receipt (API → Agent → PWA)", () => {
+    const cleanReceipt = {
+      mutationId: "mut-1",
+      mutationKind: "transactions.expense.create",
+      status: "succeeded" as const,
+      affectedTargets: ["transactions", "accounts", "dashboard-summary", "budgets", "quick-insights"],
+      operationId: "op-1",
+      entity: { type: "transaction", id: "op-1" },
+    };
+
+    it("decidePendingOperation parses and exposes the real execution receipt", async () => {
+      vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+      vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+        new Response(
+          JSON.stringify({ operationId: "op-1", status: "succeeded", receipt: cleanReceipt }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+      await expect(decidePendingOperation("workspace-123", "op-1", "confirm")).resolves.toEqual({
+        operationId: "op-1",
+        status: "succeeded",
+        receipt: cleanReceipt,
+      });
+    });
+
+    it("a receipt carrying attestation is dropped wholesale — nothing tainted reaches the browser (INV-05)", async () => {
+      vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+      vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+        new Response(
+          JSON.stringify({
+            operationId: "op-1",
+            status: "succeeded",
+            receipt: { ...cleanReceipt, attestation: "must-never-reach-browser" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+      const result = await decidePendingOperation("workspace-123", "op-1", "confirm");
+      expect(result.receipt).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain("attestation");
+    });
+
+    it("a receipt with an unknown key is dropped (strict browser allowlist)", async () => {
+      vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+      vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+        new Response(
+          JSON.stringify({
+            operationId: "op-1",
+            status: "succeeded",
+            receipt: { ...cleanReceipt, normalizedArgs: { amountCents: 8500 } },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+      const result = await decidePendingOperation("workspace-123", "op-1", "confirm");
+      expect(result.receipt).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain("normalizedArgs");
+    });
+
+    it("sendAgentMessage exposes pendingOperation.receipt from a succeeded chat turn", async () => {
+      vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+      vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+        new Response(
+          JSON.stringify({
+            turnId: "t1",
+            status: "completed",
+            output: "Lançamento registrado com sucesso.",
+            pendingOperation: {
+              id: "op-1",
+              status: "succeeded",
+              operation: "transactions.expense.create",
+              receipt: cleanReceipt,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+      const turn = await sendAgentMessage("ws-1", "confirma");
+      expect(turn.pendingOperation?.receipt).toEqual(cleanReceipt);
+      expect(JSON.stringify(turn)).not.toContain("attestation");
+    });
   });
 
 });

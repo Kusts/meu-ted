@@ -2,19 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode, type TouchEvent as ReactTouchEvent } from "react";
 import { X } from "lucide-react";
-import { OVERLAY_Z_INDEX, useBodyScrollLock } from "@/lib/ui/overlay-a11y";
+import {
+  OVERLAY_Z_INDEX,
+  prefersReducedMotion,
+  useBodyScrollLock,
+  useOverlayDialog,
+} from "@/lib/ui/overlay-a11y";
 
 /** Arrastar o cabeçalho mais que isso para baixo fecha a sheet. */
 export const SHEET_DRAG_DISMISS_PX = 90;
 
 /** Duração da animação de saída (translateY 100%, Onda 4). */
 export const SHEET_EXIT_MS = 200;
-
-function reducedMotion(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function")
-    return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
 
 export interface BottomSheetProps {
   open: boolean;
@@ -40,6 +39,7 @@ export function BottomSheet({
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onCloseRef = useRef(onClose);
   useBodyScrollLock(rendered);
+  const containerRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ y: number; dy: number } | null>(null);
 
@@ -61,7 +61,7 @@ export function BottomSheet({
    * chamar onClose de fato; instantâneo sob prefers-reduced-motion. */
   const requestClose = useCallback(() => {
     if (leavingRef.current) return;
-    if (reducedMotion()) {
+    if (prefersReducedMotion()) {
       onCloseRef.current();
       return;
     }
@@ -81,6 +81,11 @@ export function BottomSheet({
       onCloseRef.current();
     }, SHEET_EXIT_MS);
   }, [clearExitTimer]);
+
+  /* SPEC §21 (H2): foco inicial no primeiro focalizável (botão fechar),
+   * trap de Tab, restore ao fechar e inert no fundo — primitiva compartilhada.
+   * `rendered` cobre a animação de saída (mesmo ciclo do scroll lock). */
+  useOverlayDialog(containerRef, { open: rendered, onEscape: requestClose });
 
   /* Fechamento vindo do pai (open true->false): se a saída já foi animada
    * via requestClose, desmonta direto; senão anima antes de desmontar.
@@ -109,7 +114,7 @@ export function BottomSheet({
       setRendered(false);
       return;
     }
-    if (reducedMotion()) {
+    if (prefersReducedMotion()) {
       setRendered(false);
       return;
     }
@@ -123,22 +128,6 @@ export function BottomSheet({
     }, SHEET_EXIT_MS);
   }, [open, rendered, clearExitTimer]);
   /* eslint-enable react-hooks/set-state-in-effect */
-
-  /* Close on Escape key */
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        requestClose();
-      }
-    },
-    [requestClose]
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, handleKeyDown]);
 
   /* Drag-to-dismiss no cabeçalho (spec AGY Onda 2/3 §4.2): só o header é
    * zona de arraste (touch-none) para não sequestrar a rolagem do conteúdo.
@@ -171,7 +160,7 @@ export function BottomSheet({
     const dy = t.clientY - drag.y;
     if (dy <= 0) return;
     drag.dy = dy;
-    if (!reducedMotion()) {
+    if (!prefersReducedMotion()) {
       const el = sheetRef.current;
       if (el) el.style.transform = `translateY(${dy}px)`;
     }
@@ -189,7 +178,7 @@ export function BottomSheet({
     }
     const el = sheetRef.current;
     if (el) {
-      el.style.transition = reducedMotion()
+      el.style.transition = prefersReducedMotion()
         ? ""
         : "transform 200ms var(--easing-standard)";
       el.style.transform = "";
@@ -206,10 +195,12 @@ export function BottomSheet({
 
   return (
     <div
+      ref={containerRef}
       className="fixed inset-0"
       style={{ zIndex: OVERLAY_Z_INDEX.sheet }}
       role="dialog"
       aria-modal="true"
+      aria-label={title}
     >
       {/* Overlay */}
       <div

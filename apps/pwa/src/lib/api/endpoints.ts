@@ -19,6 +19,18 @@ import type {
   DashboardSummary,
 } from "@/lib/state/types";
 import { apiFetch } from "./client";
+import type { MutationReceipt } from "@pi-finance/llm-contracts/types";
+
+// ─── Mutation receipts (SPEC §15.1, FIX-P1) ────────────────────────────────
+
+/**
+ * List payload carrying the server MutationReceipt additively. The value
+ * stays an array (no public API change); the receipt rides as an own
+ * property so `extractMutationReceipt` finds it and the existing
+ * `reconcileAfterWrite` path consumes the real receipt instead of the
+ * registry-kind fallback.
+ */
+export type ReceiptCarryingItems<T> = T[] & { receipt?: MutationReceipt };
 
 // ─── Mutation options (idempotency) ──────────────────────────────────────────
 
@@ -186,9 +198,11 @@ export async function createInstallments(input: {
   categoryId?: string;
   subcategoryId?: string;
   notes?: string;
-}): Promise<Transaction[]> {
-  const res = await apiFetch<{ items: Transaction[] }>("/cards/installments", mutationOptions("POST", input));
-  return res.items;
+}): Promise<ReceiptCarryingItems<Transaction>> {
+  const res = await apiFetch<{ items: Transaction[]; receipt?: MutationReceipt }>("/cards/installments", mutationOptions("POST", input));
+  const items = res.items as ReceiptCarryingItems<Transaction>;
+  if (res.receipt !== undefined) items.receipt = res.receipt;
+  return items;
 }
 
 /** H-01: single (1x) card purchase through the CardStore invoice path. */
@@ -200,9 +214,11 @@ export async function createCardPurchase(input: {
   categoryId?: string;
   subcategoryId?: string;
   notes?: string;
-}): Promise<Transaction[]> {
-  const res = await apiFetch<{ items: Transaction[] }>("/cards/purchases", mutationOptions("POST", input));
-  return res.items;
+}): Promise<ReceiptCarryingItems<Transaction>> {
+  const res = await apiFetch<{ items: Transaction[]; receipt?: MutationReceipt }>("/cards/purchases", mutationOptions("POST", input));
+  const items = res.items as ReceiptCarryingItems<Transaction>;
+  if (res.receipt !== undefined) items.receipt = res.receipt;
+  return items;
 }
 
 export async function createTransfer(input: {
@@ -333,8 +349,17 @@ export async function updateTransaction(
   return apiFetch<Transaction>(`/transactions/${id}`, mutationOptions("PATCH", input));
 }
 
-export async function deleteTransaction(id: string): Promise<void> {
-  await apiFetch(`/transactions/${id}`, mutationOptions("DELETE"));
+/**
+ * FIX-P1-PWA-RECEIPT-CONSUMERS: DELETE /transactions/:id answers 200 with
+ * the soft-deleted entity + a transaction.delete receipt (204 cannot carry
+ * a body). The receipt rides on the returned value so `extractMutationReceipt`
+ * + `reconcileAfterWrite` consume the real mutationId instead of the
+ * registry-kind fallback.
+ */
+export type DeletedTransaction = Transaction & { receipt?: MutationReceipt };
+
+export async function deleteTransaction(id: string): Promise<DeletedTransaction> {
+  return apiFetch<DeletedTransaction>(`/transactions/${id}`, mutationOptions("DELETE"));
 }
 
 export async function updateAccount(
@@ -490,8 +515,10 @@ export async function fetchQuickInsights(): Promise<QuickInsight[]> {
 
 export async function undoLastAction(input?: { lastOperationId?: string }): Promise<{
   undone: { operation: string; entityId: string; reversal: string };
+  /** FIX-P1: server undo receipt (SPEC §15.1) — propagated verbatim via apiFetch. */
+  receipt?: MutationReceipt;
 }> {
-  return apiFetch<{ undone: { operation: string; entityId: string; reversal: string } }>('/audit/undo', mutationOptions("POST", input ?? {}));
+  return apiFetch<{ undone: { operation: string; entityId: string; reversal: string }; receipt?: MutationReceipt }>('/audit/undo', mutationOptions("POST", input ?? {}));
 }
 
 // ─── Duplicate detector ─────────────────────────────────────

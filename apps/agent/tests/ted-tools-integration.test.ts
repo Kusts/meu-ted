@@ -10,7 +10,9 @@ describe("TED Tools Integration – V2 trust boundary", () => {
   it("finance-chat-agent usa somente os clientes V2 de mutação, sem o registro global V1", () => {
     const content = readFileSync(financeChatPath, "utf8");
     expect(content).toMatch(/MutationApiClient/);
-    expect(content).toMatch(/MutationExecutor/);
+    // T1.5 (SPEC §8.1): button + NL converge in PendingOperationCoordinator
+    // (which drives MutationApiClient/MutationExecutor underneath).
+    expect(content).toMatch(/PendingOperationCoordinator|MutationExecutor/);
     expect(content).toMatch(/transactions\.expense\.create|transactions\.income\.create/);
     expect(content).not.toMatch(/generatedHttpTools/);
     expect(content).not.toMatch(/setGlobalApiContext/);

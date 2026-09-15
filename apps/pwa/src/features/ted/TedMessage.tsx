@@ -2,10 +2,20 @@
 
 import type { AgentMessage } from "@/lib/api/agent-client";
 
+/**
+ * SPEC §19.1: local optimistic delivery lifecycle of a user message.
+ * `sent` renders no indicator; the authoritative history replaces the
+ * bubble after a successful turn.
+ */
+export type TedDeliveryState = "sending" | "sent" | "failed";
+
 interface TedMessageProps {
   message: AgentMessage;
   isCurrentUser: boolean;
   senderName?: string;
+  delivery?: TedDeliveryState;
+  /** SPEC §19.3: offered only for failed messages (retry keeps the draft). */
+  onRetry?: () => void;
 }
 
 function avatarColor(actorId: string, role: string): string {
@@ -17,7 +27,7 @@ function avatarColor(actorId: string, role: string): string {
   return `hsl(${hue} 58% 42%)`;
 }
 
-export function TedMessage({ message, isCurrentUser, senderName }: TedMessageProps) {
+export function TedMessage({ message, isCurrentUser, senderName, delivery, onRetry }: TedMessageProps) {
   const isAssistant = message.role === "assistant";
   const displayName = isCurrentUser ? "Você" : isAssistant ? "TED" : (senderName || "Membro");
   const initial = isCurrentUser ? "V" : isAssistant ? "T" : (senderName || "M").charAt(0).toUpperCase();
@@ -96,6 +106,26 @@ export function TedMessage({ message, isCurrentUser, senderName }: TedMessagePro
               </div>
             )}
         </div>
+        {delivery === "sending" && (
+          <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-text-muted">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-text-muted" aria-hidden="true" />
+            enviando…
+          </span>
+        )}
+        {delivery === "failed" && (
+          <span className="mt-1 inline-flex items-center gap-2 text-[10px] font-semibold text-danger">
+            Falha no envio.
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-danger/40 bg-danger-tint px-2 py-0.5 text-[10px] font-bold text-danger transition-colors hover:bg-danger/10"
+              >
+                Tentar novamente
+              </button>
+            )}
+          </span>
+        )}
       </div>
       {isCurrentUser && (
         <span

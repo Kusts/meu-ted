@@ -5,6 +5,9 @@ import type { AuthResolver } from './auth.js';
 import { DomainError, domainErrors } from '../writes/errors.js';
 import { requireIdempotencyKey } from '../writes/idempotency.js';
 import { computePendingOperationV2Hash, type PendingOperationV2 } from '@pi-finance/llm-contracts';
+import { validateApprovalToolArgs } from '../approvals/tool-registry.js';
+import { buildPendingOperationPresentation } from '../approvals/presentation.js';
+import type { ReadModelStore } from '../read-models/store.js';
 import { PendingOperationV2Error, type PendingExecutor, type PendingOperationExecutor, type PendingOperationStore, type PendingOperationV2Store } from '../approvals/pending.js';
 import type { UndoService } from '../approvals/undo.js';
 
@@ -21,11 +24,12 @@ export const V2_APPROVAL_CAPABILITIES = {
   read: 'financial.approval.read',
   confirm: 'financial.approval.confirm',
   execute: 'financial.approval.execute',
+  reconcile: 'financial.approval.reconcile',
   retry: 'financial.approval.retry',
   cancel: 'financial.approval.cancel',
 } as const;
 
-export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { store: PendingOperationStore; resolveToken: AuthResolver; executor?: PendingOperationExecutor; undoService?: UndoService; v2Store?: PendingOperationV2Store; v2Executor?: PendingExecutor; v2Only?: boolean }): void => {
+export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { store: PendingOperationStore; resolveToken: AuthResolver; executor?: PendingOperationExecutor; undoService?: UndoService; v2Store?: PendingOperationV2Store; v2Executor?: PendingExecutor; v2Only?: boolean; readModel?: Pick<ReadModelStore, 'listAccounts' | 'listCategories'> }): void => {
   const { store, resolveToken, executor, undoService, v2Store, v2Executor } = opts;
   const resolve = async (req: import('fastify').FastifyRequest): Promise<{ householdId: string; actorId: string; deviceId: string }> => {
     if (req.authenticatedContext) return req.authenticatedContext;
@@ -40,7 +44,18 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
       }
       return reply.code(error.statusCode).send({ code: error.code, message: error.message });
     }
-    if (error instanceof PendingOperationV2Error) return reply.code(error.statusCode).send({ code: error.code, message: error.message });
+    if (error instanceof PendingOperationV2Error) {
+      // forbiddenOnMissing applies to V2 errors too: the V2 store raises
+      // approval.not_found as PendingOperationV2Error (404), and scoped
+      // routes (get/confirm/execute/reconcile/...) must answer a foreign
+      // or unknown id with 403 — never a 404 existence leak.
+      if (forbiddenOnMissing && error.code === 'approval.not_found') {
+        return reply.code(403).send({ code: 'approval.forbidden', message: 'Operação pendente fora do workspace do ator.' });
+      }
+      const body: Record<string, unknown> = { code: error.code, message: error.message };
+      if (error.details !== undefined) body.details = error.details;
+      return reply.code(error.statusCode).send(body);
+    }
     throw error;
   };
 
@@ -56,19 +71,107 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
       }
       return true;
     };
-    app.post('/pending-operations/v2/propose', async (req, reply) => {
+    const proposeV2 = async (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => {
       if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.propose)) return;
       let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); }
       try {
         const key = requireIdempotencyKey(req.headers as Record<string, unknown>);
         const body = z.object({ tool: z.string().min(1), normalizedArgs: z.record(z.unknown()), expiresAt: z.string().datetime({ offset: true }).optional() }).strict().safeParse(req.body ?? {});
         if (!body.success) return reply.code(400).send({ code: 'validation.error', issues: body.error.issues });
-        const base = { version: 2 as const, ...identity(ctx), tool: body.data.tool, normalizedArgs: body.data.normalizedArgs as PendingOperationV2['normalizedArgs'], proposalHash: '', idempotencyKey: key, createdAt: new Date().toISOString(), expiresAt: body.data.expiresAt ?? new Date(Date.now() + 30 * 60_000).toISOString(), bindings: identity(ctx) };
+        // SPEC §7.4: validate against the registry contract for the requested
+        // tool BEFORE persisting (the store re-validates as defense-in-depth).
+        const checked = validateApprovalToolArgs(body.data.tool, body.data.normalizedArgs);
+        if (!checked.success && checked.code === 'tool.not_allowed') return reply.code(403).send({ code: 'tool.not_allowed', message: 'Ferramenta não permitida no protocolo de aprovação.' });
+        if (!checked.success) return reply.code(422).send({ code: 'approval.invalid_args', message: 'Argumentos inválidos para a ferramenta de aprovação.', details: checked.issues });
+        const base = { version: 2 as const, ...identity(ctx), tool: body.data.tool, normalizedArgs: checked.data as PendingOperationV2['normalizedArgs'], proposalHash: '', idempotencyKey: key, createdAt: new Date().toISOString(), expiresAt: body.data.expiresAt ?? new Date(Date.now() + 30 * 60_000).toISOString(), bindings: identity(ctx) };
         const operation = { ...base, proposalHash: await computePendingOperationV2Hash(base) };
-        return reply.code(201).send(await v2Store.propose(operation));
+        const result = await v2Store.propose(operation);
+        // SPEC §7.7: same key + same payload replays the existing operation.
+        if (result.existing) return reply.code(200).send(result);
+        return reply.code(201).send(result);
+      } catch (error) { return handleError(error, reply); }
+    };
+    app.post('/pending-operations/v2/propose', proposeV2);
+    app.post('/pending-operations/v2', proposeV2);
+    // T1.5 (SPEC §8.3): Agent-only authoritative listing. Identity comes
+    // exclusively from the authenticated context — the PWA never declares
+    // which operations it believes are pending. Lean projection: enough for
+    // disambiguation (amount/description/date/account), never authority
+    // material (no attestation, no full normalizedArgs). Registered before
+    // the `/:id` GETs so the static segment can never be read as an id.
+    // FIX-P1 (presentation rehydration): each item carries the canonical
+    // `PendingOperationPresentation` derived SERVER-side from the STORED
+    // hash-bound normalizedArgs via buildPendingOperationPresentation —
+    // never from client input. Account/category display labels resolve
+    // server-side from the authoritative workspace-scoped read model
+    // (omitted honestly when unresolvable); the presentation is optional
+    // (absent when the stored args are incomplete) and never carries
+    // attestation/hash/token/args.
+    app.get('/pending-operations/v2/active', async (req, reply) => {
+      if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.read)) return;
+      let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); }
+      try {
+        const records = await v2Store.listActive(identity(ctx));
+        // Display-only label maps, bulk-loaded once per request from the
+        // authoritative read model. A lookup failure empties the maps —
+        // the listing itself never fails for a display-only enrichment.
+        const accountLabels = new Map<string, string>();
+        const categoryLabels = new Map<string, string>();
+        if (opts.readModel) {
+          try {
+            const [accounts, categories] = await Promise.all([
+              opts.readModel.listAccounts(ctx.householdId),
+              opts.readModel.listCategories(ctx.householdId),
+            ]);
+            for (const account of accounts) accountLabels.set(account.id, account.name);
+            for (const category of categories) categoryLabels.set(category.id, category.name);
+          } catch {
+            // Honest omission below (no labels) — never a 500.
+          }
+        }
+        const items = records.map((record) => {
+          const args = (record.normalizedArgs ?? {}) as Record<string, unknown>;
+          const accountId = typeof args.accountId === 'string' ? args.accountId : undefined;
+          const categoryId = typeof args.categoryId === 'string' ? args.categoryId : undefined;
+          const accountLabel = accountId !== undefined ? accountLabels.get(accountId) : undefined;
+          const categoryLabel = categoryId !== undefined ? categoryLabels.get(categoryId) : undefined;
+          // V3-FIX-CARD-FAILCLOSED: label ids carried by the stored args but
+          // missing from the read-model maps degrade honestly — the card
+          // fails closed on these warnings instead of offering Confirm.
+          const labelWarnings: string[] = [];
+          if (accountId !== undefined && accountLabel === undefined) {
+            labelWarnings.push('Dados da conta indisponíveis no momento');
+          }
+          if (categoryId !== undefined && categoryLabel === undefined) {
+            labelWarnings.push('Dados da categoria indisponíveis no momento');
+          }
+          const presentation = buildPendingOperationPresentation({
+            id: record.id,
+            status: record.status,
+            tool: record.tool,
+            normalizedArgs: record.normalizedArgs,
+            expiresAt: record.expiresAt,
+            ...(accountLabel !== undefined ? { accountLabel } : {}),
+            ...(categoryLabel !== undefined ? { categoryLabel } : {}),
+            ...(labelWarnings.length > 0 ? { warnings: labelWarnings } : {}),
+          });
+          return {
+            id: record.id,
+            status: record.status,
+            tool: record.tool,
+            createdAt: record.createdAt,
+            expiresAt: record.expiresAt,
+            ...(typeof args.amountCents === 'number' ? { amountCents: args.amountCents } : {}),
+            ...(typeof args.description === 'string' ? { description: args.description } : {}),
+            ...(typeof args.date === 'string' ? { date: args.date } : {}),
+            ...(typeof args.accountId === 'string' ? { accountId: args.accountId } : {}),
+            ...(typeof args.categoryId === 'string' ? { categoryId: args.categoryId } : {}),
+            ...(presentation ? { presentation } : {}),
+          };
+        });
+        return reply.send({ items, total: items.length });
       } catch (error) { return handleError(error, reply); }
     });
-    app.post('/pending-operations/v2', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.propose)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } try { const key = requireIdempotencyKey(req.headers as Record<string, unknown>); const body = z.object({ tool: z.string().min(1), normalizedArgs: z.record(z.unknown()), expiresAt: z.string().datetime({ offset: true }).optional() }).strict().safeParse(req.body ?? {}); if (!body.success) return reply.code(400).send({ code: 'validation.error', issues: body.error.issues }); const base = { version: 2 as const, ...identity(ctx), tool: body.data.tool, normalizedArgs: body.data.normalizedArgs as PendingOperationV2['normalizedArgs'], proposalHash: '', idempotencyKey: key, createdAt: new Date().toISOString(), expiresAt: body.data.expiresAt ?? new Date(Date.now() + 30 * 60_000).toISOString(), bindings: identity(ctx) }; return reply.code(201).send(await v2Store.propose({ ...base, proposalHash: await computePendingOperationV2Hash(base) })); } catch (error) { return handleError(error, reply); } });
     const confirm = async (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.confirm)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.confirm(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } };
     app.post('/pending-operations/v2/:id/confirm', confirm);
     app.get('/pending-operations/v2/:id', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.read)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.get(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } });
@@ -78,6 +181,14 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
     app.post('/pending-operations/v2/:id/cancel', reject);
     app.post('/pending-operations/v2/:id/execute', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.execute)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); const body = z.object({ attestation: z.string().min(32) }).strict().safeParse(req.body ?? {}); if (!body.success) return reply.code(400).send({ code: 'validation.error', issues: body.error.issues }); if (!v2Executor) return reply.code(501).send({ code: 'unsupported', message: 'Executor V2 não configurado.' }); try { return reply.send(await v2Store.execute(body.data.attestation, identity(ctx), v2Executor)); } catch (error) { return handleError(error, reply, true); } });
     app.post('/pending-operations/v2/:id/retry', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.retry)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.retry(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } });
+    // T6.1 (audit remediation, SPEC §11): controlled crash-recovery entry
+    // point — same Agent-only auth/capability model as the sibling V2 routes.
+    // Identity comes exclusively from the authenticated context; a foreign
+    // workspace's id maps to 403 via forbiddenOnMissing (no existence leak).
+    // Valid lease → 409 approval.execution_in_progress; terminal/confirmed →
+    // 409 approval.reconcile_not_allowed; expired lease → executor re-runs
+    // with the SAME persisted idempotencyKey (0/1 effect at the WriteStore).
+    app.post('/pending-operations/v2/:id/reconcile', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.reconcile)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); if (!v2Executor) return reply.code(501).send({ code: 'unsupported', message: 'Executor V2 não configurado.' }); try { return reply.send(await v2Store.reconcileExpiredExecuting(params.data.id, identity(ctx), v2Executor)); } catch (error) { return handleError(error, reply, true); } });
     app.post('/pending-operations/v2/:id/expire', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.cancel)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.expire(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } });
   }
 

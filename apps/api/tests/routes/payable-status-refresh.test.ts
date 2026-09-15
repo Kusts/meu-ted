@@ -16,7 +16,7 @@ describe('POST /payables/refresh-status', () => {
     const refreshed = await app.inject({
       method: 'POST',
       url: '/payables/refresh-status',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': 'status-refresh-1' },
     });
     expect(refreshed.statusCode).toBe(200);
     expect(refreshed.json()).toMatchObject({ updated: [{ description: 'Vencida', status: 'overdue' }] });

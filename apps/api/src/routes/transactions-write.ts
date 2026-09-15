@@ -8,6 +8,7 @@ import type { IdempotencyStore } from '../writes/idempotency.js';
 import { createExpenseInputSchema, createIncomeInputSchema, createTransferInputSchema, updateTransactionInputSchema } from '../writes/types.js';
 import { DomainError } from '../writes/errors.js';
 import { requireIdempotencyKey } from '../writes/idempotency.js';
+import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
 import type { AuthResolver } from './auth.js';
 
 const IDEMPOTENCY_HEADER = 'idempotency-key';
@@ -137,10 +138,10 @@ export const registerTransactionWriteRoutes = (
       });
       const first = txs[0];
       if (!first) throw new DomainError('unsupported', 'compra no cartão não retornou lançamento.', 500);
-      return { status: 201, body: first };
+      return { status: 201, body: attachMutationReceipt(first, 'transaction.create', { type: 'transaction', id: first.id }) };
     }
     const tx = await opts.writes.createExpense(ctx.householdId, input as unknown as Parameters<WriteStore['createExpense']>[1]);
-    return { status: 201, body: tx };
+    return { status: 201, body: attachMutationReceipt(tx, 'transaction.create', { type: 'transaction', id: tx.id }) };
   });
 
   originPostHandler('/transactions/income', incomeOriginSchema, createIncomeInputSchema, async (ctx, input, origin) => {
@@ -152,12 +153,12 @@ export const registerTransactionWriteRoutes = (
       };
     }
     const tx = await opts.writes.createIncome(ctx.householdId, input as unknown as Parameters<WriteStore['createIncome']>[1]);
-    return { status: 201, body: tx };
+    return { status: 201, body: attachMutationReceipt(tx, 'transaction.create', { type: 'transaction', id: tx.id }) };
   });
 
   postHandler('/transfers', createTransferInputSchema, async (ctx, input) => {
     const tx = await opts.writes.createTransfer(ctx.householdId, input);
-    return { status: 201, body: tx };
+    return { status: 201, body: attachMutationReceipt(tx, 'transfer.create', { type: 'transaction', id: tx.id }) };
   });
 
   app.patch('/transactions/:id', async (req, reply) => {
@@ -166,7 +167,7 @@ export const registerTransactionWriteRoutes = (
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
     const parsed = updateTransactionInputSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-    try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id, ...parsed.data }, () => opts.writes.updateTransaction(ctx.householdId, params.data.id, parsed.data))); }
+    try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id, ...parsed.data }, async () => attachMutationReceipt(await opts.writes.updateTransaction(ctx.householdId, params.data.id, parsed.data), 'transaction.update', { type: 'transaction', id: params.data.id }))); }
     catch (e) { return handleError(e, reply); }
   });
 
@@ -174,7 +175,16 @@ export const registerTransactionWriteRoutes = (
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
-    try { await runIdempotent(req, ctx.householdId, { id: params.data.id }, () => opts.writes.softDeleteTransaction(ctx.householdId, params.data.id)); return reply.code(204).send(); }
+    try {
+      // T3.2 (SPEC §15.1): 200 with the soft-deleted entity + a
+      // registry-derived transaction.delete receipt. The receipt is built
+      // inside the idempotent producer so replays preserve the mutationId;
+      // 204 cannot carry a body. Second delete still 404s (tombstone kept).
+      const deleted = await runIdempotent(req, ctx.householdId, { id: params.data.id }, async () =>
+        attachMutationReceipt(await opts.writes.softDeleteTransaction(ctx.householdId, params.data.id), 'transaction.delete', { type: 'transaction', id: params.data.id }),
+      );
+      return reply.code(200).send(deleted);
+    }
     catch (e) { return handleError(e, reply); }
   });
 };

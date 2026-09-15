@@ -29,7 +29,7 @@ describe('POST /payables/auto-create-from-templates', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/payables/auto-create-from-templates?daysAhead=0',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': 'automation-auto-1' },
     });
     expect(created.statusCode).toBe(201);
     expect(created.json()).toMatchObject({ created: [{ description: 'Internet mensal', amountCents: 9990 }] });
@@ -37,7 +37,7 @@ describe('POST /payables/auto-create-from-templates', () => {
     const otherWorkspace = await app.inject({
       method: 'POST',
       url: '/payables/auto-create-from-templates?daysAhead=0',
-      headers: { 'x-device-token': TOKEN_B },
+      headers: { 'x-device-token': TOKEN_B, 'idempotency-key': 'automation-auto-2' },
     });
     expect(otherWorkspace.statusCode).toBe(201);
     expect(otherWorkspace.json()).toMatchObject({ created: [] });

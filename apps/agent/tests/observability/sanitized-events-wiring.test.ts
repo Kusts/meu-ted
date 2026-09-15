@@ -44,6 +44,13 @@ describe('AGENT-010 sanitized lifecycle events', () => {
     const seen: Array<{ type: string; fields: Record<string, unknown> }> = [];
     const request = vi.fn()
       .mockResolvedValueOnce({ id: 'pending-1' })
+      .mockResolvedValueOnce({
+        items: [{
+          id: 'pending-1', status: 'proposed', tool: 'transactions.expense.create',
+          createdAt: '2026-09-14T00:00:00.000Z', expiresAt: '2026-09-14T01:00:00.000Z',
+        }],
+        total: 1,
+      })
       .mockResolvedValueOnce({ id: 'pending-1', attestation: 'a'.repeat(32) })
       .mockResolvedValueOnce({ status: 'succeeded', operationId: 'pending-1' });
     const api = new MutationApiClient({ request, events: (type, fields) => seen.push({ type, fields }) });
@@ -58,6 +65,11 @@ describe('AGENT-010 sanitized lifecycle events', () => {
       });
     const orchestrator = new ConversationOrchestrator({
       mutationApiClient: api, plan: planner, events: (type, fields) => seen.push({ type, fields }),
+      // SPEC §7.2/§7.3: single account auto-resolves, UUID category verified.
+      entityReader: {
+        listAccounts: async () => [{ id: '00000000-0000-4000-8000-0000000000a1', name: 'Nubank' }],
+        listCategories: async () => [{ id: '00000000-0000-4000-8000-000000000001', name: 'Mercado' }],
+      },
     });
     await orchestrator.runTurn(normalizeRestTurn({ text: 'gastei R$ 12,34 no mercado na categoria 00000000-0000-4000-8000-000000000001', intentionId: 'intent-mut' }, identity));
     await orchestrator.runTurn(normalizeRestTurn({ text: 'confirmo', intentionId: 'intent-mut', pendingOperationIds: ['pending-1'] }, identity));

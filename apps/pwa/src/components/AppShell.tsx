@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import BottomNav from "@/components/BottomNav";
 import BottomSheet from "@/components/BottomSheet";
@@ -78,7 +78,9 @@ export default function AppShell({ children }: AppShellProps) {
   const [pendingInviteCount, setPendingInviteCount] = useState(0);
 
   // Load pending invites count for badge
-  useLayoutEffect(() => {
+  // §24: HTTP must not run in useLayoutEffect (blocking paint for a network
+  // round-trip buys nothing here — no DOM measurement involved).
+  useEffect(() => {
     let cancelled = false;
     fetchPendingMe()
       .then((res) => { if (!cancelled) setPendingInviteCount(res.total); })
@@ -95,6 +97,11 @@ export default function AppShell({ children }: AppShellProps) {
     sheetKind ?? preselectedKind;
 
   // Listen for fallback event from pages that don't have context access
+  // §24 exception (kept as useLayoutEffect, documented): child pages like
+  // CaptureBridge dispatch "pwa:open-tx" from their own passive effects,
+  // which run bottom-up BEFORE parent passive effects. A useEffect here
+  // would attach this window listener too late and silently drop the first
+  // capture event (regression caught by CaptureAppShell.integration.test).
   useLayoutEffect(() => {
     function handler(e: Event) {
       const detail = parseOpenTransactionEvent(e);

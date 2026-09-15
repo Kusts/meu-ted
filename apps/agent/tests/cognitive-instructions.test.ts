@@ -10,6 +10,7 @@ import {
 import { PLAYBOOK_BODY } from '../src/agent-config/playbook.js';
 import { skillCatalogLines } from '../src/agent-config/skills/index.js';
 import { toolSkillLines } from '../src/agent-config/tools.js';
+import { assembleCognition } from '../src/agent-config/index.js';
 
 const baseInput = {
   skillCatalog: skillCatalogLines(),
@@ -77,5 +78,19 @@ describe('TED instructions (Part A, item 15)', () => {
     const system = buildSystemPrompt(baseInput);
     expect(system).not.toContain('SKILL ATIVA');
     expect(system).not.toContain('MEMÓRIA DO USUÁRIO');
+  });
+
+  it('carries the anti-tool-call response discipline in the mounted prompt (TEDV3-003)', () => {
+    const system = buildSystemPrompt(baseInput);
+    expect(system).toContain('DISCIPLINA DE RESPOSTA');
+    expect(system).toContain('<tool_call>');
+    expect(system).toMatch(/linguagem natural/i);
+  });
+
+  it('assembleCognition injects the discipline for the grounded read path', () => {
+    const cognition = assembleCognition('Como está o meu orçamento?', {});
+    expect(cognition.system).toContain('DISCIPLINA DE RESPOSTA');
+    expect(cognition.system).toContain('<tool_call>');
+    expect(cognition.system).toMatch(/\?/);
   });
 });

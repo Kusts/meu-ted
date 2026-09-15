@@ -5,6 +5,7 @@ import * as endpoints from "@/lib/api/endpoints";
 import { ApiError, apiFetch } from "@/lib/api/client";
 import { SessionProvider } from "@/lib/auth/session-context";
 import type { Account, Category, Transaction, Payable } from "@/lib/state/types";
+import type { MutationReceipt } from "@pi-finance/llm-contracts/types";
 
 // ─── Spy setup ──────────────────────────────────────────────────────────────
 
@@ -772,6 +773,11 @@ describe("AppStateProvider — API write path", () => {
     const spy = vi
       .spyOn(endpoints, "markPayablePaid")
       .mockResolvedValue({} as Payable);
+    // Post-write reconciliation replaces optimistic state with server truth:
+    // bootstrap sees pending p1, the post-pay refresh sees it paid.
+    vi.mocked(endpoints.fetchPayables)
+      .mockResolvedValueOnce([{ ...mockP1 }])
+      .mockResolvedValue([{ ...mockP1, status: "paid" }]);
 
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
@@ -896,6 +902,10 @@ describe("AppStateProvider — API write path", () => {
   it("adds account optimistically then reconciles with API", async () => {
     const created = { ...mockAccount("real-1", "New Account") };
     const spy = vi.spyOn(endpoints, "addAccount").mockResolvedValue(created);
+    // Post-write reconciliation replaces optimistic state with server truth.
+    vi.mocked(endpoints.fetchAccounts)
+      .mockResolvedValueOnce([mockAccount("a1", "API Nubank")])
+      .mockResolvedValue([mockAccount("a1", "API Nubank"), created]);
 
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
@@ -945,13 +955,18 @@ describe("AppStateProvider — API write path", () => {
   // ── addCard ────────────────────────────────────────────────────
 
   it("adds card optimistically and calls API", async () => {
-    const spy = vi.spyOn(endpoints, "createCard").mockResolvedValue({
+    const createdCard = {
       ...mockAccount("card-1", "New Card"),
       kind: "credit_card",
       creditLimitCents: 1000_00,
       closingDay: 15,
       dueDay: 25,
-    });
+    };
+    const spy = vi.spyOn(endpoints, "createCard").mockResolvedValue(createdCard as never);
+    // Post-write reconciliation replaces optimistic state with server truth.
+    vi.mocked(endpoints.fetchAccounts)
+      .mockResolvedValueOnce([mockAccount("a1", "API Nubank")])
+      .mockResolvedValue([mockAccount("a1", "API Nubank"), createdCard] as never);
 
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
@@ -1027,10 +1042,203 @@ describe("AppStateProvider — API write path", () => {
     );
   });
 
+  // ── FIX-P1 receipt forwarding ──────────────────────────────────
+
+  it("forwards the server receipt targets (not the kind fallback) after addCard", async () => {
+    const createdCard = {
+      ...mockAccount("card-receipt-1", "Receipt Card"),
+      kind: "credit_card",
+      receipt: {
+        mutationId: "m-receipt-1",
+        mutationKind: "account.create",
+        status: "succeeded",
+        // Narrower than the account.create registry set: proves the receipt
+        // wins over the fallback (which would also refresh dashboard-summary).
+        affectedTargets: ["accounts"],
+      },
+    };
+    vi.spyOn(endpoints, "createCard").mockResolvedValue(createdCard as never);
+    const dashSpy = vi
+      .spyOn(endpoints, "fetchDashboardSummary")
+      .mockResolvedValue(null as never);
+    const accountsSpy = vi.mocked(endpoints.fetchAccounts);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // Bootstrap fetches the dashboard summary once — baseline AFTER load so
+    // only post-write reconciliation calls are counted below.
+    const dashCallsAfterBootstrap = dashSpy.mock.calls.length;
+    const accountsCallsAfterBootstrap = accountsSpy.mock.calls.length;
+
+    await act(() =>
+      result.current.addCard({
+        name: "Receipt Card",
+        creditLimitCents: 1000_00,
+        closingDay: 15,
+        dueDay: 25,
+      }),
+    );
+
+    // Receipt targets refreshed …
+    await waitFor(() =>
+      expect(accountsSpy.mock.calls.length).toBeGreaterThan(
+        accountsCallsAfterBootstrap,
+      ),
+    );
+    // … and the fallback-only target was NOT refreshed by reconciliation.
+    expect(dashSpy.mock.calls.length).toBe(dashCallsAfterBootstrap);
+    expect(result.current.reconciliationStale).toBeNull();
+  });
+
+  it("marks targets stale when post-card-write refresh fails (never rolls back)", async () => {
+    const createdCard = {
+      ...mockAccount("card-stale-1", "Stale Card"),
+      kind: "credit_card",
+      receipt: {
+        mutationId: "m-stale-1",
+        mutationKind: "account.create",
+        status: "succeeded",
+        affectedTargets: ["accounts"],
+      },
+    };
+    vi.spyOn(endpoints, "createCard").mockResolvedValue(createdCard as never);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // Fail ONLY the post-write refresh (bootstrap already consumed the
+    // default mock).
+    vi.mocked(endpoints.fetchAccounts).mockRejectedValue(new Error("boom"));
+
+    await act(() =>
+      result.current.addCard({
+        name: "Stale Card",
+        creditLimitCents: 1000_00,
+        closingDay: 15,
+        dueDay: 25,
+      }),
+    );
+
+    // The persisted mutation stays; the failed target is signaled stale.
+    await waitFor(() =>
+      expect(result.current.reconciliationStale).not.toBeNull(),
+    );
+    expect(result.current.reconciliationStale?.targets).toContain("accounts");
+    expect(
+      result.current.accounts.some((a) => a.name === "Stale Card"),
+    ).toBe(true);
+  });
+
+  // ── FIX-P1-PWA-RECEIPT-CONSUMERS: deleteTransaction receipt ──────
+
+  it("deleteTransaction reconciles with the server receipt (no kind fallback)", async () => {
+    apiReady();
+    mockApiReads();
+    const seedTx = {
+      id: "t-del-1",
+      description: "Deletable tx",
+      amountCents: 1000,
+      date: "2026-06-25",
+      kind: "expense",
+      categoryId: "cat1",
+      accountId: "acc1",
+    } as never;
+    const txSpy = vi.mocked(endpoints.fetchTransactions);
+    // Bootstrap seeds one tx; the post-delete reconciliation refresh then
+    // observes the authoritative empty list.
+    txSpy.mockResolvedValueOnce({ items: [seedTx], total: 1 });
+    txSpy.mockResolvedValue({ items: [], total: 0 });
+    const deleted = {
+      id: "t-del-1",
+      description: "Deletable tx",
+      amountCents: 1000,
+      date: "2026-06-25",
+      kind: "expense",
+      categoryId: "cat1",
+      accountId: "acc1",
+      receipt: {
+        mutationId: "m-del-1",
+        mutationKind: "transaction.delete",
+        status: "succeeded",
+        // Narrower than the transaction.delete registry set: proves the
+        // receipt wins over the fallback (which would also refresh
+        // dashboard-summary).
+        affectedTargets: ["transactions"],
+      },
+    };
+    vi.spyOn(endpoints, "deleteTransaction").mockResolvedValue(deleted as never);
+    const dashSpy = vi
+      .spyOn(endpoints, "fetchDashboardSummary")
+      .mockResolvedValue(null as never);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.transactions).toHaveLength(1);
+    const txCallsAfterBootstrap = txSpy.mock.calls.length;
+    const dashCallsAfterBootstrap = dashSpy.mock.calls.length;
+
+    await act(() => result.current.deleteTransaction("t-del-1"));
+
+    // Receipt targets refreshed (reconciliation is fire-and-forget) …
+    await waitFor(() =>
+      expect(txSpy.mock.calls.length).toBeGreaterThan(txCallsAfterBootstrap),
+    );
+    // … the authoritative list no longer contains the tx (no rollback) …
+    await waitFor(() => expect(result.current.transactions).toHaveLength(0));
+    // … and the fallback-only target was NOT refreshed by reconciliation.
+    expect(dashSpy.mock.calls.length).toBe(dashCallsAfterBootstrap);
+    expect(result.current.reconciliationStale).toBeNull();
+  });
+
+  it("replaying the same delete receipt dedups the refresh", async () => {
+    apiReady();
+    mockApiReads();
+    vi.spyOn(endpoints, "fetchDashboardSummary").mockResolvedValue(null as never);
+    const txSpy = vi.mocked(endpoints.fetchTransactions);
+
+    const { result } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const txCallsAfterBootstrap = txSpy.mock.calls.length;
+
+    const receipt: MutationReceipt = {
+      mutationId: "m-del-replay-1",
+      mutationKind: "transaction.delete",
+      status: "succeeded",
+      affectedTargets: ["transactions"],
+    };
+    let first: unknown;
+    await act(async () => {
+      first = await result.current.reconcileMutation?.({ receipt: { ...receipt } });
+    });
+    expect((first as { deduped: boolean }).deduped).toBe(false);
+    await waitFor(() =>
+      expect(txSpy.mock.calls.length).toBeGreaterThan(txCallsAfterBootstrap),
+    );
+    const txCallsAfterFirst = txSpy.mock.calls.length;
+
+    let second: unknown;
+    await act(async () => {
+      second = await result.current.reconcileMutation?.({ receipt: { ...receipt } });
+    });
+    expect((second as { deduped: boolean }).deduped).toBe(true);
+    expect(txSpy.mock.calls.length).toBe(txCallsAfterFirst);
+  });
+
   // ── addSubscription ────────────────────────────────────────────
 
   it("adds subscription optimistically and calls API", async () => {
-    const spy = vi.spyOn(endpoints, "addSubscription").mockResolvedValue({
+    const createdSub = {
       id: "sub-real-1",
       name: "Netflix",
       amountCents: 39_90,
@@ -1039,7 +1247,12 @@ describe("AppStateProvider — API write path", () => {
         paymentMethod: "credit_card",
         status: "active" as const,
       createdAt: new Date().toISOString(),
-    });
+    };
+    const spy = vi.spyOn(endpoints, "addSubscription").mockResolvedValue(createdSub);
+    // Post-write reconciliation replaces optimistic state with server truth.
+    // (Subscriptions are lazy-loaded: bootstrap never calls fetchSubscriptions,
+    // so no Once() slot — the reconcile refresh is the first read.)
+    vi.mocked(endpoints.fetchSubscriptions).mockResolvedValue([createdSub] as never);
 
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
@@ -1096,7 +1309,7 @@ describe("AppStateProvider — API write path", () => {
 
   it("cancels subscription and rolls back on failure", async () => {
     // Mock addSubscription to succeed
-    vi.spyOn(endpoints, "addSubscription").mockResolvedValue({
+    const createdSub = {
       id: "sub-mock-1",
       name: "Test Sub",
       amountCents: 20_00,
@@ -1105,7 +1318,12 @@ describe("AppStateProvider — API write path", () => {
       paymentMethod: "credit_card",
       status: "active",
       createdAt: new Date().toISOString(),
-    });
+    };
+    vi.spyOn(endpoints, "addSubscription").mockResolvedValue(createdSub as never);
+    // Post-write reconciliation replaces optimistic state with server truth.
+    // (Subscriptions are lazy-loaded: bootstrap never calls fetchSubscriptions,
+    // so no Once() slot — the reconcile refresh is the first read.)
+    vi.mocked(endpoints.fetchSubscriptions).mockResolvedValue([createdSub] as never);
     const spy = vi
       .spyOn(endpoints, "cancelSubscription")
       .mockRejectedValue(new Error("Fail"));
@@ -1332,12 +1550,17 @@ describe("AppStateProvider — API write path", () => {
   // ── addCategory ────────────────────────────────────────────────
 
   it("adds category optimistically and calls API", async () => {
-    const spy = vi.spyOn(endpoints, "addCategory").mockResolvedValue({
+    const createdCat = {
       id: "cat-real-1",
       name: "New Cat",
       kind: "expense",
       icon: "Tag",
-    });
+    };
+    const spy = vi.spyOn(endpoints, "addCategory").mockResolvedValue(createdCat as never);
+    // Post-write reconciliation replaces optimistic state with server truth.
+    vi.mocked(endpoints.fetchCategories)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([createdCat] as never);
 
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
@@ -1748,6 +1971,9 @@ function seedApiData() {
   ]);
   vi.spyOn(endpoints, "fetchSubscriptions").mockResolvedValue([
     { id: "s1", name: "Netflix", amountCents: 3000, cycle: "monthly", day: 5, paymentMethod: "card", status: "active", createdAt: "2026-01-01" } as never,
+    // Post-write reconciliation resets subscriptions to server truth, so the
+    // command-mock id exercised below must exist server-side too.
+    { id: "srv-sub", name: "Sub", amountCents: 1000, cycle: "monthly", day: 5, paymentMethod: "card", status: "active", createdAt: "" } as never,
   ]);
   vi.spyOn(endpoints, "fetchCards").mockResolvedValue([
     { id: "card1", name: "Nubank", kind: "credit_card", balanceCents: 0, creditLimitCents: 100000, closingDay: 5, dueDay: 10, status: "active" } as never,

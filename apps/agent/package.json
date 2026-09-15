@@ -7,7 +7,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit",
-    "eval:ted-v2": "node evals/run-ted-v2-regression-evals.mjs"
+    "eval:ted-v2": "node evals/run-ted-v2-regression-evals.mjs",
+    "eval:ted-v3": "node evals/run-ted-v3-real-model-evals.mjs"
   },
   "dependencies": {
     "@pi-finance/llm-contracts": "workspace:*",

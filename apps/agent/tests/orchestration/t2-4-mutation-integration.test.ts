@@ -26,15 +26,28 @@ const plan = (mode: 'mutation-proposal' | 'confirmation') => ({
 
 describe('T2.4 mutation integration', () => {
   it('routes proposal and confirmation through V2 API and renders only an API success', async () => {
+    const activeListing = {
+      items: [{
+        id: 'pending-1', status: 'proposed', tool: 'transactions.expense.create',
+        createdAt: '2026-09-14T00:00:00.000Z', expiresAt: '2026-09-14T01:00:00.000Z',
+      }],
+      total: 1,
+    };
     const request = vi.fn()
       .mockResolvedValueOnce({ id: 'pending-1' })
+      .mockResolvedValueOnce(activeListing)
       .mockResolvedValueOnce({ id: 'pending-1', attestation: 'a'.repeat(32) })
       .mockResolvedValueOnce({ status: 'succeeded', operationId: 'pending-1' });
     const api = new MutationApiClient({ request });
     const planner = vi.fn()
       .mockReturnValueOnce(plan('mutation-proposal'))
       .mockReturnValueOnce(plan('confirmation'));
-    const orchestrator = new ConversationOrchestrator({ mutationApiClient: api, plan: planner });
+    // SPEC §7.2/§7.3: single account auto-resolves, UUID category verified.
+    const entityReader = {
+      listAccounts: async () => [{ id: '00000000-0000-4000-8000-0000000000a1', name: 'Nubank' }],
+      listCategories: async () => [{ id: '00000000-0000-4000-8000-000000000001', name: 'Mercado' }],
+    };
+    const orchestrator = new ConversationOrchestrator({ mutationApiClient: api, plan: planner, entityReader });
 
     const proposed = await orchestrator.runTurn(normalizeRestTurn({ text: 'gastei R$ 12,34 no mercado na categoria 00000000-0000-4000-8000-000000000001', intentionId: 'intent-1' }, identity));
     expect(proposed.mutation?.operationId).toBe('pending-1');
@@ -45,13 +58,21 @@ describe('T2.4 mutation integration', () => {
     expect(request).toHaveBeenNthCalledWith(1, 'POST', '/pending-operations/v2/propose', expect.objectContaining({
       body: expect.not.objectContaining({ actorId: expect.anything(), workspaceId: expect.anything(), deviceId: expect.anything() }),
     }));
-    expect(request).toHaveBeenNthCalledWith(2, 'POST', '/pending-operations/v2/pending-1/confirm', expect.anything());
-    expect(request).toHaveBeenNthCalledWith(3, 'POST', '/pending-operations/v2/pending-1/execute', expect.objectContaining({ body: { attestation: 'a'.repeat(32) } }));
+    expect(request).toHaveBeenNthCalledWith(2, 'GET', '/pending-operations/v2/active', expect.anything());
+    expect(request).toHaveBeenNthCalledWith(3, 'POST', '/pending-operations/v2/pending-1/confirm', expect.anything());
+    expect(request).toHaveBeenNthCalledWith(4, 'POST', '/pending-operations/v2/pending-1/execute', expect.objectContaining({ body: { attestation: 'a'.repeat(32) } }));
     expect(planner).toHaveBeenCalledTimes(2);
   });
 
   it('does not use success wording when API execution is incomplete', async () => {
     const request = vi.fn()
+      .mockResolvedValueOnce({
+        items: [{
+          id: 'pending-2', status: 'proposed', tool: 'transactions.expense.create',
+          createdAt: '2026-09-14T00:00:00.000Z', expiresAt: '2026-09-14T01:00:00.000Z',
+        }],
+        total: 1,
+      })
       .mockResolvedValueOnce({ id: 'pending-2', attestation: 'b'.repeat(32) })
       .mockResolvedValueOnce({ status: 'failed', operationId: 'pending-2' });
     const api = new MutationApiClient({ request });

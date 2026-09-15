@@ -47,6 +47,7 @@ import { resolveConfirmation } from '../src/mutations/confirmation-resolver.js';
 import { MutationApiClient } from '../src/mutations/mutation-api-client.js';
 import { MutationExecutor } from '../src/mutations/mutation-executor.js';
 import { resolveEntity, EntityResolutionError } from '../src/tools/entity-resolution.js';
+import type { EntityReader } from '../src/mutations/entity-resolver.js';
 import { createEvidenceEnvelope, isCurrentEvidence } from '../src/evidence/evidence-envelope.js';
 import { collectEvidence } from '../src/evidence/evidence-collector.js';
 import { validateGroundedClaims } from '../src/evidence/grounding-validator.js';
@@ -188,6 +189,31 @@ const createFakePendingApi = (options: FakeApiOptions = {}): FakeApi => {
   };
 
   const request = async (method: string, path: string, opts: Record<string, unknown> = {}): Promise<unknown> => {
+    // T1.5 (SPEC §8.3): authoritative listing. The fake mirrors the real
+    // API vocabulary loosely ('pending' → proposed, 'approved' → confirmed)
+    // and enforces the same identity scope + terminal-state exclusion.
+    if (method === 'GET' && path === '/pending-operations/v2/active') {
+      const headers = headersOf(opts);
+      const items = [...store.entries()]
+        .filter(([, operation]) =>
+          operation.bindings.workspaceId === headers.workspaceId &&
+          operation.bindings.actorId === headers.actorId &&
+          operation.bindings.deviceId === headers.deviceId)
+        .filter(([, operation]) => ['pending', 'approved', 'failed'].includes(operation.status))
+        .map(([id, operation]) => {
+          const args = (operation.normalizedArgs ?? {}) as Record<string, unknown>;
+          return {
+            id,
+            status: operation.status === 'approved' ? 'confirmed' : operation.status === 'failed' ? 'failed' : 'proposed',
+            tool: operation.tool,
+            createdAt: freshTs(),
+            expiresAt: operation.expiresAt,
+            ...(typeof args.amountCents === 'number' ? { amountCents: args.amountCents } : {}),
+            ...(typeof args.description === 'string' ? { description: args.description } : {}),
+          };
+        });
+      return { items, total: items.length };
+    }
     if (method === 'POST' && path === '/pending-operations/v2/propose') {
       calls.propose += 1;
       const body = (opts.body ?? {}) as Record<string, unknown>;
@@ -296,7 +322,12 @@ const runNormalize = (scenario: BehavioralScenario): string => {
   const identity = (exec.identity ?? DEFAULT_IDENTITY) as AuthenticatedIdentity;
   const body = (exec.body ?? {}) as Record<string, unknown>;
   const channel = String(exec.channel ?? 'pwa-rest');
-  const input = channel === 'sdk' ? normalizeSdkTurn(body, identity) : channel === 'broker' ? normalizeBrokerTurn(body, identity) : normalizeRestTurn(body, identity);
+  // SPEC §7.7: production turns always carry the PWA messageId. Fixture
+  // bodies that predate it get a deterministic scenario-scoped id so the
+  // harness exercises identity precedence, not the missing-id rejection
+  // (covered separately by turn-idempotency.test.ts).
+  const withId = body.intentionId ?? body.messageId ?? body.traceId ? body : { ...body, intentionId: `${id}-intent` };
+  const input = channel === 'sdk' ? normalizeSdkTurn(withId, identity) : channel === 'broker' ? normalizeBrokerTurn(withId, identity) : normalizeRestTurn(withId, identity);
   if (expect.actorId !== undefined) eq(input.actorId, expect.actorId, 'actorId from verified identity', id);
   if (expect.workspaceId !== undefined) eq(input.workspaceId, expect.workspaceId, 'workspaceId from verified identity', id);
   if (expect.channel !== undefined) eq(input.channel, expect.channel, 'channel', id);
@@ -366,7 +397,25 @@ const runOrchPropose = async (scenario: BehavioralScenario): Promise<string> => 
   const utterances = (exec.utterances ?? (exec.utterance !== undefined ? [exec.utterance] : [])) as string[];
   const api = createFakePendingApi();
   const client = new MutationApiClient({ request: api.request as never, events: silent });
-  const orchestrator = new ConversationOrchestrator({ plan: () => mutationPlan('mutation-proposal'), mutationApiClient: client, events: silent });
+  // SPEC §7.2/§7.3: authoritative entity lists come from exec.entities, so
+  // resolution is exercised against deterministic fakes, never guesses.
+  const entities = (exec.entities ?? {}) as { accounts?: { id: string; name: string }[]; categories?: { id: string; name: string }[] };
+  const entityReader: EntityReader = {
+    listAccounts: async () => entities.accounts ?? [{ id: '00000000-0000-4000-8000-0000000000a1', name: 'Conta eval' }],
+    listCategories: async () => entities.categories ?? [],
+  };
+  const orchestrator = new ConversationOrchestrator({ plan: () => mutationPlan('mutation-proposal'), mutationApiClient: client, entityReader, events: silent });
+  // SPEC §7 (H-01): incomplete canonical args clarify with zero proposals.
+  if (expect.clarified === true) {
+    const result = await orchestrator.runTurn(normalizeRestTurn({ text: utterances[0] ?? '', intentionId: `${id}-intent-0` }, identity));
+    ok(result.mutation === undefined, 'no proposal while canonical args are incomplete', id);
+    ok(result.clarification !== undefined && result.response !== undefined, 'explicit clarification outcome', id);
+    eq(api.calls.propose, 0, 'zero propose calls', id);
+    if (expect.missingFields !== undefined) {
+      eq(JSON.stringify(result.plan.missingFields), JSON.stringify(expect.missingFields), 'real missingFields', id);
+    }
+    return `clarified missing=${JSON.stringify(result.plan.missingFields)}`;
+  }
   try {
     const operationIds: string[] = [];
     for (let index = 0; index < utterances.length; index += 1) {
@@ -422,8 +471,13 @@ const runOrchIdempotency = async (scenario: BehavioralScenario): Promise<string>
   const identity = (exec.identity ?? DEFAULT_IDENTITY) as AuthenticatedIdentity;
   const api = createFakePendingApi();
   const client = new MutationApiClient({ request: api.request as never, events: silent });
+  const entities = (exec.entities ?? {}) as { accounts?: { id: string; name: string }[]; categories?: { id: string; name: string }[] };
+  const entityReader: EntityReader = {
+    listAccounts: async () => entities.accounts ?? [{ id: '00000000-0000-4000-8000-0000000000a1', name: 'Conta eval' }],
+    listCategories: async () => entities.categories ?? [],
+  };
   const proposePlan = () => mutationPlan('mutation-proposal');
-  const proposeTurn = new ConversationOrchestrator({ plan: proposePlan, mutationApiClient: client, events: silent });
+  const proposeTurn = new ConversationOrchestrator({ plan: proposePlan, mutationApiClient: client, entityReader, events: silent });
   const first = await proposeTurn.runTurn(normalizeRestTurn({ text: String(exec.utterance ?? ''), intentionId: `${id}-idem` }, identity));
   const second = await proposeTurn.runTurn(normalizeRestTurn({ text: String(exec.utterance ?? ''), intentionId: `${id}-idem` }, identity));
   if (expect.sameOperation === true) eq(first.mutation?.operationId, second.mutation?.operationId, 'stable idempotency key', id);

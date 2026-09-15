@@ -122,12 +122,14 @@ describe('AGENT-005 production channel grounding (orchestratorForChannel)', () =
     requestSpy.mockRestore();
   });
 
-  it('corrects an unsupported provider claim once through the unified path, then falls back safe', async () => {
+  it('fails closed without calling the generative provider when account rows carry no usable balance', async () => {
     const { agent } = createTestAgent();
     const requestSpy = vi.spyOn(apiClient, 'requestPiApiJson').mockImplementation(async (method, path) => {
       if (method === 'GET' && path === '/accounts') {
-        // Known data with no deterministic shape (no balance): the turn must
-        // go through the provider + grounding retry instead of rendering.
+        // Known data with no deterministic shape (no balance): the read maps
+        // to an `error` item, so the envelope is all-error. T3.1 (SPEC §14
+        // H-06): the turn fails closed WITHOUT asking the LLM to wing it —
+        // zero relay calls, deterministic failure, never an invented number.
         return { items: [{ id: 'acc-1', name: 'Conta principal', status: 'active' }] } as unknown as Record<string, unknown>;
       }
       throw new Error(`unexpected production read: ${method} ${path}`);
@@ -153,9 +155,10 @@ describe('AGENT-005 production channel grounding (orchestratorForChannel)', () =
       expect(res.status).toBe(200);
       const body = (await res.json()) as { output?: string; status?: string };
       expect(body.status).toBe('completed');
-      // ONE structured correction attempt (initial + retry), then safe fallback.
-      expect(relayCalls).toBe(2);
-      expect(body.output).toMatch(/Não foi possível consultar/);
+      // Fail-closed: no generative call at all (not even ONE correction
+      // attempt), deterministic SPEC §14 failure, never an invented number.
+      expect(relayCalls).toBe(0);
+      expect(body.output).toMatch(/Não consegui acessar seus dados financeiros agora/);
       expect(body.output).not.toMatch(/999,99|777,77/);
     } finally {
       globalThis.fetch = realFetch;

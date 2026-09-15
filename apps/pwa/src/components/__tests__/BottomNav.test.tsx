@@ -35,7 +35,7 @@ describe("BottomNav", () => {
       renderNav();
       expect(screen.getByText("Início")).toBeInTheDocument();
       expect(screen.getByText("Extrato")).toBeInTheDocument();
-      expect(screen.getByText("Minhas Contas")).toBeInTheDocument();
+      expect(screen.getByText("Compromissos")).toBeInTheDocument();
       expect(screen.getByText("Mais")).toBeInTheDocument();
       expect(screen.getByLabelText("Nova transação")).toBeInTheDocument();
     });
@@ -70,13 +70,23 @@ describe("BottomNav", () => {
       expect(handlers.onNavClick).toHaveBeenCalledWith("hub");
     });
 
-    it("opens the quick menu when FAB is clicked", async () => {
+    // SPEC §24: the quick-action popup is a disclosure (button + group of
+    // plain buttons), not an ARIA menu — no menuitem roles, no arrow-key
+    // contract it cannot fulfill.
+    it("toggles the quick actions disclosure when FAB is clicked", async () => {
       const user = userEvent.setup();
       renderNav();
-      await user.click(screen.getByLabelText("Nova transação"));
-      expect(screen.getByRole("menu", { name: "Novo lançamento" })).toBeInTheDocument();
+      const fab = screen.getByLabelText("Nova transação");
+      expect(fab).toHaveAttribute("aria-expanded", "false");
+      expect(fab).not.toHaveAttribute("aria-haspopup", "menu");
+      await user.click(fab);
+      const panel = screen.getByRole("group", { name: "Novo lançamento" });
+      expect(panel).toBeInTheDocument();
+      expect(fab).toHaveAttribute("aria-expanded", "true");
+      expect(fab).toHaveAttribute("aria-controls", "quick-actions");
+      expect(panel).toHaveAttribute("id", "quick-actions");
       for (const label of ["Despesa", "Receita", "Transferência", "Ler Comprovante"]) {
-        expect(screen.getByRole("menuitem", { name: label })).toBeInTheDocument();
+        expect(screen.getByText(label)).toBeInTheDocument();
       }
     });
 
@@ -85,30 +95,32 @@ describe("BottomNav", () => {
       const dispatch = vi.spyOn(window, "dispatchEvent");
       renderNav();
       await user.click(screen.getByLabelText("Nova transação"));
-      await user.click(screen.getByRole("menuitem", { name: "Receita" }));
+      await user.click(screen.getByText("Receita"));
       expect(dispatch).toHaveBeenCalledWith(
         expect.objectContaining({ type: "pwa:open-tx" }),
       );
       const event = dispatch.mock.calls.map(([e]) => e).find((e) => (e as Event).type === "pwa:open-tx") as CustomEvent;
       expect(event.detail).toMatchObject({ kind: "income" });
-      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: "Novo lançamento" })).not.toBeInTheDocument();
     });
 
     it("navigates to /capture for Ler Comprovante", async () => {
       const user = userEvent.setup();
       renderNav();
       await user.click(screen.getByLabelText("Nova transação"));
-      await user.click(screen.getByRole("menuitem", { name: "Ler Comprovante" }));
+      await user.click(screen.getByText("Ler Comprovante"));
       expect(navigation.push).toHaveBeenCalledWith("/capture");
     });
 
-    it("closes the quick menu on Escape", async () => {
+    it("closes the disclosure on Escape and returns focus to the FAB", async () => {
       const user = userEvent.setup();
       renderNav();
-      await user.click(screen.getByLabelText("Nova transação"));
-      expect(screen.getByRole("menu")).toBeInTheDocument();
+      const fab = screen.getByLabelText("Nova transação");
+      await user.click(fab);
+      expect(screen.getByRole("group", { name: "Novo lançamento" })).toBeInTheDocument();
       await user.keyboard("{Escape}");
-      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(screen.queryByRole("group", { name: "Novo lançamento" })).not.toBeInTheDocument();
+      expect(fab).toHaveFocus();
     });
   });
 
@@ -128,7 +140,7 @@ describe("BottomNav", () => {
 
     it("renders labels at 11px", () => {
       renderNav();
-      for (const label of ["Início", "Extrato", "Minhas Contas", "Mais"]) {
+      for (const label of ["Início", "Extrato", "Compromissos", "Mais"]) {
         expect(screen.getByText(label).className).toMatch(/text-\[11px\]/);
       }
     });

@@ -340,3 +340,234 @@ export interface PendingOperationV2 {
   expiresAt: string;
   bindings: PendingOperationV2Bindings;
 }
+
+/* ── TED V3 hardening (SPEC §15, §16, §7.8) ──────────────────────────────
+ * Canonical shared contracts for mutation receipts, reconciliation effects,
+ * the approval-card presentation and the draft clarification channel.
+ * Pure types + const tables only — same discipline as the rest of this
+ * module (no server-side imports), so API, PWA and Agent can share them. */
+
+/**
+ * Closed set of refresh targets a MutationReceipt may invalidate (SPEC
+ * §15.1.1). Derived from the real PWA domains (snapshot DomainKey:
+ * accounts, categories, transactions, payables, budgets, goals,
+ * subscriptions, cardStatements) plus server-computed views
+ * (dashboard-summary, quick-insights) and the TED chat surface
+ * (agent-conversation). `statement` covers card statements; `subscription`
+ * covers the subscriptions domain.
+ */
+export const REFRESH_TARGETS = [
+  'transactions',
+  'accounts',
+  'dashboard-summary',
+  'budgets',
+  'quick-insights',
+  'payables',
+  'statement',
+  'goals',
+  'categories',
+  'subscription',
+  'agent-conversation',
+] as const;
+export type RefreshTarget = (typeof REFRESH_TARGETS)[number];
+
+/**
+ * V2 approval-protocol tools (SPEC §7.5) — the only TED-origin mutation
+ * kinds. Mirrors the API Approval Tool Contract ids; the single source for
+ * "receipt requires operationId" validation lives on the schema side.
+ */
+export const TED_APPROVAL_TOOLS = [
+  'transactions.expense.create',
+  'transactions.income.create',
+] as const;
+export type TedApprovalTool = (typeof TED_APPROVAL_TOOLS)[number];
+
+/**
+ * Every mutation kind that may produce a MutationReceipt: the V2 protocol
+ * tools (§7.5) plus the normal PWA/API writes (§15.6). A receipt carrying a
+ * kind outside this union fails validation; a known kind without a
+ * registered effects entry is an error at resolve time (never silent).
+ */
+export const MUTATION_KINDS = [
+  ...TED_APPROVAL_TOOLS,
+  'transaction.create',
+  'transaction.update',
+  'transaction.delete',
+  'transfer.create',
+  'payable.create',
+  'payable.update',
+  'payable.delete',
+  'payable.pay',
+  'payable.payment.undo',
+  'statement.create',
+  'statement.update',
+  'statement.delete',
+  'budget.create',
+  'budget.update',
+  'budget.delete',
+  'goal.create',
+  'goal.update',
+  'goal.delete',
+  'account.create',
+  'account.update',
+  'account.delete',
+  'category.create',
+  'category.update',
+  'category.delete',
+  'subscription.create',
+  'subscription.update',
+  'subscription.delete',
+] as const;
+export type MutationKind = (typeof MUTATION_KINDS)[number];
+
+/**
+ * Keys that must NEVER appear in browser-facing channel types (approval
+ * card, receipt, draft clarification). The runtime ban is enforced by
+ * `.strict()` schemas plus the BROWSER_FACING_SCHEMAS sweep test; this
+ * const is the single list both sides share.
+ */
+export const FORBIDDEN_BROWSER_KEYS = [
+  'authorization',
+  'attestation',
+  'attestationHash',
+  'proposalHash',
+  'normalizedArgs',
+  'executableArgs',
+  'args',
+] as const;
+export type ForbiddenBrowserKey = (typeof FORBIDDEN_BROWSER_KEYS)[number];
+
+export interface PendingOperationPresentationLabel {
+  id: string;
+  label: string;
+}
+
+/**
+ * Safe projection of a proposed operation for the approval card (SPEC §16).
+ * Derived server-side from the same canonical/hash-bound args that will
+ * execute — never invented by the PWA, never carrying attestation.
+ */
+export interface PendingOperationPresentation {
+  id: string;
+  status: string;
+  tool: string;
+  title: string;
+  amountCents?: number;
+  description?: string;
+  date?: string;
+  account?: PendingOperationPresentationLabel;
+  category?: PendingOperationPresentationLabel;
+  expiresAt: string;
+  warnings: string[];
+}
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0;
+
+const isPresentationLabel = (value: unknown): value is PendingOperationPresentationLabel => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const label = value as Record<string, unknown>;
+  return isNonEmptyString(label.id) && isNonEmptyString(label.label);
+};
+
+/**
+ * Fail-closed actionability gate (SPEC §16, INV-02): true only when the
+ * full financial context the user must see before confirming is present —
+ * title, description, amountCents, date, and both account and category
+ * labels. A presentation failing this predicate must render as a degraded,
+ * non-actionable card: Cancel stays (it moves no money), Confirm never
+ * renders. The schema keeps every field optional for transport; this
+ * predicate is the single rule deciding whether Confirm may be offered.
+ */
+export const isActionablePendingOperationPresentation = (
+  presentation: PendingOperationPresentation,
+): boolean => {
+  if (!presentation || typeof presentation !== 'object') return false;
+  if (!isNonEmptyString(presentation.title)) return false;
+  if (!isNonEmptyString(presentation.description)) return false;
+  if (typeof presentation.amountCents !== 'number' || !Number.isFinite(presentation.amountCents)) return false;
+  if (!isNonEmptyString(presentation.date)) return false;
+  if (!isPresentationLabel(presentation.account)) return false;
+  if (!isPresentationLabel(presentation.category)) return false;
+  return true;
+};
+
+/**
+ * Receipt emitted once per successful mutation, TED or normal write
+ * (SPEC §15.1). `operationId` is present ONLY when the origin is a TED
+ * PendingOperation — normal-write receipts are valid without it and must
+ * never be converted into PendingOperations to obtain the field.
+ */
+export interface MutationReceipt {
+  mutationId: string;
+  mutationKind: MutationKind;
+  status: 'succeeded';
+  affectedTargets: RefreshTarget[];
+  operationId?: string;
+  entity?: {
+    type: string;
+    id: string;
+  };
+}
+
+/**
+ * One Mutation Effects Registry entry (SPEC §15.1.1). Either a deterministic
+ * non-empty refresh set, or an explicit `noRefresh: true` exception with
+ * zero targets — an empty set without the marker is invalid, and a known
+ * kind with no entry at all is a resolve-time error.
+ */
+export type MutationEffectsEntry =
+  | { mutationKind: MutationKind; affectedTargets: RefreshTarget[]; noRefresh?: false }
+  | { mutationKind: MutationKind; affectedTargets: []; noRefresh: true };
+
+/**
+ * Deterministic reconciliation table shared by the TED path and normal
+ * PWA writes (SPEC §15.1.1). Never derived from the LLM, never spread in
+ * component-level if/else. New mutations must register here before they
+ * may return success (except explicit no-refresh entries).
+ */
+export const MUTATION_EFFECTS_REGISTRY: Record<MutationKind, MutationEffectsEntry> = {
+  'transactions.expense.create': { mutationKind: 'transactions.expense.create', affectedTargets: ['transactions', 'accounts', 'dashboard-summary', 'budgets', 'quick-insights'] },
+  'transactions.income.create': { mutationKind: 'transactions.income.create', affectedTargets: ['transactions', 'accounts', 'dashboard-summary', 'budgets', 'quick-insights'] },
+  'transaction.create': { mutationKind: 'transaction.create', affectedTargets: ['transactions', 'accounts', 'dashboard-summary', 'budgets', 'quick-insights'] },
+  'transaction.update': { mutationKind: 'transaction.update', affectedTargets: ['transactions', 'accounts', 'dashboard-summary', 'budgets', 'quick-insights'] },
+  'transaction.delete': { mutationKind: 'transaction.delete', affectedTargets: ['transactions', 'accounts', 'dashboard-summary', 'budgets', 'quick-insights'] },
+  'transfer.create': { mutationKind: 'transfer.create', affectedTargets: ['transactions', 'accounts', 'dashboard-summary', 'quick-insights'] },
+  'payable.create': { mutationKind: 'payable.create', affectedTargets: ['payables', 'dashboard-summary', 'quick-insights'] },
+  'payable.update': { mutationKind: 'payable.update', affectedTargets: ['payables', 'dashboard-summary', 'quick-insights'] },
+  'payable.delete': { mutationKind: 'payable.delete', affectedTargets: ['payables', 'dashboard-summary', 'quick-insights'] },
+  'payable.pay': { mutationKind: 'payable.pay', affectedTargets: ['payables', 'dashboard-summary', 'quick-insights'] },
+  'payable.payment.undo': { mutationKind: 'payable.payment.undo', affectedTargets: ['payables', 'dashboard-summary', 'quick-insights'] },
+  'statement.create': { mutationKind: 'statement.create', affectedTargets: ['statement', 'accounts'] },
+  'statement.update': { mutationKind: 'statement.update', affectedTargets: ['statement', 'accounts'] },
+  'statement.delete': { mutationKind: 'statement.delete', affectedTargets: ['statement', 'accounts'] },
+  'budget.create': { mutationKind: 'budget.create', affectedTargets: ['budgets', 'dashboard-summary'] },
+  'budget.update': { mutationKind: 'budget.update', affectedTargets: ['budgets', 'dashboard-summary'] },
+  'budget.delete': { mutationKind: 'budget.delete', affectedTargets: ['budgets', 'dashboard-summary'] },
+  'goal.create': { mutationKind: 'goal.create', affectedTargets: ['goals', 'dashboard-summary'] },
+  'goal.update': { mutationKind: 'goal.update', affectedTargets: ['goals', 'dashboard-summary'] },
+  'goal.delete': { mutationKind: 'goal.delete', affectedTargets: ['goals', 'dashboard-summary'] },
+  'account.create': { mutationKind: 'account.create', affectedTargets: ['accounts', 'dashboard-summary'] },
+  'account.update': { mutationKind: 'account.update', affectedTargets: ['accounts', 'dashboard-summary'] },
+  'account.delete': { mutationKind: 'account.delete', affectedTargets: ['accounts', 'dashboard-summary'] },
+  'category.create': { mutationKind: 'category.create', affectedTargets: ['categories', 'transactions'] },
+  'category.update': { mutationKind: 'category.update', affectedTargets: ['categories', 'transactions'] },
+  'category.delete': { mutationKind: 'category.delete', affectedTargets: ['categories', 'transactions'] },
+  'subscription.create': { mutationKind: 'subscription.create', affectedTargets: ['subscription', 'dashboard-summary'] },
+  'subscription.update': { mutationKind: 'subscription.update', affectedTargets: ['subscription', 'dashboard-summary'] },
+  'subscription.delete': { mutationKind: 'subscription.delete', affectedTargets: ['subscription', 'dashboard-summary'] },
+};
+
+/**
+ * Browser-safe clarification payload for an active MutationDraft (SPEC
+ * §7.8/§16): identity, tool, what is missing and the objective question —
+ * never authorization, attestation material or executable args. The draft
+ * itself is NOT a PendingOperation and cannot be executed.
+ */
+export interface MutationDraftChannelMessage {
+  draftId: string;
+  tool: TedApprovalTool;
+  missingFields: string[];
+  question: string;
+  expiresAt: string;
+}

@@ -94,9 +94,12 @@ describe("FinanceChatAgent & Worker Integration (Task 4)", () => {
 
   it("fails closed when provider is not configured rather than echoing raw input or silently falling back", async () => {
     const agent = Object.create(FinanceChatAgent.prototype) as FinanceChatAgent;
-    const result = await agent.onChatMessage({ text: "Qual o meu saldo?" }) as { text?: string };
+    // Non-finance utterance on purpose: finance-seeking reads fail closed on
+    // missing evidence (SPEC §14) before ever consulting the provider, so the
+    // provider-gate premise is exercised with a general question.
+    const result = await agent.onChatMessage({ text: "Olá, como você pode me ajudar?", intentionId: "intent-provider-gate-1" }) as { text?: string };
     expect(result).toBeDefined();
-    expect(result.text).not.toBe("Qual o meu saldo?");
+    expect(result.text).not.toBe("Olá, como você pode me ajudar?");
     expect(result.text).toContain("provider not configured");
   });
 

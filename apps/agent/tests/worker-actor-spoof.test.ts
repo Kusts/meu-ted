@@ -135,7 +135,7 @@ describe('C-06: actorId do payload nunca vira identidade', () => {
           'x-agent-actor': REAL_ACTOR,
           'x-agent-workspace': WS,
         },
-        body: JSON.stringify({ text: 'qual meu saldo?', actorId: SPOOFED_ACTOR }),
+        body: JSON.stringify({ text: 'qual meu saldo?', intentionId: 'intent-spoof-1', actorId: SPOOFED_ACTOR }),
       }),
     );
     expect(res.status).toBe(200);

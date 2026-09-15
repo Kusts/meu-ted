@@ -69,6 +69,8 @@ export function lintAllDocumentation() {
     "docs/ARCHITECTURE-TARGET.md",
     "docs/ROADMAP.md",
     "docs/adr/README.md",
+    "docs/MEU-TED-SPEC-HARDENING-PONTA-A-PONTA-V3.md",
+    "docs/superpowers/plans/2026-09-14-meu-ted-v3-hardening.md",
     "docs/runbooks/backup-restore.md",
   ];
 

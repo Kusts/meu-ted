@@ -169,6 +169,17 @@ jobs:
         env:
           DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
           DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001
+      - name: Build shared contracts (workspace exports resolve dist)
+        run: pnpm --filter @pi-finance/llm-contracts build
+      - name: Apply API migrations to test database
+        run: pnpm --filter meu-ted-api db:migrate
+        env:
+          DATABASE_URL: postgres://test:test@localhost:5432/pi_financeiro_test
+      - name: API full suite with Postgres (gated approvals suites enabled)
+        run: pnpm --filter meu-ted-api test
+        env:
+          DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
+          DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001
 
   # ─── Docker image builds ─────────────────────────────────────────────
   docker:

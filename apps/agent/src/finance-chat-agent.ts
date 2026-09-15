@@ -2,6 +2,7 @@ import { AIChatAgent, type UIMessage } from "agents/ai-chat-agent";
 import { streamText, generateText, stepCountIs } from "ai";
 import { z } from "zod";
 import { protocolSchema } from "@pi-finance/llm-contracts/schemas";
+import { mutationReceiptSchema, pendingOperationPresentationSchema } from "@pi-finance/llm-contracts";
 import { fetchRuntimeConfig, type RuntimeSnapshot } from "./llm/runtime-config-client.js";
 import { createLanguageModel } from "./llm/model-factory.js";
 import type { Protocol } from "./llm/provider-registry.js";
@@ -62,9 +63,12 @@ import { emitSanitizedEvent } from "./observability/events.js";
 import { routeIntent } from "./orchestration/intent-router.js";
 import { createChannelGrounding } from "./orchestration/channel-evidence.js";
 import type { EvidenceEnvelope } from "./evidence/evidence-envelope.js";
-import { parseFinancialMutation } from "./mutations/financial-parser.js";
+import { parseFinancialMutation, isClearlyMutating } from "./mutations/financial-parser.js";
+import { toActiveOperationRecords } from "./mutations/active-operation-projection.js";
+import { createRequestEntityReader, type EntityReader } from "./mutations/entity-resolver.js";
 import { MutationApiClient } from "./mutations/mutation-api-client.js";
-import { MutationExecutor, type ApprovalDecision } from "./mutations/mutation-executor.js";
+import { PendingOperationCoordinator, isRetryText } from "./orchestration/pending-operation-coordinator.js";
+import { initializeMutationDraftSchema, SqlMutationDraftStore, hasRecoverableDraft } from "./mutations/mutation-draft.js";
 
 export type Env = {
   AGENT_DELEGATION_SECRET?: string;
@@ -273,6 +277,13 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         initializeSessionSchema(state.storage.sql as unknown as MemorySql);
       } catch {
         // Memory is best-effort: turns work without it.
+      }
+      // SPEC §7.8 (ADR-014): MutationDraft table for multi-turn intention
+      // persistence (idempotent; best-effort like the memory schema above).
+      try {
+        initializeMutationDraftSchema(state.storage.sql as unknown as { exec<T>(query: string, ...bindings: unknown[]): Iterable<T> });
+      } catch {
+        // Drafts degrade to single-turn clarification without storage.
       }
     }
   }
@@ -589,11 +600,14 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
 
   private orchestratorForChannel(dependencies: {
     mutationApiClient?: MutationApiClient;
+    entityReader?: EntityReader;
     plan?: (input: TurnInput) => TurnPlan;
     evidenceProvider?: (input: TurnInput, plan: TurnPlan) => Promise<EvidenceEnvelope | null>;
     correctionProvider?: (input: TurnInput, plan: TurnPlan, unsupportedClaims: readonly string[]) => Promise<string | null>;
     /** Sanitized lifecycle event sink, shared by the turn and its evidence reads. */
     events?: (eventType: string, fields: Record<string, unknown>) => void;
+    /** SPEC §7.8 draft store (DO storage). Absent = legacy single-turn flow. */
+    draftStore?: SqlMutationDraftStore;
   } = {}): ConversationOrchestrator {
     // AGENT-005 production grounding: every channel (pwa-rest, sdk, broker)
     // reads through the same evidence provider over the canonical read
@@ -618,15 +632,34 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     });
   }
 
+  /**
+   * Authoritative entity lists for SPEC §7.2/§7.3 resolution: the same
+   * `GET /accounts` + `GET /categories` reads the evidence layer uses,
+   * scoped by the turn's `financial.read` delegation. Unreadable lists fail
+   * closed downstream (clarification, never a proposal).
+   */
+  private async entityReaderForTurn(input: TurnInput): Promise<EntityReader> {
+    const delegatedToken = await this.mintReadToken(input);
+    const apiOrigin = this.env?.API_ORIGIN;
+    const request = <T>(method: string, path: string, options: Parameters<typeof requestPiApiJson>[2] = {}) =>
+      requestPiApiJson<T>(method, path, { ...options, delegatedToken, ...(apiOrigin !== undefined ? { apiOrigin } : {}) });
+    return createRequestEntityReader(request);
+  }
+
   override async onChatMessage(messagePayload: unknown, ..._rest: unknown[]): Promise<unknown> {
     // C-06 trust boundary: the SDK direct leg carries NO transport identity.
     // `payload.actorId` is a gateway-stamped hint, NEVER a source of
     // identity — the Worker gateway compares any client-supplied actorId
     // against the authenticated actor (403 on mismatch) before this code is
     // reachable, and the REST legs derive identity from verified headers.
-    const payload = (messagePayload ?? {}) as { text?: string; intentionId?: string; actorId?: string; workspaceId?: string };
+    const payload = (messagePayload ?? {}) as { text?: string; intentionId?: string; messageId?: string; actorId?: string; workspaceId?: string };
     const text = typeof payload.text === "string" ? payload.text.trim() : "";
-    const intentionId = payload.intentionId ?? `intent-${Date.now()}`;
+    // SPEC §7.7: no Date.now()/random fallback — the caller owns the turn
+    // identity; without it the turn cannot dedup safely.
+    const intentionId = typeof payload.intentionId === "string" && payload.intentionId.trim()
+      ? payload.intentionId.trim()
+      : typeof payload.messageId === "string" && payload.messageId.trim() ? payload.messageId.trim() : "";
+    if (!intentionId) throw Object.assign(new Error("agent.invalid_message"), { code: "agent.invalid_message", status: 400 });
     const actorId = payload.actorId ?? "anonymous";
     const sdkWorkspace = payload.workspaceId ?? "workspace";
 
@@ -935,11 +968,15 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       }, secret);
       const requestWithApprovalToken = async <T>(method: string, path: string, opts: Parameters<typeof requestPiApiJson>[2] = {}) =>
         requestPiApiJson<T>(method, path, { ...opts, delegatedToken, apiOrigin: this.env?.API_ORIGIN });
-      const result = await new MutationExecutor({ request: requestWithApprovalToken }).decide({
+      // T1.5 (SPEC §8.1/§8.2): the approval button converges into the same
+      // PendingOperationCoordinator as natural language — one decision
+      // machine, no parallel path. The card names its operation, so decide()
+      // addresses it by id (no listing, no disambiguation).
+      const result = await new PendingOperationCoordinator({
+        client: new MutationApiClient({ request: requestWithApprovalToken }),
+      }).decide({
         operationId,
-        decision: body.decision as ApprovalDecision,
-        requestId: body.requestId.trim(),
-        delegatedToken,
+        decision: body.decision as 'confirm' | 'cancel' | 'retry',
         identity: { workspaceId, actorId, deviceId },
       });
       // AGENT-010: sanitized approval lifecycle events (status only — never
@@ -966,11 +1003,52 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     }
   }
 
+  /**
+   * T5.3 (H-14, SPEC §22): authoritative listing of the workspace's active
+   * pending operations, relayed lean to trusted PWA surfaces (Home badge,
+   * Aprovações page). The browser NEVER decides here — this is a read-only
+   * reflection. The delegated credential carries the READ capability only
+   * and the response is the strict lean projection (never attestation,
+   * never raw normalizedArgs), scoped to the gateway-verified
+   * workspace/actor/device identity.
+   */
+  private async handleActivePendingOperations(request: Request): Promise<Response> {
+    const secret = this.env?.AGENT_DELEGATION_SECRET?.trim();
+    const actorId = request.headers.get("x-agent-actor")?.trim();
+    const workspaceId = request.headers.get("x-agent-workspace")?.trim();
+    const deviceId = request.headers.get("x-agent-device")?.trim();
+    if (!secret || !actorId || !workspaceId || !deviceId) {
+      return Response.json({ code: "agent.approval_context_required" }, { status: 401 });
+    }
+    const role = request.headers.get("x-agent-role") === "owner" ? "owner" : "member";
+    try {
+      const delegatedToken = await createDelegatedTurnToken({
+        actorId,
+        workspaceId,
+        role,
+        capabilities: ["financial.approval.read"],
+        requestId: crypto.randomUUID(),
+        deviceId,
+      }, secret);
+      const requestWithReadToken = async <T>(method: string, path: string, opts: Parameters<typeof requestPiApiJson>[2] = {}) =>
+        requestPiApiJson<T>(method, path, { ...opts, delegatedToken, apiOrigin: this.env?.API_ORIGIN });
+      const client = new MutationApiClient({ request: requestWithReadToken });
+      const result = await client.listActive({ workspaceId, actorId, deviceId });
+      const items = toActiveOperationRecords(result?.items);
+      // total reflects what is actually relayed (invalid items are dropped).
+      return Response.json({ items, total: items.length });
+    } catch {
+      return Response.json(
+        { code: "agent.pending_list_unavailable", message: "Não foi possível carregar as aprovações agora." },
+        { status: 502 },
+      );
+    }
+  }
+
   /** Builds the sole V2 mutation plan used by every channel adapter. */
   private mutationProposalPlan(input: TurnInput): TurnPlan | null {
     const parsed = parseFinancialMutation(input.text);
-    const clearlyMutating = /\b(gastei|gasto|paguei|compra|despesa|recebi|ganhei|renda|sal[aá]rio|receita|lancei|lancar|lançamento|lancamento)\b/i.test(input.text);
-    if (parsed.kind === "none" || !clearlyMutating) return null;
+    if (parsed.kind === "none" || !isClearlyMutating(input.text)) return null;
 
     const routed = routeIntent(input.text);
     return {
@@ -979,7 +1057,9 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       domain: "transactions",
       skillNames: routed.skillNames.slice(0, 2),
       requestedOperations: [{ name: parsed.kind === "income" ? "transactions.income.create" : "transactions.expense.create", kind: "mutation" }],
-      missingFields: [],
+      // SPEC §7.6: canonical IDs are never resolved at plan time — the
+      // orchestrator resolves them against authoritative reads (§7.2/§7.3).
+      missingFields: ["accountId", "categoryId"],
       ambiguity: null,
       confidence: routed.confidence,
     };
@@ -988,6 +1068,11 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
   /**
    * Constructs the per-turn, approval-scoped transport injected into the
    * canonical orchestrator. No browser-owned data crosses this boundary.
+   *
+   * T1.5 (SPEC §8.1): ONE client carries every decision capability
+   * (propose/read/confirm/execute/retry/cancel) so proposal, confirmation,
+   * cancellation and retry turns share the same transport + coordinator —
+   * the previous propose-only asymmetry starved decision turns.
    */
   private async mutationApiClientForTurn(input: TurnInput, needsMutationClient: boolean): Promise<MutationApiClient | undefined> {
     if (!needsMutationClient) return undefined;
@@ -1000,7 +1085,14 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       actorId: input.actorId,
       workspaceId: input.workspaceId,
       role: input.role,
-      capabilities: ["financial.approval.propose"],
+      capabilities: [
+        'financial.approval.propose',
+        'financial.approval.read',
+        'financial.approval.confirm',
+        'financial.approval.execute',
+        'financial.approval.retry',
+        'financial.approval.cancel',
+      ],
       requestId: input.intentionId,
       deviceId: input.deviceId,
     }, secret);
@@ -1036,6 +1128,21 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     }
   }
 
+  /**
+   * SPEC §7.8 draft store over DO SQLite storage. Undefined when storage is
+   * unavailable — the orchestrator then keeps the legacy single-turn flow.
+   */
+  private draftStoreForRequest(): SqlMutationDraftStore | undefined {
+    const sql = this.state?.storage?.sql as unknown as { exec<T>(query: string, ...bindings: unknown[]): Iterable<T> } | undefined;
+    if (!sql || typeof sql.exec !== 'function') return undefined;
+    try {
+      initializeMutationDraftSchema(sql);
+      return new SqlMutationDraftStore(sql);
+    } catch {
+      return undefined;
+    }
+  }
+
   private async enqueueChat<T>(task: () => Promise<T>): Promise<T> {
     const prev = this.chatQueue ?? Promise.resolve();
     const next = prev.then(() => task(), () => task());
@@ -1054,6 +1161,10 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     if (url.pathname.startsWith("/rpc/")) {
       const bindingError = await this.assertConnectionBinding(request);
       if (bindingError) return bindingError;
+    }
+    const activeMatch = url.pathname === "/rpc/pending-operations/active" && request.method === "GET";
+    if (activeMatch) {
+      return this.handleActivePendingOperations(request);
     }
     const decisionMatch = url.pathname.match(/^\/rpc\/pending-operations\/([^/]+)\/decision$/);
     if (decisionMatch && request.method === "POST") {
@@ -1081,7 +1192,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       const deviceHeader = request.headers.get("x-agent-device")?.trim();
       const deviceId = deviceHeader ? deviceHeader : undefined;
 
-      let body: { text?: unknown; content?: unknown; intentionId?: unknown; attachments?: unknown };
+      let body: { text?: unknown; content?: unknown; intentionId?: unknown; messageId?: unknown; attachments?: unknown };
       try {
         body = (await request.json()) as { text?: unknown; content?: unknown; intentionId?: unknown; attachments?: unknown };
       } catch {
@@ -1096,9 +1207,16 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       // H-09: central DLP scrub before the text becomes durable (transcript,
       // memory, summary, learning, export all read this value downstream).
       const text = unredactedText ? scrubForPersistence(unredactedText) : incomingAttachments.length > 0 ? `[anexo ${incomingAttachments.map((a) => a.name).join(", ")}]` : "";
+      // SPEC §7.7/§7.7.1: the intentionId derives deterministically from the
+      // PWA messageId (intentionId field, or messageId alias). No
+      // Date.now()/random fallback: a redelivery after a lost response
+      // carries the same id and dedups to the same proposal downstream.
       const intentionId = typeof body.intentionId === "string" && body.intentionId.trim()
         ? body.intentionId.trim()
-        : `intent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        : typeof body.messageId === "string" && body.messageId.trim() ? body.messageId.trim() : "";
+      if (!intentionId || intentionId.length > 128) {
+        return Response.json({ code: "agent.invalid_message" }, { status: 400 });
+      }
 
       const restInput = normalizeRestTurn(
         { ...body, text, intentionId, attachments: incomingAttachments },
@@ -1114,10 +1232,31 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       }
       try {
         const mutationPlan = this.mutationProposalPlan(restInput);
-        const mutationApiClient = await this.mutationApiClientForTurn(restInput, mutationPlan !== null);
+        // SPEC §7.8: a bare continuation answer ("Nubank") carries no
+        // mutation plan, but with a recoverable draft it still needs the
+        // mutation client + reader so the turn can complete the handoff.
+        const draftStore = this.draftStoreForRequest();
+        const hasPendingDraft = draftStore
+          ? hasRecoverableDraft(
+            draftStore,
+            { workspaceId: identity.workspaceId, actorId: identity.actorId, deviceId: deviceId ?? null },
+            Date.now(),
+          )
+          : false;
+        // T1.5 (SPEC §8): decision turns (confirmation/cancel/retry) build
+        // the same MutationApiClient as proposals — the orchestrator's
+        // coordinator needs the transport even when no draft exists.
+        const routed = routeIntent(text);
+        const needsMutation = mutationPlan !== null || hasPendingDraft
+          || routed.mode === 'confirmation' || routed.mode === 'cancel'
+          || isRetryText(text);
+        const mutationApiClient = await this.mutationApiClientForTurn(restInput, needsMutation);
+        const entityReader = needsMutation ? await this.entityReaderForTurn(restInput) : undefined;
         const turnResult = await this.orchestratorForChannel({
           ...(mutationPlan ? { plan: () => mutationPlan } : {}),
           ...(mutationApiClient ? { mutationApiClient } : {}),
+          ...(entityReader ? { entityReader } : {}),
+          ...(draftStore ? { draftStore } : {}),
         }).runTurn(restInput);
         if (turnResult.response) {
           // Persist the FINAL grounded/deterministic response (never the raw
@@ -1127,6 +1266,20 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           // was persisted for them either), so their historical
           // non-persistence is preserved unchanged.
           if (turnResult.plan.mode !== 'mutation-proposal' && turnResult.plan.mode !== 'confirmation' && turnResult.plan.mode !== 'cancel') {
+            // T3.1 (SPEC §14): a fail-closed read never reaches the response
+            // provider, which is where the user message is otherwise
+            // persisted — persist it here so history keeps the Q&A pair
+            // (fail-closed only ever happens on the read path, so mutation
+            // non-persistence above is unaffected).
+            if (turnResult.failClosed) {
+              const failClosedUserMessage: UIMessage = {
+                id: `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                role: 'user',
+                parts: [{ type: 'text', text: restInput.text }],
+                metadata: { actorId: identity.actorId, workspaceId: identity.workspaceId, createdAt: new Date().toISOString() },
+              } as unknown as UIMessage;
+              await this.persistMessages([failClosedUserMessage]);
+            }
             const assistantMessage: UIMessage = {
               id: `msg-asst-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               role: 'assistant',
@@ -1141,6 +1294,26 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
                 status: turnResult.mutation.status,
                 operation: turnResult.plan.requestedOperations[0]?.name,
                 summary: turnResult.response.text,
+                // T3.4 (SPEC §16): the safe card projection derived from the
+                // canonical args. Re-validated here so only schema-conformant
+                // display fields cross to the browser (attestation can never
+                // ride along — the strict schema rejects it).
+                ...(() => {
+                  const presentation = (turnResult.mutation as { presentation?: unknown }).presentation;
+                  if (!presentation) return {};
+                  const parsed = pendingOperationPresentationSchema.safeParse(presentation);
+                  return parsed.success ? { presentation: parsed.data } : {};
+                })(),
+                // T3.3 (SPEC §15.1): the REAL execution receipt relayed from
+                // the API on succeeded turns. Re-validated with the strict
+                // contract schema — a receipt carrying attestation or any
+                // unknown key is dropped, never partially forwarded.
+                ...(() => {
+                  const receipt = (turnResult.mutation as { receipt?: unknown }).receipt;
+                  if (!receipt) return {};
+                  const parsed = mutationReceiptSchema.safeParse(receipt);
+                  return parsed.success ? { receipt: parsed.data } : {};
+                })(),
               }
             : undefined;
           return Response.json({ status: "completed", output: turnResult.response.text, ...(pendingOperation ? { pendingOperation } : {}) });

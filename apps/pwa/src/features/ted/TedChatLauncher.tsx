@@ -10,41 +10,76 @@ import { useIsOverlayOpen } from "@/lib/ui/overlay-a11y";
  * convention in AppShell). Any surface — e.g. the empty Insights card —
  * opens the existing chat via `openTedChat()`; the launcher owns the
  * listener, so there is a single source of truth, no parallel event.
+ *
+ * T5.3 (SPEC §22): `openTedChat({ operationId })` deep-links the single
+ * chat to ONE pending operation. The id is display routing only — the
+ * Decision Service inside the chat still owns confirm/cancel/retry.
  */
 export const OPEN_TED_CHAT_EVENT = "pwa:open-ted";
 
-export function openTedChat(): void {
+export type OpenTedChatOptions = Readonly<{
+  /** Authoritative pending-operation id to focus once the chat opens. */
+  operationId?: string;
+}>;
+
+type OpenTedChatDetail = OpenTedChatOptions | undefined;
+
+export function openTedChat(options?: OpenTedChatOptions): void {
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent(OPEN_TED_CHAT_EVENT));
+    window.dispatchEvent(new CustomEvent<OpenTedChatDetail>(OPEN_TED_CHAT_EVENT, { detail: options }));
   }
+}
+
+function readFocusedOperationId(event: Event): string | null {
+  const detail = (event as CustomEvent<OpenTedChatDetail>).detail;
+  return typeof detail?.operationId === "string" && detail.operationId.length > 0
+    ? detail.operationId
+    : null;
 }
 
 export function TedChatLauncher() {
   const [open, setOpen] = useState(false);
+  const [focusedOperationId, setFocusedOperationId] = useState<string | null>(null);
   // A1: hide the FAB while any overlay (sheet/dialog/confirm) is open so it
   // never renders above — or below but visually clashing with — overlay
   // content. Also hidden while its own chat is open.
   const overlayOpen = useIsOverlayOpen();
 
   useEffect(() => {
-    function handler() {
+    function handler(event: Event) {
+      setFocusedOperationId(readFocusedOperationId(event));
       setOpen(true);
     }
     window.addEventListener(OPEN_TED_CHAT_EVENT, handler);
     return () => window.removeEventListener(OPEN_TED_CHAT_EVENT, handler);
   }, []);
 
-  if (overlayOpen || open) {
-    return <TedChat open={open} onClose={() => setOpen(false)} />;
-  }
+  const hideLauncher = overlayOpen || open;
+
+  const handleFabOpen = () => {
+    setFocusedOperationId(null);
+    setOpen(true);
+  };
+
+  const handleClose = () => {
+    setOpen(false);
+    setFocusedOperationId(null);
+  };
 
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={handleFabOpen}
         aria-label="Abrir assistente TED"
-        className="group fixed bottom-[88px] right-4 z-40 h-14 w-14 overflow-hidden rounded-full shadow-fab ring-1 ring-white/10 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-modal focus:outline-none focus-visible:ring-4 focus-visible:ring-primary/30 active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 lg:bottom-6 lg:right-6"
+        // §24: this FAB opens the TED chat dialog — announce the dialog
+        // instead of a menu pattern. It remains mounted while the chat is
+        // open so the shared dialog primitive can restore focus to its opener.
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        tabIndex={hideLauncher ? -1 : undefined}
+        data-overlay-restore-fallback
+        className={`group fixed bottom-[88px] right-4 z-40 h-14 w-14 overflow-hidden rounded-full shadow-fab ring-1 ring-white/10 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-modal focus:outline-none focus-visible:ring-4 focus-visible:ring-primary/30 active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 lg:bottom-6 lg:right-6 ${hideLauncher ? "pointer-events-none opacity-0" : ""}`}
       >
         <Image
           src="/brand/ted-launcher.png"
@@ -56,7 +91,7 @@ export function TedChatLauncher() {
         />
       </button>
 
-      <TedChat open={open} onClose={() => setOpen(false)} />
+      <TedChat open={open} onClose={handleClose} focusedOperationId={focusedOperationId} />
     </>
   );
 }

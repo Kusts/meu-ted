@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ComponentType } from "react";
+import { useEffect, useRef, useState, type ComponentType } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeftRight,
@@ -32,7 +32,10 @@ interface ItemDef {
 const ITEMS: ItemDef[] = [
   { key: "home", label: "Início", Icon: Home },
   { key: "records", label: "Extrato", Icon: Receipt },
-  { key: "compromissos", label: "Minhas Contas", Icon: CalendarClock },
+  // §24 naming review: the /compromissos section (A Pagar + Pendências) keeps
+  // its canonical route name so "Contas e Cartões" stays unambiguous for
+  // /hub/patrimonio (accounts & cards).
+  { key: "compromissos", label: "Compromissos", Icon: CalendarClock },
   { key: "hub", label: "Mais", Icon: LayoutGrid },
 ];
 
@@ -102,11 +105,17 @@ export function BottomNav({
 }: BottomNavProps) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
+  const fabRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!menuOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMenuOpen(false);
+      if (e.key === "Escape") {
+        setMenuOpen(false);
+        // §24 disclosure pattern: Escape closes and returns focus to the
+        // disclosure button so keyboard users are not stranded.
+        fabRef.current?.focus();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -148,6 +157,7 @@ export function BottomNav({
         style={{ width: 64 }}
       >
         <button
+          ref={fabRef}
           onClick={() => {
             haptic(8);
             setMenuOpen((open) => !open);
@@ -158,7 +168,7 @@ export function BottomNav({
           }}
           aria-label="Nova transação"
           aria-expanded={menuOpen}
-          aria-haspopup="menu"
+          aria-controls="quick-actions"
         >
           {menuOpen ? (
             <X size={24} strokeWidth={2.6} />
@@ -184,8 +194,12 @@ export function BottomNav({
               aria-hidden="true"
               onClick={() => setMenuOpen(false)}
             />
+            {/* §24: disclosure popup — a named group of plain buttons instead
+                of an incomplete ARIA menu (which would promise arrow-key
+                navigation and item focus that were never implemented). */}
             <div
-              role="menu"
+              id="quick-actions"
+              role="group"
               aria-label="Novo lançamento"
               className="absolute bottom-full left-1/2 mb-3 flex w-[218px] -translate-x-1/2 flex-col gap-1 rounded-[18px] border border-border-subtle bg-surface-1 p-2 shadow-elevated"
             >
@@ -193,7 +207,6 @@ export function BottomNav({
                 <button
                   key={action.key}
                   type="button"
-                  role="menuitem"
                   onClick={() => runQuickAction(action.key)}
                   className="flex min-h-[44px] items-center gap-3 rounded-[12px] px-3 py-2 text-left transition-colors hover:bg-surface-2 active:bg-surface-2"
                 >
@@ -210,7 +223,7 @@ export function BottomNav({
         )}
       </div>
 
-      {/* Items: right side (Minhas Contas, Mais) */}
+      {/* Items: right side (Compromissos, Mais) */}
       {ITEMS.slice(2).map((item) => (
         <NavButton
           key={item.key}

@@ -80,8 +80,10 @@ describe('FINDING 2 (HIGH): persisted history serves the grounded response, neve
     const { agent } = createTestAgent();
     const requestSpy = vi.spyOn(apiClient, 'requestPiApiJson').mockImplementation(async (method, path) => {
       if (method === 'GET' && path === '/accounts') {
-        // Known data with no deterministic shape: forces the provider +
-        // grounding-retry path instead of the deterministic renderer.
+        // Known data with no deterministic shape (no balance): the read maps
+        // to an `error` item, so the envelope is all-error and T3.1 (SPEC
+        // §14) fails closed WITHOUT invoking the relay — history serves the
+        // deterministic failure, never the raw relay text.
         return { items: [{ id: 'acc-1', name: 'Conta principal', status: 'active' }] } as unknown as Record<string, unknown>;
       }
       throw new Error(`unexpected production read: ${method} ${path}`);
@@ -104,8 +106,8 @@ describe('FINDING 2 (HIGH): persisted history serves the grounded response, neve
       expect(res.status).toBe(200);
       const body = (await res.json()) as { output?: string; status?: string };
       expect(body.status).toBe('completed');
-      // Grounding rejected the unsupported claim and fell back safe.
-      expect(body.output).toMatch(/Não foi possível consultar/);
+      // Fail-closed: the deterministic SPEC §14 failure is served and persisted.
+      expect(body.output).toMatch(/Não consegui acessar seus dados financeiros agora/);
       expect(body.output).not.toContain('999,99');
 
       const historyRes = await agent.fetch(historyRequest());

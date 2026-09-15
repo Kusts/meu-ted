@@ -12,6 +12,7 @@ import { DomainError } from '../writes/errors.js';
 import { requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
 import type { CardStore } from '../cards/store.js';
 import type { AuthResolver } from './auth.js';
+import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
 
 // ── Input schemas ────────────────────────────────────────────────
 
@@ -197,7 +198,14 @@ export const registerCardRoutes = (
         ...(parsed.data.installmentsTotal != null ? { installmentsTotal: parsed.data.installmentsTotal } : {}),
         ...(parsed.data.installmentNumber != null ? { installmentNumber: parsed.data.installmentNumber } : {}),
       });
-      return { status: 201 as const, body: { items: txs } };
+      // T3.2 (SPEC §15.1): receipt built inside the idempotent producer so
+      // keyed replays preserve the mutationId. A card purchase creates
+      // transactions (statement linkage is a consequence) → transaction.create.
+      const first = txs[0];
+      return {
+        status: 201 as const,
+        body: attachMutationReceipt({ items: txs }, 'transaction.create', first ? { type: 'transaction', id: first.id } : undefined),
+      };
     };
     try {
       const result = key ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, parsed.data, fn) : { response: await fn(), replayed: false };
@@ -224,7 +232,13 @@ export const registerCardRoutes = (
         ...(parsed.data.subcategoryId ? { subcategoryId: parsed.data.subcategoryId } : {}),
         ...(parsed.data.notes ? { notes: parsed.data.notes } : {}),
       });
-      return { status: 201 as const, body: { items: txs } };
+      // T3.2 (SPEC §15.1): same receipt contract as single purchases —
+      // installments create N transactions → transaction.create.
+      const first = txs[0];
+      return {
+        status: 201 as const,
+        body: attachMutationReceipt({ items: txs }, 'transaction.create', first ? { type: 'transaction', id: first.id } : undefined),
+      };
     };
     try {
       const result = key ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, parsed.data, fn) : { response: await fn(), replayed: false };
@@ -265,7 +279,9 @@ export const registerCardRoutes = (
         ...(parsed.data.endDate ? { endDate: parsed.data.endDate } : {}),
         ...(parsed.data.categoryId ? { categoryId: parsed.data.categoryId } : {}),
       });
-      return { status: 201 as const, body: r };
+      // T3.2 (SPEC §15.1): a recurring template feeds future statements
+      // (no transaction yet) → statement.create.
+      return { status: 201 as const, body: attachMutationReceipt(r, 'statement.create', { type: 'recurring-purchase', id: r.id }) };
     };
     try {
       const result = key ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, parsed.data, fn) : { response: await fn(), replayed: false };
@@ -285,7 +301,7 @@ export const registerCardRoutes = (
     const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
     const fn = async () => {
       const s = await opts.cardStore.payStatement(ctx.householdId, params.data.id, parsed.data);
-      return { status: 200 as const, body: s };
+      return { status: 200 as const, body: attachMutationReceipt(s, 'statement.update', { type: 'statement', id: params.data.id }) };
     };
     try {
       const result = key ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, parsed.data, fn) : { response: await fn(), replayed: false };
@@ -301,7 +317,8 @@ export const registerCardRoutes = (
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     try {
       const card = await opts.cardStore.createCard(ctx.householdId, parsed.data);
-      return reply.code(201).send(card);
+      // T3.2 (SPEC §15.1): a credit card is an account → account.create.
+      return reply.code(201).send(attachMutationReceipt(card, 'account.create', { type: 'account', id: card.id }));
     } catch (e) { return handleError(e, reply); }
   });
 
@@ -314,7 +331,8 @@ export const registerCardRoutes = (
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     try {
       const card = await opts.cardStore.updateCard(ctx.householdId, params.data.id, parsed.data as Parameters<typeof opts.cardStore.updateCard>[2]);
-      return reply.code(200).send(card);
+      // T3.2 (SPEC §15.1): same account domain → account.update.
+      return reply.code(200).send(attachMutationReceipt(card, 'account.update', { type: 'account', id: params.data.id }));
     } catch (e) { return handleError(e, reply); }
   });
 
@@ -333,7 +351,9 @@ export const registerCardRoutes = (
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     try {
       const detail = await opts.cardStore.updatePurchase(ctx.householdId, params.data.id, parsed.data as Parameters<typeof opts.cardStore.updatePurchase>[2]);
-      return reply.code(200).send(detail);
+      // T3.2 (SPEC §15.1): a purchase edit mutates its transaction →
+      // transaction.update (additive: statement detail fields untouched).
+      return reply.code(200).send(attachMutationReceipt(detail, 'transaction.update', { type: 'transaction', id: params.data.id }));
     } catch (e) { return handleError(e, reply); }
   });
 
@@ -342,9 +362,27 @@ export const registerCardRoutes = (
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
-    try {
+    const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
+    const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
+    // T3.2 (SPEC §15.1): 200 with a transaction.delete receipt — 204 cannot
+    // carry a body. Cancelling removes a financial effect, so a receipt is
+    // required. Receipt built inside the idempotent producer so keyed
+    // replays preserve the mutationId (cancel itself stays idempotent).
+    const fn = async () => {
       await opts.cardStore.cancelPurchase(ctx.householdId, params.data.id);
-      return reply.code(204).send();
+      return {
+        status: 200 as const,
+        body: attachMutationReceipt(
+          { id: params.data.id, cancelled: true },
+          'transaction.delete',
+          { type: 'transaction', id: params.data.id },
+        ),
+      };
+    };
+    try {
+      const result = key ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, { id: params.data.id }, fn) : { response: await fn(), replayed: false };
+      if (result.replayed) reply.header('Idempotent-Replayed', 'true');
+      return reply.code(result.response.status).send(result.response.body);
     } catch (e) { return handleError(e, reply); }
   });
 };

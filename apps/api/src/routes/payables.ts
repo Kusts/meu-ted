@@ -105,6 +105,7 @@ export { notificationSchema, autoCreateQuery };
 import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
+import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
 
 export const registerPayableRoutes = (
   app: FastifyInstance,
@@ -191,7 +192,7 @@ export const registerPayableRoutes = (
             ...(parsed.data.notes ? { notes: parsed.data.notes } : {}),
           },
         });
-        return { status: 201 as const, body: p };
+        return { status: 201 as const, body: attachMutationReceipt(p, 'payable.create', { type: 'payable', id: (p as { id: string }).id }) };
       }
 
       const payableInput = {
@@ -211,7 +212,7 @@ export const registerPayableRoutes = (
           : {}),
       };
       const p = await opts.payableStore.createPayable(ctx.householdId, payableInput);
-      return { status: 201 as const, body: p };
+      return { status: 201 as const, body: attachMutationReceipt(p, 'payable.create', { type: 'payable', id: p.id }) };
     };
 
     try {
@@ -264,7 +265,7 @@ export const registerPayableRoutes = (
             : {}),
         },
       );
-      return { status: 200 as const, body: p };
+      return { status: 200 as const, body: attachMutationReceipt(p, 'payable.pay', { type: 'payable', id: params.data.id }) };
     };
     try {
       const result = key
@@ -300,7 +301,7 @@ export const registerPayableRoutes = (
         ctx.householdId,
         params.data.id,
       );
-      return reply.code(200).send(p);
+      return reply.code(200).send(attachMutationReceipt(p, 'payable.payment.undo', { type: 'payable', id: params.data.id }));
     } catch (e) {
       return handleError(e, reply);
     }
@@ -355,7 +356,7 @@ export const registerPayableRoutes = (
         params.data.id,
         parsed.data,
       );
-      return reply.code(200).send(p);
+      return reply.code(200).send(attachMutationReceipt(p, 'payable.update', { type: 'payable', id: params.data.id }));
     } catch (e) {
       return handleError(e, reply);
     }
@@ -381,7 +382,7 @@ export const registerPayableRoutes = (
         params.data.id,
         parsed.data?.reason,
       );
-      return reply.code(200).send(p);
+      return reply.code(200).send(attachMutationReceipt(p, 'payable.delete', { type: 'payable', id: params.data.id }));
     } catch (e) {
       return handleError(e, reply);
     }
@@ -395,21 +396,27 @@ export const registerPayableRoutes = (
     } catch (e) {
       return handleError(e, reply);
     }
-    const rawKey = req.headers[IDEMPOTENCY_HEADER] ?? req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
-    const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
+    let key: string;
+    try {
+      key = requireIdempotencyKey(req.headers);
+    } catch (e) {
+      return handleError(e, reply);
+    }
     const fn = async () => {
       const updated = await opts.payableStore.refreshPayableStatus(ctx.householdId);
-      return { status: 200 as const, body: { updated, updatedCount: updated.length } };
+      // FIX-P1 (SPEC §15.1): bulk status recompute mutates payable effects →
+      // payable.update receipt, built inside the idempotent producer so keyed
+      // replays preserve the mutationId. No single entity: bulk result.
+      // The key is mandatory: missing/blank returns 400 via handleError.
+      return { status: 200 as const, body: attachMutationReceipt({ updated, updatedCount: updated.length }, 'payable.update') };
     };
     try {
-      const result = key
-        ? await opts.idempotency.lookupOrRecord(
-            ctx.householdId,
-            key,
-            req.query ?? {},
-            fn,
-          )
-        : { response: await fn(), replayed: false };
+      const result = await opts.idempotency.lookupOrRecord(
+        ctx.householdId,
+        key,
+        req.query ?? {},
+        fn,
+      );
       if (result.replayed) reply.header("Idempotent-Replayed", "true");
       return reply.code(result.response.status).send(result.response.body);
     } catch (e) {
@@ -430,24 +437,30 @@ export const registerPayableRoutes = (
       return reply
         .code(400)
         .send({ code: "validation.error", issues: parsed.error.issues });
-    const rawKey = req.headers[IDEMPOTENCY_HEADER] ?? req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
-    const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
+    let key: string;
+    try {
+      key = requireIdempotencyKey(req.headers);
+    } catch (e) {
+      return handleError(e, reply);
+    }
     const fn = async () => {
       const created = await opts.payableStore.autoCreateFromTemplates(
         ctx.householdId,
         parsed.data.daysAhead,
       );
-      return { status: 201 as const, body: { created, createdCount: created.length } };
+      // FIX-P1 (SPEC §15.1): bulk payable creation → payable.create receipt,
+      // built inside the idempotent producer so keyed replays preserve the
+      // mutationId. Bulk result carries no single entity.
+      // The key is mandatory: missing/blank returns 400 via handleError.
+      return { status: 201 as const, body: attachMutationReceipt({ created, createdCount: created.length }, 'payable.create') };
     };
     try {
-      const result = key
-        ? await opts.idempotency.lookupOrRecord(
-            ctx.householdId,
-            key,
-            parsed.data,
-            fn,
-          )
-        : { response: await fn(), replayed: false };
+      const result = await opts.idempotency.lookupOrRecord(
+        ctx.householdId,
+        key,
+        parsed.data,
+        fn,
+      );
       if (result.replayed) reply.header("Idempotent-Replayed", "true");
       return reply.code(result.response.status).send(result.response.body);
     } catch (e) {
@@ -498,7 +511,10 @@ export const registerPayableRoutes = (
           : {}),
         ...(parsed.data.notes ? { notes: parsed.data.notes } : {}),
       });
-      return { status: 201 as const, body: t };
+      // FIX-P1 (SPEC §15.1): a new template feeds future payables in the
+      // payables domain → payable.create receipt, built inside the idempotent
+      // producer so keyed replays preserve the mutationId.
+      return { status: 201 as const, body: attachMutationReceipt(t, 'payable.create', { type: 'payable-template', id: t.id }) };
     };
     try {
       const result = key
@@ -529,8 +545,12 @@ export const registerPayableRoutes = (
       return reply
         .code(400)
         .send({ code: "validation.error", issues: parsed.error.issues });
-    const rawKey = req.headers[IDEMPOTENCY_HEADER] ?? req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
-    const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
+    let key: string;
+    try {
+      key = requireIdempotencyKey(req.headers);
+    } catch (e) {
+      return handleError(e, reply);
+    }
     const fn = async () => {
       const p = await opts.payableStore.createPayableFromTemplate(
         ctx.householdId,
@@ -547,17 +567,19 @@ export const registerPayableRoutes = (
             : {}),
         },
       );
-      return { status: 201 as const, body: p };
+      // FIX-P1 (SPEC §15.1): instantiating a payable from a template creates
+      // a payable → payable.create receipt, built inside the idempotent
+      // producer so keyed replays preserve the mutationId.
+      // The key is mandatory: missing/blank returns 400 via handleError.
+      return { status: 201 as const, body: attachMutationReceipt(p, 'payable.create', { type: 'payable', id: p.id }) };
     };
     try {
-      const result = key
-        ? await opts.idempotency.lookupOrRecord(
-            ctx.householdId,
-            key,
-            parsed.data,
-            fn,
-          )
-        : { response: await fn(), replayed: false };
+      const result = await opts.idempotency.lookupOrRecord(
+        ctx.householdId,
+        key,
+        parsed.data,
+        fn,
+      );
       if (result.replayed) reply.header("Idempotent-Replayed", "true");
       return reply.code(result.response.status).send(result.response.body);
     } catch (e) {
@@ -632,7 +654,10 @@ export const registerPayableRoutes = (
           : {}),
         ...(parsed.data.timezone ? { timezone: parsed.data.timezone } : {}),
       });
-      return reply.code(201).send(n);
+      // FIX-P1 (SPEC §15.1): notification configuration is a supported write
+      // owned by the payables domain (reminders feed off payables) → a normal
+      // payable.update receipt, never a PendingOperation (no operationId).
+      return reply.code(201).send(attachMutationReceipt(n, 'payable.update', { type: 'notification', id: n.id }));
     } catch (e) {
       return handleError(e, reply);
     }

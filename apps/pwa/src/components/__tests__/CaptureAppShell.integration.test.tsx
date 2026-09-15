@@ -15,6 +15,10 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/state/app-state-context", () => ({
+  // TedChat calls useOptionalAppState unconditionally (null-safe via
+  // optionalAppState?.reconcileMutation); this suite renders outside a
+  // provider, so null is the coherent value — no reconciliation exercised.
+  useOptionalAppState: () => null,
   useAppState: () => ({
     accounts: [
       {

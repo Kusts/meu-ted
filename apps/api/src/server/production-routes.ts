@@ -25,6 +25,7 @@ import {
   createPostgresWriteStore,
 } from "../writes/postgres.js";
 import { createLegacyPostgresAuditLogStore, createPostgresAuditLogStore } from "../audit/store.js";
+import { createUndoService } from "../approvals/undo.js";
 import { InviteError, createInviteService } from "../auth/invites.js";
 import { createPostgresInviteStore } from "../auth/invites-postgres.js";
 import { createPostgresWorkspaceStore } from "../auth/workspaces-postgres.js";
@@ -145,6 +146,10 @@ export const registerPostgresProductionRoutes = (
     const subscriptionStore = createLegacyPostgresSubscriptionStore(pool);
     const profileStore = createPostgresProfileStore({ pool });
     const auditLogs = createLegacyPostgresAuditLogStore(pool);
+    // FIX-P1-UNDO-BOOTSTRAP: UndoService com deps reais (antes /audit/undo
+    // respondia `unsupported` neste bootstrap).
+    // FIX-P1-UNDO-IDEMPOTENCY: MESMO IdempotencyStore dos writes.
+    const undoService = createUndoService({ auditLogs, writes, idempotency });
     registerRoutes(app, {
       store,
       writes,
@@ -159,6 +164,7 @@ export const registerPostgresProductionRoutes = (
       profileStore,
       pushStore,
       auditLogs,
+      undoService,
       disableDeviceRegistration: true,
       analyticsSource: createSqlAnalyticsSource(pool, {
         legacy: true,
@@ -187,6 +193,10 @@ export const registerPostgresProductionRoutes = (
   const subscriptionStore = createPostgresSubscriptionStore(pool);
   const profileStore = createPostgresProfileStore({ pool });
   const auditLogs = createPostgresAuditLogStore(pool);
+  // FIX-P1-UNDO-BOOTSTRAP: UndoService com deps reais (antes /audit/undo
+  // respondia `unsupported` neste bootstrap).
+  // FIX-P1-UNDO-IDEMPOTENCY: MESMO IdempotencyStore dos writes.
+  const undoService = createUndoService({ auditLogs, writes, idempotency });
   registerRoutes(app, {
     store,
     writes,
@@ -201,6 +211,7 @@ export const registerPostgresProductionRoutes = (
     profileStore,
     pushStore,
     auditLogs,
+    undoService,
     disableDeviceRegistration: true,
     analyticsSource: createSqlAnalyticsSource(pool, {
       stores: { store, cardStore, budgetStore, subscriptionStore },

@@ -77,12 +77,16 @@ describe("TedChatLauncher Component (Task 10)", () => {
       await act(async () => {
         acquireBodyScrollLock();
       });
-      expect(screen.queryByRole("button", { name: /abrir assistente ted/i })).not.toBeInTheDocument();
+      const hiddenFab = screen.getByRole("button", { name: /abrir assistente ted/i });
+      expect(hiddenFab).toHaveClass("pointer-events-none", "opacity-0");
+      expect(hiddenFab).toHaveAttribute("tabindex", "-1");
 
       await act(async () => {
         releaseBodyScrollLock();
       });
-      expect(screen.getByRole("button", { name: /abrir assistente ted/i })).toBeInTheDocument();
+      const restoredFab = screen.getByRole("button", { name: /abrir assistente ted/i });
+      expect(restoredFab).not.toHaveClass("pointer-events-none", "opacity-0");
+      expect(restoredFab).not.toHaveAttribute("tabindex");
     });
 
     it("hides the FAB while its own chat is open", async () => {
@@ -94,7 +98,10 @@ describe("TedChatLauncher Component (Task 10)", () => {
       render(<TedChatLauncher />);
       await user.click(screen.getByRole("button", { name: /abrir assistente ted/i }));
       expect(await screen.findByRole("dialog", { name: /chat com ted/i })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /abrir assistente ted/i })).not.toBeInTheDocument();
+      const hiddenFab = screen.getByRole("button", { name: /abrir assistente ted/i });
+      expect(hiddenFab).toHaveAttribute("aria-expanded", "true");
+      expect(hiddenFab).toHaveClass("pointer-events-none", "opacity-0");
+      expect(hiddenFab).toHaveAttribute("tabindex", "-1");
     });
   });
 

@@ -18,6 +18,7 @@ describe("Agents SDK Runtime Contract & Isolation (Steps 2 & 6)", () => {
       // In new path, onChatMessage should not simply return raw input echo
       const result = await (agent as unknown as { onChatMessage?: (msg: unknown) => Promise<unknown> }).onChatMessage?.({
         text: "teste de mensagem financeira",
+        intentionId: "intent-sdk-contract-1",
       });
       if (typeof result === "object" && result !== null && "text" in result) {
         expect((result as { text: string }).text).not.toBe("teste de mensagem financeira");

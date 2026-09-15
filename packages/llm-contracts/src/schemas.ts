@@ -1,13 +1,19 @@
 import { z } from 'zod';
 import {
   AUTH_MODES,
+  MUTATION_EFFECTS_REGISTRY,
+  MUTATION_KINDS,
   PRIVACY_CLASSES,
   PROTOCOLS,
   PROVIDER_ELIGIBILITIES,
   PROVIDER_KINDS,
+  REFRESH_TARGETS,
   ROLLOUT_MODES,
   SECRET_ALIASES,
+  TED_APPROVAL_TOOLS,
   TRANSPORTS,
+  type MutationEffectsEntry,
+  type MutationKind,
   type PendingOperationV2,
   type PendingOperationV2JsonValue,
 } from './types.js';
@@ -356,3 +362,140 @@ export const internalSnapshotSchema = z
       });
     }
   });
+
+/* ── TED V3 hardening (SPEC §15, §16, §7.8) ────────────────────────────── */
+
+export const refreshTargetSchema = z.enum(REFRESH_TARGETS);
+export const tedApprovalToolSchema = z.enum(TED_APPROVAL_TOOLS);
+export const mutationKindSchema = z.enum(MUTATION_KINDS);
+
+/**
+ * Approval-card projection (SPEC §16). Strict: attestation, auth and args
+ * material are rejected — the card carries display data only. `warnings`
+ * is required (possibly empty) so the user always sees an explicit list;
+ * `date` is a calendar day (YYYY-MM-DD), never a free-form LLM string.
+ */
+export const pendingOperationPresentationSchema = z
+  .object({
+    id: z.string().trim().min(1).max(128),
+    status: z.string().trim().min(1).max(64),
+    tool: z
+      .string()
+      .trim()
+      .min(1)
+      .regex(/^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9_]*)+$/),
+    title: z.string().trim().min(1).max(120),
+    amountCents: z.number().int().min(0).optional(),
+    description: z.string().trim().min(1).max(500).optional(),
+    date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD')
+      .optional(),
+    account: z.object({ id: z.string().trim().min(1).max(128), label: z.string().trim().min(1).max(120) }).strict().optional(),
+    category: z.object({ id: z.string().trim().min(1).max(128), label: z.string().trim().min(1).max(120) }).strict().optional(),
+    expiresAt: z.string().datetime({ offset: true }),
+    warnings: z.array(z.string().trim().min(1)),
+  })
+  .strict();
+
+/**
+ * Mutation receipt (SPEC §15.1). Identity rule enforced below: receipts
+ * whose kind originates from a TED approval tool MUST carry the origin
+ * `operationId`; normal-write receipts are valid without it.
+ */
+export const mutationReceiptSchema = z
+  .object({
+    mutationId: z.string().trim().min(1).max(128),
+    mutationKind: mutationKindSchema,
+    status: z.literal('succeeded'),
+    affectedTargets: z.array(refreshTargetSchema),
+    operationId: z.string().trim().min(1).max(128).optional(),
+    entity: z
+      .object({
+        type: z.string().trim().min(1).max(64),
+        id: z.string().trim().min(1).max(128),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (
+      (TED_APPROVAL_TOOLS as readonly string[]).includes(value.mutationKind) &&
+      value.operationId === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['operationId'],
+        message: 'TED approval-tool receipts require the origin operationId',
+      });
+    }
+  });
+
+/**
+ * Single Mutation Effects Registry entry (SPEC §15.1.1): a deterministic
+ * refresh set, or an explicit no-refresh exception with zero targets.
+ */
+export const mutationEffectsEntrySchema = z.union([
+  z
+    .object({
+      mutationKind: mutationKindSchema,
+      affectedTargets: z.array(refreshTargetSchema).min(1),
+      noRefresh: z.literal(false).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      mutationKind: mutationKindSchema,
+      affectedTargets: z.array(refreshTargetSchema).max(0),
+      noRefresh: z.literal(true),
+    })
+    .strict(),
+]);
+
+/**
+ * Browser-safe draft clarification payload (SPEC §7.8). Strict: no
+ * authorization, attestation, hash or executable-args keys survive.
+ */
+export const mutationDraftChannelSchema = z
+  .object({
+    draftId: z.string().trim().min(1).max(128),
+    tool: tedApprovalToolSchema,
+    missingFields: z.array(z.string().trim().min(1).max(64)).min(1),
+    question: z.string().trim().min(1).max(500),
+    expiresAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+
+/**
+ * Every schema whose output may reach the browser. The attestation-ban
+ * test sweeps this record, so new channel types are covered by adding
+ * them here.
+ */
+export const BROWSER_FACING_SCHEMAS = {
+  pendingOperationPresentation: pendingOperationPresentationSchema,
+  mutationReceipt: mutationReceiptSchema,
+  mutationDraftChannel: mutationDraftChannelSchema,
+} as const;
+
+export type BrowserFacingSchemaName = keyof typeof BROWSER_FACING_SCHEMAS;
+
+/**
+ * Deterministic effects lookup (SPEC §15.1.1). A known kind with no
+ * registration is an error — never an empty silent refresh.
+ */
+export const resolveMutationEffects = (kind: MutationKind): MutationEffectsEntry => {
+  const entry = (MUTATION_EFFECTS_REGISTRY as Record<string, MutationEffectsEntry | undefined>)[kind];
+  if (!entry) throw new Error(`no registered mutation effects for kind: ${kind}`);
+  return entry;
+};
+
+/** Fails listing every registered kind missing from the given table. */
+export const assertAllMutationKindsRegistered = (
+  registry: Partial<Record<MutationKind, MutationEffectsEntry>> = MUTATION_EFFECTS_REGISTRY,
+): void => {
+  const missing = MUTATION_KINDS.filter((kind) => registry[kind] === undefined);
+  if (missing.length > 0) {
+    throw new Error(`mutation kinds without registered effects: ${missing.join(', ')}`);
+  }
+};

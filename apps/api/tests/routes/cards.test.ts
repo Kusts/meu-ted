@@ -26,6 +26,17 @@ function auth(token: string) {
   return { 'x-device-token': token };
 }
 
+/**
+ * Purchase date guaranteed to land on an OPEN statement regardless of run date.
+ * today+35d → attaching statement's closingDate is always >= purchase date
+ * (getClosingDate never moves backwards), hence > today → computeStatus 'open'.
+ */
+function openPurchaseDate(): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + 35);
+  return d.toISOString().slice(0, 10);
+}
+
 describe('GET /cards/accounts', () => {
   it('returns only credit_card accounts for the household', async () => {
     const { app } = buildTestApp(freshSeed());
@@ -820,20 +831,22 @@ describe('DELETE /cards/purchases/:id', () => {
       method: 'POST',
       url: '/cards/purchases',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
-      payload: { accountId: CARD_A1.id, description: 'Compra cancelável', amountCents: 123_45, date: '2026-08-20', categoryId: CATEGORY_FOOD_A.id },
+      payload: { accountId: CARD_A1.id, description: 'Compra cancelável', amountCents: 123_45, date: openPurchaseDate(), categoryId: CATEGORY_FOOD_A.id },
     });
     expect(create.statusCode).toBe(201);
     const purchaseId = create.json().items[0].id;
     const stmtId = (await app.inject({ method: 'GET', url: `/cards/statements?accountId=${CARD_A1.id}`, headers: auth(TOKEN_A) })).json().items[0].id;
 
     const first = await app.inject({ method: 'DELETE', url: `/cards/purchases/${purchaseId}`, headers: auth(TOKEN_A) });
-    expect(first.statusCode).toBe(204);
+    expect(first.statusCode).toBe(200);
+    expect(first.json().id).toBe(purchaseId);
+    expect(first.json().receipt.mutationKind).toBe('transaction.delete');
     const detail = await app.inject({ method: 'GET', url: `/cards/statements/${stmtId}`, headers: auth(TOKEN_A) });
     expect(detail.json().purchases).toHaveLength(0);
     expect(detail.json().totalCents).toBe(0);
 
     const second = await app.inject({ method: 'DELETE', url: `/cards/purchases/${purchaseId}`, headers: auth(TOKEN_A) });
-    expect(second.statusCode).toBe(204);
+    expect(second.statusCode).toBe(200);
   });
 
   it('returns 404 when cancelling a purchase from another household', async () => {
@@ -855,7 +868,7 @@ describe('DELETE /cards/purchases/:id', () => {
       method: 'POST',
       url: '/cards/purchases',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
-      payload: { accountId: CARD_A1.id, description: 'Compra paga', amountCents: 100_00, date: '2026-08-20', categoryId: CATEGORY_FOOD_A.id },
+      payload: { accountId: CARD_A1.id, description: 'Compra paga', amountCents: 100_00, date: openPurchaseDate(), categoryId: CATEGORY_FOOD_A.id },
     });
     const purchaseId = create.json().items[0].id;
     const stmtId = (await app.inject({ method: 'GET', url: `/cards/statements?accountId=${CARD_A1.id}`, headers: auth(TOKEN_A) })).json().items[0].id;
@@ -877,13 +890,13 @@ describe('DELETE /cards/purchases/:id', () => {
       method: 'POST',
       url: '/cards/purchases',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
-      payload: { accountId: CARD_A1.id, description: 'Manter', amountCents: 70_00, date: '2026-08-20', categoryId: CATEGORY_FOOD_A.id },
+      payload: { accountId: CARD_A1.id, description: 'Manter', amountCents: 70_00, date: openPurchaseDate(), categoryId: CATEGORY_FOOD_A.id },
     });
     const c2 = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
-      payload: { accountId: CARD_A1.id, description: 'Cancelar', amountCents: 30_00, date: '2026-08-20', categoryId: CATEGORY_FOOD_A.id },
+      payload: { accountId: CARD_A1.id, description: 'Cancelar', amountCents: 30_00, date: openPurchaseDate(), categoryId: CATEGORY_FOOD_A.id },
     });
     const cancelId = c2.json().items[0].id;
     await app.inject({ method: 'DELETE', url: `/cards/purchases/${cancelId}`, headers: auth(TOKEN_A) });

@@ -74,10 +74,16 @@ describe('H-14: revogação fail-closed + epoch comparado durante a resposta', (
         epoch = 3; // revogação acontece enquanto a inferência roda
         return new Response(JSON.stringify({ text: 'resposta revogada' }), { status: 200 });
       }
+      // T3.1 (SPEC §14): finance reads require evidence before inference —
+      // serve usable-but-not-deterministically-renderable budget evidence so
+      // this turn reaches the relay and the epoch check still applies.
+      if (u.includes('/budgets')) {
+        return new Response(JSON.stringify({ budgets: [{ id: 'b1', name: 'Alimentação', limitCents: 100000 }] }), { status: 200 });
+      }
       return new Response('not found', { status: 404 });
     }) as unknown as typeof fetch;
 
-    const res = await agent.fetch(chatRequest('qual meu saldo?'));
+    const res = await agent.fetch(chatRequest('como está meu orçamento?'));
     expect(res.status).toBe(409);
     expect(((await res.json()) as { code?: string }).code).toBe('agent.security_epoch_changed');
     // A mensagem do usuário (pré-inferência, autorizada) persiste; a do
@@ -85,7 +91,7 @@ describe('H-14: revogação fail-closed + epoch comparado durante a resposta', (
     expect(persisted.filter((m) => m.role === 'assistant')).toHaveLength(0);
   });
 
-  it('autoridade indisponível ANTES do turno → 503 e relay nunca chamado', async () => {
+  it('autoridade indisponível ANTES do turno → fail-closed determinístico, relay nunca chamado', async () => {
     const { agent, persisted } = createTestAgent();
     const relayCalls: string[] = [];
     globalThis.fetch = (async (url: unknown) => {
@@ -98,9 +104,18 @@ describe('H-14: revogação fail-closed + epoch comparado durante a resposta', (
     }) as unknown as typeof fetch;
 
     const res = await agent.fetch(chatRequest('qual meu saldo?'));
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { output?: string; status?: string };
+    expect(body.status).toBe('completed');
+    // T3.1 (SPEC §14): unreadable evidence fails closed with the
+    // deterministic failure — the LLM is never consulted for a financial
+    // claim. Relay never called; history serves the deterministic failure
+    // (user Q + fail-closed A), never invented data.
     expect(relayCalls).toHaveLength(0);
-    expect(persisted).toHaveLength(0);
+    expect(body.output).toMatch(/Não consegui acessar seus dados financeiros agora/);
+    const assistants = persisted.filter((m) => m.role === 'assistant');
+    expect(assistants).toHaveLength(1);
+    expect(JSON.stringify(assistants[0])).toContain('Não consegui acessar seus dados financeiros agora');
   });
 
   it('autoridade cai DURANTE o turno → 503 e output não publicado', async () => {
@@ -116,10 +131,15 @@ describe('H-14: revogação fail-closed + epoch comparado durante a resposta', (
         authorityUp = false; // cai logo após a inferência
         return new Response(JSON.stringify({ text: 'resposta sem autoridade' }), { status: 200 });
       }
+      // T3.1: evidence must be usable so the turn reaches inference (see
+      // test 1); the authority failure under test happens after the relay.
+      if (u.includes('/budgets')) {
+        return new Response(JSON.stringify({ budgets: [{ id: 'b1', name: 'Alimentação', limitCents: 100000 }] }), { status: 200 });
+      }
       return new Response('not found', { status: 404 });
     }) as unknown as typeof fetch;
 
-    const res = await agent.fetch(chatRequest('qual meu saldo?'));
+    const res = await agent.fetch(chatRequest('como está meu orçamento?'));
     expect(res.status).toBe(503);
     expect(persisted.filter((m) => m.role === 'assistant')).toHaveLength(0);
   });
@@ -136,10 +156,15 @@ describe('H-14: revogação fail-closed + epoch comparado durante a resposta', (
         mode = 'disabled';
         return new Response(JSON.stringify({ text: 'resposta desabilitada' }), { status: 200 });
       }
+      // T3.1: evidence must be usable so the turn reaches inference (see
+      // test 1); the disable under test happens after the relay.
+      if (u.includes('/budgets')) {
+        return new Response(JSON.stringify({ budgets: [{ id: 'b1', name: 'Alimentação', limitCents: 100000 }] }), { status: 200 });
+      }
       return new Response('not found', { status: 404 });
     }) as unknown as typeof fetch;
 
-    const res = await agent.fetch(chatRequest('qual meu saldo?'));
+    const res = await agent.fetch(chatRequest('como está meu orçamento?'));
     expect(res.status).toBe(503);
     expect(persisted.filter((m) => m.role === 'assistant')).toHaveLength(0);
   });
@@ -160,10 +185,15 @@ describe('H-14: revogação fail-closed + epoch comparado durante a resposta', (
         });
         return new Response(stream, { status: 200, headers: { 'content-type': 'application/json' } });
       }
+      // T3.1: evidence must be usable so the turn reaches inference (see
+      // test 1); the relay failure under test happens after the read.
+      if (u.includes('/budgets')) {
+        return new Response(JSON.stringify({ budgets: [{ id: 'b1', name: 'Alimentação', limitCents: 100000 }] }), { status: 200 });
+      }
       return new Response('not found', { status: 404 });
     }) as unknown as typeof fetch;
 
-    const res = await agent.fetch(chatRequest('qual meu saldo?'));
+    const res = await agent.fetch(chatRequest('como está meu orçamento?'));
     expect(res.status).toBe(502);
     expect(persisted.filter((m) => m.role === 'assistant')).toHaveLength(0);
   });

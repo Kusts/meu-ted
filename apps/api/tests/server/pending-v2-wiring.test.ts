@@ -26,7 +26,17 @@ describe('pending V2 bootstrap wiring', () => {
       normalizedArgs: { description: 'Mercado', amountCents: 100, date: '2026-09-13', accountId: '00000000-0000-4000-8000-000000000001', categoryId: '00000000-0000-4000-8000-000000000002' },
       proposalHash: 'hash', idempotencyKey: 'key', createdAt: '2026-09-13T00:00:00.000Z', expiresAt: '2026-09-13T01:00:00.000Z',
       bindings: { workspaceId: 'workspace-authoritative', actorId: 'actor', deviceId: 'device' },
-    })).resolves.toEqual({ status: 'succeeded', operationId: 'tx-expense' });
+    })).resolves.toMatchObject({
+      status: 'succeeded',
+      operationId: 'tx-expense',
+      receipt: {
+        mutationKind: 'transactions.expense.create',
+        status: 'succeeded',
+        operationId: 'tx-expense',
+        affectedTargets: ['transactions', 'accounts', 'dashboard-summary', 'budgets', 'quick-insights'],
+        entity: { type: 'transaction', id: 'tx-expense' },
+      },
+    });
     expect(calls).toEqual([{ householdId: 'workspace-authoritative', input: expect.objectContaining({ description: 'Mercado' }) }]);
     await expect(execute({
       version: 2, id: 'op', workspaceId: 'workspace-authoritative', actorId: 'actor', deviceId: 'device', tool: 'create_expense', normalizedArgs: {}, proposalHash: 'hash', idempotencyKey: 'key-2', createdAt: '2026-09-13T00:00:00.000Z', expiresAt: '2026-09-13T01:00:00.000Z', bindings: { workspaceId: 'workspace-authoritative', actorId: 'actor', deviceId: 'device' },
@@ -71,7 +81,7 @@ describe('pending V2 bootstrap wiring', () => {
     const accepted = await app.inject({
       method: 'POST', url: '/pending-operations/v2/propose',
       headers: { 'idempotency-key': 'wiring-test-key-2' },
-      payload: { tool: 'transactions.create', normalizedArgs: { amountCents: 1 } },
+      payload: { tool: 'transactions.expense.create', normalizedArgs: { description: 'Mercado', amountCents: 100, date: '2026-09-13', accountId: '00000000-0000-4000-8000-000000000001', categoryId: '00000000-0000-4000-8000-000000000002' } },
     });
     expect(accepted.statusCode).toBe(201);
     expect(accepted.json().workspaceId).toBe('workspace-auth');
