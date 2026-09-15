@@ -183,6 +183,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
         },
         body: JSON.stringify({
           text: "Quanto gastei este mês?",
+          intentionId: "intent-forged-actor-1",
           actorId: "attacker-spoofed-999",
           metadata: { actorId: "attacker-spoofed-999" },
         }),
@@ -508,7 +509,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
           "x-agent-actor": "user-test-1",
           "x-agent-workspace": "ws-test-1",
         },
-        body: JSON.stringify({ text: userPromptWithSecret }),
+        body: JSON.stringify({ text: userPromptWithSecret, intentionId: "intent-redaction-1" }),
       }),
     );
 
@@ -641,7 +642,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
           "x-agent-actor": "user-test-1",
           "x-agent-workspace": "ws-test-1",
         },
-        body: JSON.stringify({ text: "Olá TED" }),
+        body: JSON.stringify({ text: "Olá TED", intentionId: "intent-no-persist-1" }),
       }),
     );
 

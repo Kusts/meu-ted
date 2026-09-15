@@ -10,6 +10,7 @@ import {
 } from "@/lib/api/agent-client";
 import { TedMessage } from "./TedMessage";
 import { TedApprovalCard, type TedPendingOperation } from "./TedApprovalCard";
+import { useRecordingState } from "./use-recording-state";
 import { useBodyScrollLock } from "@/lib/ui/overlay-a11y";
 import { Sparkles, X, Send, Mic, MicOff, Image as ImageIcon, FileText, Paperclip, Trash2, RefreshCw } from "lucide-react";
 
@@ -35,15 +36,26 @@ export function TedChat({ open, onClose }: TedChatProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [status, setStatus] = useState<"connecting" | "ready" | "streaming" | "error">("ready");
   const [attachments, setAttachments] = useState<TedAttachment[]>([]);
-  const [recording, setRecording] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
   const prevWorkspaceIdRef = useRef<string | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Microphone lifecycle (SPEC §17, H-08): recording state only exists after
+  // getUserMedia + MediaRecorder + start; single idempotent cleanup.
+  // (start/stop expostos de forma estável; cleanupMedia é useCallback estável.)
+  const recordingCtl = useRecordingState({
+    onAudioBlob: (blob) => {
+      const url = URL.createObjectURL(blob);
+      setAttachments((prev) => [...prev, { type: "audio", url, name: `audio-${Date.now()}.webm` }]);
+    },
+    onError: (message) => setError(message),
+  });
+  const { state: recordingState, cleanupMedia: cleanupRecordingMedia } = recordingCtl;
+  const isRecording = recordingState === "recording";
+  const isRequestingMic = recordingState === "requesting";
 
   const flashNotice = useCallback((text: string) => {
     setNotice(text);
@@ -78,9 +90,11 @@ export function TedChat({ open, onClose }: TedChatProps) {
   }, [activeWorkspace]);
 
   // Isolamento por workspace: limpar histórico imediatamente ao trocar de workspace
+  // (SPEC §17: troca de workspace também encerra o microfone via cleanup único)
   useEffect(() => {
     const newId = activeWorkspace?.id ?? null;
     if (prevWorkspaceIdRef.current !== null && prevWorkspaceIdRef.current !== newId) {
+      cleanupRecordingMedia();
       setMessages([]);
       setPendingOps([]);
       setError(null);
@@ -88,7 +102,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
       setAttachments([]);
     }
     prevWorkspaceIdRef.current = newId;
-  }, [activeWorkspace?.id]);
+  }, [activeWorkspace?.id, cleanupRecordingMedia]);
 
   useEffect(() => {
     if (open && activeWorkspace) {
@@ -96,11 +110,21 @@ export function TedChat({ open, onClose }: TedChatProps) {
       void loadHistory();
     }
     if (!open) {
-      // Limpar estado sensível ao fechar
-      setAttachments([]);
-      setRecording(false);
+      // Limpar estado sensível ao fechar (SPEC §17: cleanup único do microfone
+      // + revogar URLs locais de áudio; demais anexos seguem com T4.2).
+      cleanupRecordingMedia();
+      setAttachments((prev) => {
+        for (const att of prev) {
+          if (att.type === "audio") {
+            try {
+              URL.revokeObjectURL(att.url);
+            } catch {}
+          }
+        }
+        return [];
+      });
     }
-  }, [open, activeWorkspace, loadHistory]);
+  }, [open, activeWorkspace, loadHistory, cleanupRecordingMedia]);
 
   useEffect(() => {
     if (typeof messagesEndRef.current?.scrollIntoView === "function") {
@@ -157,45 +181,19 @@ export function TedChat({ open, onClose }: TedChatProps) {
     });
   };
 
-  const handleToggleRecording = async () => {
-    if (recording) {
-      // Parar gravação
-      try {
-        mediaRecorderRef.current?.stop();
-      } catch {}
-      try {
-        mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
-      } catch {}
-      setRecording(false);
+  // SPEC §17: estado "recording" só existe após getUserMedia + MediaRecorder + start.
+  // "requesting" é cancelável; "processing" aguarda o onstop gerar o anexo.
+  const handleToggleRecording = () => {
+    if (isRecording || recordingState === "processing") {
+      recordingCtl.stop();
       return;
     }
-    // Otimista: mostrar gravando imediatamente para feedback instantâneo e testes
-    setRecording(true);
-    setError(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
-      const chunks: BlobPart[] = [];
-      recorder.ondataavailable = (ev: BlobEvent) => {
-        if (ev.data.size > 0) chunks.push(ev.data);
-      };
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: "audio/webm" });
-        const url = URL.createObjectURL(blob);
-        setAttachments((prev) => [...prev, { type: "audio", url, name: `audio-${Date.now()}.webm` }]);
-        try {
-          stream.getTracks().forEach((t) => t.stop());
-        } catch {}
-      };
-      mediaRecorderRef.current = recorder;
-      recorder.start();
-    } catch {
-      // Manter feedback visual mesmo em caso de falha para testes e UX (mostra erro mas mantém gravando visível brevemente)
-      setError("Não foi possível acessar o microfone. Verifique as permissões.");
-      // Não reverter imediatamente para garantir que o teste capture o estado 'gravando'
-      // Em produção, o usuário verá o erro e poderá tentar novamente; mantém gravando por feedback
+    if (isRequestingMic) {
+      cleanupRecordingMedia();
+      return;
     }
+    setError(null);
+    void recordingCtl.start();
   };
 
   const handleSend = async (e: React.FormEvent) => {
@@ -256,6 +254,8 @@ export function TedChat({ open, onClose }: TedChatProps) {
 
   const handleNewSession = async () => {
     if (!activeWorkspace || loading) return;
+    // SPEC §17: nova sessão encerra o microfone via cleanup único.
+    cleanupRecordingMedia();
     setError(null);
     try {
       await renewAgentSession(activeWorkspace.id);
@@ -447,12 +447,13 @@ export function TedChat({ open, onClose }: TedChatProps) {
             <button
               type="button"
               onClick={handleToggleRecording}
-              aria-label={recording ? "Parar gravação" : "Gravar áudio"}
-              className={`flex h-9 w-9 flex-none items-center justify-center rounded-full shadow-xs cursor-pointer ${recording ? "bg-danger text-white animate-pulse" : "bg-surface-3 text-text-secondary hover:bg-surface-4"}`}
+              aria-label={isRecording ? "Parar gravação" : isRequestingMic ? "Solicitando permissão de microfone" : "Gravar áudio"}
+              className={`flex h-9 w-9 flex-none items-center justify-center rounded-full shadow-xs cursor-pointer ${isRecording ? "bg-danger text-white animate-pulse" : "bg-surface-3 text-text-secondary hover:bg-surface-4"}`}
             >
-              {recording ? <MicOff size={16} /> : <Mic size={16} />}
+              {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
             </button>
-            {recording && <span className="text-[11px] font-bold text-danger animate-pulse">gravando…</span>}
+            {isRecording && <span className="text-[11px] font-bold text-danger animate-pulse">gravando…</span>}
+            {isRequestingMic && <span className="text-[11px] font-medium text-text-muted">solicitando permissão…</span>}
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}

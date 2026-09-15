@@ -39,20 +39,34 @@ vi.mock("@/lib/api/agent-client", async (importOriginal) => {
 describe("TedChat – áudio e anexos (imagem, PDF)", () => {
   beforeEach(() => {
     vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("mock-token");
-    // Mock MediaRecorder on both globalThis and window
-    const mockRecorder = vi.fn().mockImplementation(() => ({
-      start: vi.fn(),
-      stop: vi.fn(function (this: unknown) {
+    // Mock MediaRecorder on both globalThis and window.
+    // NOTE (SPEC §17): construtor fiel via `function` + `this` — um
+    // mockImplementation com arrow não é construível com `new`, e o hook
+    // corretamente recusa o estado "recording" nesse caso.
+    const mockRecorder = vi.fn(function (this: {
+      start: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
+      addEventListener: ReturnType<typeof vi.fn>;
+      removeEventListener: ReturnType<typeof vi.fn>;
+      state: string;
+      ondataavailable: null;
+      onstop: (() => void) | null;
+    }) {
+      this.state = "inactive";
+      this.ondataavailable = null;
+      this.onstop = null;
+      this.addEventListener = vi.fn();
+      this.removeEventListener = vi.fn();
+      this.start = vi.fn(() => {
+        this.state = "recording";
+      });
+      const self = this;
+      this.stop = vi.fn(() => {
         // Simulate onstop triggering
-        const self = this as { onstop?: () => void };
+        self.state = "inactive";
         if (self.onstop) self.onstop();
-      }),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      state: "inactive",
-      ondataavailable: null,
-      onstop: null as unknown as (() => void) | null,
-    }));
+      });
+    });
     (globalThis as unknown as { MediaRecorder?: unknown }).MediaRecorder = mockRecorder;
     (window as unknown as { MediaRecorder?: unknown }).MediaRecorder = mockRecorder as unknown as typeof MediaRecorder;
     // Ensure navigator.mediaDevices.getUserMedia resolves

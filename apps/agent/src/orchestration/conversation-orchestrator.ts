@@ -3,6 +3,7 @@ import { parseFinancialMutation } from '../mutations/financial-parser.js';
 import { resolveMutationEntities, type EntityReader } from '../mutations/entity-resolver.js';
 import { resolveConfirmation } from '../mutations/confirmation-resolver.js';
 import type { MutationApiClient, MutationIdentity } from '../mutations/mutation-api-client.js';
+import { deriveIdempotencyKey } from '../tools/intention-ledger.js';
 import { emitSanitizedEvent } from '../observability/events.js';
 import type { EvidenceEnvelope } from '../evidence/evidence-envelope.js';
 import { createGroundedResponseWithRetry } from '../responses/grounded-response.js';
@@ -65,7 +66,7 @@ export type AuthenticatedIdentity = Readonly<{
   deviceId?: string | null;
 }>;
 
-type Body = { text?: unknown; content?: unknown; intentionId?: unknown; traceId?: unknown; attachments?: unknown; pendingOperationIds?: unknown; [key: string]: unknown };
+type Body = { text?: unknown; content?: unknown; intentionId?: unknown; messageId?: unknown; traceId?: unknown; attachments?: unknown; pendingOperationIds?: unknown; [key: string]: unknown };
 
 const freeze = <T>(value: T): T => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -78,7 +79,15 @@ const normalize = (body: Body, identity: AuthenticatedIdentity, channel: Convers
   const textValue = typeof body.text === 'string' ? body.text : typeof body.content === 'string' ? body.content : '';
   const text = scrubForPersistence(textValue.trim());
   if (!text) throw new Error('agent.invalid_message');
-  const intentionId = typeof body.intentionId === 'string' && body.intentionId.trim() ? body.intentionId.trim() : `intent-${Date.now()}`;
+  // SPEC §7.7/§7.7.1: the intentionId derives deterministically from the
+  // PWA messageId (sent as intentionId, or as messageId alias). No
+  // Date.now()/random fallback: a lost response is redelivered with the same
+  // id, so retry can only ever dedup to the same proposal.
+  const rawIntention = typeof body.intentionId === 'string' && body.intentionId.trim()
+    ? body.intentionId.trim()
+    : typeof body.messageId === 'string' && body.messageId.trim() ? body.messageId.trim() : '';
+  if (!rawIntention) throw new Error('agent.invalid_message');
+  const intentionId = rawIntention;
   const traceId = typeof body.traceId === 'string' && body.traceId.trim() ? body.traceId.trim() : intentionId;
   if (intentionId.length > 128 || traceId.length > 128) throw new Error('agent.invalid_message');
   const attachments = Array.isArray(body.attachments)
@@ -231,8 +240,15 @@ export class ConversationOrchestrator {
         return freeze({ ...result, plan: incompletePlan, clarification: freeze({ missingFields: incompletePlan.missingFields, text: resolution.clarification }), response: freeze({ text: resolution.clarification }) });
       }
       const identity: MutationIdentity = { workspaceId: input.workspaceId, actorId: input.actorId, deviceId: input.deviceId ?? (() => { throw new Error('mutation.device_required'); })() };
+      // SPEC §7.7.1: the no-draft proposal key derives deterministically
+      // from the intentionId (same turn → same key, even after a lost
+      // response). The API dedups by (workspaceId, key) + payload
+      // fingerprint: same key + same payload returns the existing operation
+      // (treated as success below); same key + divergent payload is a
+      // definitive idempotency.conflict, which propagates — never success.
+      const tool = parsed.kind === 'income' ? 'transactions.income.create' : 'transactions.expense.create';
       const proposal = await client.propose({
-          tool: parsed.kind === 'income' ? 'transactions.income.create' : 'transactions.expense.create',
+        tool,
         normalizedArgs: {
           amountCents: parsed.amountCents,
           description: parsed.description,
@@ -242,7 +258,7 @@ export class ConversationOrchestrator {
         },
         summary: parsed.description,
         identity,
-        idempotencyKey: input.intentionId,
+        idempotencyKey: deriveIdempotencyKey(input.workspaceId, input.intentionId, tool),
       });
       return freeze({ ...result, mutation: freeze({ operationId: proposal.id, status: 'proposed' }), response: freeze({ text: renderMutationResult('proposed', proposal.summary) }) });
     }

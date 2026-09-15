@@ -640,9 +640,14 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     // identity — the Worker gateway compares any client-supplied actorId
     // against the authenticated actor (403 on mismatch) before this code is
     // reachable, and the REST legs derive identity from verified headers.
-    const payload = (messagePayload ?? {}) as { text?: string; intentionId?: string; actorId?: string; workspaceId?: string };
+    const payload = (messagePayload ?? {}) as { text?: string; intentionId?: string; messageId?: string; actorId?: string; workspaceId?: string };
     const text = typeof payload.text === "string" ? payload.text.trim() : "";
-    const intentionId = payload.intentionId ?? `intent-${Date.now()}`;
+    // SPEC §7.7: no Date.now()/random fallback — the caller owns the turn
+    // identity; without it the turn cannot dedup safely.
+    const intentionId = typeof payload.intentionId === "string" && payload.intentionId.trim()
+      ? payload.intentionId.trim()
+      : typeof payload.messageId === "string" && payload.messageId.trim() ? payload.messageId.trim() : "";
+    if (!intentionId) throw Object.assign(new Error("agent.invalid_message"), { code: "agent.invalid_message", status: 400 });
     const actorId = payload.actorId ?? "anonymous";
     const sdkWorkspace = payload.workspaceId ?? "workspace";
 
@@ -1098,7 +1103,7 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       const deviceHeader = request.headers.get("x-agent-device")?.trim();
       const deviceId = deviceHeader ? deviceHeader : undefined;
 
-      let body: { text?: unknown; content?: unknown; intentionId?: unknown; attachments?: unknown };
+      let body: { text?: unknown; content?: unknown; intentionId?: unknown; messageId?: unknown; attachments?: unknown };
       try {
         body = (await request.json()) as { text?: unknown; content?: unknown; intentionId?: unknown; attachments?: unknown };
       } catch {
@@ -1113,9 +1118,16 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       // H-09: central DLP scrub before the text becomes durable (transcript,
       // memory, summary, learning, export all read this value downstream).
       const text = unredactedText ? scrubForPersistence(unredactedText) : incomingAttachments.length > 0 ? `[anexo ${incomingAttachments.map((a) => a.name).join(", ")}]` : "";
+      // SPEC §7.7/§7.7.1: the intentionId derives deterministically from the
+      // PWA messageId (intentionId field, or messageId alias). No
+      // Date.now()/random fallback: a redelivery after a lost response
+      // carries the same id and dedups to the same proposal downstream.
       const intentionId = typeof body.intentionId === "string" && body.intentionId.trim()
         ? body.intentionId.trim()
-        : `intent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        : typeof body.messageId === "string" && body.messageId.trim() ? body.messageId.trim() : "";
+      if (!intentionId || intentionId.length > 128) {
+        return Response.json({ code: "agent.invalid_message" }, { status: 400 });
+      }
 
       const restInput = normalizeRestTurn(
         { ...body, text, intentionId, attachments: incomingAttachments },

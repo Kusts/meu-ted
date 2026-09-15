@@ -60,7 +60,11 @@ describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
     expect(capturedUrl).toBe("https://agent.example.test/agents/finance-chat-agent/workspace-123/rpc/chat");
     expect(capturedInit?.method).toBe("POST");
     expect((capturedInit?.headers as Record<string, string>)["x-agent-connection-token"]).toBe("signed-token-123");
-    expect(capturedInit?.body).toBe(JSON.stringify({ text: "Quanto gastei?" }));
+    // SPEC §7.7: the send carries a stable intentionId (PWA messageId).
+    const sentBody = JSON.parse(String(capturedInit?.body)) as { text?: string; intentionId?: string };
+    expect(sentBody.text).toBe("Quanto gastei?");
+    expect(typeof sentBody.intentionId).toBe("string");
+    expect(sentBody.intentionId!.length).toBeGreaterThan(0);
     expect(result.output).toBe("Seu saldo é R$ 1.000,00.");
   });
 

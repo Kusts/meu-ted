@@ -171,6 +171,7 @@ describe('H-09: ingresso /rpc/chat com PAN + anexo inline', () => {
         },
         body: JSON.stringify({
           text: `pague a fatura com o cartão ${PAN_SPACED}`,
+          intentionId: 'intent-dlp-1',
           attachments: [{ type: 'image', url: 'https://cdn.test/x.png', name: 'c.png', data: 'RAWBASE64' }],
         }),
       }),

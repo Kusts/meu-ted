@@ -94,7 +94,7 @@ describe("FinanceChatAgent & Worker Integration (Task 4)", () => {
 
   it("fails closed when provider is not configured rather than echoing raw input or silently falling back", async () => {
     const agent = Object.create(FinanceChatAgent.prototype) as FinanceChatAgent;
-    const result = await agent.onChatMessage({ text: "Qual o meu saldo?" }) as { text?: string };
+    const result = await agent.onChatMessage({ text: "Qual o meu saldo?", intentionId: "intent-provider-gate-1" }) as { text?: string };
     expect(result).toBeDefined();
     expect(result.text).not.toBe("Qual o meu saldo?");
     expect(result.text).toContain("provider not configured");

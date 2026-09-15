@@ -297,7 +297,12 @@ const runNormalize = (scenario: BehavioralScenario): string => {
   const identity = (exec.identity ?? DEFAULT_IDENTITY) as AuthenticatedIdentity;
   const body = (exec.body ?? {}) as Record<string, unknown>;
   const channel = String(exec.channel ?? 'pwa-rest');
-  const input = channel === 'sdk' ? normalizeSdkTurn(body, identity) : channel === 'broker' ? normalizeBrokerTurn(body, identity) : normalizeRestTurn(body, identity);
+  // SPEC §7.7: production turns always carry the PWA messageId. Fixture
+  // bodies that predate it get a deterministic scenario-scoped id so the
+  // harness exercises identity precedence, not the missing-id rejection
+  // (covered separately by turn-idempotency.test.ts).
+  const withId = body.intentionId ?? body.messageId ?? body.traceId ? body : { ...body, intentionId: `${id}-intent` };
+  const input = channel === 'sdk' ? normalizeSdkTurn(withId, identity) : channel === 'broker' ? normalizeBrokerTurn(withId, identity) : normalizeRestTurn(withId, identity);
   if (expect.actorId !== undefined) eq(input.actorId, expect.actorId, 'actorId from verified identity', id);
   if (expect.workspaceId !== undefined) eq(input.workspaceId, expect.workspaceId, 'workspaceId from verified identity', id);
   if (expect.channel !== undefined) eq(input.channel, expect.channel, 'channel', id);

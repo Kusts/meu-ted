@@ -58,6 +58,87 @@ export type AgentTurn = {
   }>;
 };
 
+/**
+ * SPEC §7.7/§7.7.1 — stable per-turn message identity (PWA-owned).
+ *
+ * Every outgoing chat message gets a `messageId` generated ONCE at send
+ * composition. Retries of the same send MUST reuse it (pass
+ * `{ messageId }` back into `sendAgentMessage`); the id is sent as the
+ * Agent's `intentionId`, so a lost HTTP response can never produce a second
+ * proposal. Never regenerate on retry; a new message composes a new id.
+ */
+export type PendingChatSend = Readonly<{
+  messageId: string;
+  content: string;
+  createdAt: string;
+  attachments?: ReadonlyArray<Readonly<{ type: string; url: string; name: string }>>;
+}>;
+
+export function createChatMessageId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+export function composeChatSend(
+  content: string,
+  opts?: {
+    attachments?: Array<{ type: string; url: string; name: string }>;
+    messageId?: string;
+  },
+): PendingChatSend {
+  const messageId = opts?.messageId && opts.messageId.trim() ? opts.messageId.trim() : createChatMessageId();
+  return {
+    messageId,
+    content,
+    createdAt: new Date().toISOString(),
+    ...(opts?.attachments ? { attachments: opts.attachments } : {}),
+  };
+}
+
+const pendingSendKey = (workspaceId: string): string => `ted.pending-send.${workspaceId}`;
+
+/**
+ * Persists the in-flight send record (messageId + content only — never
+ * secrets) so a page reload restores the same id for retry.
+ */
+export function savePendingChatSend(workspaceId: string, send: PendingChatSend): void {
+  try {
+    sessionStorage.setItem(
+      pendingSendKey(workspaceId),
+      JSON.stringify({ messageId: send.messageId, content: send.content, createdAt: send.createdAt }),
+    );
+  } catch {
+    // Storage unavailable (private mode): the in-memory retry path still reuses the id.
+  }
+}
+
+export function loadPendingChatSend(workspaceId: string): PendingChatSend | null {
+  try {
+    const raw = sessionStorage.getItem(pendingSendKey(workspaceId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { messageId?: unknown; content?: unknown; createdAt?: unknown };
+    if (typeof parsed.messageId !== "string" || !parsed.messageId || typeof parsed.content !== "string") return null;
+    return {
+      messageId: parsed.messageId,
+      content: parsed.content,
+      createdAt: typeof parsed.createdAt === "string" ? parsed.createdAt : new Date(0).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingChatSend(workspaceId: string): void {
+  try {
+    sessionStorage.removeItem(pendingSendKey(workspaceId));
+  } catch {
+    // Best effort.
+  }
+}
+
 const pendingDecisionSchema = z.object({
   operationId: z.string(),
   status: z.enum(["proposed", "succeeded", "failed", "cancelled", "expired"]),
@@ -157,9 +238,18 @@ async function fetchWithAgentAuth(workspaceId: string, url: string, init: Reques
 export async function sendAgentMessage(
   workspaceId: string,
   content: string,
-  opts?: { attachments?: Array<{ type: string; url: string; name: string }> },
+  opts?: { attachments?: Array<{ type: string; url: string; name: string }>; messageId?: string },
 ): Promise<AgentTurn> {
   const baseUrl = agentBaseUrl();
+  // SPEC §7.7: the send identity is fixed ONCE here; retries pass the same
+  // messageId back and the pending record keeps it across reloads.
+  const messageId = opts?.messageId && opts.messageId.trim() ? opts.messageId.trim() : createChatMessageId();
+  savePendingChatSend(workspaceId, {
+    messageId,
+    content,
+    createdAt: new Date().toISOString(),
+    ...(opts?.attachments ? { attachments: opts.attachments } : {}),
+  });
   const response = await fetchWithAgentAuth(
     workspaceId,
     `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/chat`,
@@ -170,7 +260,7 @@ export async function sendAgentMessage(
         "content-type": "application/json",
         "X-Workspace-Id": workspaceId,
       },
-      body: JSON.stringify({ text: content, attachments: opts?.attachments }),
+      body: JSON.stringify({ text: content, attachments: opts?.attachments, intentionId: messageId }),
     },
   );
   if (!response.ok) {
@@ -192,6 +282,9 @@ export async function sendAgentMessage(
     throw err;
   }
   const data = await response.json() as { turnId?: string; intentionId?: string; status?: string; output?: string; memorized?: string[]; pendingOperation?: AgentTurn["pendingOperation"] };
+  // The turn landed: the in-flight record is no longer needed. On failure
+  // (throw above) it stays, so retry reuses the same messageId.
+  clearPendingChatSend(workspaceId);
   return {
     turnId: data.turnId ?? data.intentionId ?? `turn-${Date.now()}`,
     status: data.status ?? "completed",
