@@ -14,8 +14,9 @@
  * Forbidden: executing->confirmed, succeeded->executing,
  *  cancelled->confirmed, expired->confirmed.
  *
- * Three RED-BY-DESIGN tests assert TARGET behavior and are EXPECTED to fail
- * on the in-memory store until T2.2-T2.4 land. Do not weaken them.
+ * One RED-BY-DESIGN test asserts TARGET behavior (claim parity, T2.3) and
+ * is EXPECTED to fail until T2.3 lands. Do not weaken it. The H-03
+ * recoverable-confirm tests (T2.2) already assert target behavior and pass.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -268,16 +269,39 @@ export function definePendingV2ContractSuite(
       await expect(store.confirm(saved.id, id)).rejects.toBeInstanceOf(PendingOperationV2Error);
     });
 
-    it('RED-BY-DESIGN (H-03): second confirm on confirmed returns no attestation', async () => {
+    it('recoverable confirm (H-03, SPEC §9): second confirm on confirmed re-emits a NEW attestation and invalidates the old', async () => {
       const id = newIdentity();
       const saved = await proposeCanonical(id);
       const first = await store.confirm(saved.id, id);
       expect(first.attestation).toBeTruthy();
+      expect(first.attestationIssuedAt).toBeTruthy();
+      const firstToken = first.attestation!;
       const second = await store.confirm(saved.id, id);
-      expect(second.attestation).toBeUndefined();
+      expect(second.status).toBe('confirmed');
+      expect(second.attestation).toBeTruthy();
+      expect(second.attestation).not.toBe(firstToken);
+      // Old token is invalid immediately after rotation: exactly one valid
+      // attestation at any instant.
+      await expect(
+        store.execute(firstToken, id, async () => succeededResult()),
+      ).rejects.toMatchObject({ code: 'approval.attestation_replayed' });
+      // The new token executes exactly once: recovery without duplication.
+      const done = await store.execute(second.attestation!, id, async () => succeededResult());
+      expect(done.status).toBe('succeeded');
+      await expect(
+        store.execute(second.attestation!, id, async () => succeededResult()),
+      ).rejects.toMatchObject({ code: 'approval.attestation_replayed' });
     });
 
-    it('RED-BY-DESIGN: get after confirm never exposes attestation', async () => {
+    it('confirm after the attestation was consumed never re-emits (replay path rejects per protocol)', async () => {
+      const id = newIdentity();
+      const saved = await proposeCanonical(id);
+      const confirmed = await store.confirm(saved.id, id);
+      await store.execute(confirmed.attestation!, id, async () => succeededResult());
+      await expect(store.confirm(saved.id, id)).rejects.toBeInstanceOf(PendingOperationV2Error);
+    });
+
+    it('get after confirm never exposes attestation', async () => {
       const id = newIdentity();
       const saved = await proposeCanonical(id);
       await store.confirm(saved.id, id);
