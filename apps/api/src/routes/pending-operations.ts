@@ -83,6 +83,35 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
     };
     app.post('/pending-operations/v2/propose', proposeV2);
     app.post('/pending-operations/v2', proposeV2);
+    // T1.5 (SPEC §8.3): Agent-only authoritative listing. Identity comes
+    // exclusively from the authenticated context — the PWA never declares
+    // which operations it believes are pending. Lean projection: enough for
+    // disambiguation (amount/description/date/account), never authority
+    // material (no attestation, no full normalizedArgs). Registered before
+    // the `/:id` GETs so the static segment can never be read as an id.
+    app.get('/pending-operations/v2/active', async (req, reply) => {
+      if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.read)) return;
+      let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); }
+      try {
+        const records = await v2Store.listActive(identity(ctx));
+        const items = records.map((record) => {
+          const args = (record.normalizedArgs ?? {}) as Record<string, unknown>;
+          return {
+            id: record.id,
+            status: record.status,
+            tool: record.tool,
+            createdAt: record.createdAt,
+            expiresAt: record.expiresAt,
+            ...(typeof args.amountCents === 'number' ? { amountCents: args.amountCents } : {}),
+            ...(typeof args.description === 'string' ? { description: args.description } : {}),
+            ...(typeof args.date === 'string' ? { date: args.date } : {}),
+            ...(typeof args.accountId === 'string' ? { accountId: args.accountId } : {}),
+            ...(typeof args.categoryId === 'string' ? { categoryId: args.categoryId } : {}),
+          };
+        });
+        return reply.send({ items, total: items.length });
+      } catch (error) { return handleError(error, reply); }
+    });
     const confirm = async (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.confirm)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.confirm(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } };
     app.post('/pending-operations/v2/:id/confirm', confirm);
     app.get('/pending-operations/v2/:id', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.read)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.get(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } });

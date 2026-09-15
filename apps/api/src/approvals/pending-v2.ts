@@ -68,6 +68,24 @@ const nowIso = (): string => new Date().toISOString();
 export const PENDING_V2_EXECUTION_LEASE_MS = 60_000;
 
 /**
+ * SPEC §11 (T2.4): lease duration is configurable — explicit override wins,
+ * then `PENDING_V2_EXECUTION_LEASE_MS` env, then the 60s default constant
+ * (which stays the default source). Claim (TX1) and the reconciler renew
+ * both resolve through here so they share the window by construction.
+ */
+export type PendingOperationV2StoreOptions = {
+  /** Execution-lease window in milliseconds. Must be > 0 to take effect. */
+  leaseMs?: number;
+};
+
+export const resolvePendingV2LeaseMs = (override?: number): number => {
+  if (typeof override === 'number' && Number.isFinite(override) && override > 0) return Math.floor(override);
+  const fromEnv = Number(process.env.PENDING_V2_EXECUTION_LEASE_MS);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.floor(fromEnv);
+  return PENDING_V2_EXECUTION_LEASE_MS;
+};
+
+/**
  * SPEC §10: TX2 failure persists a SANITIZED code only — never the error
  * message, stack, prompt, or executor payload content. Protocol errors keep
  * their code; foreign string codes are allow-listed by shape; everything
@@ -83,11 +101,38 @@ export const sanitizePendingV2FailureCode = (error: unknown): string => {
 export type PendingOperationV2Store = {
   propose(operation: PendingOperationV2): Promise<PendingOperationV2Record>;
   get(id: string, identity: PendingIdentity): Promise<PendingOperationV2Record>;
+  /**
+   * T1.5 (SPEC §8.3): authoritative listing of non-terminal operations for
+   * the AUTHENTICATED identity (workspace + actor + device). Never takes
+   * client-declared ids. Read-only: no state transitions, no attestation.
+   */
+  listActive(identity: PendingIdentity): Promise<readonly PendingOperationV2Record[]>;
   confirm(id: string, identity: PendingIdentity): Promise<PendingOperationV2Record>;
   execute(token: string, identity: PendingIdentity, executor: PendingExecutor): Promise<PendingOperationV2Record>;
   retry(id: string, identity: PendingIdentity): Promise<PendingOperationV2Record>;
   cancel(id: string, identity: PendingIdentity): Promise<PendingOperationV2Record>;
   expire(id: string, identity: PendingIdentity): Promise<PendingOperationV2Record>;
+  /**
+   * SPEC §11.3 (T2.4): reconcile an abandoned `executing` operation whose
+   * lease expired — crash recovery, NOT a new approval. Renews the lease,
+   * bumps the attempt, and re-runs the SAME executor with the SAME persisted
+   * idempotencyKey, persisting TX2 succeeded/failed exactly like execute().
+   * Valid lease → `approval.execution_in_progress`; any non-`executing`
+   * state (including `confirmed`, whose recovery is attestation re-emission
+   * per §9/T2.2) → `approval.reconcile_not_allowed`. Terminal states never
+   * re-enter execution.
+   *
+   * HTTP attach point (NOT wired here — routes/pending-operations.ts is
+   * owned by a sibling task): e.g.
+   * `POST /pending-operations/v2/:id/reconcile` →
+   * `v2Store.reconcileExpiredExecuting(id, identity, v2Executor)`.
+   */
+  reconcileExpiredExecuting(
+    id: string,
+    identity: PendingIdentity,
+    executor: PendingExecutor,
+    opts?: { leaseMs?: number },
+  ): Promise<PendingOperationV2Record>;
   readonly audit: readonly PendingAuditEvent[];
 };
 
@@ -125,7 +170,10 @@ const mapV2 = (row: PendingV2Row, token?: string): PendingOperationV2Record => {
   };
 };
 
-export const createPostgresPendingOperationV2Store = (pool: Pool): PendingOperationV2Store => {
+export const createPostgresPendingOperationV2Store = (
+  pool: Pool,
+  options?: PendingOperationV2StoreOptions,
+): PendingOperationV2Store => {
   const events: PendingAuditEvent[] = [];
   const fail = (code: string, message: string, statusCode = 409): never => { throw new PendingOperationV2Error(code, message, statusCode); };
   const read = async (client: PoolClient, id: string, identity: PendingIdentity, forUpdate = false): Promise<PendingV2Row> => {
@@ -149,6 +197,25 @@ export const createPostgresPendingOperationV2Store = (pool: Pool): PendingOperat
       return { ...mapV2(row), existing };
     },
     async get(id, identity) { return mapV2(await read({ query: pool.query.bind(pool) } as unknown as PoolClient, id, identity)); },
+    /**
+     * T1.5 (SPEC §8.3) — appended after the terminal transitions so the
+     * execute/claim/lease surface above stays untouched (T2.4 owns it).
+     * Read-only scan scoped by the authenticated identity; terminal states
+     * (succeeded/cancelled/expired) are excluded, actionable
+     * (proposed/confirmed) and recovery-relevant (executing/failed) states
+     * are included as listing metadata. No covering index is added here:
+     * the table holds only live pending operations and the existing
+     * V051/V052 partial indexes already narrow the sibling paths — a
+     * dedicated (workspace, actor, device, status) index is a V053
+     * follow-up if the scan ever shows up in query stats.
+     */
+    async listActive(identity) {
+      const result = await pool.query<PendingV2Row>(
+        `SELECT * FROM pending_operations WHERE workspace_id = $1 AND actor_id = $2 AND device_id = $3 AND protocol_version = 2 AND execution_status IN ('proposed','confirmed','executing','failed') ORDER BY created_at DESC`,
+        [identity.workspaceId, identity.actorId, identity.deviceId],
+      );
+      return result.rows.map((row) => mapV2(row));
+    },
     async confirm(id, identity) { return withTransaction(pool, async (client) => { const row = await read(client, id, identity, true); const status = String(row.execution_status); if (Date.parse(String(row.expires_at)) <= Date.now()) { await client.query("UPDATE pending_operations SET execution_status='expired' WHERE id=$1", [id]); events.push({ operationId: id, event: 'expire', actorId: identity.actorId, at: nowIso() }); return fail('approval.expired', 'A proposta expirou.'); } if (status === 'confirmed') {
       // SPEC §9 (H-03) recoverable confirm: lost confirm responses re-emit.
       // Unconsumed attestation rotates atomically in this same transaction:
@@ -165,9 +232,18 @@ export const createPostgresPendingOperationV2Store = (pool: Pool): PendingOperat
       // lease columns, and COMMITS before the executor runs: a failure after
       // this point can never roll the claim back (H-04).
       const claimed = await withTransaction(pool, async (client) => {
-        const claim = await client.query<PendingV2Row>("UPDATE pending_operations SET attestation_consumed_at=NOW(), execution_status='executing', execution_claimed_at=NOW(), execution_lease_expires_at=$5, execution_attempt_count=execution_attempt_count+1 WHERE workspace_id=$1 AND actor_id=$2 AND device_id=$3 AND protocol_version=2 AND attestation_hash=$4 AND attestation_consumed_at IS NULL AND execution_status='confirmed' AND expires_at>NOW() RETURNING *", [identity.workspaceId, identity.actorId, identity.deviceId, hashAttestation(token), new Date(Date.now() + PENDING_V2_EXECUTION_LEASE_MS).toISOString()]);
+        const claim = await client.query<PendingV2Row>("UPDATE pending_operations SET attestation_consumed_at=NOW(), execution_status='executing', execution_claimed_at=NOW(), execution_lease_expires_at=$5, execution_attempt_count=execution_attempt_count+1 WHERE workspace_id=$1 AND actor_id=$2 AND device_id=$3 AND protocol_version=2 AND attestation_hash=$4 AND attestation_consumed_at IS NULL AND execution_status='confirmed' AND expires_at>NOW() RETURNING *", [identity.workspaceId, identity.actorId, identity.deviceId, hashAttestation(token), new Date(Date.now() + resolvePendingV2LeaseMs(options?.leaseMs)).toISOString()]);
         const row = claim.rows[0];
-        if (!row) return fail('approval.attestation_replayed', 'Attestation inválida ou já consumida.', 403);
+        if (!row) {
+          // Claim miss: distinguish an in-flight execution (valid OR expired
+          // lease — recovery belongs to the reconciler, never to a second
+          // executor run) from a genuinely invalid/replayed attestation.
+          const probe = await pool.query<PendingV2Row>("SELECT execution_status FROM pending_operations WHERE workspace_id=$1 AND protocol_version=2 AND attestation_hash=$2 LIMIT 1", [identity.workspaceId, hashAttestation(token)]);
+          if (probe.rows[0] && String(probe.rows[0].execution_status) === 'executing') {
+            return fail('approval.execution_in_progress', 'Execução já em andamento.', 409);
+          }
+          return fail('approval.attestation_replayed', 'Attestation inválida ou já consumida.', 403);
+        }
         events.push({ operationId: String(row.id), event: 'execute', actorId: identity.actorId, at: nowIso() });
         return row;
       });
@@ -202,13 +278,63 @@ export const createPostgresPendingOperationV2Store = (pool: Pool): PendingOperat
       });
       return mapV2(updated);
     },
+    async reconcileExpiredExecuting(id, identity, executor, opts) {
+      // TX-R — renew. Row lock serializes concurrent reconciles: the loser
+      // observes the renewed (valid) lease or the terminal state and aborts
+      // WITHOUT running the executor a second time.
+      const renewed = await withTransaction(pool, async (client) => {
+        const row = await read(client, id, identity, true);
+        const status = String(row.execution_status);
+        // `confirmed` recovery is attestation re-emission (§9, T2.2) — the
+        // lease path must never touch it. Asserted explicitly, not folded
+        // into the generic guard below.
+        if (status === 'confirmed') return fail('approval.reconcile_not_allowed', 'Operação confirmed recupera-se por reemissão de attestation, nunca por lease.');
+        if (status !== 'executing') return fail('approval.reconcile_not_allowed', 'Reconciliação disponível somente para executing com lease expirada.');
+        const leaseExpiresAt = Date.parse(String(row.execution_lease_expires_at));
+        if (!Number.isNaN(leaseExpiresAt) && leaseExpiresAt > Date.now()) return fail('approval.execution_in_progress', 'Execução já em andamento.');
+        const next = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_lease_expires_at=$2, execution_attempt_count=execution_attempt_count+1 WHERE id=$1 RETURNING *", [id, new Date(Date.now() + resolvePendingV2LeaseMs(opts?.leaseMs ?? options?.leaseMs)).toISOString()]);
+        events.push({ operationId: id, event: 'execute', actorId: identity.actorId, at: nowIso() });
+        return next.rows[0]!;
+      });
+      // The SAME executor runs OUTSIDE any transaction with the SAME
+      // persisted idempotencyKey (recovery, not a new approval).
+      let result: unknown;
+      try {
+        result = await executor(mapV2(renewed));
+      } catch (error) {
+        // TX2 (failure). Same shape as execute(): sanitized code only.
+        await withTransaction(pool, async (client) => {
+          await read(client, id, identity, true);
+          await client.query("UPDATE pending_operations SET execution_status='failed', failed_at=NOW(), failure_code=$2 WHERE id=$1", [id, sanitizePendingV2FailureCode(error)]);
+        });
+        events.push({ operationId: id, event: 'fail', actorId: identity.actorId, at: nowIso() });
+        throw error;
+      }
+      if (!result || typeof result !== 'object' || (result as { status?: unknown }).status !== 'succeeded' || typeof (result as { operationId?: unknown }).operationId !== 'string') {
+        await withTransaction(pool, async (client) => {
+          await read(client, id, identity, true);
+          await client.query("UPDATE pending_operations SET execution_status='failed', failed_at=NOW(), failure_code=$2 WHERE id=$1", [id, 'approval.incomplete_result']);
+        });
+        events.push({ operationId: id, event: 'fail', actorId: identity.actorId, at: nowIso() });
+        return fail('approval.incomplete_result', 'Executor retornou resultado incompleto.');
+      }
+      // TX2 (success).
+      const updated = await withTransaction(pool, async (client) => {
+        await read(client, id, identity, true);
+        const terminal = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_status='succeeded', execution_result=$2::jsonb, mutation_id=$3 WHERE id=$1 RETURNING *", [id, JSON.stringify(result), (result as { operationId: string }).operationId]);
+        return terminal.rows[0]!;
+      });
+      return mapV2(updated);
+    },
     async retry(id, identity) { return withTransaction(pool, async (client) => { const row = await read(client, id, identity, true); if (String(row.execution_status) !== 'failed') return fail('approval.retry_not_allowed', 'Retry disponível somente após falha.'); const token = attestation(); const updated = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_status='confirmed', attestation_hash=$2, attestation_consumed_at=NULL, attestation_issued_at=NOW() WHERE id=$1 RETURNING *", [id, hashAttestation(token)]); events.push({ operationId: id, event: 'confirm', actorId: identity.actorId, at: nowIso() }); return mapV2(updated.rows[0]!, token); }); },
     async cancel(id, identity) { return withTransaction(pool, async (client) => { const row = await read(client, id, identity, true); if (!['proposed','confirmed'].includes(String(row.execution_status))) return fail('approval.not_pending', 'A operação não está pendente.'); const updated = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_status='cancelled' WHERE id=$1 RETURNING *", [id]); events.push({ operationId: id, event: 'cancel', actorId: identity.actorId, at: nowIso() }); return mapV2(updated.rows[0]!); }); },
     async expire(id, identity) { return withTransaction(pool, async (client) => { const row = await read(client, id, identity, true); if (!['proposed','confirmed'].includes(String(row.execution_status))) return fail('approval.not_pending', 'A operação não está pendente.'); const updated = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_status='expired' WHERE id=$1 RETURNING *", [id]); events.push({ operationId: id, event: 'expire', actorId: identity.actorId, at: nowIso() }); return mapV2(updated.rows[0]!); }); },
   };
 };
 
-export const createInMemoryPendingOperationV2Store = (): PendingOperationV2Store => {
+export const createInMemoryPendingOperationV2Store = (
+  options?: PendingOperationV2StoreOptions,
+): PendingOperationV2Store => {
   const records = new Map<string, PendingOperationV2Record>();
   const tokens = new Map<string, { id: string; consumed: boolean }>();
   const events: PendingAuditEvent[] = [];
@@ -279,7 +405,18 @@ export const createInMemoryPendingOperationV2Store = (): PendingOperationV2Store
     async execute(token, identity, executor) {
       const found = tokens.get(token);
       if (!found) throw new PendingOperationV2Error('approval.attestation_replayed', 'Attestation inválida ou já consumida.', 403);
-      if (found.consumed) fail('approval.attestation_replayed', 'Attestation inválida ou já consumida.', 403);
+      if (found.consumed) {
+        // Consumed attestation on an in-flight execution (valid OR expired
+        // lease) → in-progress, never a duplicate run. Recovery of an
+        // expired lease belongs to reconcileExpiredExecuting. Plain object
+        // lookup (no resolve()) so this error path has no expiry side
+        // effects on proposed/confirmed rows.
+        const inFlight = records.get(found.id);
+        if (inFlight && identityMatches(inFlight, identity) && inFlight.status === 'executing') {
+          fail('approval.execution_in_progress', 'Execução já em andamento.');
+        }
+        fail('approval.attestation_replayed', 'Attestation inválida ou já consumida.', 403);
+      }
       // TX1 — claim commits before the executor runs: consumption is never
       // rolled back, so any non-eligible state below is a replay (parity
       // with the Postgres claim, which burns nothing on mismatch but also
@@ -290,7 +427,7 @@ export const createInMemoryPendingOperationV2Store = (): PendingOperationV2Store
       if (record.status !== 'confirmed' || record.attestation !== token) fail('approval.attestation_replayed', 'Attestation inválida ou já consumida.', 403);
       record.status = 'executing';
       record.executionClaimedAt = nowIso();
-      record.executionLeaseExpiresAt = new Date(Date.now() + PENDING_V2_EXECUTION_LEASE_MS).toISOString();
+      record.executionLeaseExpiresAt = new Date(Date.now() + resolvePendingV2LeaseMs(options?.leaseMs)).toISOString();
       record.executionAttemptCount = (record.executionAttemptCount ?? 0) + 1;
       events.push({ operationId: record.id, event: 'execute', actorId: record.actorId, at: nowIso() });
       let result: unknown;
@@ -310,6 +447,44 @@ export const createInMemoryPendingOperationV2Store = (): PendingOperationV2Store
         fail('approval.incomplete_result', 'Executor retornou resultado incompleto.');
       }
       // TX2 (success).
+      record.execution = result;
+      record.mutationId = (result as { operationId: string }).operationId;
+      record.status = 'succeeded';
+      return record;
+    },
+    async reconcileExpiredExecuting(id, identity, executor, opts) {
+      // Renew section is synchronous (no await): atomic under the JS event
+      // loop, so concurrent reconciles serialize like the Postgres row lock
+      // — the loser observes the renewed lease or terminal state and aborts
+      // WITHOUT running the executor a second time.
+      const record = records.get(id);
+      if (!record) return fail('approval.not_found', 'Operação pendente não encontrada.', 404);
+      if (!identityMatches(record, identity)) return fail('approval.binding_mismatch', 'A operação não pertence ao contexto autenticado.', 403);
+      // `confirmed` recovery is attestation re-emission (§9, T2.2) — the
+      // lease path must never touch it. Asserted explicitly.
+      if (record.status === 'confirmed') return fail('approval.reconcile_not_allowed', 'Operação confirmed recupera-se por reemissão de attestation, nunca por lease.');
+      if (record.status !== 'executing') return fail('approval.reconcile_not_allowed', 'Reconciliação disponível somente para executing com lease expirada.');
+      const leaseExpiresAt = record.executionLeaseExpiresAt ? Date.parse(record.executionLeaseExpiresAt) : NaN;
+      if (!Number.isNaN(leaseExpiresAt) && leaseExpiresAt > Date.now()) return fail('approval.execution_in_progress', 'Execução já em andamento.');
+      record.executionLeaseExpiresAt = new Date(Date.now() + resolvePendingV2LeaseMs(opts?.leaseMs ?? options?.leaseMs)).toISOString();
+      record.executionAttemptCount = (record.executionAttemptCount ?? 0) + 1;
+      events.push({ operationId: id, event: 'execute', actorId: record.actorId, at: nowIso() });
+      // The SAME executor runs with the SAME persisted idempotencyKey.
+      let result: unknown;
+      try {
+        result = await executor(record);
+      } catch (error) {
+        record.status = 'failed';
+        record.failureCode = sanitizePendingV2FailureCode(error);
+        events.push({ operationId: id, event: 'fail', actorId: record.actorId, at: nowIso() });
+        throw error;
+      }
+      if (!result || typeof result !== 'object' || (result as { status?: unknown }).status !== 'succeeded' || typeof (result as { operationId?: unknown }).operationId !== 'string') {
+        record.status = 'failed';
+        record.failureCode = 'approval.incomplete_result';
+        events.push({ operationId: id, event: 'fail', actorId: record.actorId, at: nowIso() });
+        return fail('approval.incomplete_result', 'Executor retornou resultado incompleto.');
+      }
       record.execution = result;
       record.mutationId = (result as { operationId: string }).operationId;
       record.status = 'succeeded';
@@ -337,6 +512,20 @@ export const createInMemoryPendingOperationV2Store = (): PendingOperationV2Store
       record.status = 'expired';
       events.push({ operationId: id, event: 'expire', actorId: record.actorId, at: nowIso() });
       return record;
+    },
+    /**
+     * T1.5 (SPEC §8.3) — appended after the terminal transitions so the
+     * execute/claim/lease surface above stays untouched (T2.4 owns it).
+     * In-memory mirror of the Postgres scan: same identity scope, same
+     * non-terminal status set, same newest-first order. Plaintext
+     * attestations never leave via listing (same omission as get).
+     */
+    async listActive(identity) {
+      return [...records.values()]
+        .filter((record) => identityMatches(record, identity))
+        .filter((record) => ['proposed', 'confirmed', 'executing', 'failed'].includes(record.status))
+        .map(({ attestation: _omitted, ...exposed }) => exposed)
+        .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     },
   };
 };
