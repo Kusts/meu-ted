@@ -17,6 +17,18 @@ export type PendingOperationV2Record = PendingOperationV2 & {
   attestation?: string;
   execution?: unknown;
   /**
+   * V052 execution-recovery surface (SPEC §12). Fresh records carry
+   * executionAttemptCount 0 with the remaining fields absent; claim/lease
+   * writers (T2.3/T2.4) populate them later. Read-only mapping here —
+   * no protocol behavior changes.
+   */
+  attestationIssuedAt?: string;
+  executionClaimedAt?: string;
+  executionLeaseExpiresAt?: string;
+  executionAttemptCount?: number;
+  failureCode?: string;
+  mutationId?: string;
+  /**
    * Set only on propose() results: true when the call deduplicated onto an
    * already-persisted operation (same idempotency key + same proposal hash),
    * false when a new row was created. Never persisted; absent on get/confirm.
@@ -61,17 +73,37 @@ export type PendingOperationV2Store = {
 
 type PendingV2Row = Record<string, unknown>;
 const hashAttestation = (token: string): string => createHash('sha256').update(token, 'utf8').digest('hex');
-const mapV2 = (row: PendingV2Row, token?: string): PendingOperationV2Record => ({
-  version: 2,
-  id: String(row.id), workspaceId: String(row.workspace_id), actorId: String(row.actor_id), deviceId: String(row.device_id),
-  tool: String(row.tool), normalizedArgs: (row.normalized_args ?? {}) as PendingOperationV2['normalizedArgs'],
-  proposalHash: String(row.proposal_hash), idempotencyKey: String(row.idempotency_key),
-  createdAt: new Date(row.created_at as string).toISOString(), expiresAt: new Date(row.expires_at as string).toISOString(),
-  bindings: { workspaceId: String(row.workspace_id), actorId: String(row.actor_id), deviceId: String(row.device_id) },
-  status: (row.execution_status ?? 'proposed') as PendingOperationV2Status,
-  ...(token ? { attestation: token } : {}),
-  ...(row.execution_result !== null && row.execution_result !== undefined ? { execution: row.execution_result } : {}),
-});
+const isoOrUndefined = (value: unknown): string | undefined => {
+  if (value === null || value === undefined) return undefined;
+  const date = value instanceof Date ? value : new Date(value as string);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+};
+const textOrUndefined = (value: unknown): string | undefined =>
+  value === null || value === undefined ? undefined : String(value);
+const mapV2 = (row: PendingV2Row, token?: string): PendingOperationV2Record => {
+  const attestationIssuedAt = isoOrUndefined(row.attestation_issued_at);
+  const executionClaimedAt = isoOrUndefined(row.execution_claimed_at);
+  const executionLeaseExpiresAt = isoOrUndefined(row.execution_lease_expires_at);
+  const failureCode = textOrUndefined(row.failure_code);
+  const mutationId = textOrUndefined(row.mutation_id);
+  return {
+    version: 2,
+    id: String(row.id), workspaceId: String(row.workspace_id), actorId: String(row.actor_id), deviceId: String(row.device_id),
+    tool: String(row.tool), normalizedArgs: (row.normalized_args ?? {}) as PendingOperationV2['normalizedArgs'],
+    proposalHash: String(row.proposal_hash), idempotencyKey: String(row.idempotency_key),
+    createdAt: new Date(row.created_at as string).toISOString(), expiresAt: new Date(row.expires_at as string).toISOString(),
+    bindings: { workspaceId: String(row.workspace_id), actorId: String(row.actor_id), deviceId: String(row.device_id) },
+    status: (row.execution_status ?? 'proposed') as PendingOperationV2Status,
+    executionAttemptCount: typeof row.execution_attempt_count === 'number' ? row.execution_attempt_count : Number(row.execution_attempt_count ?? 0),
+    ...(token ? { attestation: token } : {}),
+    ...(row.execution_result !== null && row.execution_result !== undefined ? { execution: row.execution_result } : {}),
+    ...(attestationIssuedAt !== undefined ? { attestationIssuedAt } : {}),
+    ...(executionClaimedAt !== undefined ? { executionClaimedAt } : {}),
+    ...(executionLeaseExpiresAt !== undefined ? { executionLeaseExpiresAt } : {}),
+    ...(failureCode !== undefined ? { failureCode } : {}),
+    ...(mutationId !== undefined ? { mutationId } : {}),
+  };
+};
 
 export const createPostgresPendingOperationV2Store = (pool: Pool): PendingOperationV2Store => {
   const events: PendingAuditEvent[] = [];
@@ -136,7 +168,7 @@ export const createInMemoryPendingOperationV2Store = (): PendingOperationV2Store
         if (existing.proposalHash !== operation.proposalHash) fail('idempotency.conflict', 'Chave de idempotência já utilizada com proposta diferente.');
         return { ...existing, existing: true };
       }
-      const record: PendingOperationV2Record = { ...operation, id: randomUUID(), status: 'proposed' };
+      const record: PendingOperationV2Record = { ...operation, id: randomUUID(), status: 'proposed', executionAttemptCount: 0 };
       records.set(record.id, record);
       events.push({ operationId: record.id, event: 'propose', actorId: record.actorId, at: nowIso() });
       return { ...record, existing: false };
