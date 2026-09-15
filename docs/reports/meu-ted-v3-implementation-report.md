@@ -30,6 +30,7 @@ A SPEC V3 foi implementada por completo no escopo de código local: os blocos A�
 | Tipos de teste quebravam `next build` | gate | Migração vitest 4 (`vi.fn` genérico único), receipts/mensagens anotados com contratos reais; produção intocada | 8 arquivos de teste; `pwa build` exit 0 |
 | 10 erros de lint React (hooks/refs) | gate | `useOptionalAppState` (hook incondicional), refs sincronizados em effects, reconciler persistente (`useState` + `setRefresh`) preservando dedup entre re-renders, disables scoped justificados | `TedChat.tsx`, `use-recording-state.ts`, `overlay-a11y.ts`, `use-pending-operations.ts`, `app-state-context.tsx`, `mutation-reconciler.ts` |
 | Deep-link T5.3 (P2) | concluído | Lista de pendentes abre o TED focado na operação (`data-testid="ted-approval-focused"`, `aria-current`, fallback honesto), sem segundo executor | `TedChatLauncher.tsx`, `TedChat.tsx`, `PendingOperationsPage.tsx` + 5 testes |
+| Card acionável sem Conta/Categoria quando labels não resolvem (re-auditoria R5, sessão de verificação 2026-09-15) | P1 | Predicado compartilhado `isActionablePendingOperationPresentation` (contracts): botão Confirmar só rende com título, descrição, valor, data, conta e categoria completos; card degradado pt-BR mantém Cancelar, nunca inventa labels; listagem ativa anexa warnings honestos quando o read model não resolve labels | `packages/llm-contracts/src/types.ts`, `apps/pwa/src/features/ted/TedApprovalCard.tsx`, `apps/api/src/routes/pending-operations.ts`; `pending-operations-v2-active-presentation.test.ts`, `TedApprovalCard.test.tsx`; commit `b037179` |
 
 ## 4. Auditoria independente (trilha)
 
@@ -37,6 +38,7 @@ A SPEC V3 foi implementada por completo no escopo de código local: os blocos A�
 2. **R2 (reviewer):** CHANGES REQUIRED — 3 findings (consumidores PWA de receipt; undo UI; bootstrap do undo). Reidratação da R1 **confirmada resolvida**.
 3. **R3 (reviewer, mesma sessão):** CHANGES REQUIRED — 1 blocker restante (idempotência atômica/persistente do undo).
 4. **R4 (reviewer, mesma sessão):** **APPROVED** — fix confirmado; risco residual (janela reversão→registro no Postgres, padrão pré-existente do store) classificado débito documentado, não P1.
+5. **R5 (reviewer, sessão de verificação 2026-09-15):** finding HIGH próprio da R1-re-verification — card podia ficar acionável sem Conta/Categoria quando o read model não resolvia labels — corrigido em `b037179`; **APPROVED** na re-auditoria (file:line, testes novos provadamente falham no código anterior, sem vazamento de autoridade).
 
 ## 5. Validação executada (estado entregue)
 
@@ -51,6 +53,7 @@ A SPEC V3 foi implementada por completo no escopo de código local: os blocos A�
 | Segurança | `pnpm security:check` | gitleaks delegado ao CI Linux; `pnpm audit` 0 critical; trivy 0 HIGH/CRITICAL nas imagens |
 | Containers | `pnpm container:smoke` | API + Broker non-root, `/health` GREEN |
 | Write policy | `pnpm write-policy:check` | 183/183 (nova rota `reconcile` classificada high, idempotência required) |
+| **Verificação independente pós-fix (sessão 2026-09-15, planner + subagentes tester/reviewer)** | suíte API completa com Postgres real (`DATABASE_URL_TEST` + `DB_TEST_MARKER`, container `ted-v3-test-pg` = serviço CI) | **200/200 arquivos, 1573/1573 testes** — metades Postgres das suítes dual-store (contract/fault/claim/lease/recovery) exercitadas de verdade; E2E T1.6 real: **6/6** (handoff idempotente, cancel 0 linhas, reemissão de confirm com replay 403, crash-after-claim 0 ou 1 transação); PWA completa **190 arquivos / 1672 testes**; `pnpm lint` 0 erros; `pnpm validate:final` **13/13 PASS** com o fix `b037179` no tree |
 
 ## 6. Disposição dos itens P2/P3 (SPEC §32)
 
@@ -98,4 +101,4 @@ A SPEC V3 foi implementada por completo no escopo de código local: os blocos A�
 | Gates locais | 10/10 | 13/13 + dual-store + evals reais |
 | CI remoto/proteção/deploy | 0/10 | bloqueios externos (billing; plano GitHub; autorização) — pendências do owner |
 
-**Conclusão:** o Meu TED V3 atende ao DoD §31 em código e evidência local (P0=0, P1=0, disposições P2 registradas). Candidatura a produção permanece condicionada aos itens externos da §32/§27: CI+PWA CI verdes no SHA, proteção da `main`, evals reais já aprovados, auditoria aprovada, deploy+smoke pendentes de autorização.
+**Conclusão:** o Meu TED V3 atende ao DoD §31 em código e evidência local (P0=0, P1=0, disposições P2 registradas). Sessão de verificação independente (2026-09-15) re-executou os gates com Postgres real, re-auditou o card (finding HIGH corrigido em `b037179`, APPROVED) e confirmou 13/13 + dual-store + E2E reais verdes no SHA final da branch. Candidatura a produção permanece condicionada aos itens externos da §32/§27: CI+PWA CI verdes no SHA, proteção da `main`, evals reais já aprovados, auditoria aprovada, deploy+smoke pendentes de autorização.
