@@ -4,10 +4,25 @@ import { resolveMutationEntities, type EntityReader } from '../mutations/entity-
 import { resolveConfirmation } from '../mutations/confirmation-resolver.js';
 import type { MutationApiClient, MutationIdentity } from '../mutations/mutation-api-client.js';
 import { deriveIdempotencyKey } from '../tools/intention-ledger.js';
+import {
+  DEFAULT_MAX_PROPOSE_ATTEMPTS,
+  DEFAULT_DRAFT_TTL_MS,
+  buildDraftRecord,
+  isCancelText,
+  isExpired,
+  isDefinitiveProposeError,
+  isResetText,
+  toChannelMessage,
+  validateCompleteArgs,
+  type DraftContext,
+  type MutationDraftRecord,
+  type MutationDraftStore,
+} from '../mutations/mutation-draft.js';
+import type { MutationDraftChannelMessage } from '@pi-finance/llm-contracts';
 import { emitSanitizedEvent } from '../observability/events.js';
 import type { EvidenceEnvelope } from '../evidence/evidence-envelope.js';
 import { createGroundedResponseWithRetry } from '../responses/grounded-response.js';
-import { renderBalance, renderEmpty, renderMutationResult, renderStatement, renderUnavailable } from '../responses/deterministic-responses.js';
+import { renderBalance, renderEmpty, renderInconclusive, renderMutationResult, renderStatement, renderUnavailable } from '../responses/deterministic-responses.js';
 import { routeIntent } from './intent-router.js';
 
 export type ConversationChannel = 'pwa-rest' | 'sdk' | 'broker';
@@ -55,7 +70,12 @@ export type TurnResult = Readonly<{
   policy: MutationPolicy;
   mutation?: Readonly<{ operationId: string; status: 'proposed' | 'succeeded' }>;
   /** Explicit clarification outcome (SPEC §7.8-ready): no proposal exists. */
-  clarification?: Readonly<{ missingFields: readonly string[]; text: string }>;
+  clarification?: Readonly<{
+    missingFields: readonly string[];
+    text: string;
+    /** Browser-safe draft payload (ADR-014): never authority/attestation. */
+    draft?: MutationDraftChannelMessage;
+  }>;
   response?: Readonly<{ text: string }>;
 }>;
 export type TurnResponseProvider = (input: TurnInput, plan: TurnPlan) => Promise<string>;
@@ -128,6 +148,18 @@ export class ConversationOrchestrator {
     correctionProvider?: (input: TurnInput, plan: TurnPlan, unsupportedClaims: readonly string[]) => Promise<string | null>;
     /** Sanitized lifecycle event sink (defaults to emitSanitizedEvent). */
     events?: (eventType: string, fields: Record<string, unknown>) => void;
+    /**
+     * Multi-turn draft persistence (SPEC §7.8, ADR-014). Absent = legacy
+     * single-turn behavior (incomplete args clarify without persistence).
+     * Lives in DO storage of the conversation — never PWA, never API.
+     */
+    draftStore?: MutationDraftStore;
+    /** Draft TTL override (default ~15 min). */
+    draftTtlMs?: number;
+    /** Clock override (tests). */
+    draftNow?: () => number;
+    /** Bounded propose attempts per handoff (default 2, same key always). */
+    draftMaxProposeAttempts?: number;
   } = {}) {}
 
   private emit(eventType: string, fields: Record<string, unknown>): void {
@@ -192,6 +224,667 @@ export class ConversationOrchestrator {
     return freeze({ ...base, response: freeze({ text: grounded.text }) });
   }
 
+  // --- MutationDraft multi-turno (SPEC §7.8, ADR-014) ---
+
+  private draftContext(input: TurnInput): DraftContext {
+    return {
+      workspaceId: input.workspaceId,
+      actorId: input.actorId,
+      deviceId: input.deviceId ?? null,
+    };
+  }
+
+  private draftNowMs(): number {
+    return this.dependencies.draftNow?.() ?? Date.now();
+  }
+
+  private hasRecoverableDraft(input: TurnInput): boolean {
+    const store = this.dependencies.draftStore;
+    if (!store) return false;
+    const ctx = this.draftContext(input);
+    const now = this.draftNowMs();
+    return (
+      store.listActive(ctx, now).length > 0 || store.listProposing(ctx, now).length > 0
+    );
+  }
+
+  /**
+   * Any draft state this turn must converge instead of taking the legacy
+   * path: active/proposing drafts, or a redelivered turn (§7.7 resend after
+   * consumption must reuse the existing proposal, never fall through).
+   */
+  private hasDraftForTurn(input: TurnInput): boolean {
+    const store = this.dependencies.draftStore;
+    if (!store) return false;
+    if (this.hasRecoverableDraft(input)) return true;
+    return store.findByIntention(this.draftContext(input), input.intentionId) !== undefined;
+  }
+
+  private entityReaderOrClosed(): EntityReader {
+    return (
+      this.dependencies.entityReader ?? {
+        listAccounts: async (): Promise<never> => {
+          throw new Error('agent.entity_reader_missing');
+        },
+        listCategories: async (): Promise<never> => {
+          throw new Error('agent.entity_reader_missing');
+        },
+      }
+    );
+  }
+
+  private completeTurn(
+    input: TurnInput,
+    plan: TurnPlan,
+    startedAt: number,
+    base: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy },
+    extra: Partial<TurnResult> & { plan?: TurnPlan },
+  ): TurnResult {
+    this.emit('turn.completed', {
+      intentionId: input.intentionId,
+      traceId: input.traceId,
+      channel: input.channel,
+      domain: plan.domain,
+      mode: plan.mode,
+      status: 'completed',
+      latencyMs: Date.now() - startedAt,
+    });
+    return freeze({ ...base, ...(extra.plan ? { plan: freeze(extra.plan) } : {}), ...('mutation' in extra && extra.mutation ? { mutation: freeze(extra.mutation) } : {}), ...('clarification' in extra && extra.clarification ? { clarification: freeze(extra.clarification) } : {}), ...('response' in extra && extra.response ? { response: freeze(extra.response) } : {}) });
+  }
+
+  private clarifyDraft(
+    input: TurnInput,
+    plan: TurnPlan,
+    startedAt: number,
+    base: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy },
+    draft: MutationDraftRecord,
+    question: string,
+  ): TurnResult {
+    const incompletePlan = freeze({ ...plan, missingFields: freeze([...draft.missingFields]) });
+    const clarification = freeze({
+      missingFields: incompletePlan.missingFields,
+      text: question,
+      draft: toChannelMessage(draft, question),
+    });
+    this.emit('mutation.blocked', {
+      intentionId: input.intentionId,
+      traceId: input.traceId,
+      channel: input.channel,
+      domain: plan.domain,
+      mode: plan.mode,
+      status: 'blocked',
+    });
+    return this.completeTurn(input, incompletePlan, startedAt, base, {
+      plan: incompletePlan,
+      clarification,
+      response: freeze({ text: question }),
+    });
+  }
+
+  /** New intention that must never inherit draft fields (SPEC §7.8). */
+  private isReplacement(
+    text: string,
+    draft: MutationDraftRecord,
+  ): boolean {
+    if (isResetText(text)) return true;
+    const parsed = parseFinancialMutation(text);
+    if (parsed.kind === 'none') return false;
+    return (
+      parsed.kind !== draft.resolvedArgs.kind || parsed.amountCents !== draft.resolvedArgs.amountCents
+    );
+  }
+
+  private toolForKind(kind: 'expense' | 'income'): 'transactions.expense.create' | 'transactions.income.create' {
+    return kind === 'income' ? 'transactions.income.create' : 'transactions.expense.create';
+  }
+
+  /**
+   * Single propose attempt + outcome handling (handoff protocol §7.8):
+   * created/existing → consumed; definitive 4xx → discarded; anything else
+   * → stays proposing with an inconclusive reply (never success/cancelled).
+   */
+  private async executePropose(
+    input: TurnInput,
+    plan: TurnPlan,
+    startedAt: number,
+    base: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy },
+    draft: MutationDraftRecord,
+    client: MutationApiClient,
+  ): Promise<TurnResult> {
+    const store = this.dependencies.draftStore!;
+    const maxAttempts = this.dependencies.draftMaxProposeAttempts ?? DEFAULT_MAX_PROPOSE_ATTEMPTS;
+    const args = draft.resolvedArgs;
+    const identity: MutationIdentity = {
+      workspaceId: input.workspaceId,
+      actorId: input.actorId,
+      deviceId: input.deviceId ?? (() => { throw new Error('mutation.device_required'); })(),
+    };
+    for (let attempt = 1; attempt <= Math.max(1, maxAttempts); attempt += 1) {
+      try {
+        const proposal = await client.propose({
+          tool: draft.tool,
+          normalizedArgs: {
+            amountCents: args.amountCents,
+            description: args.description,
+            date: args.date,
+            accountId: args.accountId!,
+            categoryId: args.categoryId!,
+          },
+          summary: args.description,
+          identity,
+          idempotencyKey: draft.proposalIdempotencyKey,
+        });
+        store.update(draft.draftId, {
+          status: 'consumed',
+          proposalId: proposal.id,
+          proposeOutcome: proposal.existing ? 'existing' : 'created',
+          updatedAt: new Date(this.draftNowMs()).toISOString(),
+          lastIntentionId: input.intentionId,
+        });
+        return this.completeTurn(input, plan, startedAt, base, {
+          mutation: freeze({ operationId: proposal.id, status: 'proposed' }),
+          response: freeze({ text: renderMutationResult('proposed', proposal.summary) }),
+        });
+      } catch (error) {
+        if (isDefinitiveProposeError(error)) {
+          // Case C: definitive rejection — no operation was created.
+          store.update(draft.draftId, {
+            status: 'discarded',
+            discardReason: 'propose_rejected',
+            proposeOutcome: 'rejected',
+            updatedAt: new Date(this.draftNowMs()).toISOString(),
+            lastIntentionId: input.intentionId,
+          });
+          this.emit('mutation.blocked', {
+            intentionId: input.intentionId,
+            traceId: input.traceId,
+            channel: input.channel,
+            domain: plan.domain,
+            mode: plan.mode,
+            status: 'blocked',
+          });
+          return this.completeTurn(input, plan, startedAt, base, {
+            response: freeze({ text: renderMutationResult('failed') }),
+          });
+        }
+        if (attempt >= Math.max(1, maxAttempts)) {
+          // Outcome unknown: stays proposing, retry later with the SAME key.
+          store.update(draft.draftId, {
+            proposeOutcome: 'unknown',
+            updatedAt: new Date(this.draftNowMs()).toISOString(),
+            lastIntentionId: input.intentionId,
+          });
+          this.emit('mutation.blocked', {
+            intentionId: input.intentionId,
+            traceId: input.traceId,
+            channel: input.channel,
+            domain: plan.domain,
+            mode: plan.mode,
+            status: 'blocked',
+          });
+          return this.completeTurn(input, plan, startedAt, base, {
+            response: freeze({ text: renderInconclusive() }),
+          });
+        }
+      }
+    }
+    return this.completeTurn(input, plan, startedAt, base, {
+      response: freeze({ text: renderInconclusive() }),
+    });
+  }
+
+  /**
+   * CAS loser path (deterministic, never proposes): consumed → reuse the
+   * existing proposal; proposing → inconclusive; otherwise the intention is
+   * over and the user is told to describe it again.
+   */
+  private handleCasLoss(
+    input: TurnInput,
+    plan: TurnPlan,
+    startedAt: number,
+    base: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy },
+    current: MutationDraftRecord | undefined,
+  ): TurnResult {
+    if (current?.status === 'consumed' && current.proposalId) {
+      return this.completeTurn(input, plan, startedAt, base, {
+        mutation: freeze({ operationId: current.proposalId, status: 'proposed' }),
+        response: freeze({ text: renderMutationResult('proposed', current.resolvedArgs.description) }),
+      });
+    }
+    if (current?.status === 'proposing') {
+      return this.completeTurn(input, plan, startedAt, base, {
+        response: freeze({ text: renderInconclusive() }),
+      });
+    }
+    const text = 'A intenção anterior foi encerrada. Descreva novamente o lançamento.';
+    const closedPlan = freeze({ ...plan, missingFields: freeze(['intent']) });
+    return this.completeTurn(input, closedPlan, startedAt, base, {
+      plan: closedPlan,
+      clarification: freeze({ missingFields: closedPlan.missingFields, text }),
+      response: freeze({ text }),
+    });
+  }
+
+  private async continueDraft(
+    input: TurnInput,
+    plan: TurnPlan,
+    startedAt: number,
+    base: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy },
+    draft: MutationDraftRecord,
+    client: MutationApiClient,
+  ): Promise<TurnResult> {
+    const store = this.dependencies.draftStore!;
+    // Resolve ONLY the missing field, then revalidate ALL args: the stored
+    // financial fields are authoritative for this draft, the new text only
+    // supplies entity hints (e.g. "Nubank" → account).
+    const merged = {
+      kind: draft.resolvedArgs.kind,
+      amountCents: draft.resolvedArgs.amountCents,
+      description: draft.resolvedArgs.description,
+      date: draft.resolvedArgs.date,
+      ...(draft.resolvedArgs.categoryQuery ? { categoryQuery: draft.resolvedArgs.categoryQuery } : {}),
+    };
+    const resolution = await resolveMutationEntities(
+      merged,
+      `${draft.resolvedArgs.description} ${input.text}`,
+      this.entityReaderOrClosed(),
+    );
+    const stamp = new Date(this.draftNowMs()).toISOString();
+    if (!resolution.complete) {
+      store.update(draft.draftId, {
+        missingFields: [...resolution.missingFields],
+        updatedAt: stamp,
+        lastIntentionId: input.intentionId,
+        lastQuestion: resolution.clarification,
+      });
+      const updated = store.get(draft.draftId) ?? draft;
+      return this.clarifyDraft(input, plan, startedAt, base, updated, resolution.clarification);
+    }
+    const completeArgs = {
+      ...draft.resolvedArgs,
+      accountId: resolution.accountId,
+      categoryId: resolution.categoryId,
+    };
+    if (!validateCompleteArgs(completeArgs)) {
+      // Canonical gate failed agent-side: never propose, clarify again.
+      const question = 'Não foi possível validar os dados com segurança. Descreva novamente o lançamento.';
+      store.update(draft.draftId, {
+        missingFields: ['accountId', 'categoryId'],
+        updatedAt: stamp,
+        lastIntentionId: input.intentionId,
+        lastQuestion: question,
+      });
+      const updated = store.get(draft.draftId) ?? draft;
+      return this.clarifyDraft(input, plan, startedAt, base, updated, question);
+    }
+    store.update(draft.draftId, {
+      resolvedArgs: completeArgs,
+      missingFields: [],
+      updatedAt: stamp,
+      lastIntentionId: input.intentionId,
+    });
+    // Atomic consumption: exactly one continuation wins; losers converge.
+    const cas = store.cas(draft.draftId, 'active', 'proposing', {
+      updatedAt: stamp,
+      lastIntentionId: input.intentionId,
+    });
+    if (!cas.ok) return this.handleCasLoss(input, plan, startedAt, base, cas.current);
+    return this.executePropose(input, plan, startedAt, base, cas.record, client);
+  }
+
+  private async freshMutationFlow(
+    input: TurnInput,
+    plan: TurnPlan,
+    startedAt: number,
+    base: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy },
+    client: MutationApiClient,
+  ): Promise<TurnResult> {
+    const store = this.dependencies.draftStore!;
+    const ctx = this.draftContext(input);
+    const parsed = parseFinancialMutation(input.text);
+    if (parsed.kind === 'none') {
+      // SPEC §7.6: missing amount/date is a real missing field, never [].
+      const missing = parsed.reason === 'missing_amount' ? ['amount'] : [...plan.missingFields];
+      const blockedPlan = freeze({ ...plan, missingFields: freeze([...missing]) });
+      const text =
+        parsed.reason === 'missing_amount'
+          ? 'Não identifiquei o valor a registrar. Informe o valor e a descrição.'
+          : 'Não foi possível preparar a mutação com segurança. Esclareça valor e descrição.';
+      this.emit('mutation.blocked', {
+        intentionId: input.intentionId,
+        traceId: input.traceId,
+        channel: input.channel,
+        domain: plan.domain,
+        mode: plan.mode,
+        status: 'blocked',
+      });
+      return this.completeTurn(input, blockedPlan, startedAt, base, {
+        plan: blockedPlan,
+        clarification: freeze({ missingFields: blockedPlan.missingFields, text }),
+        response: freeze({ text }),
+      });
+    }
+    const resolution = await resolveMutationEntities(parsed, input.text, this.entityReaderOrClosed());
+    if (!resolution.complete) {
+      // Idempotent per turn (§7.7): same intentionId reuses the draft.
+      const tool = this.toolForKind(parsed.kind);
+      const now = this.draftNowMs();
+      const candidate = buildDraftRecord({
+        workspaceId: ctx.workspaceId,
+        actorId: ctx.actorId,
+        deviceId: ctx.deviceId,
+        intentionId: input.intentionId,
+        tool,
+        resolvedArgs: {
+          kind: parsed.kind,
+          amountCents: parsed.amountCents,
+          description: parsed.description,
+          date: parsed.date,
+          ...(parsed.categoryQuery ? { categoryQuery: parsed.categoryQuery } : {}),
+        },
+        missingFields: [...resolution.missingFields],
+        question: resolution.clarification,
+        ttlMs: this.dependencies.draftTtlMs ?? DEFAULT_DRAFT_TTL_MS,
+        nowMs: now,
+      });
+      const { record } = store.getOrCreate(candidate);
+      return this.clarifyDraft(input, plan, startedAt, base, record, record.lastQuestion);
+    }
+    // Complete on the first turn: no draft involved; the no-draft proposal
+    // key derives deterministically from the intentionId (T1.2, unchanged).
+    const identity: MutationIdentity = {
+      workspaceId: input.workspaceId,
+      actorId: input.actorId,
+      deviceId: input.deviceId ?? (() => { throw new Error('mutation.device_required'); })(),
+    };
+    const tool = parsed.kind === 'income' ? 'transactions.income.create' : 'transactions.expense.create';
+    const proposal = await client.propose({
+      tool,
+      normalizedArgs: {
+        amountCents: parsed.amountCents,
+        description: parsed.description,
+        date: parsed.date,
+        accountId: resolution.accountId,
+        categoryId: resolution.categoryId,
+      },
+      summary: parsed.description,
+      identity,
+      idempotencyKey: deriveIdempotencyKey(input.workspaceId, input.intentionId, tool),
+    });
+    return this.completeTurn(input, plan, startedAt, base, {
+      mutation: freeze({ operationId: proposal.id, status: 'proposed' }),
+      response: freeze({ text: renderMutationResult('proposed', proposal.summary) }),
+    });
+  }
+
+  private async runMutationTurn(
+    input: TurnInput,
+    plan: TurnPlan,
+    client: MutationApiClient,
+    startedAt: number,
+    base: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy },
+  ): Promise<TurnResult> {
+    const store = this.dependencies.draftStore!;
+    const ctx = this.draftContext(input);
+    const now = this.draftNowMs();
+    store.expireStale(ctx, now);
+
+    // §7.7 resend: the same turn redelivered converges without new state.
+    const redelivered = store.findByIntention(ctx, input.intentionId);
+    if (redelivered?.status === 'consumed' && redelivered.proposalId) {
+      return this.completeTurn(input, plan, startedAt, base, {
+        mutation: freeze({ operationId: redelivered.proposalId, status: 'proposed' }),
+        response: freeze({ text: renderMutationResult('proposed', redelivered.resolvedArgs.description) }),
+      });
+    }
+    if (redelivered?.status === 'active' && !isExpired(redelivered, now)) {
+      return this.clarifyDraft(input, plan, startedAt, base, redelivered, redelivered.lastQuestion);
+    }
+    if (redelivered?.status === 'proposing' && !isExpired(redelivered, now)) {
+      // Case A: the continuation was redelivered — re-emit with the SAME key.
+      return this.executePropose(input, plan, startedAt, base, redelivered, client);
+    }
+
+    // Restart recovery (cases A/B): drafts left `proposing` by a crash are
+    // re-emitted with the same key before the current turn proceeds — the
+    // API dedup converges both paths to the same operation.
+    for (const proposing of store.listProposing(ctx, now)) {
+      if (validateCompleteArgs({ ...proposing.resolvedArgs, accountId: proposing.resolvedArgs.accountId ?? '', categoryId: proposing.resolvedArgs.categoryId ?? '' })) {
+        try {
+          await this.executeProposeSilent(proposing, client, input);
+        } catch {
+          // Best effort: the current turn still proceeds; the draft stays
+          // proposing with outcome unknown for the next reconciliation.
+        }
+      }
+    }
+
+    // "cancela" routed here under a forced mutation plan still cancels.
+    if (isCancelText(input.text)) {
+      return this.runCancelTurn(input, plan, client, startedAt, base);
+    }
+
+    const actives = store.listActive(ctx, now);
+    if (actives.length >= 2) {
+      const replacement = parseFinancialMutation(input.text);
+      if (replacement.kind !== 'none' && actives.every((draft) => this.isReplacement(input.text, draft))) {
+        const stamp = new Date(now).toISOString();
+        for (const draft of actives) {
+          store.update(draft.draftId, { status: 'replaced', updatedAt: stamp, lastIntentionId: input.intentionId });
+        }
+        return this.freshMutationFlow(input, plan, startedAt, base, client);
+      }
+      // Ambiguity: never choose silently, propose nothing.
+      const options = actives
+        .slice(0, 5)
+        .map((draft, index) => `${index + 1}. ${draft.resolvedArgs.description}`)
+        .join('\n');
+      const text = `Encontrei mais de uma intenção pendente. Qual delas você quer continuar?\n${options}`;
+      const ambiguousPlan = freeze({ ...plan, missingFields: freeze(['intent']) });
+      this.emit('mutation.blocked', {
+        intentionId: input.intentionId,
+        traceId: input.traceId,
+        channel: input.channel,
+        domain: plan.domain,
+        mode: plan.mode,
+        status: 'blocked',
+      });
+      return this.completeTurn(input, ambiguousPlan, startedAt, base, {
+        plan: ambiguousPlan,
+        clarification: freeze({ missingFields: ambiguousPlan.missingFields, text }),
+        response: freeze({ text }),
+      });
+    }
+    if (actives.length === 1 && actives[0]) {
+      const draft = actives[0];
+      if (this.isReplacement(input.text, draft)) {
+        store.update(draft.draftId, {
+          status: 'replaced',
+          updatedAt: new Date(now).toISOString(),
+          lastIntentionId: input.intentionId,
+        });
+        return this.freshMutationFlow(input, plan, startedAt, base, client);
+      }
+      return this.continueDraft(input, plan, startedAt, base, draft, client);
+    }
+    return this.freshMutationFlow(input, plan, startedAt, base, client);
+  }
+
+  /** Recovery re-emission without a turn response (result converges in store). */
+  private async executeProposeSilent(
+    draft: MutationDraftRecord,
+    client: MutationApiClient,
+    input: TurnInput,
+  ): Promise<void> {
+    const store = this.dependencies.draftStore!;
+    const identity: MutationIdentity = {
+      workspaceId: draft.workspaceId,
+      actorId: draft.actorId,
+      deviceId: draft.deviceId ?? input.deviceId ?? (() => { throw new Error('mutation.device_required'); })(),
+    };
+    const args = draft.resolvedArgs;
+    try {
+      const proposal = await client.propose({
+        tool: draft.tool,
+        normalizedArgs: {
+          amountCents: args.amountCents,
+          description: args.description,
+          date: args.date,
+          accountId: args.accountId!,
+          categoryId: args.categoryId!,
+        },
+        summary: args.description,
+        identity,
+        idempotencyKey: draft.proposalIdempotencyKey,
+      });
+      store.update(draft.draftId, {
+        status: 'consumed',
+        proposalId: proposal.id,
+        proposeOutcome: proposal.existing ? 'existing' : 'created',
+        updatedAt: new Date(this.draftNowMs()).toISOString(),
+      });
+    } catch (error) {
+      if (isDefinitiveProposeError(error)) {
+        store.update(draft.draftId, {
+          status: 'discarded',
+          discardReason: 'propose_rejected',
+          proposeOutcome: 'rejected',
+          updatedAt: new Date(this.draftNowMs()).toISOString(),
+        });
+        return;
+      }
+      store.update(draft.draftId, {
+        proposeOutcome: 'unknown',
+        updatedAt: new Date(this.draftNowMs()).toISOString(),
+      });
+      throw error;
+    }
+  }
+
+  private async runCancelTurn(
+    input: TurnInput,
+    plan: TurnPlan,
+    client: MutationApiClient | null,
+    startedAt: number,
+    base: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy },
+  ): Promise<TurnResult> {
+    const store = this.dependencies.draftStore;
+    const cancelled = (): TurnResult => {
+      this.emit('approval.rejected', {
+        intentionId: input.intentionId,
+        traceId: input.traceId,
+        channel: input.channel,
+        domain: plan.domain,
+        mode: plan.mode,
+        status: 'rejected',
+      });
+      return this.completeTurn(input, plan, startedAt, base, {
+        response: freeze({ text: renderMutationResult('cancelled') }),
+      });
+    };
+    // Legacy contract preserved when no draft store is configured.
+    if (!store) return cancelled();
+    const ctx = this.draftContext(input);
+    const now = this.draftNowMs();
+    store.expireStale(ctx, now);
+    const stamp = new Date(now).toISOString();
+
+    // Case E: resolve every proposing handoff by the SAME key before
+    // answering. Without a client the outcome cannot be resolved — reply
+    // inconclusive, never "cancelado" with a possibly-active operation.
+    const proposing = store.listProposing(ctx, now);
+    if (proposing.length > 0 && !client) {
+      return this.completeTurn(input, plan, startedAt, base, {
+        response: freeze({ text: renderInconclusive() }),
+      });
+    }
+    let pendingOperationId: string | null = null;
+    let outcomeUnknown = false;
+    for (const draft of proposing) {
+      try {
+        const identity: MutationIdentity = {
+          workspaceId: draft.workspaceId,
+          actorId: draft.actorId,
+          deviceId: draft.deviceId ?? input.deviceId ?? (() => { throw new Error('mutation.device_required'); })(),
+        };
+        const args = draft.resolvedArgs;
+        const proposal = await client!.propose({
+          tool: draft.tool,
+          normalizedArgs: {
+            amountCents: args.amountCents,
+            description: args.description,
+            date: args.date,
+            accountId: args.accountId!,
+            categoryId: args.categoryId!,
+          },
+          summary: args.description,
+          identity,
+          idempotencyKey: draft.proposalIdempotencyKey,
+        });
+        store.update(draft.draftId, {
+          status: 'consumed',
+          proposalId: proposal.id,
+          proposeOutcome: proposal.existing ? 'existing' : 'created',
+          updatedAt: stamp,
+          lastIntentionId: input.intentionId,
+        });
+        pendingOperationId = proposal.id;
+      } catch (error) {
+        if (isDefinitiveProposeError(error)) {
+          // Definitive "no operation was created" — safe to discard.
+          store.update(draft.draftId, {
+            status: 'discarded',
+            discardReason: 'propose_rejected',
+            proposeOutcome: 'rejected',
+            updatedAt: stamp,
+            lastIntentionId: input.intentionId,
+          });
+        } else {
+          store.update(draft.draftId, {
+            proposeOutcome: 'unknown',
+            updatedAt: stamp,
+            lastIntentionId: input.intentionId,
+          });
+          outcomeUnknown = true;
+        }
+      }
+    }
+    // Cancelation always discards the active drafts of the same context: no
+    // structured intention may survive to become a proposal afterwards.
+    for (const draft of store.listActive(ctx, now)) {
+      store.update(draft.draftId, {
+        status: 'discarded',
+        discardReason: 'user_cancel',
+        updatedAt: stamp,
+        lastIntentionId: input.intentionId,
+      });
+    }
+    if (outcomeUnknown) {
+      return this.completeTurn(input, plan, startedAt, base, {
+        response: freeze({ text: renderInconclusive() }),
+      });
+    }
+    if (pendingOperationId) {
+      // A pending operation exists: route to the cancel flow (T1.5 owns the
+      // authoritative cancel API) — never claim "cancelado" here (INV-10).
+      this.emit('approval.rejected', {
+        intentionId: input.intentionId,
+        traceId: input.traceId,
+        channel: input.channel,
+        domain: plan.domain,
+        mode: plan.mode,
+        status: 'rejected',
+      });
+      return this.completeTurn(input, plan, startedAt, base, {
+        mutation: freeze({ operationId: pendingOperationId, status: 'proposed' }),
+        response: freeze({
+          text: 'Encontrei uma operação pendente criada a partir do seu pedido. Conclua o cancelamento pelo cartão de aprovação.',
+        }),
+      });
+    }
+    return cancelled();
+  }
+
   async runTurn(input: TurnInput): Promise<TurnResult> {
     const startedAt = Date.now();
     this.emit('turn.started', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel });
@@ -212,7 +905,7 @@ export class ConversationOrchestrator {
     if (plan.mode === 'mutation-proposal' && !client) {
       return freeze({ ...result, response: freeze({ text: 'Não foi possível preparar a operação com segurança. A sessão precisa de um dispositivo autenticado.' }) });
     }
-    if (plan.mode === 'mutation-proposal' && client) {
+    if (plan.mode === 'mutation-proposal' && client && !this.dependencies.draftStore) {
       const parsed = parseFinancialMutation(input.text);
       if (parsed.kind === 'none') {
         // SPEC §7.6: missing amount/date is a real missing field, never [].
@@ -262,6 +955,23 @@ export class ConversationOrchestrator {
       });
       return freeze({ ...result, mutation: freeze({ operationId: proposal.id, status: 'proposed' }), response: freeze({ text: renderMutationResult('proposed', proposal.summary) }) });
     }
+    // SPEC §7.8 (ADR-014) with a draft store: the full multi-turn flow
+    // (draft persistence, continuation, atomic consumption, recoverable
+    // handoff). Without a store the legacy single-turn block above applies.
+    if (plan.mode === 'mutation-proposal' && client && this.dependencies.draftStore) {
+      return this.runMutationTurn(input, plan, client, startedAt, result);
+    }
+    // Draft continuation under a non-mutation plan: a bare answer ("Nubank")
+    // routes `unsupported`, but with a recoverable draft and a client it is a
+    // missing-field answer, not a new turn. Reads keep their normal flow — a
+    // balance query never completes a draft.
+    if (
+      this.dependencies.draftStore && client &&
+      (plan.mode === 'unsupported' || plan.mode === 'conversation') &&
+      this.hasDraftForTurn(input)
+    ) {
+      return this.runMutationTurn(input, plan, client, startedAt, result);
+    }
     if (plan.mode === 'confirmation' && client) {
       const decision = resolveConfirmation(input.text, input.pendingOperationIds ?? []);
       if (decision.kind !== 'confirm' || !decision.operationId) {
@@ -285,9 +995,7 @@ export class ConversationOrchestrator {
       }
     }
     if (plan.mode === 'cancel') {
-      this.emit('approval.rejected', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'rejected' });
-      this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
-      return freeze({ ...result, response: freeze({ text: renderMutationResult('cancelled') }) });
+      return this.runCancelTurn(input, plan, client ?? null, startedAt, result);
     }
     if (plan.mode === 'read' && this.dependencies.evidenceProvider) {
       // Evidence-backed read: deterministic render or validated grounded text.

@@ -65,6 +65,7 @@ import type { EvidenceEnvelope } from "./evidence/evidence-envelope.js";
 import { parseFinancialMutation, isClearlyMutating } from "./mutations/financial-parser.js";
 import { createRequestEntityReader, type EntityReader } from "./mutations/entity-resolver.js";
 import { MutationApiClient } from "./mutations/mutation-api-client.js";
+import { initializeMutationDraftSchema, SqlMutationDraftStore, hasRecoverableDraft } from "./mutations/mutation-draft.js";
 import { MutationExecutor, type ApprovalDecision } from "./mutations/mutation-executor.js";
 
 export type Env = {
@@ -274,6 +275,13 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         initializeSessionSchema(state.storage.sql as unknown as MemorySql);
       } catch {
         // Memory is best-effort: turns work without it.
+      }
+      // SPEC §7.8 (ADR-014): MutationDraft table for multi-turn intention
+      // persistence (idempotent; best-effort like the memory schema above).
+      try {
+        initializeMutationDraftSchema(state.storage.sql as unknown as { exec<T>(query: string, ...bindings: unknown[]): Iterable<T> });
+      } catch {
+        // Drafts degrade to single-turn clarification without storage.
       }
     }
   }
@@ -596,6 +604,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     correctionProvider?: (input: TurnInput, plan: TurnPlan, unsupportedClaims: readonly string[]) => Promise<string | null>;
     /** Sanitized lifecycle event sink, shared by the turn and its evidence reads. */
     events?: (eventType: string, fields: Record<string, unknown>) => void;
+    /** SPEC §7.8 draft store (DO storage). Absent = legacy single-turn flow. */
+    draftStore?: SqlMutationDraftStore;
   } = {}): ConversationOrchestrator {
     // AGENT-005 production grounding: every channel (pwa-rest, sdk, broker)
     // reads through the same evidence provider over the canonical read
@@ -1058,6 +1068,21 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     }
   }
 
+  /**
+   * SPEC §7.8 draft store over DO SQLite storage. Undefined when storage is
+   * unavailable — the orchestrator then keeps the legacy single-turn flow.
+   */
+  private draftStoreForRequest(): SqlMutationDraftStore | undefined {
+    const sql = this.state?.storage?.sql as unknown as { exec<T>(query: string, ...bindings: unknown[]): Iterable<T> } | undefined;
+    if (!sql || typeof sql.exec !== 'function') return undefined;
+    try {
+      initializeMutationDraftSchema(sql);
+      return new SqlMutationDraftStore(sql);
+    } catch {
+      return undefined;
+    }
+  }
+
   private async enqueueChat<T>(task: () => Promise<T>): Promise<T> {
     const prev = this.chatQueue ?? Promise.resolve();
     const next = prev.then(() => task(), () => task());
@@ -1143,12 +1168,25 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       }
       try {
         const mutationPlan = this.mutationProposalPlan(restInput);
-        const mutationApiClient = await this.mutationApiClientForTurn(restInput, mutationPlan !== null);
-        const entityReader = mutationPlan ? await this.entityReaderForTurn(restInput) : undefined;
+        // SPEC §7.8: a bare continuation answer ("Nubank") carries no
+        // mutation plan, but with a recoverable draft it still needs the
+        // mutation client + reader so the turn can complete the handoff.
+        const draftStore = this.draftStoreForRequest();
+        const hasPendingDraft = draftStore
+          ? hasRecoverableDraft(
+            draftStore,
+            { workspaceId: identity.workspaceId, actorId: identity.actorId, deviceId: deviceId ?? null },
+            Date.now(),
+          )
+          : false;
+        const needsMutation = mutationPlan !== null || hasPendingDraft;
+        const mutationApiClient = await this.mutationApiClientForTurn(restInput, needsMutation);
+        const entityReader = needsMutation ? await this.entityReaderForTurn(restInput) : undefined;
         const turnResult = await this.orchestratorForChannel({
           ...(mutationPlan ? { plan: () => mutationPlan } : {}),
           ...(mutationApiClient ? { mutationApiClient } : {}),
           ...(entityReader ? { entityReader } : {}),
+          ...(draftStore ? { draftStore } : {}),
         }).runTurn(restInput);
         if (turnResult.response) {
           // Persist the FINAL grounded/deterministic response (never the raw

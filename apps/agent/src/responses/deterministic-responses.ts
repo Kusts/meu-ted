@@ -28,9 +28,16 @@ export const renderStatement = (entries: readonly unknown[], subject = 'extrato'
 
 export type MutationOutcome = 'proposed' | 'succeeded' | 'failed' | 'cancelled' | 'expired';
 
+/**
+ * Inconclusive handoff reply (SPEC §7.8/INV-10): the propose outcome is
+ * unknown, so the turn claims neither success nor cancellation. Fixed
+ * wording, never model text.
+ */
+export const renderInconclusive = (subject = 'operação'): string =>
+  `A ${subject} está em processamento e ainda não foi concluída. Nada foi criado ou cancelado ainda — tente novamente em instantes.`;
+
 /** Deterministic mutation/approval result: fixed wording per outcome, never model text. */
-export const renderMutationResult = (outcome: MutationOutcome, subject = 'operação'): string => {
-  switch (outcome) {
+export const renderMutationResult = (outcome: MutationOutcome, subject = 'operação'): string => {  switch (outcome) {
     case 'succeeded': return `Lançamento registrado com sucesso.`;
     case 'proposed': return `Proposta: ${subject}. Confirma?`;
     case 'cancelled': return `Operação cancelada com segurança.`;
