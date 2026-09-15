@@ -211,14 +211,20 @@ export default {
       }
 
       const subPath = url.pathname.slice(financeMatch[0].length);
-      const isRestRpc = subPath === "/rpc/chat" || subPath === "/rpc/history" || subPath === "/rpc/session/new" || subPath === "/rpc/memory/prefs" || /^\/rpc\/pending-operations\/[^/]+\/decision$/.test(subPath);
+      // T5.3 (SPEC §22): the lean active listing is a read-only rpc — the DO
+      // delegates straight to the authoritative API, so it never depends on
+      // the legacy chat-history migration.
+      const isRestRpc = subPath === "/rpc/chat" || subPath === "/rpc/history" || subPath === "/rpc/session/new" || subPath === "/rpc/memory/prefs" || subPath === "/rpc/pending-operations/active" || /^\/rpc\/pending-operations\/[^/]+\/decision$/.test(subPath);
 
       if (isRestRpc) {
         const financeAgent = env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(canonicalId));
         const isHistory = subPath === "/rpc/history";
-        const syncError = await syncLegacyHistory(env, canonicalId, financeAgent, {
-          allowPendingForHistory: isHistory,
-        });
+        const needsLegacySync = subPath !== "/rpc/pending-operations/active";
+        const syncError = needsLegacySync
+          ? await syncLegacyHistory(env, canonicalId, financeAgent, {
+              allowPendingForHistory: isHistory,
+            })
+          : null;
         if (syncError) return syncError;
 
         const headers = new Headers(request.headers);

@@ -147,6 +147,26 @@ describe("AppStateProvider — MutationReconciler integration (T3.3)", () => {
     expect(txCalls).toBe(1);
   });
 
+  it("dedups repeated receipts across re-renders (single persistent reconciler)", async () => {
+    mockReads();
+    const { result, rerender } = renderHook(() => useAppState(), {
+      wrapper: AppStateProvider,
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    vi.clearAllMocks();
+
+    const input = { receipt: tedReceipt("mut-rerender-dup") };
+    await act(() => result.current.reconcileMutation!(input));
+    act(() => {
+      rerender();
+    });
+    await act(() => result.current.reconcileMutation!(input));
+
+    // The second receipt hits the same reconciler instance (seen set kept
+    // across the refresh swap) — no second transactions refresh.
+    expect(vi.mocked(endpoints.fetchTransactions).mock.calls.length).toBe(1);
+  });
+
   it("refresh failure marks stale + banner + retry (nunca rollback da mutação)", async () => {
     mockReads();
     vi.spyOn(endpoints, "createExpenseTransaction").mockResolvedValue({

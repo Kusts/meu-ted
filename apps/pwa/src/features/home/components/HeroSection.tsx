@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import { formatBRL } from "@/lib/format/brl";
 import { haptic } from "@/lib/ui/haptics";
+import { openTedChat } from "@/features/ted/TedChatLauncher";
 import { HERO_BACKGROUND } from "../hero";
 import { Bell, Eye, EyeOff } from "lucide-react";
 
@@ -179,7 +180,7 @@ export function HeroSection({
 
       {/* Mini-stats row */}
       <div className="flex gap-[9px]">
-        <div
+  <div
           className="flex-1 rounded-[14px] p-[10px_12px] border border-white/10"
           style={{ background: "rgba(255,255,255,.12)" }}
         >
@@ -241,6 +242,28 @@ export function HeroSection({
           </div>
         </div>
       </div>
+
+      {/* T5.3 (H-14, SPEC §22): real pending-approvals indicator. Only a
+          REFLECTION of the authoritative Agent listing — shown for a known
+          count > 0, hidden when zero or unknown (null/error). Decisions
+          never happen here: tapping opens the TED. */}
+      {pendingCount !== null && pendingCount > 0 && (
+        <button
+          type="button"
+          data-testid="hero-pending-approvals"
+          onClick={() => {
+            haptic(8);
+            openTedChat();
+          }}
+          className="mt-[14px] flex w-full items-center justify-center gap-2 rounded-[12px] border border-white/10 px-4 py-2.5 text-[12px] font-bold text-white shadow-xs transition-all hover:bg-white/20 active:scale-[0.99]"
+          style={{ background: "rgba(255,255,255,.14)" }}
+        >
+          <span aria-hidden="true" className="h-[7px] w-[7px] rounded-full bg-warning ring-1 ring-white/40" />
+          {pendingCount === 1
+            ? "1 aprovação pendente"
+            : `${pendingCount} aprovações pendentes`}
+        </button>
+      )}
     </div>
   );
 }

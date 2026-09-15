@@ -4,9 +4,12 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useWorkspaceSafe } from "@/lib/auth/workspace-context";
 import {
   fetchAgentHistory,
+  fetchActivePendingOperations,
   sendAgentMessage,
   renewAgentSession,
   composeChatSend,
+  PENDING_OPERATION_STATUS,
+  type ActivePendingOperation,
   type AgentMessage,
   type PendingChatSend,
 } from "@/lib/api/agent-client";
@@ -14,15 +17,43 @@ import { TedMessage, type TedDeliveryState } from "./TedMessage";
 import { TedApprovalCard, type TedPendingOperation } from "./TedApprovalCard";
 import { useRecordingState } from "./use-recording-state";
 import { getChatAttachmentCapabilities } from "@/lib/capabilities";
-import { useAppState } from "@/lib/state/app-state-context";
+import { useOptionalAppState } from "@/lib/state/app-state-context";
 import { resolveTedMutationKind } from "@/lib/state/mutation-reconciler";
 import type { MutationReceipt } from "@pi-finance/llm-contracts/types";
 import type { PendingOperationDecision } from "@/lib/api/agent-client";
-import { useBodyScrollLock } from "@/lib/ui/overlay-a11y";
+import { useBodyScrollLock, useOverlayDialog } from "@/lib/ui/overlay-a11y";
+import { notifyPendingOperationsChanged } from "@/lib/state/use-pending-operations";
 import { Sparkles, X, Send, Mic, MicOff, Image as ImageIcon, FileText, Paperclip, Trash2, RefreshCw } from "lucide-react";
 
 const HISTORY_LOAD_ERROR = "Não foi possível carregar o histórico. Tente novamente.";
+const ACTIVE_LOAD_ERROR = "Não foi possível carregar as aprovações agora.";
 const MESSAGE_SEND_ERROR = "Não foi possível enviar a mensagem. Tente novamente.";
+
+/**
+ * FIX-P1 (presentation rehydration): live cards come EXCLUSIVELY from the
+ * authoritative active list (Agent relay of GET /pending-operations/v2/active
+ * with the server-derived canonical presentation) — never from history.
+ * Only actionable/recovery states keep a live card; terminal states stay in
+ * the message log. Unknown statuses are dropped (fail closed, never success).
+ */
+const LIVE_CARD_STATUSES: ReadonlySet<string> = new Set([
+  "proposed",
+  "confirmed",
+  "executing",
+  "failed",
+]);
+
+function toLiveCard(item: ActivePendingOperation): TedPendingOperation | null {
+  if (!LIVE_CARD_STATUSES.has(item.status)) return null;
+  if (!(PENDING_OPERATION_STATUS as readonly string[]).includes(item.status)) return null;
+  return {
+    id: item.id,
+    status: item.status as TedPendingOperation["status"],
+    operation: item.tool,
+    ...(typeof item.description === "string" && item.description ? { summary: item.description } : {}),
+    ...(item.presentation ? { presentation: item.presentation } : {}),
+  };
+}
 
 /** SPEC §19.4: every connection status is user-facing pt-BR, never raw enum names. */
 type TedChatStatus = "connecting" | "ready" | "streaming" | "error";
@@ -40,16 +71,23 @@ type ChatMessage = AgentMessage & { delivery?: TedDeliveryState };
 interface TedChatProps {
   open: boolean;
   onClose: () => void;
+  /**
+   * T5.3 (SPEC §22): deep-link target — the authoritative pending-operation
+   * id to highlight/focus once the chat opens. Display routing only; the
+   * Decision Service still owns every decision. `null`/absent = no focus.
+   */
+  focusedOperationId?: string | null;
 }
 
 export type TedAttachment = { type: "image" | "pdf" | "audio"; url: string; name: string; file?: File };
 
-export function TedChat({ open, onClose }: TedChatProps) {
+export function TedChat({ open, onClose, focusedOperationId = null }: TedChatProps) {
   const ws = useWorkspaceSafe();
   const activeWorkspace = ws?.activeWorkspace ?? null;
   const members = ws?.members ?? [];
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pendingOps, setPendingOps] = useState<TedPendingOperation[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +96,9 @@ export function TedChat({ open, onClose }: TedChatProps) {
   const [attachments, setAttachments] = useState<TedAttachment[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const chatRootRef = useRef<HTMLDivElement>(null);
+  const focusedCardRef = useRef<HTMLDivElement>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const prevWorkspaceIdRef = useRef<string | null>(null);
@@ -144,42 +185,60 @@ export function TedChat({ open, onClose }: TedChatProps) {
   // Full-screen overlay como as demais superfícies: trava o scroll do body
   // (ref-counted, libera ao fechar/desmontar) e conta para useIsOverlayOpen.
   useBodyScrollLock(open);
+  // SPEC §21: one shared dialog owner manages focus, Tab trapping, restore,
+  // background inert and Escape. Recording owns Escape so an active mic flow
+  // cannot be closed accidentally.
+  useOverlayDialog(chatRootRef, {
+    open,
+    initialFocus: () => messageInputRef.current,
+    onEscape: () => {
+      if (recordingState !== "recording" && recordingState !== "requesting" && recordingState !== "processing") {
+        onClose();
+      }
+    },
+  });
 
   const loadHistory = useCallback(async (preserveError = false) => {
     if (!activeWorkspace) return;
+    let history: AgentMessage[];
     try {
       setStatus("connecting");
-      const history = await fetchAgentHistory(activeWorkspace.id);
-      setMessages((prev) => [
-        ...history,
-        // SPEC §19.1/§19.3: local optimistic sends not yet confirmed by the
-        // server survive authoritative reloads — failed messages are never
-        // silently discarded and in-flight ones keep their sending state.
-        ...prev.filter((m) => m.delivery === "sending" || m.delivery === "failed"),
-      ]);
-      // SPEC §25.4 (browser reload during proposed/executing): rehydrate
-      // in-flight approval cards from AUTHORITATIVE history only — never
-      // local optimistic residue. Terminal states stay in the message log;
-      // only proposed/confirmed/executing keep a live card.
-      const rehydrated = new Map<string, TedPendingOperation>();
-      for (const message of history) {
-        const op = message.pendingOperation;
-        if (
-          op &&
-          (op.status === "proposed" || op.status === "confirmed" || op.status === "executing") &&
-          !rehydrated.has(op.id)
-        ) {
-          rehydrated.set(op.id, op);
-        }
-      }
-      setPendingOps([...rehydrated.values()]);
-      if (!preserveError) setError(null);
-      setStatus("ready");
+      history = await fetchAgentHistory(activeWorkspace.id);
     } catch {
       // SPEC §25.4: a failed reload keeps last-known server state and
       // signals staleness — never invents a card, never wipes history.
       setError(HISTORY_LOAD_ERROR);
       setStatus("error");
+      return;
+    }
+    setMessages((prev) => [
+      ...history,
+      // SPEC §19.1/§19.3: local optimistic sends not yet confirmed by the
+      // server survive authoritative reloads — failed messages are never
+      // silently discarded and in-flight ones keep their sending state.
+      ...prev.filter((m) => m.delivery === "sending" || m.delivery === "failed"),
+    ]);
+    setHistoryLoaded(true);
+    if (!preserveError) setError(null);
+    // FIX-P1: live cards come EXCLUSIVELY from the authoritative active
+    // list (server-derived canonical presentation) — history NEVER mints a
+    // card, even when a legacy turn still carries a pendingOperation.
+    try {
+      const active = await fetchActivePendingOperations(activeWorkspace.id);
+      const cards = new Map<string, TedPendingOperation>();
+      for (const item of active) {
+        const card = toLiveCard(item);
+        if (card && !cards.has(card.id)) cards.set(card.id, card);
+      }
+      setPendingOps([...cards.values()]);
+      if (!preserveError) setError(null);
+      setStatus("ready");
+    } catch {
+      // Fail closed on first load (no cards invented) and honest afterwards:
+      // last-known cards stay (untouched), staleness is signaled, history is
+      // untouched.
+      setError(ACTIVE_LOAD_ERROR);
+      setStatus("ready");
     }
   }, [activeWorkspace]);
 
@@ -188,22 +247,23 @@ export function TedChat({ open, onClose }: TedChatProps) {
   // by the Agent through agent-client) drives the reconciler whenever the
   // decision carries one; the operation → mutationKind mapping stays as a
   // documented fallback for legacy turns without a receipt. Safe outside
-  // AppStateProvider (launcher tests).
-  let reconcileFinancialUi: ((input: { receipt?: MutationReceipt | null; mutationKind?: string }) => Promise<unknown>) | null = null;
-  try {
-    const { reconcileMutation } = useAppState();
-    reconcileFinancialUi =
-      reconcileMutation !== undefined
-        ? (input: { receipt?: MutationReceipt | null; mutationKind?: string }) => reconcileMutation(input)
-        : null;
-  } catch {
-    reconcileFinancialUi = null;
-  }
+  // AppStateProvider (launcher tests) via the optional hook — null means
+  // "no financial refresh", never an invented reconciliation.
+  const optionalAppState = useOptionalAppState();
+  const optionalReconcile = optionalAppState?.reconcileMutation;
+  const reconcileFinancialUi: ((input: { receipt?: MutationReceipt | null; mutationKind?: string }) => Promise<unknown>) | null =
+    optionalReconcile !== undefined && optionalReconcile !== null
+      ? (input: { receipt?: MutationReceipt | null; mutationKind?: string }) => optionalReconcile(input)
+      : null;
 
   const handleApprovalResolved = async (
     operation: string,
     decision?: PendingOperationDecision,
   ): Promise<void> => {
+    // T5.3 (SPEC §22): an operation was resolved (confirm/cancel/retry) —
+    // external reflections of the authoritative listing (Home badge,
+    // Aprovações page) refetch via the invalidation event.
+    notifyPendingOperationsChanged();
     if (reconcileFinancialUi) {
       try {
         // Real receipt wins (mutationId enables dedup); without one the
@@ -233,6 +293,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
       discardDrafts();
       setMessages([]);
       setPendingOps([]);
+      setHistoryLoaded(false);
       setError(null);
       setStatus("ready");
     }
@@ -243,6 +304,9 @@ export function TedChat({ open, onClose }: TedChatProps) {
     if (open && activeWorkspace) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       void loadHistory();
+      // T5.3 (SPEC §22): chat mount refreshes the external pending
+      // reflections so indicators are never stale after in-chat decisions.
+      notifyPendingOperationsChanged();
     }
     if (!open) {
       // Limpar estado sensível ao fechar (SPEC §17: cleanup único do microfone;
@@ -258,15 +322,28 @@ export function TedChat({ open, onClose }: TedChatProps) {
     }
   }, [messages, pendingOps]);
 
+  // T5.3 deep-link: the launcher routes one authoritative operation id here.
+  // Only AUTHORITATIVE cards (history rehydration + turn responses) can match
+  // — never an invented card. An unknown id renders the honest fallback below.
+  const focusedOperation = focusedOperationId
+    ? pendingOps.find((op) => op.id === focusedOperationId)
+    : undefined;
+  const showFocusedMissing =
+    open && focusedOperationId !== null && focusedOperationId !== undefined && historyLoaded && !focusedOperation;
+
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && open) {
-        onClose();
+    if (!open || !focusedOperation) return;
+    const target = focusedCardRef.current;
+    if (!target) return;
+    try {
+      if (typeof target.scrollIntoView === "function") {
+        target.scrollIntoView({ behavior: "auto", block: "center" });
       }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, onClose]);
+    } catch {
+      /* scroll is best-effort — focus below is the accessible contract */
+    }
+    target.focus({ preventScroll: true });
+  }, [open, focusedOperation]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!caps.image) return;
@@ -353,13 +430,16 @@ export function TedChat({ open, onClose }: TedChatProps) {
       if (turn.memorized && turn.memorized.length > 0) {
         flashNotice(`TED memorizou: ${turn.memorized.slice(0, 2).join(" · ")}`);
       }
-      if (turn.pendingOperation) {
-        setPendingOps((previous) => [turn.pendingOperation!, ...previous.filter((operation) => operation.id !== turn.pendingOperation!.id)]);
-      }
+      const returnedPendingOperation = turn.pendingOperation;
       // T3.3 (§15.4): a natural-language confirmation turn that EXECUTED in
       // the same round-trip carries the real execution receipt — reconcile
       // from it immediately (same single reconciler as the button path).
       const executedTurn = turn.pendingOperation?.status === "succeeded" ? turn.pendingOperation : undefined;
+      if (executedTurn) {
+        // T5.3 (SPEC §22): a turn executed an operation to a terminal
+        // (succeeded) state — invalidate the external pending reflections.
+        notifyPendingOperationsChanged();
+      }
       if (executedTurn?.receipt && reconcileFinancialUi) {
         try {
           await reconcileFinancialUi({ receipt: executedTurn.receipt });
@@ -369,6 +449,15 @@ export function TedChat({ open, onClose }: TedChatProps) {
       }
       setMessages((prev) => prev.map((m) => (m.id === send.messageId ? { ...m, delivery: "sent" as const } : m)));
       await loadHistory();
+      // The turn response is authoritative too. Apply it AFTER the history
+      // reload so an eventually consistent history read cannot erase the card
+      // just returned by the Agent.
+      if (returnedPendingOperation) {
+        setPendingOps((previous) => [
+          returnedPendingOperation,
+          ...previous.filter((operation) => operation.id !== returnedPendingOperation.id),
+        ]);
+      }
       // §19.3: success consumed the draft — the authoritative history
       // replaced the bubble, so the local blob URLs can be revoked now.
       draftsRef.current.delete(send.messageId);
@@ -454,6 +543,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
       await renewAgentSession(activeWorkspace.id);
       setMessages([]);
       setPendingOps([]);
+      setHistoryLoaded(false);
       setInput("");
       flashNotice("Nova sessão iniciada — o TED mantém o que aprendeu.");
       await loadHistory();
@@ -466,6 +556,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
 
   return (
     <div
+      ref={chatRootRef}
       role="dialog"
       aria-modal="true"
       aria-label="Chat com TED"
@@ -566,14 +657,37 @@ export function TedChat({ open, onClose }: TedChatProps) {
           })}
 
           {activeWorkspace &&
-            pendingOps.map((op) => (
-              <TedApprovalCard
-                key={op.id}
-                operation={op}
-                workspaceId={activeWorkspace.id}
-                onResolved={(decision) => void handleApprovalResolved(op.operation, decision)}
-              />
-            ))}
+            pendingOps.map((op) => {
+              const isFocused = focusedOperation?.id === op.id;
+              return (
+                <div
+                  key={op.id}
+                  id={`ted-op-${op.id}`}
+                  ref={isFocused ? focusedCardRef : undefined}
+                  tabIndex={isFocused ? -1 : undefined}
+                  data-testid={isFocused ? "ted-approval-focused" : "ted-approval-item"}
+                  aria-current={isFocused ? "true" : undefined}
+                  className={isFocused ? "rounded-[14px] outline-none ring-2 ring-primary ring-offset-2 ring-offset-surface-1" : undefined}
+                >
+                  <TedApprovalCard
+                    operation={op}
+                    workspaceId={activeWorkspace.id}
+                    onResolved={(decision) => void handleApprovalResolved(op.operation, decision)}
+                  />
+                </div>
+              );
+            })}
+
+          {showFocusedMissing && (
+            <div
+              role="status"
+              data-testid="ted-approval-missing"
+              className="my-2 rounded-[14px] border border-border-subtle bg-surface-2 px-3.5 py-2.5 text-xs font-semibold text-text-secondary"
+            >
+              <p>Operação não encontrada nesta conversa.</p>
+              <p className="mt-1 font-medium">As decisões acontecem nos cartões desta conversa.</p>
+            </div>
+          )}
 
           {status === "streaming" && (
             <div className="flex items-center gap-2 py-3">
@@ -658,6 +772,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
             {isRecording && <span className="text-[11px] font-bold text-danger animate-pulse">gravando…</span>}
             {isRequestingMic && <span className="text-[11px] font-medium text-text-muted">solicitando permissão…</span>}
             <textarea
+              ref={messageInputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {

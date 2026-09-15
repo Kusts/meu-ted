@@ -97,3 +97,30 @@ export const attachMutationReceipt = <T>(
 
 export { MUTATION_EFFECTS_REGISTRY };
 export type { MutationKind, MutationReceipt, RefreshTarget };
+
+/**
+ * Undo reversal → normal-write receipt kind (SPEC §15.1, T3.2). An undo
+ * always reverses a prior financial write, so it always carries a receipt:
+ * `no-refresh` is never valid here. The mapping is server-side and
+ * registry-derived — never client/LLM-derived — and every mapped kind is a
+ * registered normal-write kind (never a TED approval tool, so no
+ * operationId is attached and no PendingOperation is created).
+ */
+const UNDO_OPERATION_RECEIPTS: Record<string, { kind: MutationKind; entityType: string }> = {
+  'transactions.expense.create': { kind: 'transaction.delete', entityType: 'transaction' },
+  'transactions.income.create': { kind: 'transaction.delete', entityType: 'transaction' },
+  'transactions.transfer.create': { kind: 'transaction.delete', entityType: 'transaction' },
+  'accounts.create': { kind: 'account.delete', entityType: 'account' },
+  'categories.create': { kind: 'category.delete', entityType: 'category' },
+};
+
+/**
+ * Builds the receipt for an undo reversal of the given audit operation.
+ * Throws for unmapped operations — an undo that alters financial targets
+ * must never succeed silently without a receipt.
+ */
+export const resolveUndoReceipt = (operation: string, entityId: string): MutationReceipt => {
+  const mapped = UNDO_OPERATION_RECEIPTS[operation];
+  if (!mapped) throw new Error(`no registered undo receipt for operation: ${operation}`);
+  return buildMutationReceipt(mapped.kind, { type: mapped.entityType, id: entityId });
+};

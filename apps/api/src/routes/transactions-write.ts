@@ -175,9 +175,16 @@ export const registerTransactionWriteRoutes = (
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
-    try { await runIdempotent(req, ctx.householdId, { id: params.data.id }, () => opts.writes.softDeleteTransaction(ctx.householdId, params.data.id)); return reply.code(204).send(); }
-    // T3.2 deferred: 204 carries no body for a receipt; transaction.delete
-    // targets stay registered for the TED/reconciliation path.
+    try {
+      // T3.2 (SPEC §15.1): 200 with the soft-deleted entity + a
+      // registry-derived transaction.delete receipt. The receipt is built
+      // inside the idempotent producer so replays preserve the mutationId;
+      // 204 cannot carry a body. Second delete still 404s (tombstone kept).
+      const deleted = await runIdempotent(req, ctx.householdId, { id: params.data.id }, async () =>
+        attachMutationReceipt(await opts.writes.softDeleteTransaction(ctx.householdId, params.data.id), 'transaction.delete', { type: 'transaction', id: params.data.id }),
+      );
+      return reply.code(200).send(deleted);
+    }
     catch (e) { return handleError(e, reply); }
   });
 };

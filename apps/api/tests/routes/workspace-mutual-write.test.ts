@@ -79,7 +79,8 @@ describe('Mutual write permissions in shared workspace (RED -> GREEN)', () => {
       url: `/transactions/${existing.id}`,
       headers: { 'x-workspace-id': HOUSEHOLD_A, authorization: 'Bearer token-member', 'idempotency-key': 'mutual-del-1' },
     });
-    expect(del.statusCode).toBe(204);
+    expect(del.statusCode).toBe(200);
+    expect(del.json().receipt.mutationKind).toBe('transaction.delete');
     await app.app.close();
   });
 });

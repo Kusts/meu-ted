@@ -101,7 +101,7 @@ describe('normal-write receipts', () => {
     expect(first.json().receipt.mutationId).not.toBe(second.json().receipt.mutationId);
   });
 
-  it('DELETE /transactions/:id keeps the 204 contract (receipt deferred)', async () => {
+  it('DELETE /transactions/:id returns 200 with a transaction.delete receipt', async () => {
     const created = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
@@ -119,6 +119,15 @@ describe('normal-write receipts', () => {
       url: `/transactions/${created.json().id}`,
       headers: { 'x-device-token': TOKEN_A },
     });
-    expect(del.statusCode).toBe(204);
+    expect(del.statusCode).toBe(200);
+    const body = del.json();
+    expect(body.receipt).toBeTruthy();
+    expect(body.receipt.mutationKind).toBe('transaction.delete');
+    expect(body.receipt.status).toBe('succeeded');
+    expect(body.receipt.operationId).toBeUndefined();
+    expect(body.receipt.affectedTargets).toEqual(
+      MUTATION_EFFECTS_REGISTRY['transaction.delete'].affectedTargets,
+    );
+    expect(mutationReceiptSchema.safeParse(body.receipt).success).toBe(true);
   });
 });

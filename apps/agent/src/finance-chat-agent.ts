@@ -64,6 +64,7 @@ import { routeIntent } from "./orchestration/intent-router.js";
 import { createChannelGrounding } from "./orchestration/channel-evidence.js";
 import type { EvidenceEnvelope } from "./evidence/evidence-envelope.js";
 import { parseFinancialMutation, isClearlyMutating } from "./mutations/financial-parser.js";
+import { toActiveOperationRecords } from "./mutations/active-operation-projection.js";
 import { createRequestEntityReader, type EntityReader } from "./mutations/entity-resolver.js";
 import { MutationApiClient } from "./mutations/mutation-api-client.js";
 import { PendingOperationCoordinator, isRetryText } from "./orchestration/pending-operation-coordinator.js";
@@ -1002,6 +1003,48 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     }
   }
 
+  /**
+   * T5.3 (H-14, SPEC §22): authoritative listing of the workspace's active
+   * pending operations, relayed lean to trusted PWA surfaces (Home badge,
+   * Aprovações page). The browser NEVER decides here — this is a read-only
+   * reflection. The delegated credential carries the READ capability only
+   * and the response is the strict lean projection (never attestation,
+   * never raw normalizedArgs), scoped to the gateway-verified
+   * workspace/actor/device identity.
+   */
+  private async handleActivePendingOperations(request: Request): Promise<Response> {
+    const secret = this.env?.AGENT_DELEGATION_SECRET?.trim();
+    const actorId = request.headers.get("x-agent-actor")?.trim();
+    const workspaceId = request.headers.get("x-agent-workspace")?.trim();
+    const deviceId = request.headers.get("x-agent-device")?.trim();
+    if (!secret || !actorId || !workspaceId || !deviceId) {
+      return Response.json({ code: "agent.approval_context_required" }, { status: 401 });
+    }
+    const role = request.headers.get("x-agent-role") === "owner" ? "owner" : "member";
+    try {
+      const delegatedToken = await createDelegatedTurnToken({
+        actorId,
+        workspaceId,
+        role,
+        capabilities: ["financial.approval.read"],
+        requestId: crypto.randomUUID(),
+        deviceId,
+      }, secret);
+      const requestWithReadToken = async <T>(method: string, path: string, opts: Parameters<typeof requestPiApiJson>[2] = {}) =>
+        requestPiApiJson<T>(method, path, { ...opts, delegatedToken, apiOrigin: this.env?.API_ORIGIN });
+      const client = new MutationApiClient({ request: requestWithReadToken });
+      const result = await client.listActive({ workspaceId, actorId, deviceId });
+      const items = toActiveOperationRecords(result?.items);
+      // total reflects what is actually relayed (invalid items are dropped).
+      return Response.json({ items, total: items.length });
+    } catch {
+      return Response.json(
+        { code: "agent.pending_list_unavailable", message: "Não foi possível carregar as aprovações agora." },
+        { status: 502 },
+      );
+    }
+  }
+
   /** Builds the sole V2 mutation plan used by every channel adapter. */
   private mutationProposalPlan(input: TurnInput): TurnPlan | null {
     const parsed = parseFinancialMutation(input.text);
@@ -1118,6 +1161,10 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     if (url.pathname.startsWith("/rpc/")) {
       const bindingError = await this.assertConnectionBinding(request);
       if (bindingError) return bindingError;
+    }
+    const activeMatch = url.pathname === "/rpc/pending-operations/active" && request.method === "GET";
+    if (activeMatch) {
+      return this.handleActivePendingOperations(request);
     }
     const decisionMatch = url.pathname.match(/^\/rpc\/pending-operations\/([^/]+)\/decision$/);
     if (decisionMatch && request.method === "POST") {

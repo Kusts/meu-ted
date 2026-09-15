@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { useBodyScrollLock } from "@/lib/ui/overlay-a11y";
+import { useBodyScrollLock, useOverlayDialog } from "@/lib/ui/overlay-a11y";
 
 export interface DialogProps {
   open: boolean;
@@ -22,6 +22,7 @@ export function Dialog({
   className = "",
 }: DialogProps) {
   const [mounted, setMounted] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -31,26 +32,16 @@ export function Dialog({
   // Lock body scroll while open (ref-counted across stacked overlays)
   useBodyScrollLock(open);
 
-  // Handle Escape key
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
-    },
-    [onClose]
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, handleKeyDown]);
+  /* SPEC §21 (H2): foco inicial, trap de Tab, restore ao fechar, Escape
+   * (topmost) e inert no fundo via primitiva compartilhada. `mounted` é
+   * necessário porque o portal só existe após a montagem. */
+  useOverlayDialog(containerRef, { open: open && mounted, onEscape: onClose });
 
   if (!mounted || !open) return null;
 
   return createPortal(
     <div
+      ref={containerRef}
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"

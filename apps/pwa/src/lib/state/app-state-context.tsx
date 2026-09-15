@@ -375,6 +375,25 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, []);
   const guardReadOnlyRef = useRef(guardReadOnly);
 
+  // Stable fire-and-forget hook for mutators (SPEC §15.2, T3.3): receipt
+  // wins, mutationKind fallback. Declared before the mutators so they close
+  // over a stable callback; the underlying reconcile is resolved via ref at
+  // CALL time (wired by the reconciler block below), so the callback never
+  // goes stale and mutators keep stable identities.
+  const reconcileMutationRef = useRef<
+    (input: ReconcileInput) => Promise<ReconcileResult>
+  >(async () => ({ targets: [], refreshed: [], failed: [], deduped: true }));
+  const reconcileAfterWrite = useCallback(
+    (body: unknown, kind: MutationKind) => {
+      const receipt: MutationReceipt | undefined =
+        extractMutationReceipt(body);
+      void reconcileMutationRef.current(
+        receipt !== undefined ? { receipt } : { mutationKind: kind },
+      );
+    },
+    [],
+  );
+
   // Refs to keep latest state accessible in callbacks without stale closures
   const payablesRef = useRef(payables);
   const accountsRef = useRef(accounts);
@@ -577,7 +596,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setTransactions((prev) =>
           prev.map((t) => (t.id === tx.id ? { ...t, id: created.id } : t)),
         );
-        reconcileAfterWriteRef.current(created, "transaction.create");
+        reconcileAfterWrite(created, "transaction.create");
       } else if (tx.kind === "transfer") {
         throw new Error(
           "Use createTransfer mutator for transfers, not addTransaction",
@@ -594,14 +613,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setTransactions((prev) =>
           prev.map((t) => (t.id === tx.id ? { ...t, id: created.id } : t)),
         );
-        reconcileAfterWriteRef.current(created, "transaction.create");
+        reconcileAfterWrite(created, "transaction.create");
       }
     } catch (e) {
       setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
       handleWriteErrorRef.current(e);
       throw e;
     }
-  }, []);
+  }, [reconcileAfterWrite]);
 
   const updateTransaction = useCallback(
     async (
@@ -648,7 +667,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       try {
         const updated = await commandsRef.current!.updateTransaction(id, input);
-        reconcileAfterWriteRef.current(updated, "transaction.update");
+        reconcileAfterWrite(updated, "transaction.update");
       } catch (e) {
         // Rollback to previous state
         setTransactions((curr) =>
@@ -657,7 +676,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const deleteTransaction = useCallback(async (id: string) => {
@@ -668,14 +687,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      await commandsRef.current!.deleteTransaction(id);
-      // 204 carries no body: reconcile via the registry kind fallback.
-      reconcileAfterWriteRef.current(undefined, "transaction.delete");
+      const deleted = await commandsRef.current!.deleteTransaction(id);
+      // FIX-P1-PWA-RECEIPT-CONSUMERS: DELETE /transactions/:id answers 200
+      // with the soft-deleted entity + a transaction.delete receipt — the
+      // receipt (mutationId dedup) wins via reconcileAfterWrite, the
+      // registry kind applies only when the body carries no receipt.
+      reconcileAfterWrite(deleted, "transaction.delete");
     } catch (e) {
       if (prev) setTransactions((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
     }
-  }, []);
+  }, [reconcileAfterWrite]);
 
   const markPayablePaid = useCallback(async (id: string) => {
     if (guardReadOnlyRef.current()) return;
@@ -692,14 +714,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     try {
       const paid = await commandsRef.current!.markPayablePaid(id, today);
-      reconcileAfterWriteRef.current(paid, "payable.pay");
+      reconcileAfterWrite(paid, "payable.pay");
     } catch (e) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? prev : p)),
       );
       handleWriteErrorRef.current(e);
     }
-  }, []);
+  }, [reconcileAfterWrite]);
 
   // ── Account update / deactivate ────────────────────────────
 
@@ -718,7 +740,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       try {
         const updatedAccount = await commandsRef.current!.updateAccount(id, input);
-        reconcileAfterWriteRef.current(updatedAccount, "account.update");
+        reconcileAfterWrite(updatedAccount, "account.update");
       } catch (e) {
         setAccounts((curr) =>
           curr.map((a) => (a.id === id ? prev : a)),
@@ -726,7 +748,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const deactivateAccount = useCallback(async (id: string) => {
@@ -742,12 +764,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     try {
       await commandsRef.current!.deactivateAccount(id);
       // Void-typed endpoint discards the server receipt: registry fallback.
-      reconcileAfterWriteRef.current(undefined, "account.delete");
+      reconcileAfterWrite(undefined, "account.delete");
     } catch (e) {
       setAccounts((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
     }
-  }, []);
+  }, [reconcileAfterWrite]);
 
   // ── Category update / deactivate ───────────────────────────
 
@@ -770,7 +792,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       try {
         const updatedCategory = await commandsRef.current!.updateCategory(id, input);
-        reconcileAfterWriteRef.current(updatedCategory, "category.update");
+        reconcileAfterWrite(updatedCategory, "category.update");
       } catch (e) {
         setCategories((curr) =>
           curr.map((c) => (c.id === id ? prev : c)),
@@ -778,7 +800,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const deactivateCategory = useCallback(async (id: string) => {
@@ -793,12 +815,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     try {
       await commandsRef.current!.deactivateCategory(id);
       // Void-typed endpoint discards the server receipt: registry fallback.
-      reconcileAfterWriteRef.current(undefined, "category.delete");
+      reconcileAfterWrite(undefined, "category.delete");
     } catch (e) {
       setCategories((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
     }
-  }, []);
+  }, [reconcileAfterWrite]);
 
   const deleteCategory = useCallback(
     async (
@@ -827,7 +849,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         ]);
         setCategories(freshCategories);
         setTransactions(freshTransactions.items);
-        reconcileAfterWriteRef.current(result, "category.delete");
+        reconcileAfterWrite(result, "category.delete");
         return {
           movedTransactions: result.movedTransactions,
           softDeletedTransactions: result.softDeletedTransactions,
@@ -838,7 +860,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         throw e;
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const applyCategoryDefaults = useCallback(async () => {
@@ -848,13 +870,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       const result = await commandsRef.current!.applyCategoryDefaults();
       setCategories(await endpoints.fetchCategories());
       // No receipt for this batch op: refresh the category registry targets.
-      reconcileAfterWriteRef.current(undefined, "category.create");
+      reconcileAfterWrite(undefined, "category.create");
       return { created: result.created, skipped: result.skipped };
     } catch (e) {
       handleWriteErrorRef.current(e);
       throw e;
     }
-  }, []);
+  }, [reconcileAfterWrite]);
 
   const addAccount = useCallback(
     async (input: {
@@ -884,13 +906,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               : a,
           ),
         );
-        reconcileAfterWriteRef.current(created, "account.create");
+        reconcileAfterWrite(created, "account.create");
       } catch (e) {
         setAccounts((prev) => prev.filter((a) => a.id !== optimisticId));
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const addCategory = useCallback(
@@ -919,13 +941,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             c.id === optimisticId ? { ...created, icon: c.icon } : c,
           ),
         );
-        reconcileAfterWriteRef.current(created, "category.create");
+        reconcileAfterWrite(created, "category.create");
       } catch (e) {
         setCategories((prev) => prev.filter((c) => c.id !== optimisticId));
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const addCard = useCallback(
@@ -960,14 +982,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               : a,
           ),
         );
-        // Card routes carry no receipt yet (T3.2 follow-up): registry fallback.
-        reconcileAfterWriteRef.current(created, "account.create");
+        // FIX-P1: POST /cards attaches an account.create receipt, forwarded
+        // by reconcileAfterWrite when present (kind fallback otherwise).
+        reconcileAfterWrite(created, "account.create");
       } catch (e) {
         setAccounts((prev) => prev.filter((a) => a.id !== optimisticId));
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const updateCard = useCallback(
@@ -1009,8 +1032,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setAccounts((curr) =>
           curr.map((a) => (a.id === id ? { ...a, ...updated, color: a.color } : a)),
         );
-        // Card routes carry no receipt yet (T3.2 follow-up): registry fallback.
-        reconcileAfterWriteRef.current(updated, "account.update");
+        // FIX-P1: PATCH /cards/:id attaches an account.update receipt,
+        // forwarded when present (kind fallback otherwise).
+        reconcileAfterWrite(updated, "account.update");
       } catch (e) {
         setAccounts((curr) =>
           curr.map((a) => (a.id === id ? prev : a)),
@@ -1018,7 +1042,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const addSubscription = useCallback(
@@ -1050,13 +1074,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setSubscriptions((prev) =>
           prev.map((s) => (s.id === optimisticId ? created : s)),
         );
-        reconcileAfterWriteRef.current(created, "subscription.create");
+        reconcileAfterWrite(created, "subscription.create");
       } catch (e) {
         setSubscriptions((prev) => prev.filter((s) => s.id !== optimisticId));
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const cancelSubscription = useCallback(async (id: string) => {
@@ -1072,14 +1096,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     try {
       const cancelledSub = await commandsRef.current!.cancelSubscription(id);
-      reconcileAfterWriteRef.current(cancelledSub, "subscription.delete");
+      reconcileAfterWrite(cancelledSub, "subscription.delete");
     } catch (e) {
       setSubscriptions((curr) =>
         curr.map((s) => (s.id === id ? prev : s)),
       );
       handleWriteErrorRef.current(e);
     }
-  }, []);
+  }, [reconcileAfterWrite]);
 
   const updateSubscription = useCallback(async (
     id: string,
@@ -1103,7 +1127,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     try {
       const updatedSub = await commandsRef.current!.updateSubscription(id, input);
-      reconcileAfterWriteRef.current(updatedSub, "subscription.update");
+      reconcileAfterWrite(updatedSub, "subscription.update");
     } catch (e) {
       // Rollback
       setSubscriptions((curr) =>
@@ -1111,7 +1135,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       );
       handleWriteErrorRef.current(e);
     }
-  }, []);
+  }, [reconcileAfterWrite]);
 
   // ── Lazy load subscriptions (not fetched during bootstrap) ────
 
@@ -1181,7 +1205,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       try {
         const created = await commandsRef.current!.createTransfer(input);
-        reconcileAfterWriteRef.current(created, "transfer.create");
+        reconcileAfterWrite(created, "transfer.create");
       } catch (e) {
         setTransactions((prev) => prev.filter((t) => t.id !== optimisticId));
         if (prevFrom) {
@@ -1198,7 +1222,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         throw e;
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   // ── Payable create / cancel ─────────────────────────────────
@@ -1217,14 +1241,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     try {
       const cancelled = await commandsRef.current!.cancelPayable(id);
-      reconcileAfterWriteRef.current(cancelled, "payable.delete");
+      reconcileAfterWrite(cancelled, "payable.delete");
     } catch (e) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? { ...prev } : p)),
       );
       handleWriteErrorRef.current(e);
     }
-  }, []);
+  }, [reconcileAfterWrite]);
 
   const updatePayable = useCallback(
     async (id: string, input: {
@@ -1249,7 +1273,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       try {
         const updatedPayable = await commandsRef.current!.updatePayable(id, input);
-        reconcileAfterWriteRef.current(updatedPayable, "payable.update");
+        reconcileAfterWrite(updatedPayable, "payable.update");
       } catch (e) {
         setPayables((curr) =>
           curr.map((p) => (p.id === id ? { ...prev } : p)),
@@ -1257,7 +1281,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const undoPayablePayment = useCallback(async (id: string) => {
@@ -1278,14 +1302,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     try {
       const undone = await commandsRef.current!.undoPayablePayment(id);
-      reconcileAfterWriteRef.current(undone, "payable.payment.undo");
+      reconcileAfterWrite(undone, "payable.payment.undo");
     } catch (e) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? { ...prev } : p)),
       );
       handleWriteErrorRef.current(e);
     }
-  }, []);
+  }, [reconcileAfterWrite]);
 
   const createPayable = useCallback(
     async (input: {
@@ -1314,13 +1338,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setPayables((curr) =>
           curr.map((p) => (p.id === optimisticId ? created : p)),
         );
-        reconcileAfterWriteRef.current(created, "payable.create");
+        reconcileAfterWrite(created, "payable.create");
       } catch (e) {
         setPayables((curr) => curr.filter((p) => p.id !== optimisticId));
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   // ── Budget create / update ──────────────────────────────────
@@ -1351,13 +1375,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setBudgets((curr) =>
           curr.map((b) => (b.id === optimistic.id ? created : b)),
         );
-        reconcileAfterWriteRef.current(created, "budget.create");
+        reconcileAfterWrite(created, "budget.create");
       } catch (e) {
         setBudgets((curr) => curr.filter((b) => b.id !== optimistic.id));
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const updateBudget = useCallback(
@@ -1386,7 +1410,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       try {
         const updatedBudget = await commandsRef.current!.updateBudget(id, input);
-        reconcileAfterWriteRef.current(updatedBudget, "budget.update");
+        reconcileAfterWrite(updatedBudget, "budget.update");
       } catch (e) {
         setBudgets((curr) =>
           curr.map((b) => (b.id === id ? prev : b)),
@@ -1394,7 +1418,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   // ── Goal create / contribute / cancel ───────────────────────
@@ -1423,13 +1447,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setGoals((curr) =>
           curr.map((g) => (g.id === optimistic.id ? created : g)),
         );
-        reconcileAfterWriteRef.current(created, "goal.create");
+        reconcileAfterWrite(created, "goal.create");
       } catch (e) {
         setGoals((curr) => curr.filter((g) => g.id !== optimistic.id));
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const contributeToGoal = useCallback(
@@ -1454,7 +1478,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       try {
         const contribution = await commandsRef.current!.contributeToGoal(id, input);
-        reconcileAfterWriteRef.current(contribution, "goal.update");
+        reconcileAfterWrite(contribution, "goal.update");
       } catch (e) {
         setGoals((curr) =>
           curr.map((g) => (g.id === id ? { ...prev } : g)),
@@ -1462,7 +1486,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const cancelGoal = useCallback(async (id: string) => {
@@ -1476,12 +1500,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     try {
       const cancelledGoal = await commandsRef.current!.cancelGoal(id);
-      reconcileAfterWriteRef.current(cancelledGoal, "goal.delete");
+      reconcileAfterWrite(cancelledGoal, "goal.delete");
     } catch (e) {
       setGoals((curr) => [prev, ...curr]);
       handleWriteErrorRef.current(e);
     }
-  }, []);
+  }, [reconcileAfterWrite]);
 
   const updateGoal = useCallback(async (
     id: string,
@@ -1503,12 +1527,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     try {
       const updatedGoal = await commandsRef.current!.updateGoal(id, input);
-      reconcileAfterWriteRef.current(updatedGoal, "goal.update");
+      reconcileAfterWrite(updatedGoal, "goal.update");
     } catch (e) {
       setGoals((curr) => curr.map((g) => (g.id === id ? prev : g)));
       handleWriteErrorRef.current(e);
     }
-  }, []);
+  }, [reconcileAfterWrite]);
 
   const payStatement = useCallback(
     async (
@@ -1560,7 +1584,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               : s,
           ),
         );
-        reconcileAfterWriteRef.current(updated, "statement.update");
+        reconcileAfterWrite(updated, "statement.update");
       } catch (e) {
         if (prevStmt) {
           setCardStatements((curr) =>
@@ -1577,7 +1601,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         handleWriteErrorRef.current(e);
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const createInstallments = useCallback(
@@ -1601,14 +1625,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         const createdStmts = await commandsRef.current!.createInstallments(input);
         const stmts = await endpoints.fetchStatements(input.accountId);
         setCardStatements(stmts);
-        // Installment routes carry no receipt yet: registry fallback.
-        reconcileAfterWriteRef.current(createdStmts, "statement.create");
+        // FIX-P1: POST /cards/installments attaches a transaction.create
+        // receipt, but endpoints.createInstallments resolves res.items (the
+        // envelope — and its receipt — is stripped), so the registry
+        // fallback applies. The explicit fetchStatements above covers the
+        // statement domain; the fallback refreshes statement + accounts.
+        reconcileAfterWrite(createdStmts, "statement.create");
       } catch (e) {
         handleWriteErrorRef.current(e);
         throw e;
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   const createCardPurchase = useCallback(
@@ -1631,14 +1659,19 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         const createdPurchases = await commandsRef.current!.createCardPurchase(input);
         const stmts = await endpoints.fetchStatements(input.accountId);
         setCardStatements(stmts);
-        // Card purchase routes carry no receipt yet: registry fallback.
-        reconcileAfterWriteRef.current(createdPurchases, "statement.create");
+        // FIX-P1: POST /cards/purchases attaches a transaction.create
+        // receipt, but endpoints.createCardPurchase resolves res.items (the
+        // envelope — and its receipt — is stripped), so the registry
+        // fallback applies. Threading the receipt through endpoints +
+        // commands is tracked follow-up (same for installments); refresh +
+        // stale behavior is preserved via the fallback + explicit fetch.
+        reconcileAfterWrite(createdPurchases, "statement.create");
       } catch (e) {
         handleWriteErrorRef.current(e);
         throw e;
       }
     },
-    [],
+    [reconcileAfterWrite],
   );
 
   // ── Profile adapter ────────────────────────────────────────
@@ -1834,18 +1867,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       refreshQuickInsightsStrict,
     ],
   );
-  const refreshOneTargetRef = useRef(refreshOneTarget);
-  useEffect(() => {
-    refreshOneTargetRef.current = refreshOneTarget;
-  }, [refreshOneTarget]);
+  // Refresh callback is swapped via reconciler.setRefresh below — no ref
+  // indirection at creation time (react-hooks/refs).
 
-  const reconciler = useMemo(
-    () =>
-      createMutationReconciler({
-        refresh: (target) => refreshOneTargetRef.current(target),
-      }),
-    [],
+  // Single reconciliation instance (SPEC §15.2, T3.3): created once via
+  // useState so the seen mutationId set survives re-renders. The refresh
+  // callback is swapped in a controlled effect (never read during render).
+  const [reconciler] = useState(() =>
+    createMutationReconciler({
+      refresh: (target) => refreshOneTarget(target),
+    }),
   );
+  useEffect(() => {
+    reconciler.setRefresh(refreshOneTarget);
+  }, [reconciler, refreshOneTarget]);
 
   const reconcileMutation = useCallback(
     async (input: ReconcileInput): Promise<ReconcileResult> => {
@@ -1865,24 +1900,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     },
     [reconciler],
   );
-  const reconcileMutationRef = useRef(reconcileMutation);
+  // Wires the stable mutator hook above to the current reconcileMutation.
+  // Effect-only assignment: no ref is read during render.
   useEffect(() => {
     reconcileMutationRef.current = reconcileMutation;
   }, [reconcileMutation]);
-
-  /** Fire-and-forget hook for mutators: receipt wins, mutationKind fallback. */
-  const reconcileAfterWriteRef = useRef(
-    (_body: unknown, _kind: MutationKind) => {},
-  );
-  useEffect(() => {
-    reconcileAfterWriteRef.current = (body: unknown, kind: MutationKind) => {
-      const receipt: MutationReceipt | undefined =
-        extractMutationReceipt(body);
-      void reconcileMutationRef.current(
-        receipt !== undefined ? { receipt } : { mutationKind: kind },
-      );
-    };
-  });
 
   const retryReconciliation = useCallback(async () => {
     const targets = staleTargetsRef.current;
@@ -2087,4 +2109,13 @@ export function useAppState(): AppState {
   if (!ctx)
     throw new Error("useAppState must be used within AppStateProvider");
   return ctx;
+}
+
+/**
+ * FIX-PWA-LINT-LOW-RISK: optional read that never throws. Returns `null`
+ * outside AppStateProvider (launcher tests). `useAppState` above keeps
+ * throwing — its contract is unchanged.
+ */
+export function useOptionalAppState(): AppState | null {
+  return useContext(AppStateContext);
 }

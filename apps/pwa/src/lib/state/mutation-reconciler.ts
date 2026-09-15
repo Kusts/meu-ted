@@ -140,8 +140,15 @@ export function createMutationReconciler(options: MutationReconcilerOptions): {
   reconcileTargets: (
     targets: RefreshTarget[],
   ) => Promise<Pick<ReconcileResult, "targets" | "refreshed" | "failed">>;
+  /**
+   * Swaps the refresh callback on the SAME instance (seen mutationIds are
+   * preserved). Controlled update path for React hosts: call it from an
+   * effect, never during render.
+   */
+  setRefresh: (refresh: MutationReconcilerOptions["refresh"]) => void;
 } {
-  const { refresh, maxSeen = DEFAULT_MAX_SEEN } = options;
+  const { refresh: initialRefresh, maxSeen = DEFAULT_MAX_SEEN } = options;
+  let refresh = initialRefresh;
   const seen = new Map<string, true>();
 
   const remember = (mutationId: string): boolean => {
@@ -179,5 +186,9 @@ export function createMutationReconciler(options: MutationReconcilerOptions): {
     return { ...outcome, deduped: false };
   };
 
-  return { reconcile, reconcileTargets };
+  const setRefresh = (next: MutationReconcilerOptions["refresh"]): void => {
+    refresh = next;
+  };
+
+  return { reconcile, reconcileTargets, setRefresh };
 }

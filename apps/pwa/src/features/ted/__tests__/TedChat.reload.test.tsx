@@ -40,6 +40,7 @@ vi.mock("@/lib/api/agent-client", async (importOriginal) => {
   return {
     ...actual,
     fetchAgentHistory: vi.fn(),
+    fetchActivePendingOperations: vi.fn(),
     sendAgentMessage: vi.fn(),
     decidePendingOperation: vi.fn(),
   };
@@ -59,28 +60,43 @@ const serverPresentation = {
   warnings: [],
 };
 
-describe("TedChat — reload rehydration from authoritative history (T6.1/§25.4)", () => {
+describe("TedChat — reload rehydration from authoritative active list (FIX-P1/T6.1/§25.4)", () => {
   const onCloseMock = vi.fn();
+
+  const activeItem = (overrides: Record<string, unknown> = {}) => ({
+    id: "pending-v2-1",
+    status: "proposed",
+    tool: "transactions.expense.create",
+    createdAt: "2026-09-14T10:00:00.000Z",
+    expiresAt: "2026-09-14T13:00:00.000Z",
+    amountCents: 85000,
+    description: "Mercado",
+    date: "2026-09-14",
+    accountId: "acc-1",
+    categoryId: "cat-1",
+    presentation: serverPresentation,
+    ...overrides,
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(agentClient.fetchAgentHistory).mockResolvedValue([]);
+    vi.mocked(agentClient.fetchActivePendingOperations).mockResolvedValue([]);
     vi.mocked(agentClient.sendAgentMessage).mockResolvedValue({ turnId: "t1", status: "completed" });
     vi.mocked(agentClient.decidePendingOperation).mockResolvedValue({ operationId: "pending-v2-1", status: "succeeded" });
   });
 
   it("mount after reload with a proposed op renders the card from SERVER state, not local residue", async () => {
+    // FIX-P1: history carries no card data; the live card comes from the
+    // authoritative active list with the server-derived presentation.
     vi.mocked(agentClient.fetchAgentHistory).mockResolvedValue([
       { id: "msg-1", actorId: "user-1", role: "user", content: "gastei 850 no mercado", isOwn: true, createdAt: undefined, attachments: undefined },
       {
         id: "msg-2", actorId: "ted", role: "assistant", content: "Proposta: Mercado. Confirma?", isOwn: false,
         createdAt: undefined, attachments: undefined,
-        pendingOperation: {
-          id: "pending-v2-1", status: "proposed", operation: "transactions.expense.create",
-          summary: "Mercado", presentation: serverPresentation,
-        },
       },
     ]);
+    vi.mocked(agentClient.fetchActivePendingOperations).mockResolvedValue([activeItem()]);
 
     render(<TedChat open={true} onClose={onCloseMock} />);
 
@@ -94,26 +110,26 @@ describe("TedChat — reload rehydration from authoritative history (T6.1/§25.4
     // Nothing was sent locally after mount — no optimistic residue exists.
     expect(agentClient.sendAgentMessage).not.toHaveBeenCalled();
     // Never a stale success claim.
-    expect(screen.queryByText(/registrada|concluída/i)).toBeNull();
+    expect(screen.queryByText(/Operação.*registrada/i)).toBeNull();
+    expect(screen.queryByText(/concluída/i)).toBeNull();
   });
 
-  it("executing status in history shows pt-BR processing (INV-03), never success", async () => {
+  it("executing status in the active list shows pt-BR processing (INV-03), never success", async () => {
     vi.mocked(agentClient.fetchAgentHistory).mockResolvedValue([
       {
         id: "msg-2", actorId: "ted", role: "assistant", content: "Processando.", isOwn: false,
         createdAt: undefined, attachments: undefined,
-        pendingOperation: {
-          id: "pending-v2-1", status: "executing", operation: "transactions.expense.create",
-          summary: "Mercado",
-          presentation: { ...serverPresentation, status: "executing" },
-        },
       },
+    ]);
+    vi.mocked(agentClient.fetchActivePendingOperations).mockResolvedValue([
+      activeItem({ status: "executing", presentation: { ...serverPresentation, status: "executing" } }),
     ]);
 
     render(<TedChat open={true} onClose={onCloseMock} />);
 
     expect(await screen.findByText(/processando operação/i)).toBeInTheDocument();
-    expect(screen.queryByText(/registrada|concluída/i)).toBeNull();
+    expect(screen.queryByText(/Operação.*registrada/i)).toBeNull();
+    expect(screen.queryByText(/concluída/i)).toBeNull();
     expect(screen.queryByRole("button", { name: /aprovar|confirmar/i })).toBeNull();
   });
 

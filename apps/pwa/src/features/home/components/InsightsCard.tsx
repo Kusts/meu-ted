@@ -24,7 +24,7 @@ export function InsightsCard({ insights }: { insights: InsightItem[] }) {
               variant="secondary"
               size="sm"
               leftIcon={<MessageCircle size={15} aria-hidden="true" />}
-              onClick={openTedChat}
+              onClick={() => openTedChat()}
             >
               Conversar com o TED
             </Button>

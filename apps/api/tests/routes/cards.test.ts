@@ -838,13 +838,15 @@ describe('DELETE /cards/purchases/:id', () => {
     const stmtId = (await app.inject({ method: 'GET', url: `/cards/statements?accountId=${CARD_A1.id}`, headers: auth(TOKEN_A) })).json().items[0].id;
 
     const first = await app.inject({ method: 'DELETE', url: `/cards/purchases/${purchaseId}`, headers: auth(TOKEN_A) });
-    expect(first.statusCode).toBe(204);
+    expect(first.statusCode).toBe(200);
+    expect(first.json().id).toBe(purchaseId);
+    expect(first.json().receipt.mutationKind).toBe('transaction.delete');
     const detail = await app.inject({ method: 'GET', url: `/cards/statements/${stmtId}`, headers: auth(TOKEN_A) });
     expect(detail.json().purchases).toHaveLength(0);
     expect(detail.json().totalCents).toBe(0);
 
     const second = await app.inject({ method: 'DELETE', url: `/cards/purchases/${purchaseId}`, headers: auth(TOKEN_A) });
-    expect(second.statusCode).toBe(204);
+    expect(second.statusCode).toBe(200);
   });
 
   it('returns 404 when cancelling a purchase from another household', async () => {

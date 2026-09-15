@@ -1,4 +1,4 @@
-import type { MutationReceipt, PendingOperationV2 } from '@pi-finance/llm-contracts';
+import type { MutationReceipt, PendingOperationPresentation, PendingOperationV2 } from '@pi-finance/llm-contracts';
 import { requestPiApiJson } from '../tools/api-client.js';
 import { emitSanitizedEvent } from '../observability/events.js';
 import { createMutationProposal, type MutationProposal } from './mutation-proposal.js';
@@ -12,6 +12,8 @@ export type MutationEventSink = (eventType: string, fields: Record<string, unkno
  * T1.5 (SPEC §8.3): lean authoritative listing projection. Enough for
  * disambiguation (amount/description/date/account), never authority
  * material (no attestation, no full args).
+ * FIX-P1: optional canonical `presentation` (SPEC §16) derived server-side
+ * from the hash-bound record — display-only, strict-validated at the relay.
  */
 export type ActiveOperationRecord = Readonly<{
   id: string;
@@ -24,6 +26,7 @@ export type ActiveOperationRecord = Readonly<{
   date?: string;
   accountId?: string;
   categoryId?: string;
+  presentation?: PendingOperationPresentation;
 }>;
 
 /** Single Agent-side transport facade for the authoritative V2 approval API. */

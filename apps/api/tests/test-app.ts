@@ -144,7 +144,10 @@ export const buildTestApp = (
             value !== null &&
             typeof (value as AuditLogStore).listAuditLogs === "function",
         ) ?? createInMemoryAuditLogStore());
-  const undoService = createUndoService({ auditLogs: auditStore, writes });
+  // FIX-P1-UNDO-IDEMPOTENCY: o UndoService compartilha o MESMO
+  // IdempotencyStore dos writes (nada de cache paralelo por instância).
+  const idempotency = createInMemoryIdempotencyStore();
+  const undoService = createUndoService({ auditLogs: auditStore, writes, idempotency });
   const ownershipTransferStore = optional.find(
     (value): value is OwnershipTransferStore =>
       typeof value === "object" &&
@@ -217,7 +220,7 @@ export const buildTestApp = (
     store,
     writes,
     tokenStore: customTokenStore ?? createTestTokenStore(),
-    idempotency: createInMemoryIdempotencyStore(),
+    idempotency,
     cardStore,
     payableStore,
     budgetStore,

@@ -1,7 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef } from "react";
-import { OVERLAY_Z_INDEX, useBodyScrollLock } from "@/lib/ui/overlay-a11y";
+import { useId, useRef } from "react";
+import {
+  OVERLAY_Z_INDEX,
+  useBodyScrollLock,
+  useOverlayDialog,
+} from "@/lib/ui/overlay-a11y";
 
 interface ConfirmActionDialogProps {
   open: boolean;
@@ -26,34 +30,17 @@ export function ConfirmActionDialog({
 }: ConfirmActionDialogProps) {
   const titleId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useBodyScrollLock(open);
 
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onCancel();
-      }
-    },
-    [onCancel],
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, handleKeyDown]);
-
-  // Focus the dialog when it opens; restore focus to the trigger on close.
-  useEffect(() => {
-    if (!open) return;
-    previousFocusRef.current = (document.activeElement as HTMLElement) ?? null;
-    containerRef.current?.focus();
-    return () => {
-      previousFocusRef.current?.focus();
-    };
-  }, [open]);
+  /* SPEC §21 (H2): foco/trap/restore/Escape/inert via primitiva compartilhada
+   * (substitui o padrão local). Foco inicial permanece no container do dialog
+   * — leitores de tela anunciam o título via aria-labelledby. */
+  useOverlayDialog(containerRef, {
+    open,
+    onEscape: onCancel,
+    initialFocus: "container",
+  });
 
   if (!open) return null;
 

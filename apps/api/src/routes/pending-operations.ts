@@ -6,6 +6,8 @@ import { DomainError, domainErrors } from '../writes/errors.js';
 import { requireIdempotencyKey } from '../writes/idempotency.js';
 import { computePendingOperationV2Hash, type PendingOperationV2 } from '@pi-finance/llm-contracts';
 import { validateApprovalToolArgs } from '../approvals/tool-registry.js';
+import { buildPendingOperationPresentation } from '../approvals/presentation.js';
+import type { ReadModelStore } from '../read-models/store.js';
 import { PendingOperationV2Error, type PendingExecutor, type PendingOperationExecutor, type PendingOperationStore, type PendingOperationV2Store } from '../approvals/pending.js';
 import type { UndoService } from '../approvals/undo.js';
 
@@ -27,7 +29,7 @@ export const V2_APPROVAL_CAPABILITIES = {
   cancel: 'financial.approval.cancel',
 } as const;
 
-export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { store: PendingOperationStore; resolveToken: AuthResolver; executor?: PendingOperationExecutor; undoService?: UndoService; v2Store?: PendingOperationV2Store; v2Executor?: PendingExecutor; v2Only?: boolean }): void => {
+export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { store: PendingOperationStore; resolveToken: AuthResolver; executor?: PendingOperationExecutor; undoService?: UndoService; v2Store?: PendingOperationV2Store; v2Executor?: PendingExecutor; v2Only?: boolean; readModel?: Pick<ReadModelStore, 'listAccounts' | 'listCategories'> }): void => {
   const { store, resolveToken, executor, undoService, v2Store, v2Executor } = opts;
   const resolve = async (req: import('fastify').FastifyRequest): Promise<{ householdId: string; actorId: string; deviceId: string }> => {
     if (req.authenticatedContext) return req.authenticatedContext;
@@ -97,13 +99,51 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
     // disambiguation (amount/description/date/account), never authority
     // material (no attestation, no full normalizedArgs). Registered before
     // the `/:id` GETs so the static segment can never be read as an id.
+    // FIX-P1 (presentation rehydration): each item carries the canonical
+    // `PendingOperationPresentation` derived SERVER-side from the STORED
+    // hash-bound normalizedArgs via buildPendingOperationPresentation —
+    // never from client input. Account/category display labels resolve
+    // server-side from the authoritative workspace-scoped read model
+    // (omitted honestly when unresolvable); the presentation is optional
+    // (absent when the stored args are incomplete) and never carries
+    // attestation/hash/token/args.
     app.get('/pending-operations/v2/active', async (req, reply) => {
       if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.read)) return;
       let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); }
       try {
         const records = await v2Store.listActive(identity(ctx));
+        // Display-only label maps, bulk-loaded once per request from the
+        // authoritative read model. A lookup failure empties the maps —
+        // the listing itself never fails for a display-only enrichment.
+        const accountLabels = new Map<string, string>();
+        const categoryLabels = new Map<string, string>();
+        if (opts.readModel) {
+          try {
+            const [accounts, categories] = await Promise.all([
+              opts.readModel.listAccounts(ctx.householdId),
+              opts.readModel.listCategories(ctx.householdId),
+            ]);
+            for (const account of accounts) accountLabels.set(account.id, account.name);
+            for (const category of categories) categoryLabels.set(category.id, category.name);
+          } catch {
+            // Honest omission below (no labels) — never a 500.
+          }
+        }
         const items = records.map((record) => {
           const args = (record.normalizedArgs ?? {}) as Record<string, unknown>;
+          const accountId = typeof args.accountId === 'string' ? args.accountId : undefined;
+          const categoryId = typeof args.categoryId === 'string' ? args.categoryId : undefined;
+          const accountLabel = accountId !== undefined ? accountLabels.get(accountId) : undefined;
+          const categoryLabel = categoryId !== undefined ? categoryLabels.get(categoryId) : undefined;
+          const presentation = buildPendingOperationPresentation({
+            id: record.id,
+            status: record.status,
+            tool: record.tool,
+            normalizedArgs: record.normalizedArgs,
+            expiresAt: record.expiresAt,
+            ...(accountLabel !== undefined ? { accountLabel } : {}),
+            ...(categoryLabel !== undefined ? { categoryLabel } : {}),
+          });
           return {
             id: record.id,
             status: record.status,
@@ -115,6 +155,7 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
             ...(typeof args.date === 'string' ? { date: args.date } : {}),
             ...(typeof args.accountId === 'string' ? { accountId: args.accountId } : {}),
             ...(typeof args.categoryId === 'string' ? { categoryId: args.categoryId } : {}),
+            ...(presentation ? { presentation } : {}),
           };
         });
         return reply.send({ items, total: items.length });

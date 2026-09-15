@@ -210,7 +210,7 @@ describe('POST /payables/from-template', () => {
 
     const res = await app.inject({
       method: 'POST', url: '/payables/from-template',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json', 'idempotency-key': 'from-template-1' },
       payload: { templateName: 'Netflix', dueDate: '2026-07-15' },
     });
     expect(res.statusCode).toBe(201);
@@ -228,7 +228,7 @@ describe('POST /payables/from-template', () => {
     });
     const res = await app.inject({
       method: 'POST', url: '/payables/from-template',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json', 'idempotency-key': 'from-template-2' },
       payload: { templateName: 'Luz', dueDate: '2026-07-10', amountOverrideCents: 200_00 },
     });
     expect(res.json().amountCents).toBe(200_00);
@@ -238,7 +238,7 @@ describe('POST /payables/from-template', () => {
     const { app } = buildTestApp(seed);
     const res = await app.inject({
       method: 'POST', url: '/payables/from-template',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json', 'idempotency-key': 'from-template-3' },
       payload: { templateName: 'Inexistente', dueDate: '2026-07-01' },
     });
     expect(res.statusCode).toBe(404);

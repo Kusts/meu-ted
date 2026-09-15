@@ -74,8 +74,8 @@ const pendingOperationPresentationLabelSchema = z
   .strict();
 
 /**
- * T3.4 (SPEC §16): browser-safe card projection. Strict: attestation and
- * authority material are rejected — the card carries display data only.
+ * T3.4 (SPEC §16): browser-safe card projection. Strict: single-use approval
+ * material and authority material are rejected — the card carries display data only.
  * Every field is optional except identity/title/expiry so legacy payloads
  * (old in-flight ops without a presentation) still parse.
  */
@@ -100,7 +100,7 @@ export type PendingOperationPresentation = z.infer<typeof pendingOperationPresen
 /**
  * T3.3 (SPEC §15.1): browser-safe execution receipt. Strict allowlist with
  * the same shape as the shared `MutationReceipt` contract — a payload
- * carrying attestation/authority material or ANY unknown key is dropped
+ * carrying single-use approval material/authority material or ANY unknown key is dropped
  * wholesale (fail-closed), never partially forwarded to the reconciler.
  * Declared locally (not imported from the zod-bearing contracts entry) to
  * honor the client bundle budget; the type IS the shared contract type.
@@ -190,7 +190,7 @@ export function formatDateToBR(isoDate: string): string {
 
 /**
  * Allowlisted pending-operation DTO: only card-safe fields cross into the
- * turn. A presentation carrying attestation (or any unknown key) is
+ * turn. A presentation carrying single-use approval material (or any unknown
  * dropped — the operation itself still surfaces in its legacy shape.
  */
 function sanitizePendingOperation(
@@ -301,7 +301,7 @@ const pendingDecisionSchema = z.object({
   status: z.enum(["proposed", "succeeded", "failed", "cancelled", "expired"]),
   retryable: z.boolean().optional(),
   // Raw receipt is parsed separately: the strict schema drops any payload
-  // carrying attestation or unknown keys WHOLESALE (INV-05, T3.3).
+  // carrying single-use approval material or unknown keys WHOLESALE (INV-05, T3.3).
   receipt: z.unknown().optional(),
 }).strict();
 
@@ -631,4 +631,75 @@ export async function fetchAgentHistory(workspaceId: string): Promise<AgentMessa
   }
   const json = await response.json();
   return historySchema.parse(json).items;
+}
+
+/**
+ * T5.3 (H-14, SPEC §22): lean active pending-operation projection relayed
+ * by the Agent (which delegates to the authoritative API). Declared
+ * locally with a strict allowlist — the client bundle budget forbids
+ * importing the contracts zod entry. ANY unknown key (in particular
+ * single-use approval material/authority material) fails the parse and the WHOLE payload is
+ * discarded: the browser only ever reflects display data, never decides.
+ * FIX-P1: optional canonical `presentation` (SPEC §16) derived server-side
+ * from the hash-bound record. Present only when browser-safe; absent on
+ * legacy payloads (card degrades to the lean shape).
+ */
+export type ActivePendingOperation = Readonly<{
+  id: string;
+  status: string;
+  tool: string;
+  createdAt: string;
+  expiresAt: string;
+  amountCents?: number;
+  description?: string;
+  date?: string;
+  accountId?: string;
+  categoryId?: string;
+  presentation?: PendingOperationPresentation;
+}>;
+
+const activePendingOperationSchema = z
+  .object({
+    id: z.string().min(1),
+    status: z.string().min(1),
+    tool: z.string().min(1),
+    createdAt: z.string().min(1),
+    expiresAt: z.string().min(1),
+    amountCents: z.number().int().optional(),
+    description: z.string().optional(),
+    date: z.string().optional(),
+    accountId: z.string().optional(),
+    categoryId: z.string().optional(),
+    presentation: pendingOperationPresentationSchema.optional(),
+  })
+  .strict();
+
+const activePendingOperationsSchema = z
+  .object({
+    items: z.array(activePendingOperationSchema),
+    total: z.number(),
+  })
+  .strict();
+
+export async function fetchActivePendingOperations(workspaceId: string): Promise<ActivePendingOperation[]> {
+  const baseUrl = agentBaseUrl();
+  const response = await fetchWithAgentAuth(
+    workspaceId,
+    `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/pending-operations/active`,
+    {
+      method: "GET",
+      credentials: "include",
+      headers: { "X-Workspace-Id": workspaceId },
+    },
+  );
+  if (!response.ok) {
+    throw new Error("Não foi possível carregar as aprovações agora.");
+  }
+  // Strict parse: payloads carrying single-use approval material or otherwise
+  // malformed payloads are discarded wholesale — surfaced as an honest error,
+  const parsed = activePendingOperationsSchema.safeParse(await response.json());
+  if (!parsed.success) {
+    throw new Error("Não foi possível carregar as aprovações agora.");
+  }
+  return parsed.data.items;
 }

@@ -17,6 +17,7 @@ import type { AppStateAction } from "./state-reducer";
 import type {
   Account, Budget, Category, Goal, Payable, Subscription, Transaction, CardStatement,
 } from "./types";
+import type { ReceiptCarryingItems, DeletedTransaction } from "@/lib/api/endpoints";
 import * as endpoints from "@/lib/api/endpoints";
 
 /**
@@ -241,7 +242,7 @@ export interface Commands {
   createExpenseTransaction(input: TransactionCreateInput): Promise<Transaction>;
   createIncomeTransaction(input: TransactionCreateInput): Promise<Transaction>;
   updateTransaction(id: string, input: TransactionUpdateInput): Promise<Transaction>;
-  deleteTransaction(id: string): Promise<void>;
+  deleteTransaction(id: string): Promise<DeletedTransaction>;
   createTransfer(input: TransferInput): Promise<Transaction>;
 
   // ── Accounts (create / update / deactivate) ────────────────────
@@ -283,9 +284,13 @@ export interface Commands {
   updateSubscription(id: string, input: SubscriptionUpdateInput): Promise<Subscription>;
 
   // ── Statements / Installments ──────────────────────────────────
+  // FIX-P1: the card-write values carry the server receipt additively
+  // (ReceiptCarryingItems) and are returned untouched, so the existing
+  // `reconcileAfterWrite` mechanism (extractMutationReceipt → receipt wins,
+  // mutationKind fallback) consumes the real receipt with no API change.
   payStatement(statementId: string, input: PayStatementInput): Promise<CardStatement>;
-  createInstallments(input: InstallmentsInput): Promise<unknown>;
-  createCardPurchase(input: CardPurchaseInput): Promise<unknown>;
+  createInstallments(input: InstallmentsInput): Promise<ReceiptCarryingItems<Transaction>>;
+  createCardPurchase(input: CardPurchaseInput): Promise<ReceiptCarryingItems<Transaction>>;
 
   // ── Profile patch ──────────────────────────────────────────────
   patchProfile(input: ProfileInput): Promise<unknown>;

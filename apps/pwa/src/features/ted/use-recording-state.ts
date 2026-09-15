@@ -55,8 +55,15 @@ export function useRecordingState(options: UseRecordingStateOptions = {}): UseRe
 
   const onAudioBlobRef = useRef(options.onAudioBlob);
   const onErrorRef = useRef(options.onError);
-  onAudioBlobRef.current = options.onAudioBlob;
-  onErrorRef.current = options.onError;
+  // Latest-callback mirror: assignment lives in an effect so render stays
+  // pure (react-hooks/refs). Initial useRef value covers the first commit;
+  // callbacks only fire from async recorder events, always post-effect.
+  useEffect(() => {
+    onAudioBlobRef.current = options.onAudioBlob;
+  }, [options.onAudioBlob]);
+  useEffect(() => {
+    onErrorRef.current = options.onError;
+  }, [options.onError]);
 
   const setBoth = useCallback((next: RecordingState) => {
     stateRef.current = next;
@@ -207,7 +214,11 @@ export function useRecordingState(options: UseRecordingStateOptions = {}): UseRe
   }, [setBoth]);
 
   const cleanupRef = useRef(cleanupMedia);
-  cleanupRef.current = cleanupMedia;
+  // Unmount always runs the latest teardown (stable identity across
+  // renders); synced in an effect to keep render pure (react-hooks/refs).
+  useEffect(() => {
+    cleanupRef.current = cleanupMedia;
+  }, [cleanupMedia]);
 
   // Component unmount teardown (covers logout/expiry: those paths unmount
   // the chat — TedChat itself has no session signal to subscribe to).

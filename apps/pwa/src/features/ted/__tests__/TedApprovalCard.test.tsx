@@ -110,7 +110,7 @@ describe("TedApprovalCard V2", () => {
   it("T3.3: onResolved receives the decision including the real execution receipt", async () => {
     const user = userEvent.setup();
     const onResolved = vi.fn();
-    const receipt = {
+    const receipt: agentClient.PendingOperationReceipt = {
       mutationId: "mut-1",
       mutationKind: "transactions.expense.create",
       status: "succeeded" as const,

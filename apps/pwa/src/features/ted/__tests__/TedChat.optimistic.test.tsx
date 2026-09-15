@@ -134,8 +134,8 @@ describe("TedChat — §19.3 retry preserves the draft", () => {
     await user.click(screen.getByRole("button", { name: /tentar novamente/i }));
 
     await waitFor(() => expect(agentClient.sendAgentMessage).toHaveBeenCalledTimes(2));
-    const first = agentClient.sendAgentMessage.mock.calls[0];
-    const second = agentClient.sendAgentMessage.mock.calls[1];
+    const first = vi.mocked(agentClient.sendAgentMessage).mock.calls[0];
+    const second = vi.mocked(agentClient.sendAgentMessage).mock.calls[1];
     expect(second?.[1]).toBe(first?.[1]);
     expect((second?.[2] as { messageId?: string }).messageId).toBe(
       (first?.[2] as { messageId?: string }).messageId,
@@ -172,8 +172,9 @@ describe("TedChat — §19.3 retry preserves the draft", () => {
     // Second retry succeeds; every attempt carried the SAME messageId.
     await user.click(screen.getByRole("button", { name: /tentar novamente/i }));
     await waitFor(() => expect(agentClient.sendAgentMessage).toHaveBeenCalledTimes(3));
-    const ids = agentClient.sendAgentMessage.mock.calls.map(
-      (call) => (call[2] as { messageId?: string }).messageId,
+    const ids = vi.mocked(agentClient.sendAgentMessage).mock.calls.map(
+      (call: Parameters<typeof agentClient.sendAgentMessage>) =>
+        (call[2] as { messageId?: string }).messageId,
     );
     expect(new Set(ids).size).toBe(1);
     expect(ids[0]).toBeTruthy();
@@ -204,10 +205,10 @@ describe("TedChat — §19.3 retry preserves the draft", () => {
     await user.click(screen.getByRole("button", { name: /tentar novamente/i }));
     await waitFor(() => expect(agentClient.sendAgentMessage).toHaveBeenCalledTimes(2));
 
-    const firstAtts = (agentClient.sendAgentMessage.mock.calls[0]?.[2] as {
+    const firstAtts = (vi.mocked(agentClient.sendAgentMessage).mock.calls[0]?.[2] as {
       attachments?: Array<{ url: string; name: string; type: string }>;
     }).attachments;
-    const secondAtts = (agentClient.sendAgentMessage.mock.calls[1]?.[2] as {
+    const secondAtts = (vi.mocked(agentClient.sendAgentMessage).mock.calls[1]?.[2] as {
       attachments?: Array<{ url: string; name: string; type: string }>;
     }).attachments;
     expect(secondAtts).toEqual(firstAtts);

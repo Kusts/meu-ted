@@ -58,7 +58,10 @@ vi.mock("@/lib/state/app-state-context", async (importOriginal) => {
   const actual = await importOriginal<
     typeof import("@/lib/state/app-state-context")
   >();
-  return { ...actual, useAppState: () => ({ reconcileMutation }) };
+  // TedChat reads reconciliation through the optional hook (null outside a
+  // provider); keep the throwing hook mocked identically for any surface
+  // that still uses it.
+  return { ...actual, useAppState: () => ({ reconcileMutation }), useOptionalAppState: () => ({ reconcileMutation }) };
 });
 
 beforeEach(() => {
@@ -71,14 +74,24 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
     const user = userEvent.setup();
     // Deferred history: approving while a reload is in flight must still
     // reconcile first, then reload (SPEC §15.4: chat + financial UI).
+    // Only the MOUNT reload gates: the send/decision reloads resolve
+    // immediately so the turn card can mount while the mount read is still
+    // in flight (executeSend applies the turn card after its own reload).
     let releaseHistory!: (messages: never[]) => void;
     const historyGate = () =>
       new Promise<never[]>((resolve) => {
         releaseHistory = resolve;
       });
+    let historyCalls = 0;
     const historySpy = vi
       .spyOn(agentClient, "fetchAgentHistory")
-      .mockImplementation(historyGate);
+      .mockImplementation(() => {
+        historyCalls += 1;
+        return historyCalls === 1 ? historyGate() : Promise.resolve([]);
+      });
+    // FIX-P1: live cards come from the active list — after the decision the
+    // operation leaves the active set, so the card clears on reload.
+    vi.spyOn(agentClient, "fetchActivePendingOperations").mockResolvedValue([]);
     vi.spyOn(agentClient, "sendAgentMessage").mockResolvedValue({
       turnId: "turn-1",
       status: "completed",
@@ -134,7 +147,7 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
 
   it("real receipt wins: reconciliation consumes the receipt (mutationId dedup), not the kind fallback", async () => {
     const user = userEvent.setup();
-    const receipt = {
+    const receipt: agentClient.PendingOperationReceipt = {
       mutationId: "mut-real-1",
       mutationKind: "transactions.expense.create",
       status: "succeeded" as const,
@@ -144,7 +157,7 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
     };
     // Authoritative history keeps the proposed card alive across reloads
     // (loadHistory resets pendingOps from server state on every resolve).
-    const historyWithCard = [
+    const historyWithCard: agentClient.AgentMessage[] = [
       {
         id: "msg-1",
         actorId: "user-1",
@@ -156,6 +169,17 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
       },
     ];
     vi.spyOn(agentClient, "fetchAgentHistory").mockResolvedValue(historyWithCard);
+    // FIX-P1: the card stays alive because the op is still in the active list.
+    vi.spyOn(agentClient, "fetchActivePendingOperations").mockResolvedValue([
+      {
+        id: "op-1",
+        status: "proposed",
+        tool: "transactions.expense.create",
+        createdAt: "2026-09-14T10:00:00.000Z",
+        expiresAt: "2026-09-14T13:00:00.000Z",
+        description: "Mercado",
+      },
+    ]);
     vi.spyOn(agentClient, "sendAgentMessage").mockResolvedValue({
       turnId: "turn-2",
       status: "completed",
@@ -196,7 +220,7 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
 
   it("receipt-carrying approval keeps the chat history reloading after a reconciliation failure (stale, §15.5)", async () => {
     const user = userEvent.setup();
-    const receipt = {
+    const receipt: agentClient.PendingOperationReceipt = {
       mutationId: "mut-real-2",
       mutationKind: "transactions.income.create",
       status: "succeeded" as const,
@@ -205,6 +229,16 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
       entity: { type: "transaction", id: "op-2" },
     };
     let historyCalls = 0;
+    vi.spyOn(agentClient, "fetchActivePendingOperations").mockResolvedValue([
+      {
+        id: "op-2",
+        status: "proposed",
+        tool: "transactions.income.create",
+        createdAt: "2026-09-14T10:00:00.000Z",
+        expiresAt: "2026-09-14T13:00:00.000Z",
+        description: "Salário",
+      },
+    ]);
     vi.spyOn(agentClient, "fetchAgentHistory").mockImplementation(async () => {
       historyCalls += 1;
       return [
@@ -259,7 +293,7 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
 
   it("natural-language confirmation turn that already executed reconciles from the turn receipt", async () => {
     const user = userEvent.setup();
-    const receipt = {
+    const receipt: agentClient.PendingOperationReceipt = {
       mutationId: "mut-real-3",
       mutationKind: "transactions.expense.create",
       status: "succeeded" as const,

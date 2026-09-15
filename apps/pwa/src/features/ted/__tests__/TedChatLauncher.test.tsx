@@ -40,7 +40,7 @@ describe("TedChatLauncher", () => {
     render(<TedChatLauncher />);
     const fab = screen.getByRole("button", { name: "Abrir assistente TED" });
     // SPEC §24: the FAB opens a dialog — announce it instead of pretending a
-    // menu pattern (aria-expanded is not applicable: the button unmounts).
+    // menu pattern; its expanded state tracks the single dialog it controls.
     expect(fab).toHaveAttribute("aria-haspopup", "dialog");
   });
 
@@ -56,9 +56,10 @@ describe("TedChatLauncher", () => {
     render(<TedChatLauncher />);
     await user.click(screen.getByRole("button", { name: "Abrir assistente TED" }));
     expect(screen.getByTestId("ted-chat-stub")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Abrir assistente TED" }),
-    ).not.toBeInTheDocument();
+    const hiddenFab = screen.getByRole("button", { name: "Abrir assistente TED" });
+    expect(hiddenFab).toHaveAttribute("aria-expanded", "true");
+    expect(hiddenFab).toHaveClass("pointer-events-none", "opacity-0");
+    expect(hiddenFab).toHaveAttribute("tabindex", "-1");
   });
 
   it("returns to the FAB after the chat closes", async () => {
@@ -73,9 +74,9 @@ describe("TedChatLauncher", () => {
   it("hides the FAB while any overlay is open (A1)", () => {
     overlay.open = true;
     render(<TedChatLauncher />);
-    expect(
-      screen.queryByRole("button", { name: "Abrir assistente TED" }),
-    ).not.toBeInTheDocument();
+    const hiddenFab = screen.getByRole("button", { name: "Abrir assistente TED" });
+    expect(hiddenFab).toHaveClass("pointer-events-none", "opacity-0");
+    expect(hiddenFab).toHaveAttribute("tabindex", "-1");
     expect(screen.queryByTestId("ted-chat-stub")).not.toBeInTheDocument();
   });
 });

@@ -512,7 +512,9 @@ describe('DELETE /transactions/:id (soft)', () => {
       url: `/transactions/${id}`,
       headers: { 'x-device-token': TOKEN_A },
     });
-    expect(del.statusCode).toBe(204);
+    expect(del.statusCode).toBe(200);
+    expect(del.json().id).toBe(id);
+    expect(del.json().receipt.mutationKind).toBe('transaction.delete');
     const list = await s.app.inject({
       method: 'GET',
       url: '/transactions',

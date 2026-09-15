@@ -62,10 +62,9 @@ function installMediaMocks() {
     this.start = vi.fn(() => {
       this.state = "recording";
     });
-    const self = this;
     this.stop = vi.fn(() => {
-      self.state = "inactive";
-      if (self.onstop) self.onstop();
+      this.state = "inactive";
+      if (this.onstop) this.onstop();
     });
   });
   (globalThis as unknown as { MediaRecorder?: unknown }).MediaRecorder = mockRecorder;

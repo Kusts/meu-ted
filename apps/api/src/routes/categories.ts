@@ -82,7 +82,10 @@ export const registerCategoryRoutes = (
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     try {
       const result = await opts.writes.applyCategoryDefaults(ctx.householdId);
-      return reply.code(200).send({ ok: true, ...result });
+      // FIX-P1 (SPEC §15.1): template application creates categories →
+      // category.create receipt (bulk: no single entity). Never a
+      // PendingOperation for this normal write (no operationId).
+      return reply.code(200).send(attachMutationReceipt({ ok: true, ...result }, 'category.create'));
     } catch (e) { return handleError(e, reply); }
   });
 

@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import { useAppState } from "@/lib/state/app-state-context";
+import { usePendingOperations } from "@/lib/state/use-pending-operations";
+import { useWorkspaceSafe } from "@/lib/auth/workspace-context";
 import { usePullToRefresh, PullToRefreshIndicator } from "@/lib/ui/use-pull-to-refresh";
 import NotificationsSheet from "@/features/profile/NotificationsSheet";
 import { useEffectiveProfile } from "@/features/profile/hooks";
@@ -48,6 +50,13 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   const profile = useEffectiveProfile();
   const router = useRouter();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+
+  // T5.3 (H-14, SPEC §22): real pending-approvals count from the
+  // authoritative Agent listing, scoped to the active workspace. `null`
+  // (unknown/error) keeps the hero indicator hidden — never an invented
+  // number.
+  const workspace = useWorkspaceSafe();
+  const pendingOperations = usePendingOperations(workspace?.activeWorkspace?.id ?? null);
 
   useEffect(() => {
     if (!dashboardSummary && refreshDashboardSummary) {
@@ -138,7 +147,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
         <PullToRefreshIndicator state={pull} />
         <HeroSection
           profile={profile}
-          pendingCount={null}
+          pendingCount={pendingOperations.pendingCount}
           totalBalance={totalBalance}
           totalIncome={totalIncome}
           totalExpenses={totalExpenses}

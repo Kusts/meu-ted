@@ -59,6 +59,8 @@ import { createPostgresAccountInviteStore } from "../auth/account-invites-postgr
 import { createAccountInviteService } from "../auth/account-invites.js";
 import { createPostgresPendingOperationV2Store } from "../approvals/pending-v2.js";
 import { createPostgresPendingOperationStore } from "../approvals/pending.js";
+import { createUndoService } from "../approvals/undo.js";
+import { createInMemoryAuditLogStore, createLegacyPostgresAuditLogStore, createPostgresAuditLogStore } from "../audit/store.js";
 import { registerPendingOperationRoutes } from "../routes/pending-operations.js";
 import { createPendingOperationV2Executor } from "../routes/index.js";
 
@@ -130,6 +132,11 @@ const start = async (): Promise<void> => {
       const writes = createLegacyPostgresWriteStore({ pool });
       const tokenStore = createPostgresDeviceTokenStore(pool);
       const idempotency = createPostgresIdempotencyStore({ pool, legacy: true });
+      // FIX-P1-UNDO-BOOTSTRAP: audit store real + UndoService com deps reais
+      // (antes /audit/undo respondia `unsupported` em produção).
+      // FIX-P1-UNDO-IDEMPOTENCY: MESMO IdempotencyStore dos writes.
+      const auditLogs = createLegacyPostgresAuditLogStore(pool);
+      const undoService = createUndoService({ auditLogs, writes, idempotency });
       const cardStore = createLegacyPostgresCardStore(pool);
       const payableStore = createLegacyPostgresPayableStore(pool);
       const budgetStore = createPostgresBudgetStore(pool);
@@ -200,6 +207,8 @@ const start = async (): Promise<void> => {
         ...inviteRuntime,
         ...accountInviteRuntime,
         inviteSignupGuard,
+        auditLogs,
+        undoService,
         analyticsSource: createSqlAnalyticsSource(pool, {
           legacy: true,
           stores: { store, cardStore, budgetStore, subscriptionStore },
@@ -223,12 +232,20 @@ const start = async (): Promise<void> => {
         v2Store: createPostgresPendingOperationV2Store(pool),
         v2Executor: createPendingOperationV2Executor(writes),
         v2Only: true,
+        // FIX-P1 labels: authoritative account/category display labels for
+        // the active presentation resolve from this workspace-scoped store.
+        readModel: store,
       });
     } else {
       const store = createPostgresReadModelStore({ pool });
       const writes = createPostgresWriteStore({ pool });
       const tokenStore = createPostgresDeviceTokenStore(pool);
       const idempotency = createPostgresIdempotencyStore({ pool });
+      // FIX-P1-UNDO-BOOTSTRAP: audit store real + UndoService com deps reais
+      // (antes /audit/undo respondia `unsupported` em produção).
+      // FIX-P1-UNDO-IDEMPOTENCY: MESMO IdempotencyStore dos writes.
+      const auditLogs = createPostgresAuditLogStore(pool);
+      const undoService = createUndoService({ auditLogs, writes, idempotency });
       const cardStore = createPostgresCardStore(pool);
       const payableStore = createPostgresPayableStore(pool);
       const budgetStore = createPostgresBudgetStore(pool);
@@ -301,6 +318,8 @@ const start = async (): Promise<void> => {
         ...inviteRuntime,
         ...accountInviteRuntime,
         inviteSignupGuard,
+        auditLogs,
+        undoService,
         llmConfigStore: createPostgresLlmConfigStore(pool),
         agentConnectionSecret: cfg.agentConnectionSecret,
         agentConfigToken: cfg.agentConfigToken,
@@ -323,6 +342,9 @@ const start = async (): Promise<void> => {
         v2Store: createPostgresPendingOperationV2Store(pool),
         v2Executor: createPendingOperationV2Executor(writes),
         v2Only: true,
+        // FIX-P1 labels: authoritative account/category display labels for
+        // the active presentation resolve from this workspace-scoped store.
+        readModel: store,
       });
     }
     app.addHook("onClose", async () => {
@@ -343,6 +365,11 @@ const start = async (): Promise<void> => {
     const { state, writes } = createInMemoryStores();
     const store = createInMemoryReadModelStoreFromState(state);
     const tokenStore = createInMemoryDeviceTokenStore();
+    // FIX-P1-UNDO-IDEMPOTENCY: MESMO IdempotencyStore dos writes — o
+    // UndoService registra o claim nele (nada de cache paralelo).
+    const idempotency = createInMemoryIdempotencyStore();
+    // FIX-P1-UNDO-BOOTSTRAP: UndoService explícito também no caminho
+    // in-memory (dev), com as mesmas deps reais do processo.
     const cardStore = createInMemoryCardStore(state);
     const payableStore = createInMemoryPayableStore(state);
     const budgetStore = createInMemoryBudgetStore(state);
@@ -355,6 +382,8 @@ const start = async (): Promise<void> => {
     const profileStore = createInMemoryProfileStore();
     const pushStore = createInMemoryPushSubscriptionStore();
     const priceAlertStore = createInMemoryPriceAlertStore();
+    const auditLogs = createInMemoryAuditLogStore();
+    const undoService = createUndoService({ auditLogs, writes, idempotency });
     const pushDelivery = vapid
       ? createWebPushDelivery({ store: pushStore, config: vapid })
       : undefined;
@@ -362,7 +391,7 @@ const start = async (): Promise<void> => {
       store,
       writes,
       tokenStore,
-      idempotency: createInMemoryIdempotencyStore(),
+      idempotency,
       cardStore,
       payableStore,
       budgetStore,
@@ -371,6 +400,8 @@ const start = async (): Promise<void> => {
       profileStore,
       pushStore,
       priceAlertStore,
+      auditLogs,
+      undoService,
       auth,
       adminEmails: cfg.adminEmails,
       llmConfigStore: createInMemoryLlmConfigStore(),

@@ -204,4 +204,24 @@ describe("createMutationReconciler", () => {
     expect(outcome.failed).toEqual([]);
     expect(calls).toEqual(["payables", "dashboard-summary"]);
   });
+
+  it("setRefresh swaps the refresh callback without losing seen mutationIds", async () => {
+    const first = vi.fn(async () => {});
+    const reconciler = createMutationReconciler({ refresh: first });
+    const r = receipt({ mutationId: "swap-1" });
+    await reconciler.reconcile({ receipt: r });
+    const second = vi.fn(async () => {});
+    reconciler.setRefresh(second);
+    // Same instance: dedup preserved across the refresh swap.
+    const deduped = await reconciler.reconcile({ receipt: r });
+    expect(deduped.deduped).toBe(true);
+    expect(second).not.toHaveBeenCalled();
+    // New mutations use the swapped refresh.
+    const fresh = await reconciler.reconcile({
+      receipt: receipt({ mutationId: "swap-2" }),
+    });
+    expect(fresh.deduped).toBe(false);
+    expect(second).toHaveBeenCalled();
+    expect(first).toHaveBeenCalledTimes(r.affectedTargets.length);
+  });
 });
