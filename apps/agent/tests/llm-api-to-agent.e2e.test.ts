@@ -193,11 +193,14 @@ describe("E2E API -> Agent (Fase 3 item 5)", () => {
     await seedActivePair();
     upstreamBehavior = "http500";
     const agent = makeAgent();
-    // V2 consumes provider output inside ConversationOrchestrator, so a
+    // Non-read utterance on purpose: finance-seeking reads fail closed on
+    // evidence (SPEC §14) before ever reaching inference, so the
+    // upstream-failure premise is exercised with a general question. V2
+    // consumes provider output inside ConversationOrchestrator, so a
     // failed stream rejects the turn itself rather than leaking a deferred
     // `text` promise to the SDK adapter.
     const failure = await agent.onChatMessage({
-      text: "Qual o meu saldo?",
+      text: "Olá, como você pode me ajudar?",
       intentionId: "e2e-up500-1",
     }).then(
       () => "",
@@ -288,10 +291,12 @@ describe("E2E API -> Agent (Fase 3 item 5)", () => {
     expect(clientView.activeProviderId).toBeNull();
     expect(clientView.activeModelId).toBeNull();
 
-    // 5. O agent recusa antes de executar.
+    // 5. O agent recusa antes de executar. Non-read utterance on purpose
+    // (see falha 1): finance-seeking reads fail closed on evidence before
+    // the provider gate is ever evaluated.
     const agent = makeAgent();
     const out = (await agent.onChatMessage({
-      text: "Qual o meu saldo?",
+      text: "Olá, como você pode me ajudar?",
       intentionId: "e2e-disabled-1",
     })) as unknown as { text?: string };
     expect(out.text).toContain("provider not configured");

@@ -1218,6 +1218,20 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
           // was persisted for them either), so their historical
           // non-persistence is preserved unchanged.
           if (turnResult.plan.mode !== 'mutation-proposal' && turnResult.plan.mode !== 'confirmation' && turnResult.plan.mode !== 'cancel') {
+            // T3.1 (SPEC §14): a fail-closed read never reaches the response
+            // provider, which is where the user message is otherwise
+            // persisted — persist it here so history keeps the Q&A pair
+            // (fail-closed only ever happens on the read path, so mutation
+            // non-persistence above is unaffected).
+            if (turnResult.failClosed) {
+              const failClosedUserMessage: UIMessage = {
+                id: `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                role: 'user',
+                parts: [{ type: 'text', text: restInput.text }],
+                metadata: { actorId: identity.actorId, workspaceId: identity.workspaceId, createdAt: new Date().toISOString() },
+              } as unknown as UIMessage;
+              await this.persistMessages([failClosedUserMessage]);
+            }
             const assistantMessage: UIMessage = {
               id: `msg-asst-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               role: 'assistant',

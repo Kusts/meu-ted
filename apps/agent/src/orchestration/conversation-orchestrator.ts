@@ -21,7 +21,7 @@ import type { MutationDraftChannelMessage } from '@pi-finance/llm-contracts';
 import { emitSanitizedEvent } from '../observability/events.js';
 import type { EvidenceEnvelope } from '../evidence/evidence-envelope.js';
 import { createGroundedResponseWithRetry } from '../responses/grounded-response.js';
-import { renderBalance, renderEmpty, renderInconclusive, renderMutationResult, renderStatement, renderUnavailable } from '../responses/deterministic-responses.js';
+import { renderBalance, renderEmpty, renderInconclusive, renderMutationResult, renderStatement, renderUnavailable, FINANCIAL_EVIDENCE_UNAVAILABLE_TEXT } from '../responses/deterministic-responses.js';
 import { routeIntent } from './intent-router.js';
 import {
   NO_FAILED_OPERATION_TEXT,
@@ -74,6 +74,13 @@ export type TurnResult = Readonly<{
   plan: TurnPlan;
   policy: MutationPolicy;
   mutation?: Readonly<{ operationId: string; status: 'proposed' | 'succeeded' }>;
+  /**
+   * T3.1 (SPEC §14): set on the deterministic fail-closed read reply
+   * (evidence null/timeout/all-error). The LLM was never consulted for this
+   * turn — adapters use this to persist the user message, which otherwise
+   * only happens inside the response provider.
+   */
+  failClosed?: boolean;
   /** Explicit clarification outcome (SPEC §7.8-ready): no proposal exists. */
   clarification?: Readonly<{
     missingFields: readonly string[];
@@ -205,13 +212,19 @@ export class ConversationOrchestrator {
 
   /** Read path: deterministic render when evidence allows, else grounded provider text with ONE retry. */
   private async runGroundedRead(input: TurnInput, plan: TurnPlan, startedAt: number, base: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy }): Promise<TurnResult> {
-    const envelope = await this.dependencies.evidenceProvider!(input, plan);
-    if (!envelope) {
-      if (!this.dependencies.responseProvider) return freeze(base);
-      // No evidence: legacy pass-through (provider failures still propagate).
-      const text = await this.dependencies.responseProvider(input, plan);
-      this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
-      return freeze({ ...base, response: freeze({ text }) });
+    // T3.1 fail-closed (SPEC §14 H-06): a finance-seeking turn with no
+    // evidence (null, provider throw/timeout) or all-error evidence gets the
+    // deterministic failure WITHOUT calling the LLM. Empty ≠ Error: `empty`
+    // items still flow to the grounded path below.
+    let envelope: EvidenceEnvelope | null;
+    try {
+      envelope = await this.dependencies.evidenceProvider!(input, plan);
+    } catch {
+      envelope = null;
+    }
+    if (!envelope || envelope.items.every((item) => item.status === 'error')) {
+      this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', grounded: false, latencyMs: Date.now() - startedAt });
+      return freeze({ ...base, failClosed: true as const, response: freeze({ text: FINANCIAL_EVIDENCE_UNAVAILABLE_TEXT }) });
     }
     const deterministic = this.renderDeterministicFromEvidence(plan, envelope);
     if (deterministic !== null) {

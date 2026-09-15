@@ -3,6 +3,14 @@ import { formatCents } from '../evidence/financial-formatters.js';
 export const renderBalance = (value: { accountName: string; balanceCents: number }): string => `${value.accountName}: ${formatCents(value.balanceCents)}.`;
 export const renderEmpty = (subject: string): string => `Não há dados disponíveis para ${subject}.`;
 export const renderUnavailable = (subject: string): string => `Não foi possível consultar ${subject} agora. Tente novamente mais tarde.`;
+
+/**
+ * T3.1 fail-closed financeiro (SPEC §14 H-06): evidence null, timeout ou
+ * todos os EvidenceItems com error → esta resposta determinística, sem
+ * chamar o LLM. Wording fixo da SPEC, nunca número inventado.
+ */
+export const FINANCIAL_EVIDENCE_UNAVAILABLE_TEXT =
+  'Não consegui acessar seus dados financeiros agora. Tente novamente em instantes.';
 export const renderSuccess = (subject: string): string => `${subject} concluído com sucesso.`;
 export const renderFailure = (subject: string): string => `Não foi possível concluir ${subject}.`;
 

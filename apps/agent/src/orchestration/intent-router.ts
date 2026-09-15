@@ -73,8 +73,14 @@ export const routeIntent = (text: string): TurnPlanV2 => {
   let domain: TurnPlanV2['domain'] = 'general';
   if (/\b(saldo|quanto tenho|quanto eu tenho)\b/.test(normalized)) { domain = 'accounts'; operations.push(operation('get_balance')); }
   if (/\b(conta|contas)\b/.test(normalized)) { domain = 'accounts'; operations.push(operation('list_accounts')); }
-  if (/\b(extrato|transac|lancamento|gastos?|despesas?)\b/.test(normalized)) { domain = 'transactions'; operations.push(operation('list_transactions')); }
+  if (/\b(extrato|transac|lancamento|gast\w*|despesas?)\b/.test(normalized)) { domain = 'transactions'; operations.push(operation('list_transactions')); }
   if (/\b(fatura|faturas|cartao|cartoes)\b/.test(normalized)) { domain = /fatura/.test(normalized) ? 'payables' : 'cards'; operations.push(operation(/fatura/.test(normalized) ? 'list_payables' : 'list_cards')); }
+  // T3.1 (SPEC §14): finance-seeking asks must map to evidence reads, never
+  // fall through to unsupported/general (which yields evidence=null).
+  if (/\b(orcament\w*|budget\w*)\b/.test(normalized)) { domain = 'budgets'; operations.push(operation('list_budgets')); }
+  // "contas vencidas" overrides the generic accounts match above: overdue
+  // bills are payables evidence, not account balances.
+  if (/\b(vencid\w*|vencer|a pagar|boleto\w*)\b/.test(normalized)) { domain = 'payables'; operations.push(operation('list_payables')); }
   if (!operations.length) return fallbackPlan();
   const skills = findSkillsFor(domain).slice(0, 2).map((skill) => skill.name);
   return makePlan('read', domain, operations.slice(0, 4), skills);

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import type { UIMessage } from "agents/ai-chat-agent";
 import { FinanceChatAgent } from "../src/finance-chat-agent.js";
 import worker from "../src/worker.js";
+import * as apiClient from "../src/tools/api-client.js";
 import { createAgentConnectionToken } from "../../api/src/auth/agent-connection-token.js";
 import { decodeDelegatedTurnToken } from "../src/delegated-token.js";
 
@@ -153,6 +154,13 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
 
   it("(2) POST /rpc/chat with trusted headers and forged body actorId persists user message with header actor metadata, followed by relay assistant message", async () => {
     const { agent, persisted } = createTestAgent();
+    // T3.1 (SPEC §14): "Quanto gastei este mês?" is a finance-seeking read,
+    // so it requires evidence. Empty evidence keeps the grounded path: the
+    // relay text carries no financial claim and passes validation unchanged.
+    vi.spyOn(apiClient, "requestPiApiJson").mockResolvedValue({ transactions: [] });
+    // Claim-free relay text (no amounts/dates/names): grounded validation
+    // passes it through verbatim, preserving this test's attribution focus.
+    const RELAY_TEXT = "Aqui está o resumo das suas movimentações.";
     // Fresh Response per call: a Response body can only be consumed once,
     // and each turn performs 2+ fetches (H-03 authority re-verify + relay).
     // H-14: the authority URL serves a valid snapshot (fail-closed when
@@ -164,7 +172,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
           headers: { "content-type": "application/json" },
         });
       }
-      return new Response(JSON.stringify({ text: "Seu saldo atual é R$ 1.500,00." }), {
+      return new Response(JSON.stringify({ text: RELAY_TEXT }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -193,7 +201,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { output?: string; status?: string };
     expect(body.status).toBe("completed");
-    expect(body.output).toBe("Seu saldo atual é R$ 1.500,00.");
+    expect(body.output).toBe(RELAY_TEXT);
 
     // Contract: Must call persistMessages with user message (attributed to trusted header actor, never body) and assistant message
     expect(agent.persistMessages).toHaveBeenCalled();
@@ -210,7 +218,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     const assistantMessage = persisted[1]!;
     expect(assistantMessage.role).toBe("assistant");
     const assistantText = assistantMessage.parts?.[0]?.text;
-    expect(assistantText).toBe("Seu saldo atual é R$ 1.500,00.");
+    expect(assistantText).toBe(RELAY_TEXT);
   });
 
   it("POST /rpc/chat creates a V2 proposal through the Agent and returns only the safe pending DTO", async () => {
