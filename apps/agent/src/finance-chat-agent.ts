@@ -65,8 +65,8 @@ import type { EvidenceEnvelope } from "./evidence/evidence-envelope.js";
 import { parseFinancialMutation, isClearlyMutating } from "./mutations/financial-parser.js";
 import { createRequestEntityReader, type EntityReader } from "./mutations/entity-resolver.js";
 import { MutationApiClient } from "./mutations/mutation-api-client.js";
+import { PendingOperationCoordinator, isRetryText } from "./orchestration/pending-operation-coordinator.js";
 import { initializeMutationDraftSchema, SqlMutationDraftStore, hasRecoverableDraft } from "./mutations/mutation-draft.js";
-import { MutationExecutor, type ApprovalDecision } from "./mutations/mutation-executor.js";
 
 export type Env = {
   AGENT_DELEGATION_SECRET?: string;
@@ -966,11 +966,15 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       }, secret);
       const requestWithApprovalToken = async <T>(method: string, path: string, opts: Parameters<typeof requestPiApiJson>[2] = {}) =>
         requestPiApiJson<T>(method, path, { ...opts, delegatedToken, apiOrigin: this.env?.API_ORIGIN });
-      const result = await new MutationExecutor({ request: requestWithApprovalToken }).decide({
+      // T1.5 (SPEC §8.1/§8.2): the approval button converges into the same
+      // PendingOperationCoordinator as natural language — one decision
+      // machine, no parallel path. The card names its operation, so decide()
+      // addresses it by id (no listing, no disambiguation).
+      const result = await new PendingOperationCoordinator({
+        client: new MutationApiClient({ request: requestWithApprovalToken }),
+      }).decide({
         operationId,
-        decision: body.decision as ApprovalDecision,
-        requestId: body.requestId.trim(),
-        delegatedToken,
+        decision: body.decision as 'confirm' | 'cancel' | 'retry',
         identity: { workspaceId, actorId, deviceId },
       });
       // AGENT-010: sanitized approval lifecycle events (status only — never
@@ -1020,6 +1024,11 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
   /**
    * Constructs the per-turn, approval-scoped transport injected into the
    * canonical orchestrator. No browser-owned data crosses this boundary.
+   *
+   * T1.5 (SPEC §8.1): ONE client carries every decision capability
+   * (propose/read/confirm/execute/retry/cancel) so proposal, confirmation,
+   * cancellation and retry turns share the same transport + coordinator —
+   * the previous propose-only asymmetry starved decision turns.
    */
   private async mutationApiClientForTurn(input: TurnInput, needsMutationClient: boolean): Promise<MutationApiClient | undefined> {
     if (!needsMutationClient) return undefined;
@@ -1032,7 +1041,14 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       actorId: input.actorId,
       workspaceId: input.workspaceId,
       role: input.role,
-      capabilities: ["financial.approval.propose"],
+      capabilities: [
+        'financial.approval.propose',
+        'financial.approval.read',
+        'financial.approval.confirm',
+        'financial.approval.execute',
+        'financial.approval.retry',
+        'financial.approval.cancel',
+      ],
       requestId: input.intentionId,
       deviceId: input.deviceId,
     }, secret);
@@ -1179,7 +1195,13 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
             Date.now(),
           )
           : false;
-        const needsMutation = mutationPlan !== null || hasPendingDraft;
+        // T1.5 (SPEC §8): decision turns (confirmation/cancel/retry) build
+        // the same MutationApiClient as proposals — the orchestrator's
+        // coordinator needs the transport even when no draft exists.
+        const routed = routeIntent(text);
+        const needsMutation = mutationPlan !== null || hasPendingDraft
+          || routed.mode === 'confirmation' || routed.mode === 'cancel'
+          || isRetryText(text);
         const mutationApiClient = await this.mutationApiClientForTurn(restInput, needsMutation);
         const entityReader = needsMutation ? await this.entityReaderForTurn(restInput) : undefined;
         const turnResult = await this.orchestratorForChannel({

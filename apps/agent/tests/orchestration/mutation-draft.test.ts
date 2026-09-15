@@ -50,10 +50,46 @@ type ScriptEntry = { persistThenThrow?: unknown; throw?: unknown };
 
 const makeFakeApi = (script: ScriptEntry[] = []) => {
   const ops = new Map<string, { id: string; payload: string }>();
+  const statusById = new Map<string, 'proposed' | 'cancelled'>();
   let seq = 0;
   const proposeKeys: Array<string | undefined> = [];
   const request = vi.fn();
   request.mockImplementation(async (method: string, path: string, opts?: { body?: unknown; idempotencyKey?: string }) => {
+    // T1.5 authoritative surface used by the coordinator: listing returns
+    // every non-cancelled op (all start `proposed` in this fake), cancel
+    // persists the terminal state before any reply is built.
+    if (method === 'GET' && path === '/pending-operations/v2/active') {
+      const items = [...ops.values()]
+        .filter((op) => (statusById.get(op.id) ?? 'proposed') !== 'cancelled')
+        .map((op) => {
+          const parsed = JSON.parse(op.payload) as { tool?: unknown; normalizedArgs?: Record<string, unknown> };
+          const args = (parsed.normalizedArgs ?? {}) as Record<string, unknown>;
+          return {
+            id: op.id,
+            status: statusById.get(op.id) ?? 'proposed',
+            tool: parsed.tool,
+            createdAt: '2026-09-14T00:00:00.000Z',
+            expiresAt: '2026-09-14T01:00:00.000Z',
+            ...(typeof args.amountCents === 'number' ? { amountCents: args.amountCents } : {}),
+            ...(typeof args.description === 'string' ? { description: args.description } : {}),
+            ...(typeof args.date === 'string' ? { date: args.date } : {}),
+            ...(typeof args.accountId === 'string' ? { accountId: args.accountId } : {}),
+          };
+        });
+      return { items, total: items.length };
+    }
+    const cancelMatch = /^\/pending-operations\/v2\/([^/]+)\/cancel$/.exec(path);
+    if (method === 'POST' && cancelMatch) {
+      const id = decodeURIComponent(cancelMatch[1]!);
+      const op = [...ops.values()].find((entry) => entry.id === id);
+      if (!op) {
+        const missing = new Error('approval.not_found');
+        (missing as { statusCode?: number }).statusCode = 404;
+        throw missing;
+      }
+      statusById.set(id, 'cancelled');
+      return { id, status: 'cancelled' };
+    }
     if (method === 'POST' && path === '/pending-operations/v2/propose') {
       const key = opts?.idempotencyKey;
       proposeKeys.push(key);
@@ -66,6 +102,7 @@ const makeFakeApi = (script: ScriptEntry[] = []) => {
         if (!ops.has(key ?? '')) {
           seq += 1;
           ops.set(key ?? '', { id: `pending-${seq}`, payload });
+          statusById.set(`pending-${seq}`, 'proposed');
         }
         throw step.persistThenThrow;
       }
@@ -82,12 +119,14 @@ const makeFakeApi = (script: ScriptEntry[] = []) => {
       seq += 1;
       const id = `pending-${seq}`;
       ops.set(key ?? '', { id, payload });
+      statusById.set(id, 'proposed');
       return { id };
     }
     throw new Error(`unexpected request ${method} ${path}`);
   });
-  const proposePosts = () => request.mock.calls.filter((call) => call[0] === 'POST').length;
-  return { api: new MutationApiClient({ request }), request, ops, proposeKeys, proposePosts };
+  const proposePosts = () => request.mock.calls.filter((call) => call[0] === 'POST' && call[1] === '/pending-operations/v2/propose').length;
+  const opStatus = (id: string): string => statusById.get(id) ?? 'unknown';
+  return { api: new MutationApiClient({ request }), request, ops, proposeKeys, proposePosts, opStatus };
 };
 
 const timeoutError = () => new Error('fetch failed');
@@ -261,8 +300,15 @@ describe('SPEC §25.3.1 — MutationDraft multi-turno', () => {
     const ctx = ctxOf();
     expect(store.listActive(ctx, Date.now())).toHaveLength(0);
     if (fake.ops.size === 1) {
-      // An operation exists: nobody may have answered "cancelado".
-      expect(cancel.response?.text).not.toMatch(/cancelada/);
+      // T1.5 (SPEC §8.5/INV-10): whenever an operation exists after the
+      // race, it must have been cancelled authoritatively — "cancelada" is
+      // only ever answered with no live operation remaining.
+      const opId = [...fake.ops.values()][0]!.id;
+      expect(fake.opStatus(opId)).toBe('cancelled');
+      expect(cancel.response?.text).toMatch(/cancelada|processamento/);
+    } else {
+      // Cancel won before any proposal: nothing may have been created.
+      expect(cancel.response?.text).toMatch(/cancelada/);
     }
   });
 
@@ -368,7 +414,7 @@ describe('SPEC §25.3.2 — handoff MutationDraft → PendingOperation', () => {
     expect(fake.ops.size).toBe(1);
   });
 
-  it('case E: "cancela" during proposing with existing operation → routes to cancel flow, never "cancelado"', async () => {
+  it('case E: "cancela" during proposing with existing operation → authoritative cancel, then "cancelado"', async () => {
     const fake = makeFakeApi();
     const store = new InMemoryMutationDraftStore();
     const now = Date.now();
@@ -410,11 +456,19 @@ describe('SPEC §25.3.2 — handoff MutationDraft → PendingOperation', () => {
     });
     const orchestrator = setup(fake, store);
     const result = await turn(orchestrator, 'cancela', 'msg-e-3');
-    expect(result.response?.text).toMatch(/cartão de aprovação/);
-    expect(result.response?.text).not.toMatch(/cancelada/);
-    expect(result.mutation?.operationId).toBeDefined();
+    // T1.5 (SPEC §8.5): the same-key outcome resolved to the existing
+    // operation, which is cancelled authoritatively BEFORE replying.
+    expect(result.response?.text).toMatch(/cancelada/);
+    expect(result.response?.text).not.toMatch(/cartão de aprovação/);
+    expect(result.mutation).toBeUndefined();
     expect(fake.ops.size).toBe(1);
     expect(store.get(seed.record.draftId)?.status).toBe('consumed');
+    const opId = [...fake.ops.values()][0]!.id;
+    expect(fake.opStatus(opId)).toBe('cancelled');
+    const cancels = fake.request.mock.calls.filter(
+      (call) => call[0] === 'POST' && typeof call[1] === 'string' && call[1].endsWith('/cancel'),
+    );
+    expect(cancels).toHaveLength(1);
   });
 
   it('case E-unknown: "cancela" with unresolvable outcome → inconclusive, stays proposing', async () => {

@@ -8,6 +8,24 @@ export type MutationIdentity = MutationExecution['identity'];
 export type MutationRequest = typeof requestPiApiJson;
 export type MutationEventSink = (eventType: string, fields: Record<string, unknown>) => void;
 
+/**
+ * T1.5 (SPEC §8.3): lean authoritative listing projection. Enough for
+ * disambiguation (amount/description/date/account), never authority
+ * material (no attestation, no full args).
+ */
+export type ActiveOperationRecord = Readonly<{
+  id: string;
+  status: string;
+  tool: string;
+  createdAt: string;
+  expiresAt: string;
+  amountCents?: number;
+  description?: string;
+  date?: string;
+  accountId?: string;
+  categoryId?: string;
+}>;
+
 /** Single Agent-side transport facade for the authoritative V2 approval API. */
 export class MutationApiClient {
   private readonly executor: MutationExecutor;
@@ -58,6 +76,40 @@ export class MutationApiClient {
 
   confirm(operationId: string, identity: MutationIdentity): Promise<{ operationId: string; attestation: string }> {
     return this.timed('transactions.confirm', () => this.executor.confirm(operationId, identity));
+  }
+
+  /** T1.5 (SPEC §8.3): authoritative listing scoped by the turn identity. */
+  listActive(identity: MutationIdentity): Promise<{ items: ActiveOperationRecord[]; total: number }> {
+    return this.timed('transactions.listActive', () =>
+      this.request<{ items: ActiveOperationRecord[]; total: number }>('GET', '/pending-operations/v2/active', {
+        headers: { 'x-workspace-id': identity.workspaceId, 'x-actor-id': identity.actorId, 'x-device-id': identity.deviceId },
+      }),
+    );
+  }
+
+  /** T1.5 (SPEC §8.5): authoritative cancel — persisted before any reply. */
+  cancel(operationId: string, identity: MutationIdentity): Promise<{ operationId: string; status: 'cancelled' }> {
+    return this.timed('transactions.cancel', async () => {
+      const result = await this.request<{ id?: unknown; status?: unknown }>(
+        'POST', `/pending-operations/v2/${encodeURIComponent(operationId)}/cancel`,
+        { headers: { 'x-workspace-id': identity.workspaceId, 'x-actor-id': identity.actorId, 'x-device-id': identity.deviceId } },
+      );
+      this.events('approval.rejected', { status: 'rejected' });
+      return { operationId: typeof result.id === 'string' ? result.id : operationId, status: 'cancelled' as const };
+    });
+  }
+
+  /** T1.5 (SPEC §8.2/§13): failed → confirmed with a fresh attestation. */
+  retry(operationId: string, identity: MutationIdentity): Promise<{ operationId: string; attestation: string }> {
+    return this.timed('transactions.retry', async () => {
+      const result = await this.request<{ id?: unknown; attestation?: unknown }>(
+        'POST', `/pending-operations/v2/${encodeURIComponent(operationId)}/retry`,
+        { headers: { 'x-workspace-id': identity.workspaceId, 'x-actor-id': identity.actorId, 'x-device-id': identity.deviceId } },
+      );
+      if (typeof result.attestation !== 'string' || result.attestation.length < 32) throw new Error('approval.missing_attestation');
+      this.events('approval.confirmed', { status: 'confirmed' });
+      return { operationId: typeof result.id === 'string' ? result.id : operationId, attestation: result.attestation };
+    });
   }
 
   execute(input: MutationExecution): Promise<{ status: 'succeeded'; operationId: string }> {

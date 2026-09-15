@@ -189,6 +189,31 @@ const createFakePendingApi = (options: FakeApiOptions = {}): FakeApi => {
   };
 
   const request = async (method: string, path: string, opts: Record<string, unknown> = {}): Promise<unknown> => {
+    // T1.5 (SPEC §8.3): authoritative listing. The fake mirrors the real
+    // API vocabulary loosely ('pending' → proposed, 'approved' → confirmed)
+    // and enforces the same identity scope + terminal-state exclusion.
+    if (method === 'GET' && path === '/pending-operations/v2/active') {
+      const headers = headersOf(opts);
+      const items = [...store.entries()]
+        .filter(([, operation]) =>
+          operation.bindings.workspaceId === headers.workspaceId &&
+          operation.bindings.actorId === headers.actorId &&
+          operation.bindings.deviceId === headers.deviceId)
+        .filter(([, operation]) => ['pending', 'approved', 'failed'].includes(operation.status))
+        .map(([id, operation]) => {
+          const args = (operation.normalizedArgs ?? {}) as Record<string, unknown>;
+          return {
+            id,
+            status: operation.status === 'approved' ? 'confirmed' : operation.status === 'failed' ? 'failed' : 'proposed',
+            tool: operation.tool,
+            createdAt: freshTs(),
+            expiresAt: operation.expiresAt,
+            ...(typeof args.amountCents === 'number' ? { amountCents: args.amountCents } : {}),
+            ...(typeof args.description === 'string' ? { description: args.description } : {}),
+          };
+        });
+      return { items, total: items.length };
+    }
     if (method === 'POST' && path === '/pending-operations/v2/propose') {
       calls.propose += 1;
       const body = (opts.body ?? {}) as Record<string, unknown>;

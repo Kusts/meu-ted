@@ -22,7 +22,7 @@ export type FastPathResult = Readonly<{
 /** Classifies high-volume requests without invoking a generative planner. */
 export const classifyFastPath = (text: string, options: FastPathOptions = {}): FastPathResult => {
   const normalized = typoNormalize(fold(text));
-  const kind: FastPathKind = /\b(confirmar|confirma|sim)\b/.test(normalized) ? 'confirm'
+  const kind: FastPathKind = /\b(confirmar|confirma|confirmo|confirmado|autorizo|sim)\b/.test(normalized) ? 'confirm'
     : /\b(cancelar|cancela|desistir|deixa pra la)\b/.test(normalized) ? 'cancel'
     : /\b(saldo|quanto tenho|quanto eu tenho)\b/.test(normalized) ? 'balance'
     : /\b(ultimos? lancamentos?|extrato recente|ultimas? transac)\b/.test(normalized) ? 'recent_transactions' : 'none';

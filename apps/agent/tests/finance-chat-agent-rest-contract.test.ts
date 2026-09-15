@@ -284,7 +284,17 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     const auth = proposalRequest!.headers.get("authorization");
     expect(auth).toMatch(/^Bearer /);
     const claims = await decodeDelegatedTurnToken(auth!.slice("Bearer ".length), secret);
-    expect(claims.capabilities).toEqual(["financial.approval.propose"]);
+    // T1.5 (SPEC §8.1): one decision-scoped token serves propose + the
+    // coordinator's confirm/cancel/retry/read — still narrowly approval-only,
+    // device-bound, and bound to this turn's requestId.
+    expect(claims.capabilities).toEqual([
+      "financial.approval.propose",
+      "financial.approval.read",
+      "financial.approval.confirm",
+      "financial.approval.execute",
+      "financial.approval.retry",
+      "financial.approval.cancel",
+    ]);
   });
 
   it("(3) GET /rpc/history returns persisted messages with isOwn derived by comparing authenticated actor to server metadata", async () => {

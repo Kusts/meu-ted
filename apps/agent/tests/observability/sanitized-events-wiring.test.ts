@@ -44,6 +44,13 @@ describe('AGENT-010 sanitized lifecycle events', () => {
     const seen: Array<{ type: string; fields: Record<string, unknown> }> = [];
     const request = vi.fn()
       .mockResolvedValueOnce({ id: 'pending-1' })
+      .mockResolvedValueOnce({
+        items: [{
+          id: 'pending-1', status: 'proposed', tool: 'transactions.expense.create',
+          createdAt: '2026-09-14T00:00:00.000Z', expiresAt: '2026-09-14T01:00:00.000Z',
+        }],
+        total: 1,
+      })
       .mockResolvedValueOnce({ id: 'pending-1', attestation: 'a'.repeat(32) })
       .mockResolvedValueOnce({ status: 'succeeded', operationId: 'pending-1' });
     const api = new MutationApiClient({ request, events: (type, fields) => seen.push({ type, fields }) });

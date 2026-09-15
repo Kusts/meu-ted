@@ -1,7 +1,6 @@
 import { scrubForPersistence } from '../privacy/dlp.js';
 import { parseFinancialMutation } from '../mutations/financial-parser.js';
 import { resolveMutationEntities, type EntityReader } from '../mutations/entity-resolver.js';
-import { resolveConfirmation } from '../mutations/confirmation-resolver.js';
 import type { MutationApiClient, MutationIdentity } from '../mutations/mutation-api-client.js';
 import { deriveIdempotencyKey } from '../tools/intention-ledger.js';
 import {
@@ -24,6 +23,12 @@ import type { EvidenceEnvelope } from '../evidence/evidence-envelope.js';
 import { createGroundedResponseWithRetry } from '../responses/grounded-response.js';
 import { renderBalance, renderEmpty, renderInconclusive, renderMutationResult, renderStatement, renderUnavailable } from '../responses/deterministic-responses.js';
 import { routeIntent } from './intent-router.js';
+import {
+  NO_FAILED_OPERATION_TEXT,
+  PendingOperationCoordinator,
+  isRetryText,
+  renderDisambiguation,
+} from './pending-operation-coordinator.js';
 
 export type ConversationChannel = 'pwa-rest' | 'sdk' | 'broker';
 
@@ -139,6 +144,12 @@ export class ConversationOrchestrator {
   constructor(private readonly dependencies: {
     plan?: (input: TurnInput) => TurnPlan;
     mutationApiClient?: MutationApiClient;
+    /**
+     * T1.5 unified decision machine (SPEC §8). Injected by tests or the
+     * channel adapter; otherwise built per turn from the mutation client
+     * (+ draft store when configured).
+     */
+    coordinator?: PendingOperationCoordinator;
     /** Authoritative entity lists (accounts/categories). Absent = fail closed. */
     entityReader?: EntityReader;
     responseProvider?: TurnResponseProvider;
@@ -232,6 +243,18 @@ export class ConversationOrchestrator {
       actorId: input.actorId,
       deviceId: input.deviceId ?? null,
     };
+  }
+
+  /** T1.5: the single decision machine for this turn (injected or derived). */
+  private coordinatorFor(client: MutationApiClient): PendingOperationCoordinator {
+    const injected = this.dependencies.coordinator;
+    if (injected) return injected;
+    const store = this.dependencies.draftStore;
+    return new PendingOperationCoordinator({
+      client,
+      ...(store ? { draftStore: store } : {}),
+      ...(this.dependencies.draftNow ? { now: this.dependencies.draftNow } : {}),
+    });
   }
 
   private draftNowMs(): number {
@@ -761,6 +784,12 @@ export class ConversationOrchestrator {
     }
   }
 
+  /**
+   * T1.5 (SPEC §8.5, INV-10): every cancel resolves through the coordinator.
+   * Proposing handoffs settle by the SAME key, actives are discarded, and
+   * "cancelado" is only answered after the API persisted the cancel — or
+   * after verifying no operation was ever created.
+   */
   private async runCancelTurn(
     input: TurnInput,
     plan: TurnPlan,
@@ -786,103 +815,155 @@ export class ConversationOrchestrator {
     if (!store) return cancelled();
     const ctx = this.draftContext(input);
     const now = this.draftNowMs();
-    store.expireStale(ctx, now);
-    const stamp = new Date(now).toISOString();
-
-    // Case E: resolve every proposing handoff by the SAME key before
-    // answering. Without a client the outcome cannot be resolved — reply
-    // inconclusive, never "cancelado" with a possibly-active operation.
-    const proposing = store.listProposing(ctx, now);
-    if (proposing.length > 0 && !client) {
-      return this.completeTurn(input, plan, startedAt, base, {
-        response: freeze({ text: renderInconclusive() }),
-      });
-    }
-    let pendingOperationId: string | null = null;
-    let outcomeUnknown = false;
-    for (const draft of proposing) {
-      try {
-        const identity: MutationIdentity = {
-          workspaceId: draft.workspaceId,
-          actorId: draft.actorId,
-          deviceId: draft.deviceId ?? input.deviceId ?? (() => { throw new Error('mutation.device_required'); })(),
-        };
-        const args = draft.resolvedArgs;
-        const proposal = await client!.propose({
-          tool: draft.tool,
-          normalizedArgs: {
-            amountCents: args.amountCents,
-            description: args.description,
-            date: args.date,
-            accountId: args.accountId!,
-            categoryId: args.categoryId!,
-          },
-          summary: args.description,
-          identity,
-          idempotencyKey: draft.proposalIdempotencyKey,
-        });
+    // Without a transport the proposing outcome cannot be resolved — reply
+    // inconclusive when a handoff is in flight, never "cancelado" (INV-10).
+    // Active drafts are still discarded locally: no structured intention
+    // may survive to become a proposal afterwards.
+    if (!client) {
+      const stamp = new Date(now).toISOString();
+      for (const draft of store.listActive(ctx, now)) {
         store.update(draft.draftId, {
-          status: 'consumed',
-          proposalId: proposal.id,
-          proposeOutcome: proposal.existing ? 'existing' : 'created',
+          status: 'discarded',
+          discardReason: 'user_cancel',
           updatedAt: stamp,
           lastIntentionId: input.intentionId,
         });
-        pendingOperationId = proposal.id;
-      } catch (error) {
-        if (isDefinitiveProposeError(error)) {
-          // Definitive "no operation was created" — safe to discard.
-          store.update(draft.draftId, {
-            status: 'discarded',
-            discardReason: 'propose_rejected',
-            proposeOutcome: 'rejected',
-            updatedAt: stamp,
-            lastIntentionId: input.intentionId,
-          });
-        } else {
-          store.update(draft.draftId, {
-            proposeOutcome: 'unknown',
-            updatedAt: stamp,
-            lastIntentionId: input.intentionId,
-          });
-          outcomeUnknown = true;
-        }
       }
+      if (store.listProposing(ctx, now).length > 0) {
+        return this.completeTurn(input, plan, startedAt, base, {
+          response: freeze({ text: renderInconclusive() }),
+        });
+      }
+      return cancelled();
     }
-    // Cancelation always discards the active drafts of the same context: no
-    // structured intention may survive to become a proposal afterwards.
-    for (const draft of store.listActive(ctx, now)) {
-      store.update(draft.draftId, {
-        status: 'discarded',
-        discardReason: 'user_cancel',
-        updatedAt: stamp,
-        lastIntentionId: input.intentionId,
-      });
-    }
-    if (outcomeUnknown) {
+    const coordinator = this.coordinatorFor(client);
+    let resolution: Awaited<ReturnType<PendingOperationCoordinator['resolveCancel']>>;
+    try {
+      resolution = await coordinator.resolveCancel(
+        {
+          workspaceId: input.workspaceId,
+          actorId: input.actorId,
+          deviceId: input.deviceId ?? (() => { throw new Error('mutation.device_required'); })(),
+        },
+        { store, ctx, intentionId: input.intentionId, deviceId: input.deviceId, nowMs: now },
+      );
+    } catch {
+      // Unknown outcome (transport failure, missing device): never claim
+      // "cancelado" with a possibly-active operation (INV-10).
       return this.completeTurn(input, plan, startedAt, base, {
         response: freeze({ text: renderInconclusive() }),
       });
     }
-    if (pendingOperationId) {
-      // A pending operation exists: route to the cancel flow (T1.5 owns the
-      // authoritative cancel API) — never claim "cancelado" here (INV-10).
-      this.emit('approval.rejected', {
+    if (resolution.kind === 'inconclusive') {
+      return this.completeTurn(input, plan, startedAt, base, {
+        response: freeze({ text: coordinator.renderInconclusive() }),
+      });
+    }
+    if (resolution.kind === 'ambiguous') {
+      const text = renderDisambiguation(resolution.operations, 'cancelar');
+      const ambiguousPlan = freeze({ ...plan, missingFields: freeze(['intent']) });
+      this.emit('mutation.blocked', {
         intentionId: input.intentionId,
         traceId: input.traceId,
         channel: input.channel,
         domain: plan.domain,
         mode: plan.mode,
-        status: 'rejected',
+        status: 'blocked',
       });
-      return this.completeTurn(input, plan, startedAt, base, {
-        mutation: freeze({ operationId: pendingOperationId, status: 'proposed' }),
-        response: freeze({
-          text: 'Encontrei uma operação pendente criada a partir do seu pedido. Conclua o cancelamento pelo cartão de aprovação.',
-        }),
+      return this.completeTurn(input, ambiguousPlan, startedAt, base, {
+        plan: ambiguousPlan,
+        clarification: freeze({ missingFields: ambiguousPlan.missingFields, text }),
+        response: freeze({ text }),
       });
     }
     return cancelled();
+  }
+
+  /**
+   * T1.5 conversational retry (SPEC §8.2/§13): "tenta de novo" over a
+   * `failed` operation routes through the coordinator → API retry
+   * (failed → confirmed, fresh attestation) → execute once.
+   */
+  private async runRetryTurn(
+    input: TurnInput,
+    plan: TurnPlan,
+    client: MutationApiClient,
+    startedAt: number,
+    base: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy },
+  ): Promise<TurnResult> {
+    const coordinator = this.coordinatorFor(client);
+    const identity: MutationIdentity = {
+      workspaceId: input.workspaceId,
+      actorId: input.actorId,
+      deviceId: input.deviceId ?? (() => { throw new Error('mutation.device_required'); })(),
+    };
+    try {
+      const target = await coordinator.resolveDecisionTarget(identity, 'retryable', this.draftContext(input));
+      if (target.kind === 'none') {
+        this.emit('approval.rejected', {
+          intentionId: input.intentionId,
+          traceId: input.traceId,
+          channel: input.channel,
+          domain: plan.domain,
+          mode: plan.mode,
+          status: 'rejected',
+        });
+        return this.completeTurn(input, plan, startedAt, base, {
+          response: freeze({ text: NO_FAILED_OPERATION_TEXT }),
+        });
+      }
+      if (target.kind === 'multiple') {
+        const text = renderDisambiguation(target.operations, 'tentar novamente');
+        const ambiguousPlan = freeze({ ...plan, missingFields: freeze(['intent']) });
+        this.emit('mutation.blocked', {
+          intentionId: input.intentionId,
+          traceId: input.traceId,
+          channel: input.channel,
+          domain: plan.domain,
+          mode: plan.mode,
+          status: 'blocked',
+        });
+        return this.completeTurn(input, ambiguousPlan, startedAt, base, {
+          plan: ambiguousPlan,
+          clarification: freeze({ missingFields: ambiguousPlan.missingFields, text }),
+          response: freeze({ text }),
+        });
+      }
+      const result = await coordinator.retry(target.operation.id, identity);
+      this.emit('approval.confirmed', {
+        intentionId: input.intentionId,
+        traceId: input.traceId,
+        channel: input.channel,
+        domain: plan.domain,
+        mode: plan.mode,
+        status: 'confirmed',
+      });
+      this.emit('mutation.executed', {
+        intentionId: input.intentionId,
+        traceId: input.traceId,
+        channel: input.channel,
+        domain: plan.domain,
+        mode: plan.mode,
+        status: 'succeeded',
+        latencyMs: Date.now() - startedAt,
+      });
+      return this.completeTurn(input, plan, startedAt, base, {
+        mutation: freeze({ operationId: result.operationId, status: 'succeeded' }),
+        response: freeze({ text: renderMutationResult('succeeded') }),
+      });
+    } catch {
+      this.emit('mutation.blocked', {
+        intentionId: input.intentionId,
+        traceId: input.traceId,
+        channel: input.channel,
+        domain: plan.domain,
+        mode: plan.mode,
+        status: 'blocked',
+      });
+      return this.completeTurn(input, plan, startedAt, base, {
+        response: freeze({ text: renderMutationResult('failed') }),
+      });
+    }
   }
 
   async runTurn(input: TurnInput): Promise<TurnResult> {
@@ -972,30 +1053,60 @@ export class ConversationOrchestrator {
     ) {
       return this.runMutationTurn(input, plan, client, startedAt, result);
     }
+    // T1.5 (SPEC §8): confirmation resolves from the AUTHORITATIVE listing
+    // (GET /v2/active, authenticated identity) — never from
+    // client-declared pendingOperationIds, which are parsed for logging
+    // only. Zero → deterministic reply; one → confirm + execute once;
+    // several → disambiguation, nothing executed.
     if (plan.mode === 'confirmation' && client) {
-      const decision = resolveConfirmation(input.text, input.pendingOperationIds ?? []);
-      if (decision.kind !== 'confirm' || !decision.operationId) {
-        this.emit('approval.rejected', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'rejected' });
-        this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
-        return freeze({ ...result, response: freeze({ text: 'Não há uma única operação pendente para confirmar.' }) });
-      }
+      const coordinator = this.coordinatorFor(client);
+      const declared = input.pendingOperationIds ?? [];
       const identity: MutationIdentity = { workspaceId: input.workspaceId, actorId: input.actorId, deviceId: input.deviceId ?? (() => { throw new Error('mutation.device_required'); })() };
-      this.emit('approval.requested', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'requested' });
+      this.emit('approval.requested', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'requested', declaredOperationCount: declared.length });
       try {
-        const confirmation = await client.confirm(decision.operationId, identity);
-        const execution = await client.execute({ operationId: confirmation.operationId, attestation: confirmation.attestation, identity });
+        const target = await coordinator.resolveDecisionTarget(identity, 'decidable', this.draftContext(input));
+        if (target.kind === 'none') {
+          this.emit('approval.rejected', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'rejected' });
+          return this.completeTurn(input, plan, startedAt, result, {
+            response: freeze({ text: 'Não há nenhuma operação pendente para confirmar.' }),
+          });
+        }
+        if (target.kind === 'multiple') {
+          const text = renderDisambiguation(target.operations, 'confirmar');
+          const ambiguousPlan = freeze({ ...plan, missingFields: freeze(['intent']) });
+          this.emit('mutation.blocked', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'blocked' });
+          return this.completeTurn(input, ambiguousPlan, startedAt, result, {
+            plan: ambiguousPlan,
+            clarification: freeze({ missingFields: ambiguousPlan.missingFields, text }),
+            response: freeze({ text }),
+          });
+        }
+        const confirmed = await coordinator.confirm(target.operation.id, identity);
         this.emit('approval.confirmed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'confirmed' });
         this.emit('mutation.executed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'succeeded', latencyMs: Date.now() - startedAt });
-        this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
-        return freeze({ ...result, mutation: freeze({ operationId: execution.operationId, status: 'succeeded' }), response: freeze({ text: renderMutationResult('succeeded') }) });
+        return this.completeTurn(input, plan, startedAt, result, {
+          mutation: freeze({ operationId: confirmed.operationId, status: 'succeeded' }),
+          response: freeze({ text: renderMutationResult('succeeded') }),
+        });
       } catch {
         this.emit('mutation.blocked', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'blocked' });
-        this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
-        return freeze({ ...result, response: freeze({ text: renderMutationResult('failed') }) });
+        return this.completeTurn(input, plan, startedAt, result, {
+          response: freeze({ text: renderMutationResult('failed') }),
+        });
       }
     }
     if (plan.mode === 'cancel') {
       return this.runCancelTurn(input, plan, client ?? null, startedAt, result);
+    }
+    // T1.5 conversational retry (§8.2/§13): only when no draft owns the
+    // turn — recoverable drafts keep their own re-emission path above.
+    if (
+      client &&
+      isRetryText(input.text) &&
+      (plan.mode === 'unsupported' || plan.mode === 'conversation' || plan.mode === 'confirmation') &&
+      !this.hasDraftForTurn(input)
+    ) {
+      return this.runRetryTurn(input, plan, client, startedAt, result);
     }
     if (plan.mode === 'read' && this.dependencies.evidenceProvider) {
       // Evidence-backed read: deterministic render or validated grounded text.
