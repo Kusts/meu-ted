@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { isActionablePendingOperationPresentation } from "@pi-finance/llm-contracts/types";
 import {
   decidePendingOperation,
   describePendingOperationStatus,
@@ -104,6 +105,64 @@ export function TedApprovalCard({ operation, workspaceId, onResolved }: TedAppro
 
   // Canonical card (SPEC §16 example): real financial data, never summary-only.
   if (presentation) {
+    // V3-FIX-CARD-FAILCLOSED (SPEC §16, INV-02): an incomplete financial
+    // context degrades to a non-actionable card — Cancel stays (it moves no
+    // money), Confirm never renders.
+    if (!isActionablePendingOperationPresentation(presentation)) {
+      return (
+        <div className="my-2 rounded-[16px] border border-warning/30 bg-warning-tint p-3.5 text-xs shadow-xs">
+          <div className="font-bold text-warning">⚠️ {title}</div>
+          {presentation.description && <div className="mt-1 text-sm font-semibold text-text-primary">{presentation.description}</div>}
+          <dl className="mt-2 space-y-1 text-text-primary">
+            {typeof presentation.amountCents === "number" && (
+              <div className="flex justify-between gap-2">
+                <dt className="text-text-muted">Valor</dt>
+                <dd className="font-bold">{formatCentsToBRL(presentation.amountCents)}</dd>
+              </div>
+            )}
+            {presentation.account && (
+              <div className="flex justify-between gap-2">
+                <dt className="text-text-muted">Conta</dt>
+                <dd className="font-semibold">{presentation.account.label}</dd>
+              </div>
+            )}
+            {presentation.category && (
+              <div className="flex justify-between gap-2">
+                <dt className="text-text-muted">Categoria</dt>
+                <dd className="font-semibold">{presentation.category.label}</dd>
+              </div>
+            )}
+            {presentation.date && (
+              <div className="flex justify-between gap-2">
+                <dt className="text-text-muted">Data</dt>
+                <dd className="font-semibold">{formatDateToBR(presentation.date)}</dd>
+              </div>
+            )}
+          </dl>
+          {presentation.warnings.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-warning">
+              {presentation.warnings.map((warning) => (
+                <li key={warning}>⚠️ {warning}</li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-2 font-semibold text-warning">Dados da operação incompletos — não é possível confirmar agora. Atualize e tente novamente, ou cancele.</div>
+
+          {error && <div className="mt-1 font-semibold text-danger">{error}</div>}
+
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={handleReject}
+              className="rounded-[10px] border border-border-subtle bg-surface-1 px-3.5 py-2 font-bold text-text-secondary transition-all hover:bg-surface-2 active:scale-95 disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      );
+    }
     const confirmLabel =
       typeof presentation.amountCents === "number" ? `Confirmar ${formatCentsToBRL(presentation.amountCents)}` : "Confirmar";
     return (

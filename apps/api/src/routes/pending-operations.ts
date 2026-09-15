@@ -135,6 +135,16 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
           const categoryId = typeof args.categoryId === 'string' ? args.categoryId : undefined;
           const accountLabel = accountId !== undefined ? accountLabels.get(accountId) : undefined;
           const categoryLabel = categoryId !== undefined ? categoryLabels.get(categoryId) : undefined;
+          // V3-FIX-CARD-FAILCLOSED: label ids carried by the stored args but
+          // missing from the read-model maps degrade honestly — the card
+          // fails closed on these warnings instead of offering Confirm.
+          const labelWarnings: string[] = [];
+          if (accountId !== undefined && accountLabel === undefined) {
+            labelWarnings.push('Dados da conta indisponíveis no momento');
+          }
+          if (categoryId !== undefined && categoryLabel === undefined) {
+            labelWarnings.push('Dados da categoria indisponíveis no momento');
+          }
           const presentation = buildPendingOperationPresentation({
             id: record.id,
             status: record.status,
@@ -143,6 +153,7 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
             expiresAt: record.expiresAt,
             ...(accountLabel !== undefined ? { accountLabel } : {}),
             ...(categoryLabel !== undefined ? { categoryLabel } : {}),
+            ...(labelWarnings.length > 0 ? { warnings: labelWarnings } : {}),
           });
           return {
             id: record.id,

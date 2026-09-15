@@ -107,8 +107,40 @@ describe("TedApprovalCard V2", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("T3.3: onResolved receives the decision including the real execution receipt", async () => {
-    const user = userEvent.setup();
+  it("V3-FIX-CARD-FAILCLOSED RED: proposed + presentation without account/category renders degraded without Confirm", () => {
+    render(
+      <TedApprovalCard
+        operation={{
+          id: "pending-v2-degraded",
+          status: "proposed",
+          operation: "transactions.expense.create",
+          presentation: {
+            id: "pending-v2-degraded",
+            status: "proposed",
+            tool: "transactions.expense.create",
+            title: "Confirmar despesa",
+            amountCents: 85000,
+            description: "Mercado",
+            date: "2026-09-14",
+            expiresAt: "2026-09-14T13:00:00.000Z",
+            warnings: ["Dados da conta indisponíveis no momento"],
+          },
+        }}
+        workspaceId="workspace-1"
+      />,
+    );
+
+    // Financial context is incomplete: the Confirm button must NOT render.
+    expect(screen.queryByRole("button", { name: /Confirmar/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/Dados da operação incompletos/)).toBeInTheDocument();
+    // Canceling moves no money, so Cancel stays available.
+    expect(screen.getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
+    // Whatever data exists is still shown.
+    expect(screen.getByText("R$ 850,00")).toBeInTheDocument();
+    expect(screen.getByText("Mercado")).toBeInTheDocument();
+  });
+
+  it("T3.3: onResolved receives the decision including the real execution receipt", async () => {    const user = userEvent.setup();
     const onResolved = vi.fn();
     const receipt: agentClient.PendingOperationReceipt = {
       mutationId: "mut-1",

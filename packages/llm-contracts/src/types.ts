@@ -461,6 +461,37 @@ export interface PendingOperationPresentation {
   warnings: string[];
 }
 
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0;
+
+const isPresentationLabel = (value: unknown): value is PendingOperationPresentationLabel => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const label = value as Record<string, unknown>;
+  return isNonEmptyString(label.id) && isNonEmptyString(label.label);
+};
+
+/**
+ * Fail-closed actionability gate (SPEC §16, INV-02): true only when the
+ * full financial context the user must see before confirming is present —
+ * title, description, amountCents, date, and both account and category
+ * labels. A presentation failing this predicate must render as a degraded,
+ * non-actionable card: Cancel stays (it moves no money), Confirm never
+ * renders. The schema keeps every field optional for transport; this
+ * predicate is the single rule deciding whether Confirm may be offered.
+ */
+export const isActionablePendingOperationPresentation = (
+  presentation: PendingOperationPresentation,
+): boolean => {
+  if (!presentation || typeof presentation !== 'object') return false;
+  if (!isNonEmptyString(presentation.title)) return false;
+  if (!isNonEmptyString(presentation.description)) return false;
+  if (typeof presentation.amountCents !== 'number' || !Number.isFinite(presentation.amountCents)) return false;
+  if (!isNonEmptyString(presentation.date)) return false;
+  if (!isPresentationLabel(presentation.account)) return false;
+  if (!isPresentationLabel(presentation.category)) return false;
+  return true;
+};
+
 /**
  * Receipt emitted once per successful mutation, TED or normal write
  * (SPEC §15.1). `operationId` is present ONLY when the origin is a TED

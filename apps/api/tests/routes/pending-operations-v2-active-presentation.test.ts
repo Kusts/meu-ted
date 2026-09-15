@@ -121,6 +121,8 @@ describe('FIX-P1 RED: GET /pending-operations/v2/active carries canonical presen
     // Labels come from the server-side read model — never from PWA/LLM input.
     expect(presentation.account).toEqual({ id: accountId, label: 'Conta Nubank' });
     expect(presentation.category).toEqual({ id: categoryId, label: 'Alimentação' });
+    // Resolvable labels: no honest-unavailability warnings.
+    expect(presentation.warnings).toEqual([]);
     for (const key of FORBIDDEN) {
       expect(presentation).not.toHaveProperty(key);
     }
@@ -150,9 +152,16 @@ describe('FIX-P1 RED: GET /pending-operations/v2/active carries canonical presen
     expect(presentation.amountCents).toBe(85000);
     expect(presentation.description).toBe('Mercado');
     expect(presentation.date).toBe('2026-09-14');
-    // Unresolvable ids are omitted — never invented.
+    // Unresolvable ids are omitted — never invented — with honest warnings
+    // so the card can fail closed (V3-FIX-CARD-FAILCLOSED).
     expect(presentation).not.toHaveProperty('account');
     expect(presentation).not.toHaveProperty('category');
+    expect(presentation.warnings).toEqual(
+      expect.arrayContaining([
+        'Dados da conta indisponíveis no momento',
+        'Dados da categoria indisponíveis no momento',
+      ]),
+    );
   });
 
   it('FIX-P1 labels RED: a label-lookup failure never fails the listing', async () => {
@@ -179,5 +188,12 @@ describe('FIX-P1 RED: GET /pending-operations/v2/active carries canonical presen
     expect(presentation.amountCents).toBe(85000);
     expect(presentation).not.toHaveProperty('account');
     expect(presentation).not.toHaveProperty('category');
+    // A read-model outage degrades honestly — never a 500, never invented labels.
+    expect(presentation.warnings).toEqual(
+      expect.arrayContaining([
+        'Dados da conta indisponíveis no momento',
+        'Dados da categoria indisponíveis no momento',
+      ]),
+    );
   });
 });
