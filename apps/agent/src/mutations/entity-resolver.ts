@@ -31,7 +31,7 @@ export type ResolvableMutation = Readonly<{
 }>;
 
 export type EntityResolution =
-  | Readonly<{ complete: true; accountId: string; categoryId: string; missingFields: readonly [] }>
+  | Readonly<{ complete: true; accountId: string; accountName: string; categoryId: string; categoryName: string; missingFields: readonly [] }>
   | Readonly<{ complete: false; missingFields: readonly string[]; clarification: string }>;
 
 type RequestFn = (
@@ -125,7 +125,9 @@ export const resolveMutationEntities = async (
   const missingFields: string[] = [];
   const sections: string[] = [];
   let accountId: string | null = null;
+  let accountName: string | null = null;
   let categoryId: string | null = null;
+  let categoryName: string | null = null;
 
   // --- Account (§7.2): explicit unambiguous indication, else single account.
   const haystack = foldEntityName(text);
@@ -135,11 +137,13 @@ export const resolveMutationEntities = async (
   });
   if (hinted.length === 1) {
     accountId = hinted[0]!.id;
+    accountName = hinted[0]!.name;
   } else if (hinted.length > 1) {
     missingFields.push('accountId');
     sections.push(`Encontrei mais de uma conta para sua mensagem. Em qual conta devo registrar?${bulletList(hinted.map((a) => a.name))}`);
   } else if (accounts.length === 1) {
     accountId = accounts[0]!.id;
+    accountName = accounts[0]!.name;
   } else if (accounts.length === 0) {
     missingFields.push('accountId');
     sections.push('Não encontrei nenhuma conta disponível. Crie uma conta antes de registrar.');
@@ -155,6 +159,7 @@ export const resolveMutationEntities = async (
     const verified = categories.find((category) => category.id.toLowerCase() === query.toLowerCase());
     if (verified) {
       categoryId = verified.id;
+      categoryName = verified.name;
     } else {
       missingFields.push('categoryId');
       sections.push(`Não encontrei a categoria informada. Qual categoria devo usar?${bulletList(categories.map((c) => c.name))}`);
@@ -169,6 +174,7 @@ export const resolveMutationEntities = async (
       });
     if (candidates.length === 1) {
       categoryId = candidates[0]!.id;
+      categoryName = candidates[0]!.name;
     } else if (candidates.length > 1) {
       missingFields.push('categoryId');
       sections.push(`Encontrei mais de uma categoria para "${query}". Qual delas devo usar?${bulletList(candidates.map((c) => c.name))}`);
@@ -178,8 +184,8 @@ export const resolveMutationEntities = async (
     }
   }
 
-  if (accountId !== null && categoryId !== null) {
-    return { complete: true, accountId, categoryId, missingFields: [] };
+  if (accountId !== null && accountName !== null && categoryId !== null && categoryName !== null) {
+    return { complete: true, accountId, accountName, categoryId, categoryName, missingFields: [] };
   }
   return { complete: false, missingFields, clarification: sections.join('\n\n') };
 };

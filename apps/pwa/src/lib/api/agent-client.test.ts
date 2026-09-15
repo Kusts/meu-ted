@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decidePendingOperation,
   deleteAgentHistory,
+  describePendingOperationStatus,
   exportAgentHistory,
   fetchAgentHistory,
+  formatCentsToBRL,
+  formatDateToBR,
   sendAgentMessage,
 } from "./agent-client";
 import * as agentAuth from "./agent-auth";
@@ -204,6 +207,92 @@ describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
     await sendAgentMessage("ws-1", "oi");
 
     expect(capturedUrl).toBe("/api/agent/agents/finance-chat-agent/ws-1/rpc/chat");
+  });
+
+  it("T3.4 RED: sendAgentMessage forwards the canonical presentation (Valor/Conta/Categoria/Data) untouched", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          turnId: "t1",
+          status: "completed",
+          output: "Proposta: Mercado. Confirma?",
+          pendingOperation: {
+            id: "pending-v2-1",
+            status: "proposed",
+            operation: "transactions.expense.create",
+            summary: "Mercado",
+            presentation: {
+              id: "pending-v2-1",
+              status: "proposed",
+              tool: "transactions.expense.create",
+              title: "Confirmar despesa",
+              amountCents: 85000,
+              description: "Mercado",
+              date: "2026-09-14",
+              account: { id: "acc-1", label: "Nubank" },
+              category: { id: "cat-1", label: "Alimentação" },
+              expiresAt: "2026-09-14T13:00:00.000Z",
+              warnings: [],
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const turn = await sendAgentMessage("ws-1", "gastei 850 no mercado");
+    expect(turn.pendingOperation?.presentation?.amountCents).toBe(85000);
+    expect(turn.pendingOperation?.presentation?.account).toEqual({ id: "acc-1", label: "Nubank" });
+    expect(turn.pendingOperation?.presentation?.category).toEqual({ id: "cat-1", label: "Alimentação" });
+    expect(turn.pendingOperation?.presentation?.title).toBe("Confirmar despesa");
+  });
+
+  it("T3.4 RED: presentation carrying attestation is stripped before reaching the card", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          turnId: "t1",
+          status: "completed",
+          output: "ok",
+          pendingOperation: {
+            id: "op-1",
+            status: "proposed",
+            operation: "transactions.expense.create",
+            presentation: {
+              id: "op-1",
+              status: "proposed",
+              tool: "transactions.expense.create",
+              title: "Confirmar despesa",
+              expiresAt: "2026-09-14T13:00:00.000Z",
+              warnings: [],
+              attestation: "must-never-reach-browser",
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const turn = await sendAgentMessage("ws-1", "oi");
+    expect(JSON.stringify(turn)).not.toContain("attestation");
+  });
+
+  it("T3.4 RED: visible-states contract maps every operation status to pt-BR (SPEC §16)", () => {
+    expect(describePendingOperationStatus("proposed")).toMatch(/aguardando aprova/i);
+    expect(describePendingOperationStatus("executing")).toMatch(/processando/i);
+    expect(describePendingOperationStatus("succeeded")).toMatch(/conclu/i);
+    expect(describePendingOperationStatus("failed")).toMatch(/falhou/i);
+    expect(describePendingOperationStatus("cancelled")).toMatch(/cancelad/i);
+    expect(describePendingOperationStatus("expired")).toMatch(/expirad/i);
+  });
+
+  it("T3.4 RED: formats currency and date in pt-BR for the card", () => {
+    expect(formatCentsToBRL(85000)).toBe("R$ 850,00");
+    expect(formatDateToBR("2026-09-14")).toBe("14/09/2026");
   });
 
 });

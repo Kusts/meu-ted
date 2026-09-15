@@ -115,7 +115,11 @@ function defineClaimSuite(
       const done = await store.execute(confirmed.attestation!, id, async () => receipt);
       expect(done.status).toBe('succeeded');
       expect(done.execution).toMatchObject({ status: 'succeeded', operationId: receipt.operationId });
-      expect(done.mutationId).toBe(receipt.operationId);
+      // T3.2 (SPEC §15.1): mutation_id persists the RECEIPT identity, and the
+      // execution result carries the receipt (additive envelope).
+      const doneExecution = done.execution as { receipt: { mutationId: string } };
+      expect(doneExecution.receipt).toBeTruthy();
+      expect(done.mutationId).toBe(doneExecution.receipt.mutationId);
       expect(done.executionClaimedAt).toBeTruthy();
       expect(done.executionLeaseExpiresAt).toBeTruthy();
       expect(done.executionAttemptCount).toBe(1);

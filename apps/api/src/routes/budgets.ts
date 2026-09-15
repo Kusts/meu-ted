@@ -40,6 +40,7 @@ const handleError = (err: unknown, reply: FastifyReply) => {
 import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
+import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
 
 export const registerBudgetRoutes = (
   app: FastifyInstance,
@@ -88,7 +89,7 @@ export const registerBudgetRoutes = (
         startDate: parsed.data.startDate,
         ...(parsed.data.alertThreshold !== undefined ? { alertThreshold: parsed.data.alertThreshold } : {}),
       });
-      return { status: 201 as const, body: b };
+      return { status: 201 as const, body: attachMutationReceipt(b, 'budget.create', { type: 'budget', id: b.id }) };
     };
     try {
       const result = key
@@ -113,7 +114,7 @@ export const registerBudgetRoutes = (
         ...(parsed.data.amountCents !== undefined ? { amountCents: parsed.data.amountCents } : {}),
         ...(parsed.data.alertThreshold !== undefined ? { alertThreshold: parsed.data.alertThreshold } : {}),
       });
-      return { status: 200 as const, body: b };
+      return { status: 200 as const, body: attachMutationReceipt(b, 'budget.update', { type: 'budget', id: params.data.id }) };
     };
     try {
       const result = key

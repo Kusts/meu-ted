@@ -150,9 +150,18 @@ describe('T0.1: Approval Tool Contract registry', () => {
         accountId: acc.id, categoryId: catInc.id,
       },
       idempotencyKey: 'k-inc',
-    })) as { status: string; operationId: string };
+    })) as { status: string; operationId: string; receipt: { mutationId: string; mutationKind: string; status: string; affectedTargets: string[]; operationId: string } };
     expect(expense.status).toBe('succeeded');
     expect(income.status).toBe('succeeded');
     expect(state.transactions).toHaveLength(2);
+    // T3.2 (SPEC §15.1): the TED executor result carries a receipt with the
+    // origin operationId and registry-derived targets (additive envelope).
+    expect(expense.receipt).toBeTruthy();
+    expect(expense.receipt.mutationKind).toBe('transactions.expense.create');
+    expect(expense.receipt.status).toBe('succeeded');
+    expect(expense.receipt.operationId).toBe(expense.operationId);
+    expect(expense.receipt.affectedTargets.length).toBeGreaterThan(0);
+    expect(income.receipt.operationId).toBe(income.operationId);
+    expect(income.receipt.mutationId).not.toBe(expense.receipt.mutationId);
   });
 });

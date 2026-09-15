@@ -12,6 +12,7 @@ import { DomainError } from '../writes/errors.js';
 import { requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
 import type { CardStore } from '../cards/store.js';
 import type { AuthResolver } from './auth.js';
+import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
 
 // ── Input schemas ────────────────────────────────────────────────
 
@@ -285,7 +286,7 @@ export const registerCardRoutes = (
     const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
     const fn = async () => {
       const s = await opts.cardStore.payStatement(ctx.householdId, params.data.id, parsed.data);
-      return { status: 200 as const, body: s };
+      return { status: 200 as const, body: attachMutationReceipt(s, 'statement.update', { type: 'statement', id: params.data.id }) };
     };
     try {
       const result = key ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, parsed.data, fn) : { response: await fn(), replayed: false };

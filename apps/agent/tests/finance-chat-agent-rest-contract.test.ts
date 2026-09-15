@@ -274,7 +274,20 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
       status: "proposed",
       operation: "transactions.expense.create",
       summary: expect.any(String),
+      // T3.4 (SPEC §16, INV-02): the card projection rides the same DTO,
+      // derived from the canonical args — never attestation material.
+      presentation: expect.objectContaining({
+        id: "pending-v2-1",
+        status: "proposed",
+        tool: "transactions.expense.create",
+        title: "Confirmar despesa",
+        amountCents: 1234,
+        account: { id: "00000000-0000-4000-8000-0000000000a1", label: "Nubank" },
+        category: { id: "00000000-0000-4000-8000-000000000001", label: "Mercado" },
+        warnings: [],
+      }),
     });
+    expect(JSON.stringify(body.pendingOperation)).not.toContain("attestation");
 
     expect(proposalRequest).toBeDefined();
     const proposalBody = await proposalRequest!.json() as Record<string, unknown>;

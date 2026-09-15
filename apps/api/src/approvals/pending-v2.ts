@@ -8,6 +8,7 @@ import {
   type PendingOperationV2,
 } from '@pi-finance/llm-contracts';
 import { validateApprovalToolArgs } from './tool-registry.js';
+import { buildTedReceipt } from '../reconciliation/effects-registry.js';
 
 export type PendingOperationV2Status = 'proposed' | 'confirmed' | 'executing' | 'succeeded' | 'failed' | 'cancelled' | 'expired';
 export type PendingIdentity = Pick<PendingOperationV2, 'workspaceId' | 'actorId' | 'deviceId'>;
@@ -59,6 +60,29 @@ const assertCanonicalArgs = (fail: (code: string, message: string, statusCode?: 
   fail('approval.invalid_args', 'Argumentos inválidos para a ferramenta de aprovação.', 422, checked.issues);
 };
 const nowIso = (): string => new Date().toISOString();
+
+/**
+ * T3.2 (SPEC §15.1): every TX2 success carries a MutationReceipt with an
+ * API-generated mutationId, registry-derived affectedTargets and the origin
+ * operationId. Executors built on the tool registry already attach one —
+ * honor its mutationId; otherwise synthesize it here from the persisted
+ * tool so a custom executor can never produce a receipt-less success.
+ * The returned mutationId is what TX2 persists into `mutation_id`.
+ */
+const withTedReceipt = (
+  result: { status: string; operationId: string; receipt?: unknown },
+  tool: string,
+): { enriched: Record<string, unknown>; mutationId: string } => {
+  const existing = result.receipt as { mutationId?: unknown } | undefined;
+  if (existing && typeof existing.mutationId === 'string' && existing.mutationId.length > 0) {
+    return { enriched: result as Record<string, unknown>, mutationId: existing.mutationId };
+  }
+  const receipt = buildTedReceipt(
+    tool as 'transactions.expense.create' | 'transactions.income.create',
+    result.operationId,
+  );
+  return { enriched: { ...result, receipt }, mutationId: receipt.mutationId };
+};
 
 /**
  * SPEC §10 / ADR-013: execution lease written at claim (TX1). The reconciler
@@ -273,7 +297,11 @@ export const createPostgresPendingOperationV2Store = (
       // TX2 (success).
       const updated = await withTransaction(pool, async (client) => {
         await read(client, String(claimed.id), identity, true);
-        const terminal = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_status='succeeded', execution_result=$2::jsonb, mutation_id=$3 WHERE id=$1 RETURNING *", [String(claimed.id), JSON.stringify(result), (result as { operationId: string }).operationId]);
+        const { enriched, mutationId } = withTedReceipt(
+          result as { status: string; operationId: string; receipt?: unknown },
+          String(claimed.tool),
+        );
+        const terminal = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_status='succeeded', execution_result=$2::jsonb, mutation_id=$3 WHERE id=$1 RETURNING *", [String(claimed.id), JSON.stringify(enriched), mutationId]);
         return terminal.rows[0]!;
       });
       return mapV2(updated);
@@ -329,7 +357,11 @@ export const createPostgresPendingOperationV2Store = (
       // TX2 (success).
       const updated = await withTransaction(pool, async (client) => {
         await read(client, id, identity, true);
-        const terminal = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_status='succeeded', execution_result=$2::jsonb, mutation_id=$3 WHERE id=$1 RETURNING *", [id, JSON.stringify(result), (result as { operationId: string }).operationId]);
+        const { enriched, mutationId } = withTedReceipt(
+          result as { status: string; operationId: string; receipt?: unknown },
+          String(renewed.tool),
+        );
+        const terminal = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_status='succeeded', execution_result=$2::jsonb, mutation_id=$3 WHERE id=$1 RETURNING *", [id, JSON.stringify(enriched), mutationId]);
         return terminal.rows[0]!;
       });
       return mapV2(updated);
@@ -455,8 +487,12 @@ export const createInMemoryPendingOperationV2Store = (
         fail('approval.incomplete_result', 'Executor retornou resultado incompleto.');
       }
       // TX2 (success).
-      record.execution = result;
-      record.mutationId = (result as { operationId: string }).operationId;
+      const { enriched, mutationId } = withTedReceipt(
+        result as { status: string; operationId: string; receipt?: unknown },
+        record.tool,
+      );
+      record.execution = enriched;
+      record.mutationId = mutationId;
       record.status = 'succeeded';
       return record;
     },
@@ -493,8 +529,12 @@ export const createInMemoryPendingOperationV2Store = (
         events.push({ operationId: id, event: 'fail', actorId: record.actorId, at: nowIso() });
         return fail('approval.incomplete_result', 'Executor retornou resultado incompleto.');
       }
-      record.execution = result;
-      record.mutationId = (result as { operationId: string }).operationId;
+      const { enriched, mutationId } = withTedReceipt(
+        result as { status: string; operationId: string; receipt?: unknown },
+        record.tool,
+      );
+      record.execution = enriched;
+      record.mutationId = mutationId;
       record.status = 'succeeded';
       return record;
     },

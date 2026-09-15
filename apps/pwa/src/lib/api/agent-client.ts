@@ -33,8 +33,7 @@ const historySchema = z.object({
 
 export type AgentMessage = z.infer<typeof historyItemSchema>;
 
-function agentBaseUrl(): string {
-  // ADR-011: canonical browser transport is the same-origin proxy /api/agent.
+function agentBaseUrl(): string {  // ADR-011: canonical browser transport is the same-origin proxy /api/agent.
   // An explicitly configured direct URL is transient test-env compatibility
   // only — never a silent production default.
   const direct = process.env.NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL?.replace(/\/$/, "");
@@ -44,6 +43,46 @@ function agentBaseUrl(): string {
   return "/api/agent";
 }
 
+const pendingOperationPresentationLabelSchema = z
+  .object({ id: z.string(), label: z.string() })
+  .strict();
+
+/**
+ * T3.4 (SPEC §16): browser-safe card projection. Strict: attestation and
+ * authority material are rejected — the card carries display data only.
+ * Every field is optional except identity/title/expiry so legacy payloads
+ * (old in-flight ops without a presentation) still parse.
+ */
+const pendingOperationPresentationSchema = z
+  .object({
+    id: z.string(),
+    status: z.string(),
+    tool: z.string(),
+    title: z.string(),
+    amountCents: z.number().optional(),
+    description: z.string().optional(),
+    date: z.string().optional(),
+    account: pendingOperationPresentationLabelSchema.optional(),
+    category: pendingOperationPresentationLabelSchema.optional(),
+    expiresAt: z.string(),
+    warnings: z.array(z.string()),
+  })
+  .strict();
+
+export type PendingOperationPresentation = z.infer<typeof pendingOperationPresentationSchema>;
+
+export const PENDING_OPERATION_STATUS = [
+  "proposed",
+  "confirmed",
+  "executing",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "expired",
+] as const;
+
+export type PendingOperationStatus = (typeof PENDING_OPERATION_STATUS)[number];
+
 export type AgentTurn = {
   turnId: string;
   status: string;
@@ -52,11 +91,67 @@ export type AgentTurn = {
   memorized?: string[];
   pendingOperation?: Readonly<{
     id: string;
-    status: "proposed" | "succeeded" | "failed" | "cancelled" | "expired";
+    status: PendingOperationStatus;
     operation: string;
     summary?: string;
+    presentation?: PendingOperationPresentation;
   }>;
 };
+
+/**
+ * SPEC §16 visible-states contract (pt-BR), testable mapping from the
+ * authoritative operation status to what the TED must show. Clarification
+ * and stale states belong to T3.3 and are intentionally absent here.
+ */
+export const PENDING_OPERATION_STATUS_LABELS: Readonly<Record<PendingOperationStatus, string>> = {
+  proposed: "aguardando aprovação",
+  confirmed: "confirmada — processando operação…",
+  executing: "processando operação…",
+  succeeded: "concluída",
+  failed: "falhou",
+  cancelled: "cancelada",
+  expired: "expirada",
+};
+
+export function describePendingOperationStatus(status: string): string {
+  return (PENDING_OPERATION_STATUS_LABELS as Readonly<Record<string, string>>)[status] ?? status;
+}
+
+/** pt-BR currency for the card and the confirm button (cents → "R$ 850,00"). */
+export function formatCentsToBRL(cents: number): string {
+  return `R$ ${(cents / 100).toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, ".")}`;
+}
+
+/** Canonical YYYY-MM-DD → pt-BR "DD/MM/YYYY"; unknown shapes pass through. */
+export function formatDateToBR(isoDate: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate.trim());
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : isoDate;
+}
+
+/**
+ * Allowlisted pending-operation DTO: only card-safe fields cross into the
+ * turn. A presentation carrying attestation (or any unknown key) is
+ * dropped — the operation itself still surfaces in its legacy shape.
+ */
+function sanitizePendingOperation(
+  value: AgentTurn["pendingOperation"],
+): AgentTurn["pendingOperation"] {
+  if (!value || typeof value.id !== "string" || typeof value.operation !== "string") return undefined;
+  if (!(PENDING_OPERATION_STATUS as readonly string[]).includes(value.status)) return undefined;
+  const { id, status, operation } = value;
+  const summary = typeof value.summary === "string" ? value.summary : undefined;
+  const parsedPresentation =
+    value.presentation && typeof value.presentation === "object"
+      ? pendingOperationPresentationSchema.safeParse(value.presentation)
+      : null;
+  return {
+    id,
+    status,
+    operation,
+    ...(summary !== undefined ? { summary } : {}),
+    ...(parsedPresentation && parsedPresentation.success ? { presentation: parsedPresentation.data } : {}),
+  };
+}
 
 /**
  * SPEC §7.7/§7.7.1 — stable per-turn message identity (PWA-owned).
@@ -290,9 +385,7 @@ export async function sendAgentMessage(
     status: data.status ?? "completed",
     output: data.output,
     ...(Array.isArray(data.memorized) ? { memorized: data.memorized.filter((m): m is string => typeof m === "string") } : {}),
-    ...(data.pendingOperation && typeof data.pendingOperation.id === "string" && typeof data.pendingOperation.operation === "string" && ["proposed", "succeeded", "failed", "cancelled", "expired"].includes(data.pendingOperation.status)
-      ? { pendingOperation: data.pendingOperation }
-      : {}),
+    ...(sanitizePendingOperation(data.pendingOperation) ? { pendingOperation: sanitizePendingOperation(data.pendingOperation) } : {}),
   };
 }
 

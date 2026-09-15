@@ -772,6 +772,11 @@ describe("AppStateProvider — API write path", () => {
     const spy = vi
       .spyOn(endpoints, "markPayablePaid")
       .mockResolvedValue({} as Payable);
+    // Post-write reconciliation replaces optimistic state with server truth:
+    // bootstrap sees pending p1, the post-pay refresh sees it paid.
+    vi.mocked(endpoints.fetchPayables)
+      .mockResolvedValueOnce([{ ...mockP1 }])
+      .mockResolvedValue([{ ...mockP1, status: "paid" }]);
 
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
@@ -896,6 +901,10 @@ describe("AppStateProvider — API write path", () => {
   it("adds account optimistically then reconciles with API", async () => {
     const created = { ...mockAccount("real-1", "New Account") };
     const spy = vi.spyOn(endpoints, "addAccount").mockResolvedValue(created);
+    // Post-write reconciliation replaces optimistic state with server truth.
+    vi.mocked(endpoints.fetchAccounts)
+      .mockResolvedValueOnce([mockAccount("a1", "API Nubank")])
+      .mockResolvedValue([mockAccount("a1", "API Nubank"), created]);
 
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
@@ -945,13 +954,18 @@ describe("AppStateProvider — API write path", () => {
   // ── addCard ────────────────────────────────────────────────────
 
   it("adds card optimistically and calls API", async () => {
-    const spy = vi.spyOn(endpoints, "createCard").mockResolvedValue({
+    const createdCard = {
       ...mockAccount("card-1", "New Card"),
       kind: "credit_card",
       creditLimitCents: 1000_00,
       closingDay: 15,
       dueDay: 25,
-    });
+    };
+    const spy = vi.spyOn(endpoints, "createCard").mockResolvedValue(createdCard as never);
+    // Post-write reconciliation replaces optimistic state with server truth.
+    vi.mocked(endpoints.fetchAccounts)
+      .mockResolvedValueOnce([mockAccount("a1", "API Nubank")])
+      .mockResolvedValue([mockAccount("a1", "API Nubank"), createdCard] as never);
 
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
@@ -1030,7 +1044,7 @@ describe("AppStateProvider — API write path", () => {
   // ── addSubscription ────────────────────────────────────────────
 
   it("adds subscription optimistically and calls API", async () => {
-    const spy = vi.spyOn(endpoints, "addSubscription").mockResolvedValue({
+    const createdSub = {
       id: "sub-real-1",
       name: "Netflix",
       amountCents: 39_90,
@@ -1039,7 +1053,12 @@ describe("AppStateProvider — API write path", () => {
         paymentMethod: "credit_card",
         status: "active" as const,
       createdAt: new Date().toISOString(),
-    });
+    };
+    const spy = vi.spyOn(endpoints, "addSubscription").mockResolvedValue(createdSub);
+    // Post-write reconciliation replaces optimistic state with server truth.
+    // (Subscriptions are lazy-loaded: bootstrap never calls fetchSubscriptions,
+    // so no Once() slot — the reconcile refresh is the first read.)
+    vi.mocked(endpoints.fetchSubscriptions).mockResolvedValue([createdSub] as never);
 
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
@@ -1096,7 +1115,7 @@ describe("AppStateProvider — API write path", () => {
 
   it("cancels subscription and rolls back on failure", async () => {
     // Mock addSubscription to succeed
-    vi.spyOn(endpoints, "addSubscription").mockResolvedValue({
+    const createdSub = {
       id: "sub-mock-1",
       name: "Test Sub",
       amountCents: 20_00,
@@ -1105,7 +1124,12 @@ describe("AppStateProvider — API write path", () => {
       paymentMethod: "credit_card",
       status: "active",
       createdAt: new Date().toISOString(),
-    });
+    };
+    vi.spyOn(endpoints, "addSubscription").mockResolvedValue(createdSub as never);
+    // Post-write reconciliation replaces optimistic state with server truth.
+    // (Subscriptions are lazy-loaded: bootstrap never calls fetchSubscriptions,
+    // so no Once() slot — the reconcile refresh is the first read.)
+    vi.mocked(endpoints.fetchSubscriptions).mockResolvedValue([createdSub] as never);
     const spy = vi
       .spyOn(endpoints, "cancelSubscription")
       .mockRejectedValue(new Error("Fail"));
@@ -1332,12 +1356,17 @@ describe("AppStateProvider — API write path", () => {
   // ── addCategory ────────────────────────────────────────────────
 
   it("adds category optimistically and calls API", async () => {
-    const spy = vi.spyOn(endpoints, "addCategory").mockResolvedValue({
+    const createdCat = {
       id: "cat-real-1",
       name: "New Cat",
       kind: "expense",
       icon: "Tag",
-    });
+    };
+    const spy = vi.spyOn(endpoints, "addCategory").mockResolvedValue(createdCat as never);
+    // Post-write reconciliation replaces optimistic state with server truth.
+    vi.mocked(endpoints.fetchCategories)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([createdCat] as never);
 
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
@@ -1748,6 +1777,9 @@ function seedApiData() {
   ]);
   vi.spyOn(endpoints, "fetchSubscriptions").mockResolvedValue([
     { id: "s1", name: "Netflix", amountCents: 3000, cycle: "monthly", day: 5, paymentMethod: "card", status: "active", createdAt: "2026-01-01" } as never,
+    // Post-write reconciliation resets subscriptions to server truth, so the
+    // command-mock id exercised below must exist server-side too.
+    { id: "srv-sub", name: "Sub", amountCents: 1000, cycle: "monthly", day: 5, paymentMethod: "card", status: "active", createdAt: "" } as never,
   ]);
   vi.spyOn(endpoints, "fetchCards").mockResolvedValue([
     { id: "card1", name: "Nubank", kind: "credit_card", balanceCents: 0, creditLimitCents: 100000, closingDay: 5, dueDay: 10, status: "active" } as never,

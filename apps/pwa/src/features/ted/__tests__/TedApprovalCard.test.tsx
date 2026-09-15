@@ -4,9 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { TedApprovalCard } from "../TedApprovalCard";
 import * as agentClient from "@/lib/api/agent-client";
 
-vi.mock("@/lib/api/agent-client", () => ({
-  decidePendingOperation: vi.fn(),
-}));
+vi.mock("@/lib/api/agent-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/agent-client")>();
+  return { ...actual, decidePendingOperation: vi.fn() };
+});
 
 describe("TedApprovalCard V2", () => {
   it("sends only a confirm decision to the authenticated Agent RPC", async () => {
@@ -45,5 +46,64 @@ describe("TedApprovalCard V2", () => {
     );
 
     expect(screen.queryByRole("button", { name: "Aprovar" })).not.toBeInTheDocument();
+  });
+
+  it("T3.4 RED: renders Valor/Conta/Categoria/Data from the canonical presentation (INV-02)", () => {
+    render(
+      <TedApprovalCard
+        operation={{
+          id: "pending-v2-1",
+          status: "proposed",
+          operation: "transactions.expense.create",
+          presentation: {
+            id: "pending-v2-1",
+            status: "proposed",
+            tool: "transactions.expense.create",
+            title: "Confirmar despesa",
+            amountCents: 85000,
+            description: "Mercado",
+            date: "2026-09-14",
+            account: { id: "acc-1", label: "Nubank" },
+            category: { id: "cat-1", label: "Alimentação" },
+            expiresAt: "2026-09-14T13:00:00.000Z",
+            warnings: [],
+          },
+        }}
+        workspaceId="workspace-1"
+      />,
+    );
+
+    expect(screen.getByText(/Confirmar despesa/)).toBeInTheDocument();
+    expect(screen.getByText("R$ 850,00")).toBeInTheDocument();
+    expect(screen.getByText("Nubank")).toBeInTheDocument();
+    expect(screen.getByText("Alimentação")).toBeInTheDocument();
+    expect(screen.getByText("14/09/2026")).toBeInTheDocument();
+    expect(screen.getByText("Mercado")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Confirmar R\$ 850,00/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
+  });
+
+  it("T3.4 RED: legacy payload without presentation degrades gracefully with a generic title", () => {
+    render(
+      <TedApprovalCard
+        operation={{ id: "legacy-2", status: "proposed", operation: "transactions.expense.create", summary: "Mercado" }}
+        workspaceId="workspace-1"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Aprovar" })).toBeInTheDocument();
+    expect(screen.queryByText("R$")).not.toBeInTheDocument();
+  });
+
+  it("T3.4 RED: shows the executing state without premature success (INV-03)", () => {
+    render(
+      <TedApprovalCard
+        operation={{ id: "op-exec", status: "executing", operation: "transactions.expense.create" }}
+        workspaceId="workspace-1"
+      />,
+    );
+
+    expect(screen.getByText(/processando opera/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });

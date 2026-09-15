@@ -2,6 +2,7 @@ import { AIChatAgent, type UIMessage } from "agents/ai-chat-agent";
 import { streamText, generateText, stepCountIs } from "ai";
 import { z } from "zod";
 import { protocolSchema } from "@pi-finance/llm-contracts/schemas";
+import { pendingOperationPresentationSchema } from "@pi-finance/llm-contracts";
 import { fetchRuntimeConfig, type RuntimeSnapshot } from "./llm/runtime-config-client.js";
 import { createLanguageModel } from "./llm/model-factory.js";
 import type { Protocol } from "./llm/provider-registry.js";
@@ -1246,6 +1247,16 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
                 status: turnResult.mutation.status,
                 operation: turnResult.plan.requestedOperations[0]?.name,
                 summary: turnResult.response.text,
+                // T3.4 (SPEC §16): the safe card projection derived from the
+                // canonical args. Re-validated here so only schema-conformant
+                // display fields cross to the browser (attestation can never
+                // ride along — the strict schema rejects it).
+                ...(() => {
+                  const presentation = (turnResult.mutation as { presentation?: unknown }).presentation;
+                  if (!presentation) return {};
+                  const parsed = pendingOperationPresentationSchema.safeParse(presentation);
+                  return parsed.success ? { presentation: parsed.data } : {};
+                })(),
               }
             : undefined;
           return Response.json({ status: "completed", output: turnResult.response.text, ...(pendingOperation ? { pendingOperation } : {}) });

@@ -46,6 +46,14 @@ export type MutationDraftResolvedArgs = Readonly<{
   categoryQuery?: string;
   accountId?: string;
   categoryId?: string;
+  /**
+   * T3.4 (SPEC §16): display-only entity labels resolved from the
+   * authoritative lists at propose time. Never executed, never authority —
+   * the API re-validates the canonical IDs. Optional so pre-existing
+   * in-flight drafts keep working (card degrades to IDs/legacy shape).
+   */
+  accountName?: string;
+  categoryName?: string;
 }>;
 
 export type MutationDraftRecord = Readonly<{

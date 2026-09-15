@@ -105,6 +105,7 @@ export { notificationSchema, autoCreateQuery };
 import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
+import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
 
 export const registerPayableRoutes = (
   app: FastifyInstance,
@@ -191,7 +192,7 @@ export const registerPayableRoutes = (
             ...(parsed.data.notes ? { notes: parsed.data.notes } : {}),
           },
         });
-        return { status: 201 as const, body: p };
+        return { status: 201 as const, body: attachMutationReceipt(p, 'payable.create', { type: 'payable', id: (p as { id: string }).id }) };
       }
 
       const payableInput = {
@@ -211,7 +212,7 @@ export const registerPayableRoutes = (
           : {}),
       };
       const p = await opts.payableStore.createPayable(ctx.householdId, payableInput);
-      return { status: 201 as const, body: p };
+      return { status: 201 as const, body: attachMutationReceipt(p, 'payable.create', { type: 'payable', id: p.id }) };
     };
 
     try {
@@ -264,7 +265,7 @@ export const registerPayableRoutes = (
             : {}),
         },
       );
-      return { status: 200 as const, body: p };
+      return { status: 200 as const, body: attachMutationReceipt(p, 'payable.pay', { type: 'payable', id: params.data.id }) };
     };
     try {
       const result = key
@@ -300,7 +301,7 @@ export const registerPayableRoutes = (
         ctx.householdId,
         params.data.id,
       );
-      return reply.code(200).send(p);
+      return reply.code(200).send(attachMutationReceipt(p, 'payable.payment.undo', { type: 'payable', id: params.data.id }));
     } catch (e) {
       return handleError(e, reply);
     }
@@ -355,7 +356,7 @@ export const registerPayableRoutes = (
         params.data.id,
         parsed.data,
       );
-      return reply.code(200).send(p);
+      return reply.code(200).send(attachMutationReceipt(p, 'payable.update', { type: 'payable', id: params.data.id }));
     } catch (e) {
       return handleError(e, reply);
     }
@@ -381,7 +382,7 @@ export const registerPayableRoutes = (
         params.data.id,
         parsed.data?.reason,
       );
-      return reply.code(200).send(p);
+      return reply.code(200).send(attachMutationReceipt(p, 'payable.delete', { type: 'payable', id: params.data.id }));
     } catch (e) {
       return handleError(e, reply);
     }

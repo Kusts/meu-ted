@@ -10,6 +10,7 @@ import type { AuthResolver } from './auth.js';
 import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
+import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
 
 export const accountQuerySchema = z.object({ kind: z.enum(['bank', 'cash', 'credit_card']).optional() });
 const querySchema = accountQuerySchema;
@@ -73,7 +74,7 @@ export const registerAccountRoutes = (
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
     const parsed = createAccountInputSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-try { return reply.code(201).send(await runIdempotent(req, ctx.householdId, parsed.data, () => opts.writes.createAccount(ctx.householdId, parsed.data))); }
+try { return reply.code(201).send(await runIdempotent(req, ctx.householdId, parsed.data, async () => { const created = await opts.writes.createAccount(ctx.householdId, parsed.data); return attachMutationReceipt(created, 'account.create', { type: 'account', id: created.id }); })); }
     catch (e) { return handleError(e, reply); }
   });
 
@@ -83,7 +84,7 @@ try { return reply.code(201).send(await runIdempotent(req, ctx.householdId, pars
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
     const parsed = updateAccountInputSchema.safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
-try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id, ...parsed.data }, () => opts.writes.updateAccount(ctx.householdId, params.data.id, parsed.data))); }
+try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id, ...parsed.data }, async () => { const updated = await opts.writes.updateAccount(ctx.householdId, params.data.id, parsed.data); return attachMutationReceipt(updated, 'account.update', { type: 'account', id: params.data.id }); })); }
     catch (e) { return handleError(e, reply); }
   });
 
@@ -104,7 +105,7 @@ try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id
       });
       if (pending) return reply.code(pending.status).send(pending.body);
     }
-try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id }, () => opts.writes.deactivateAccount(ctx.householdId, params.data.id))); }
+try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id }, async () => { const deactivated = await opts.writes.deactivateAccount(ctx.householdId, params.data.id); return attachMutationReceipt(deactivated, 'account.delete', { type: 'account', id: params.data.id }); })); }
     catch (e) { return handleError(e, reply); }
   });
 };

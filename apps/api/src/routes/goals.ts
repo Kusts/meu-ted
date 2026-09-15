@@ -41,6 +41,7 @@ const handleErr = (err: unknown, reply: FastifyReply) => {
 import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
+import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
 
 export const registerGoalRoutes = (
   app: FastifyInstance,
@@ -86,7 +87,7 @@ export const registerGoalRoutes = (
         ...(p.data.accountId ? { accountId: p.data.accountId } : {}),
         ...(p.data.notes ? { notes: p.data.notes } : {}),
       });
-      return { status: 201 as const, body: g };
+      return { status: 201 as const, body: attachMutationReceipt(g, 'goal.create', { type: 'goal', id: g.id }) };
     };
     try {
       const result = key
@@ -110,7 +111,7 @@ export const registerGoalRoutes = (
         ...(p.data.source ? { source: p.data.source } : {}),
         ...(p.data.notes ? { notes: p.data.notes } : {}),
       });
-      return { status: 201 as const, body: c };
+      return { status: 201 as const, body: attachMutationReceipt(c, 'goal.update', { type: 'goal', id: params.data.id }) };
     };
     try {
       const result = key
@@ -124,7 +125,7 @@ export const registerGoalRoutes = (
   app.post('/goals/:id/cancel', async (req, reply) => {
     let ctx; try { ctx = await resolve(req); } catch (e) { return handleErr(e, reply); }
     const params = z.object({ id: z.string().uuid() }).safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
-    try { const g = await opts.goalStore.cancelGoal(ctx.householdId, params.data.id); return reply.send(g); }
+    try { const g = await opts.goalStore.cancelGoal(ctx.householdId, params.data.id); return reply.send(attachMutationReceipt(g, 'goal.delete', { type: 'goal', id: params.data.id })); }
     catch (e) { return handleErr(e, reply); }
   });
 
@@ -141,7 +142,7 @@ export const registerGoalRoutes = (
     const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
     const fn = async () => {
       const g = await opts.goalStore.updateGoal(ctx.householdId, params.data.id, p.data as Parameters<typeof opts.goalStore.updateGoal>[2]);
-      return { status: 200 as const, body: g };
+      return { status: 200 as const, body: attachMutationReceipt(g, 'goal.update', { type: 'goal', id: params.data.id }) };
     };
     try {
       const result = key

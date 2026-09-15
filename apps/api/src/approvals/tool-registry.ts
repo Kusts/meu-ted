@@ -12,8 +12,10 @@
  *   exposes only the registry plus lookup/validation helpers.
  */
 import type { z } from 'zod';
+import type { MutationReceipt } from '@pi-finance/llm-contracts';
 import { createExpenseInputSchema, createIncomeInputSchema } from '../writes/types.js';
 import type { WriteStore } from '../writes/store.js';
+import { buildTedReceipt } from '../reconciliation/effects-registry.js';
 
 export const APPROVAL_TOOL_IDS = [
   'transactions.expense.create',
@@ -29,7 +31,7 @@ export type ApprovalToolExecutionContext = {
   idempotencyKey: string;
 };
 
-export type ApprovalToolResult = { status: 'succeeded'; operationId: string };
+export type ApprovalToolResult = { status: 'succeeded'; operationId: string; receipt: MutationReceipt };
 
 export type ApprovalToolExecutor = (
   ctx: ApprovalToolExecutionContext,
@@ -57,7 +59,12 @@ const executeExpenseCreate: ApprovalToolExecutor = async ({
   const parsed = createExpenseInputSchema.safeParse(args);
   if (!parsed.success) throw new Error('validation.invalid_expense_arguments');
   const transaction = await writes.createExpense(workspaceId, parsed.data, { idempotencyKey });
-  return { status: 'succeeded' as const, operationId: transaction.id };
+  const operationId = transaction.id;
+  return {
+    status: 'succeeded' as const,
+    operationId,
+    receipt: buildTedReceipt('transactions.expense.create', operationId, { type: 'transaction', id: operationId }),
+  };
 };
 
 const executeIncomeCreate: ApprovalToolExecutor = async ({
@@ -69,7 +76,12 @@ const executeIncomeCreate: ApprovalToolExecutor = async ({
   const parsed = createIncomeInputSchema.safeParse(args);
   if (!parsed.success) throw new Error('validation.invalid_income_arguments');
   const transaction = await writes.createIncome(workspaceId, parsed.data, { idempotencyKey });
-  return { status: 'succeeded' as const, operationId: transaction.id };
+  const operationId = transaction.id;
+  return {
+    status: 'succeeded' as const,
+    operationId,
+    receipt: buildTedReceipt('transactions.income.create', operationId, { type: 'transaction', id: operationId }),
+  };
 };
 
 const CONTRACTS: Record<ApprovalToolId, ApprovalToolContract> = {

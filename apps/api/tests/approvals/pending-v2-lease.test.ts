@@ -247,7 +247,12 @@ function defineLeaseSuite(
       const final = await store.get(saved.id, id);
       expect(final.status).toBe('succeeded');
       expect(final.executionAttemptCount).toBe(2);
-      expect(final.mutationId).toBe(`mut-${saved.idempotencyKey}`);
+      // T3.2 (SPEC §15.1): mutation_id persists the receipt identity of the
+      // persisted execution result — not the financial entity id.
+      const finalExecution = final.execution as { operationId: string; receipt: { mutationId: string } };
+      expect(finalExecution.operationId).toBe(`mut-${saved.idempotencyKey}`);
+      expect(finalExecution.receipt).toBeTruthy();
+      expect(final.mutationId).toBe(finalExecution.receipt.mutationId);
     });
 
     it('executor fails after renew → failed persisted, attempts incremented, sanitized code', async () => {

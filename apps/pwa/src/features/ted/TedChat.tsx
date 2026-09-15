@@ -12,6 +12,8 @@ import { TedMessage } from "./TedMessage";
 import { TedApprovalCard, type TedPendingOperation } from "./TedApprovalCard";
 import { useRecordingState } from "./use-recording-state";
 import { getChatAttachmentCapabilities } from "@/lib/capabilities";
+import { useAppState } from "@/lib/state/app-state-context";
+import { resolveTedMutationKind } from "@/lib/state/mutation-reconciler";
 import { useBodyScrollLock } from "@/lib/ui/overlay-a11y";
 import { Sparkles, X, Send, Mic, MicOff, Image as ImageIcon, FileText, Paperclip, Trash2, RefreshCw } from "lucide-react";
 
@@ -129,6 +131,34 @@ export function TedChat({ open, onClose }: TedChatProps) {
       setStatus("error");
     }
   }, [activeWorkspace]);
+
+  // Post-approval reconciliation (SPEC §15.4, T3.3): chat history AND
+  // financial UI refresh. The execution receipt is not exposed through
+  // agent-client yet (T3.4 owns that plumbing), so reconcile via the
+  // operation → mutationKind mapping; the single MutationReconciler still
+  // decides the targets. Safe outside AppStateProvider (launcher tests).
+  let reconcileFinancialUi: ((mutationKind: string) => Promise<unknown>) | null = null;
+  try {
+    const { reconcileMutation } = useAppState();
+    reconcileFinancialUi =
+      reconcileMutation !== undefined
+        ? (mutationKind: string) => reconcileMutation({ mutationKind })
+        : null;
+  } catch {
+    reconcileFinancialUi = null;
+  }
+
+  const handleApprovalResolved = async (operation: string): Promise<void> => {
+    if (reconcileFinancialUi) {
+      try {
+        await reconcileFinancialUi(resolveTedMutationKind(operation));
+      } catch {
+        // Reconciliation failure surfaces as stale in app-state;
+        // the chat history must still reload below.
+      }
+    }
+    await loadHistory();
+  };
 
   // Isolamento por workspace: limpar histórico imediatamente ao trocar de workspace
   // (SPEC §17: troca de workspace também encerra o microfone via cleanup único)
@@ -422,7 +452,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
                 key={op.id}
                 operation={op}
                 workspaceId={activeWorkspace.id}
-                onResolved={() => void loadHistory()}
+                onResolved={() => void handleApprovalResolved(op.operation)}
               />
             ))}
 

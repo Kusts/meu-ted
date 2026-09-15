@@ -51,6 +51,7 @@ const handleError = (err: unknown, reply: FastifyReply) => {
 import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
+import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
 
 export const registerSubscriptionRoutes = (
   app: FastifyInstance,
@@ -98,7 +99,7 @@ export const registerSubscriptionRoutes = (
     }
     const fn = async () => {
       const sub = await opts.subscriptionStore.createSubscription(ctx.householdId, parsed.data);
-      return { status: 201 as const, body: sub };
+      return { status: 201 as const, body: attachMutationReceipt(sub, 'subscription.create', { type: 'subscription', id: sub.id }) };
     };
     try {
       const result = key
@@ -117,7 +118,7 @@ export const registerSubscriptionRoutes = (
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
     try {
       const sub = await opts.subscriptionStore.cancelSubscription(ctx.householdId, params.data.id);
-      return reply.code(200).send(sub);
+      return reply.code(200).send(attachMutationReceipt(sub, 'subscription.delete', { type: 'subscription', id: params.data.id }));
     } catch (e) { return handleError(e, reply); }
   });
 
@@ -139,7 +140,7 @@ export const registerSubscriptionRoutes = (
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     try {
       const sub = await opts.subscriptionStore.updateSubscription(ctx.householdId, params.data.id, parsed.data as Parameters<typeof opts.subscriptionStore.updateSubscription>[2]);
-      return reply.code(200).send(sub);
+      return reply.code(200).send(attachMutationReceipt(sub, 'subscription.update', { type: 'subscription', id: params.data.id }));
     } catch (e) { return handleError(e, reply); }
   });
 };

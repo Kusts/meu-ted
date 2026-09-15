@@ -17,7 +17,8 @@ import {
   type MutationDraftRecord,
   type MutationDraftStore,
 } from '../mutations/mutation-draft.js';
-import type { MutationDraftChannelMessage } from '@pi-finance/llm-contracts';
+import type { MutationDraftChannelMessage, PendingOperationPresentation } from '@pi-finance/llm-contracts';
+import { buildApprovalPresentation } from '../mutations/approval-presentation.js';
 import { emitSanitizedEvent } from '../observability/events.js';
 import type { EvidenceEnvelope } from '../evidence/evidence-envelope.js';
 import { createGroundedResponseWithRetry } from '../responses/grounded-response.js';
@@ -73,7 +74,16 @@ export type TurnResult = Readonly<{
   input: TurnInput;
   plan: TurnPlan;
   policy: MutationPolicy;
-  mutation?: Readonly<{ operationId: string; status: 'proposed' | 'succeeded' }>;
+  mutation?: Readonly<{
+    operationId: string;
+    status: 'proposed' | 'succeeded';
+    /**
+     * T3.4 (SPEC §16): safe card projection derived from the canonical
+     * args that were proposed. Optional so legacy/draft paths without
+     * resolved labels still produce a valid turn (PWA degrades gracefully).
+     */
+    presentation?: PendingOperationPresentation;
+  }>;
   /**
    * T3.1 (SPEC §14): set on the deterministic fail-closed read reply
    * (evidence null/timeout/all-error). The LLM was never consulted for this
@@ -375,6 +385,37 @@ export class ConversationOrchestrator {
   }
 
   /**
+   * T3.4 (SPEC §16, INV-02): builds the turn's proposed-mutation payload
+   * with the safe card presentation derived from the canonical args that
+   * were just proposed (labels from the entity-resolver output — zero new
+   * reads, zero new transport). `expiresAt` comes from the created
+   * operation; when unavailable (redelivery convergence paths) the payload
+   * stays in the legacy summary shape and the PWA degrades gracefully.
+   */
+  private proposedMutation(input: {
+    operationId: string;
+    tool: string;
+    normalizedArgs: { amountCents: number; description: string; date: string; accountId: string; categoryId: string };
+    accountName?: string;
+    categoryName?: string;
+    expiresAt?: string;
+  }): NonNullable<TurnResult['mutation']> {
+    const base = { operationId: input.operationId, status: 'proposed' as const };
+    if (!input.expiresAt) return freeze(base);
+    const presentation = buildApprovalPresentation({
+      operationId: input.operationId,
+      status: 'proposed',
+      tool: input.tool,
+      normalizedArgs: input.normalizedArgs,
+      expiresAt: input.expiresAt,
+      ...(input.accountName ? { accountLabel: input.accountName } : {}),
+      ...(input.categoryName ? { categoryLabel: input.categoryName } : {}),
+    });
+    if (!presentation) return freeze(base);
+    return freeze({ ...base, presentation });
+  }
+
+  /**
    * Single propose attempt + outcome handling (handoff protocol §7.8):
    * created/existing → consumed; definitive 4xx → discarded; anything else
    * → stays proposing with an inconclusive reply (never success/cancelled).
@@ -397,15 +438,16 @@ export class ConversationOrchestrator {
     };
     for (let attempt = 1; attempt <= Math.max(1, maxAttempts); attempt += 1) {
       try {
+        const normalizedArgs = {
+          amountCents: args.amountCents,
+          description: args.description,
+          date: args.date,
+          accountId: args.accountId!,
+          categoryId: args.categoryId!,
+        };
         const proposal = await client.propose({
           tool: draft.tool,
-          normalizedArgs: {
-            amountCents: args.amountCents,
-            description: args.description,
-            date: args.date,
-            accountId: args.accountId!,
-            categoryId: args.categoryId!,
-          },
+          normalizedArgs,
           summary: args.description,
           identity,
           idempotencyKey: draft.proposalIdempotencyKey,
@@ -418,7 +460,14 @@ export class ConversationOrchestrator {
           lastIntentionId: input.intentionId,
         });
         return this.completeTurn(input, plan, startedAt, base, {
-          mutation: freeze({ operationId: proposal.id, status: 'proposed' }),
+          mutation: this.proposedMutation({
+            operationId: proposal.id,
+            tool: draft.tool,
+            normalizedArgs,
+            ...(args.accountName ? { accountName: args.accountName } : {}),
+            ...(args.categoryName ? { categoryName: args.categoryName } : {}),
+            expiresAt: proposal.operation.expiresAt,
+          }),
           response: freeze({ text: renderMutationResult('proposed', proposal.summary) }),
         });
       } catch (error) {
@@ -540,6 +589,8 @@ export class ConversationOrchestrator {
       ...draft.resolvedArgs,
       accountId: resolution.accountId,
       categoryId: resolution.categoryId,
+      accountName: resolution.accountName,
+      categoryName: resolution.categoryName,
     };
     if (!validateCompleteArgs(completeArgs)) {
       // Canonical gate failed agent-side: never propose, clarify again.
@@ -634,21 +685,29 @@ export class ConversationOrchestrator {
       deviceId: input.deviceId ?? (() => { throw new Error('mutation.device_required'); })(),
     };
     const tool = parsed.kind === 'income' ? 'transactions.income.create' : 'transactions.expense.create';
+    const normalizedArgs = {
+      amountCents: parsed.amountCents,
+      description: parsed.description,
+      date: parsed.date,
+      accountId: resolution.accountId,
+      categoryId: resolution.categoryId,
+    };
     const proposal = await client.propose({
       tool,
-      normalizedArgs: {
-        amountCents: parsed.amountCents,
-        description: parsed.description,
-        date: parsed.date,
-        accountId: resolution.accountId,
-        categoryId: resolution.categoryId,
-      },
+      normalizedArgs,
       summary: parsed.description,
       identity,
       idempotencyKey: deriveIdempotencyKey(input.workspaceId, input.intentionId, tool),
     });
     return this.completeTurn(input, plan, startedAt, base, {
-      mutation: freeze({ operationId: proposal.id, status: 'proposed' }),
+      mutation: this.proposedMutation({
+        operationId: proposal.id,
+        tool,
+        normalizedArgs,
+        accountName: resolution.accountName,
+        categoryName: resolution.categoryName,
+        expiresAt: proposal.operation.expiresAt,
+      }),
       response: freeze({ text: renderMutationResult('proposed', proposal.summary) }),
     });
   }
@@ -1034,20 +1093,21 @@ export class ConversationOrchestrator {
       // (treated as success below); same key + divergent payload is a
       // definitive idempotency.conflict, which propagates — never success.
       const tool = parsed.kind === 'income' ? 'transactions.income.create' : 'transactions.expense.create';
+      const normalizedArgs = {
+        amountCents: parsed.amountCents,
+        description: parsed.description,
+        date: parsed.date,
+        accountId: resolution.accountId,
+        categoryId: resolution.categoryId,
+      };
       const proposal = await client.propose({
         tool,
-        normalizedArgs: {
-          amountCents: parsed.amountCents,
-          description: parsed.description,
-          date: parsed.date,
-          accountId: resolution.accountId,
-          categoryId: resolution.categoryId,
-        },
+        normalizedArgs,
         summary: parsed.description,
         identity,
         idempotencyKey: deriveIdempotencyKey(input.workspaceId, input.intentionId, tool),
       });
-      return freeze({ ...result, mutation: freeze({ operationId: proposal.id, status: 'proposed' }), response: freeze({ text: renderMutationResult('proposed', proposal.summary) }) });
+      return freeze({ ...result, mutation: this.proposedMutation({ operationId: proposal.id, tool, normalizedArgs, accountName: resolution.accountName, categoryName: resolution.categoryName, expiresAt: proposal.operation.expiresAt }), response: freeze({ text: renderMutationResult('proposed', proposal.summary) }) });
     }
     // SPEC §7.8 (ADR-014) with a draft store: the full multi-turn flow
     // (draft persistence, continuation, atomic consumption, recoverable
