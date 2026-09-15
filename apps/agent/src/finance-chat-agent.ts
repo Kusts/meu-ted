@@ -2,7 +2,7 @@ import { AIChatAgent, type UIMessage } from "agents/ai-chat-agent";
 import { streamText, generateText, stepCountIs } from "ai";
 import { z } from "zod";
 import { protocolSchema } from "@pi-finance/llm-contracts/schemas";
-import { pendingOperationPresentationSchema } from "@pi-finance/llm-contracts";
+import { mutationReceiptSchema, pendingOperationPresentationSchema } from "@pi-finance/llm-contracts";
 import { fetchRuntimeConfig, type RuntimeSnapshot } from "./llm/runtime-config-client.js";
 import { createLanguageModel } from "./llm/model-factory.js";
 import type { Protocol } from "./llm/provider-registry.js";
@@ -1256,6 +1256,16 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
                   if (!presentation) return {};
                   const parsed = pendingOperationPresentationSchema.safeParse(presentation);
                   return parsed.success ? { presentation: parsed.data } : {};
+                })(),
+                // T3.3 (SPEC §15.1): the REAL execution receipt relayed from
+                // the API on succeeded turns. Re-validated with the strict
+                // contract schema — a receipt carrying attestation or any
+                // unknown key is dropped, never partially forwarded.
+                ...(() => {
+                  const receipt = (turnResult.mutation as { receipt?: unknown }).receipt;
+                  if (!receipt) return {};
+                  const parsed = mutationReceiptSchema.safeParse(receipt);
+                  return parsed.success ? { receipt: parsed.data } : {};
                 })(),
               }
             : undefined;

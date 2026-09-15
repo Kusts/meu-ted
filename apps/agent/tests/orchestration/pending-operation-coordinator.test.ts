@@ -39,7 +39,7 @@ type FakeOp = {
 };
 
 /** Request-level fake of the V2 approval API (authority semantics included). */
-const makeFakeApprovalApi = (initial: FakeOp[] = []) => {
+const makeFakeApprovalApi = (initial: FakeOp[] = [], fakeOpts?: { executeReceipt?: Record<string, unknown> }) => {
   const ops = new Map<string, FakeOp>(initial.map((op) => [op.id, { ...op }]));
   const proposeKeys: Array<string | undefined> = [];
   const events: string[] = [];
@@ -100,7 +100,16 @@ const makeFakeApprovalApi = (initial: FakeOp[] = []) => {
         if (op.status !== 'confirmed') throw Object.assign(new Error('approval.attestation_replayed'), { statusCode: 403 });
         op.status = 'succeeded';
         events.push(`execute:${id}`);
-        return { status: 'succeeded', operationId: id };
+        const mutationId = `mut-${id}`;
+        const receipt = fakeOpts?.executeReceipt
+          ? { ...fakeOpts.executeReceipt, mutationId, operationId: id, entity: { type: 'transaction', id } }
+          : undefined;
+        return {
+          status: 'succeeded',
+          operationId: id,
+          mutationId,
+          ...(receipt ? { execution: { status: 'succeeded', operationId: id, receipt } } : {}),
+        };
       }
       if (action === 'cancel') {
         if (!['proposed', 'confirmed'].includes(op.status)) throw Object.assign(new Error('approval.not_pending'), { statusCode: 409 });
@@ -153,6 +162,58 @@ describe('T1.5 PendingOperationCoordinator — unified decision machine (§8, §
     expect(result.response?.text).toBe('Lançamento registrado com sucesso.');
     expect(fake.events).toEqual(['listActive', 'confirm:op-1', 'execute:op-1']);
     expect(fake.ops.get('op-1')?.status).toBe('succeeded');
+  });
+
+  it('T3.3: confirmation turn carries the API execution receipt into the turn mutation', async () => {
+    const fake = makeFakeApprovalApi([expenseOp('op-1')], {
+      executeReceipt: {
+        mutationId: 'ignored-server-echo',
+        mutationKind: 'transactions.expense.create',
+        status: 'succeeded',
+        affectedTargets: ['transactions', 'accounts', 'dashboard-summary', 'budgets', 'quick-insights'],
+      },
+    });
+    const orchestrator = setup(fake);
+    const result = await turn(orchestrator, 'sim', 'intent-confirm-receipt-1');
+
+    expect(result.mutation).toEqual({
+      operationId: 'op-1',
+      status: 'succeeded',
+      receipt: {
+        mutationId: 'mut-op-1',
+        mutationKind: 'transactions.expense.create',
+        status: 'succeeded',
+        affectedTargets: ['transactions', 'accounts', 'dashboard-summary', 'budgets', 'quick-insights'],
+        operationId: 'op-1',
+        entity: { type: 'transaction', id: 'op-1' },
+      },
+    });
+    expect(JSON.stringify(result.mutation)).not.toContain('attestation');
+  });
+
+  it('T3.3: coordinator.confirm returns the execution receipt for the button path', async () => {
+    const fake = makeFakeApprovalApi([expenseOp('op-1')], {
+      executeReceipt: {
+        mutationKind: 'transactions.expense.create',
+        status: 'succeeded',
+        affectedTargets: ['transactions', 'accounts', 'dashboard-summary', 'budgets', 'quick-insights'],
+      },
+    });
+    const coordinator = new PendingOperationCoordinator({ client: fake.api });
+    const decision = await coordinator.confirm('op-1', { workspaceId: identity.workspaceId, actorId: identity.actorId, deviceId: identity.deviceId! });
+
+    expect(decision).toEqual({
+      operationId: 'op-1',
+      status: 'succeeded',
+      receipt: {
+        mutationId: 'mut-op-1',
+        mutationKind: 'transactions.expense.create',
+        status: 'succeeded',
+        affectedTargets: ['transactions', 'accounts', 'dashboard-summary', 'budgets', 'quick-insights'],
+        operationId: 'op-1',
+        entity: { type: 'transaction', id: 'op-1' },
+      },
+    });
   });
 
   it('ignores client-declared pendingOperationIds as authority', async () => {

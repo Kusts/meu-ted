@@ -25,6 +25,7 @@ import {
   type DraftContext,
   type MutationDraftStore,
 } from '../mutations/mutation-draft.js';
+import type { MutationReceipt } from '@pi-finance/llm-contracts';
 import { renderInconclusive } from '../responses/deterministic-responses.js';
 
 export type DecisionScope = 'decidable' | 'retryable';
@@ -55,6 +56,12 @@ export type DecisionInput = Readonly<{
 export type DecisionResult = Readonly<{
   operationId: string;
   status: 'succeeded' | 'cancelled';
+  /**
+   * T3.3 (SPEC §15.1): the REAL execution receipt relayed from the API —
+   * the PWA reconciles from it (mutationId dedup) instead of guessing.
+   * Present only on succeeded decisions; carries no attestation material.
+   */
+  receipt?: MutationReceipt;
 }>;
 
 export const NO_PENDING_OPERATION_TEXT = 'Não há nenhuma operação pendente para confirmar.';
@@ -135,7 +142,11 @@ export class PendingOperationCoordinator {
       attestation: confirmation.attestation,
       identity,
     });
-    return { operationId: execution.operationId, status: 'succeeded' };
+    return {
+      operationId: execution.operationId,
+      status: 'succeeded',
+      ...(execution.receipt ? { receipt: execution.receipt } : {}),
+    };
   }
 
   /**
@@ -158,7 +169,11 @@ export class PendingOperationCoordinator {
       attestation: confirmation.attestation,
       identity,
     });
-    return { operationId: execution.operationId, status: 'succeeded' };
+    return {
+      operationId: execution.operationId,
+      status: 'succeeded',
+      ...(execution.receipt ? { receipt: execution.receipt } : {}),
+    };
   }
 
   /**

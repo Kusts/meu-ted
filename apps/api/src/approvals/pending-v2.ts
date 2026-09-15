@@ -440,6 +440,14 @@ export const createInMemoryPendingOperationV2Store = (
     tokens.set(token, { id: record.id, consumed: false });
     return record;
   };
+  // T3.3: terminal success responses mirror the Postgres store (mapV2) —
+  // the plaintext attestation NEVER leaves the store, even consumed. The
+  // execution response is the one the Agent relays a receipt projection
+  // from, so no authority material may ride along.
+  const expose = (record: PendingOperationV2Record): PendingOperationV2Record => {
+    const { attestation: _omitted, ...exposed } = record;
+    return exposed;
+  };
 
   return {
     get audit() { return events; },
@@ -546,7 +554,7 @@ export const createInMemoryPendingOperationV2Store = (
         fail('approval.incomplete_result', 'Executor retornou resultado incompleto.');
       }
       // TX2 (success). Guarded: recovery-finalized records are returned as-is.
-      if (!stillOurs()) return record;
+      if (!stillOurs()) return expose(record);
       const { enriched, mutationId } = withTedReceipt(
         result as { status: string; operationId: string; receipt?: unknown },
         record.tool,
@@ -554,7 +562,7 @@ export const createInMemoryPendingOperationV2Store = (
       record.execution = enriched;
       record.mutationId = mutationId;
       record.status = 'succeeded';
-      return record;
+      return expose(record);
     },
     async reconcileExpiredExecuting(id, identity, executor, opts) {
       // Renew section is synchronous (no await): atomic under the JS event
@@ -590,13 +598,13 @@ export const createInMemoryPendingOperationV2Store = (
         throw error;
       }
       if (!result || typeof result !== 'object' || (result as { status?: unknown }).status !== 'succeeded' || typeof (result as { operationId?: unknown }).operationId !== 'string') {
-        if (!stillRenewed()) return record;
+        if (!stillRenewed()) return expose(record);
         record.status = 'failed';
         record.failureCode = 'approval.incomplete_result';
         events.push({ operationId: id, event: 'fail', actorId: record.actorId, at: nowIso() });
         return fail('approval.incomplete_result', 'Executor retornou resultado incompleto.');
       }
-      if (!stillRenewed()) return record;
+      if (!stillRenewed()) return expose(record);
       const { enriched, mutationId } = withTedReceipt(
         result as { status: string; operationId: string; receipt?: unknown },
         record.tool,
@@ -604,7 +612,7 @@ export const createInMemoryPendingOperationV2Store = (
       record.execution = enriched;
       record.mutationId = mutationId;
       record.status = 'succeeded';
-      return record;
+      return expose(record);
     },
     async retry(id, identity) {
       const record = resolve(id, identity);

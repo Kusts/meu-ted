@@ -17,7 +17,7 @@ import {
   type MutationDraftRecord,
   type MutationDraftStore,
 } from '../mutations/mutation-draft.js';
-import type { MutationDraftChannelMessage, PendingOperationPresentation } from '@pi-finance/llm-contracts';
+import type { MutationDraftChannelMessage, MutationReceipt, PendingOperationPresentation } from '@pi-finance/llm-contracts';
 import { buildApprovalPresentation } from '../mutations/approval-presentation.js';
 import { emitSanitizedEvent } from '../observability/events.js';
 import type { EvidenceEnvelope } from '../evidence/evidence-envelope.js';
@@ -84,6 +84,13 @@ export type TurnResult = Readonly<{
      * resolved labels still produce a valid turn (PWA degrades gracefully).
      */
     presentation?: PendingOperationPresentation;
+    /**
+     * T3.3 (SPEC §15.1): the REAL execution receipt emitted by the API on
+     * TX2 success. Present only on `succeeded` — the PWA reconciles from
+     * it instead of the documented mutationKind fallback. Never derived
+     * from the LLM, never carries attestation material.
+     */
+    receipt?: MutationReceipt;
   }>;
   /**
    * T3.1 (SPEC §14): set on the deterministic fail-closed read reply
@@ -1021,7 +1028,11 @@ export class ConversationOrchestrator {
         latencyMs: Date.now() - startedAt,
       });
       return this.completeTurn(input, plan, startedAt, base, {
-        mutation: freeze({ operationId: result.operationId, status: 'succeeded' }),
+        mutation: freeze({
+          operationId: result.operationId,
+          status: 'succeeded' as const,
+          ...(result.receipt ? { receipt: result.receipt } : {}),
+        }),
         response: freeze({ text: renderMutationResult('succeeded') }),
       });
     } catch {
@@ -1050,7 +1061,7 @@ export class ConversationOrchestrator {
     }
     this.emit('plan.validated', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode });
     const policy = freeze({ capability: 'financial.read' as const, writeAuthorized: false as const, approvalRequired: true as const });
-    const result: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy; mutation?: { operationId: string; status: 'proposed' | 'succeeded' }; response?: { text: string } } = { input, plan: freeze(plan), policy };
+    const result: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy; mutation?: { operationId: string; status: 'proposed' | 'succeeded'; receipt?: MutationReceipt }; response?: { text: string } } = { input, plan: freeze(plan), policy };
     const client = this.dependencies.mutationApiClient;
     // A proposal may never fall through to a generative response when the
     // channel was unable to construct its narrowly-scoped API client (for
@@ -1159,7 +1170,11 @@ export class ConversationOrchestrator {
         this.emit('approval.confirmed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'confirmed' });
         this.emit('mutation.executed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'succeeded', latencyMs: Date.now() - startedAt });
         return this.completeTurn(input, plan, startedAt, result, {
-          mutation: freeze({ operationId: confirmed.operationId, status: 'succeeded' }),
+          mutation: freeze({
+            operationId: confirmed.operationId,
+            status: 'succeeded' as const,
+            ...(confirmed.receipt ? { receipt: confirmed.receipt } : {}),
+          }),
           response: freeze({ text: renderMutationResult('succeeded') }),
         });
       } catch {

@@ -1,7 +1,9 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { describe, expect, it } from 'vitest';
+import { mutationReceiptSchema } from '@pi-finance/llm-contracts';
 import { createInMemoryPendingOperationV2Store } from '../../src/approvals/pending-v2.js';
 import { registerPendingOperationRoutes } from '../../src/routes/pending-operations.js';
+import type { PendingExecutor } from '../../src/approvals/pending.js';
 
 const legacyStore = {
   async get() { return null; }, async list() { return []; }, async findByChatId() { return null; },
@@ -121,6 +123,103 @@ describe('pending operation V2 routes', () => {
     const retried = await app.inject({ method: 'POST', url: `/pending-operations/v2/${id}/retry` });
     expect(retried.statusCode).toBe(200);
     expect(typeof retried.json().attestation).toBe('string');
+  });
+
+  describe('execution receipt exposure (T3.3 — receipt travels API → Agent → PWA)', () => {
+    const delegatedApprovalApp = (v2Executor: PendingExecutor, storeOptions?: { leaseMs?: number }) => {
+      const app = Fastify();
+      app.addHook('preHandler', async (request) => {
+        request.delegatedTurn = { iss: 'pi-agent', aud: 'pi-finance-api', sub: 'a', workspace: 'w', role: 'owner', capabilities: ['financial.approval.propose', 'financial.approval.confirm', 'financial.approval.execute', 'financial.approval.reconcile'], jti: crypto.randomUUID(), request: 'r', deviceId: 'd', iat: 1, exp: 301 };
+        request.authenticatedContext = { householdId: 'w', actorId: 'a', authUserId: 'a', actorType: 'user', deviceId: 'd', role: 'owner' };
+      });
+      registerPendingOperationRoutes(app, { store: legacyStore, resolveToken: async () => ({ householdId: 'w', deviceId: 'd' }), v2Store: createInMemoryPendingOperationV2Store(storeOptions), v2Executor, v2Only: true });
+      return app;
+    };
+    const proposeExpense = (app: FastifyInstance, key: string) =>
+      app.inject({ method: 'POST', url: '/pending-operations/v2/propose', headers: { 'idempotency-key': key }, payload: { tool: 'transactions.expense.create', normalizedArgs: expenseArgs() } });
+    const confirmOp = (app: FastifyInstance, id: string) =>
+      app.inject({ method: 'POST', url: `/pending-operations/v2/${id}/confirm` });
+    const executeOp = (app: FastifyInstance, id: string, attestation: string) =>
+      app.inject({ method: 'POST', url: `/pending-operations/v2/${id}/execute`, payload: { attestation } });
+
+    it('successful execution returns the API receipt in the response body with no attestation material', async () => {
+      // Synthesis path: a receipt-less executor success still yields a full
+      // receipt (withTedReceipt), and the TX2 response the Agent consumes
+      // carries it WITHOUT any attestation/hash/token (INV-05).
+      const app = delegatedApprovalApp(async () => ({ status: 'succeeded', operationId: 'tx-1' }));
+      const proposed = await proposeExpense(app, 'receipt-key-1');
+      expect(proposed.statusCode).toBe(201);
+      const id = proposed.json().id;
+      const confirmed = await confirmOp(app, id);
+      expect(confirmed.statusCode).toBe(200);
+
+      const executed = await executeOp(app, id, confirmed.json().attestation);
+      expect(executed.statusCode).toBe(200);
+      const body = executed.json();
+      expect(body.status).toBe('succeeded');
+      expect(typeof body.mutationId).toBe('string');
+      const receipt = body.execution?.receipt;
+      expect(receipt).toBeTruthy();
+      expect(receipt.mutationId).toBe(body.mutationId);
+      expect(receipt.mutationKind).toBe('transactions.expense.create');
+      expect(receipt.status).toBe('succeeded');
+      expect(Array.isArray(receipt.affectedTargets)).toBe(true);
+      expect(receipt.affectedTargets.length).toBeGreaterThan(0);
+      expect(receipt.operationId).toBeTruthy();
+      expect(mutationReceiptSchema.safeParse(receipt).success).toBe(true);
+      // INV-05: authority material never rides along on the execution result.
+      expect(Object.keys(body)).not.toContain('attestation');
+      expect(Object.keys(receipt)).not.toContain('attestation');
+      expect(Object.keys(body.execution)).not.toContain('attestation');
+    });
+
+    it('honors an executor-emitted receipt and echoes its mutationId at the top level', async () => {
+      // Production tool-registry executors attach the REAL receipt; the store
+      // must honor its mutationId (never re-generate a second identity).
+      const executorReceipt = {
+        mutationId: 'mut-fixed-0001',
+        mutationKind: 'transactions.expense.create',
+        status: 'succeeded' as const,
+        affectedTargets: ['transactions', 'accounts', 'dashboard-summary', 'budgets', 'quick-insights'],
+        operationId: 'tx-2',
+        entity: { type: 'transaction', id: 'tx-2' },
+      };
+      const app = delegatedApprovalApp(async () => ({ status: 'succeeded', operationId: 'tx-2', receipt: executorReceipt }));
+      const proposed = await proposeExpense(app, 'receipt-key-2');
+      const id = proposed.json().id;
+      const confirmed = await confirmOp(app, id);
+      const executed = await executeOp(app, id, confirmed.json().attestation);
+      expect(executed.statusCode).toBe(200);
+      const body = executed.json();
+      expect(body.mutationId).toBe('mut-fixed-0001');
+      expect(body.execution.receipt).toEqual(executorReceipt);
+    });
+
+    it('reconcile (crash recovery) also returns the receipt in the response body', async () => {
+      // Crash window simulation: attempt 1 claims (executing) and never
+      // finalizes; the reconciler re-runs the SAME executor and the recovery
+      // response carries the receipt exactly like a direct execution.
+      let calls = 0;
+      const app = delegatedApprovalApp(async () => {
+        calls += 1;
+        if (calls === 1) return new Promise(() => {});
+        return { status: 'succeeded', operationId: 'tx-3' };
+      }, { leaseMs: 1 });
+      const proposed = await proposeExpense(app, 'receipt-key-3');
+      const id = proposed.json().id;
+      const confirmed = await confirmOp(app, id);
+      const inflight = executeOp(app, id, confirmed.json().attestation);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const reconciled = await app.inject({ method: 'POST', url: `/pending-operations/v2/${id}/reconcile` });
+      expect(reconciled.statusCode).toBe(200);
+      const body = reconciled.json();
+      expect(body.status).toBe('succeeded');
+      expect(typeof body.mutationId).toBe('string');
+      expect(body.execution?.receipt?.mutationId).toBe(body.mutationId);
+      expect(Object.keys(body)).not.toContain('attestation');
+      void inflight;
+    });
   });
 
   describe('propose canonical validation and idempotency (SPEC §7.4, §7.7)', () => {

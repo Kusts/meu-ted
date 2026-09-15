@@ -1,4 +1,4 @@
-import type { PendingOperationV2 } from '@pi-finance/llm-contracts';
+import type { MutationReceipt, PendingOperationV2 } from '@pi-finance/llm-contracts';
 import { requestPiApiJson } from '../tools/api-client.js';
 import { emitSanitizedEvent } from '../observability/events.js';
 import { createMutationProposal, type MutationProposal } from './mutation-proposal.js';
@@ -112,7 +112,8 @@ export class MutationApiClient {
     });
   }
 
-  execute(input: MutationExecution): Promise<{ status: 'succeeded'; operationId: string }> {
+  /** T3.3: the successful execute relays the API-emitted receipt (schema-validated in MutationExecutor). */
+  execute(input: MutationExecution): Promise<{ status: 'succeeded'; operationId: string; receipt?: MutationReceipt }> {
     return this.timed('transactions.execute', () => this.executor.execute(input));
   }
 
