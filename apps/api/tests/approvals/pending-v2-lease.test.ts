@@ -115,6 +115,27 @@ const waitForLeaseExpiry = async (
   }
 };
 
+/**
+ * Postgres commits the TX1 claim asynchronously (connect + BEGIN + UPDATE +
+ * COMMIT take tens of ms), while the in-memory store claims synchronously
+ * before `execute()` returns. Polling here preserves the assertions' intent
+ * ("claim committed → executing") without assuming sync visibility.
+ */
+const waitForClaim = async (
+  store: PendingOperationV2Store,
+  id: string,
+  identity: PendingIdentity,
+  timeoutMs = 5_000,
+): Promise<PendingOperationV2Record> => {
+  const started = Date.now();
+  for (;;) {
+    const record = await store.get(id, identity);
+    if (record.status === 'executing') return record;
+    if (Date.now() - started > timeoutMs) throw new Error('timed out waiting for claim');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+};
+
 function defineLeaseSuite(
   suiteName: string,
   makeStore: (opts?: { leaseMs?: number }) => PendingOperationV2Store,
@@ -169,7 +190,7 @@ function defineLeaseSuite(
       const gate = deferred();
       const first = store.execute(confirmed.attestation!, id, () => gate.promise);
       // Claim committed: the operation is `executing` with a valid lease.
-      const executing = await store.get(saved.id, id);
+      const executing = await waitForClaim(store, saved.id, id);
       expect(executing.status).toBe('executing');
       expect(Date.parse(executing.executionLeaseExpiresAt!)).toBeGreaterThan(Date.now());
       // Same-attestation replay while in flight → in-progress, never a duplicate.
@@ -302,7 +323,12 @@ function defineLeaseSuite(
     });
 
     it('concurrent reconciles on an expired lease → single financial effect', async () => {
-      const store = makeStore({ leaseMs: 40 });
+      // NOTE (postgres): the renew window must comfortably exceed one TX-R
+      // roundtrip (~tens of ms locally). A 40ms window leaves the loser's
+      // post-lock validity check racing TX latency; 500ms keeps the
+      // serialization assertion deterministic while the expiry wait stays
+      // fast. Assertions untouched.
+      const store = makeStore({ leaseMs: 500 });
       const writes = createFakeWrites();
       const id = identityOf();
       const saved = await proposeCanonical(store, id);
@@ -335,6 +361,7 @@ function defineLeaseSuite(
       const confirmed = await store.confirm(saved.id, id);
       const gate = deferred();
       const first = store.execute(confirmed.attestation!, id, () => gate.promise);
+      await waitForClaim(store, saved.id, id);
       expect((await store.get(saved.id, id)).executionAttemptCount).toBe(1);
       await waitForLeaseExpiry(store, saved.id, id);
       const recovered = await store.reconcileExpiredExecuting(saved.id, id, async () => ({

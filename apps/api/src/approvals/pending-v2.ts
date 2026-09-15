@@ -232,7 +232,7 @@ export const createPostgresPendingOperationV2Store = (
       // lease columns, and COMMITS before the executor runs: a failure after
       // this point can never roll the claim back (H-04).
       const claimed = await withTransaction(pool, async (client) => {
-        const claim = await client.query<PendingV2Row>("UPDATE pending_operations SET attestation_consumed_at=NOW(), execution_status='executing', execution_claimed_at=NOW(), execution_lease_expires_at=$5, execution_attempt_count=execution_attempt_count+1 WHERE workspace_id=$1 AND actor_id=$2 AND device_id=$3 AND protocol_version=2 AND attestation_hash=$4 AND attestation_consumed_at IS NULL AND execution_status='confirmed' AND expires_at>NOW() RETURNING *", [identity.workspaceId, identity.actorId, identity.deviceId, hashAttestation(token), new Date(Date.now() + resolvePendingV2LeaseMs(options?.leaseMs)).toISOString()]);
+        const claim = await client.query<PendingV2Row>("UPDATE pending_operations SET attestation_consumed_at=NOW(), execution_status='executing', execution_claimed_at=NOW(), execution_lease_expires_at=NOW() + ($5 * INTERVAL '1 millisecond'), execution_attempt_count=execution_attempt_count+1 WHERE workspace_id=$1 AND actor_id=$2 AND device_id=$3 AND protocol_version=2 AND attestation_hash=$4 AND attestation_consumed_at IS NULL AND execution_status='confirmed' AND expires_at>NOW() RETURNING *", [identity.workspaceId, identity.actorId, identity.deviceId, hashAttestation(token), resolvePendingV2LeaseMs(options?.leaseMs)]);
         const row = claim.rows[0];
         if (!row) {
           // Claim miss: distinguish an in-flight execution (valid OR expired
@@ -290,9 +290,17 @@ export const createPostgresPendingOperationV2Store = (
         // into the generic guard below.
         if (status === 'confirmed') return fail('approval.reconcile_not_allowed', 'Operação confirmed recupera-se por reemissão de attestation, nunca por lease.');
         if (status !== 'executing') return fail('approval.reconcile_not_allowed', 'Reconciliação disponível somente para executing com lease expirada.');
-        const leaseExpiresAt = Date.parse(String(row.execution_lease_expires_at));
+        // node-pg returns TIMESTAMPTZ as a JS Date: use its ms value
+        // directly. Date.parse(String(date)) truncates to whole seconds
+        // (Date#toString has no ms), which makes a freshly renewed lease
+        // read as already expired whenever both fall in the same second —
+        // a concurrent reconciler would then renew twice (attempt 3,
+        // double executor run) instead of aborting with
+        // execution_in_progress.
+        const leaseValue = row.execution_lease_expires_at;
+        const leaseExpiresAt = leaseValue instanceof Date ? leaseValue.getTime() : Date.parse(String(leaseValue));
         if (!Number.isNaN(leaseExpiresAt) && leaseExpiresAt > Date.now()) return fail('approval.execution_in_progress', 'Execução já em andamento.');
-        const next = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_lease_expires_at=$2, execution_attempt_count=execution_attempt_count+1 WHERE id=$1 RETURNING *", [id, new Date(Date.now() + resolvePendingV2LeaseMs(opts?.leaseMs ?? options?.leaseMs)).toISOString()]);
+        const next = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_lease_expires_at=NOW() + ($2 * INTERVAL '1 millisecond'), execution_attempt_count=execution_attempt_count+1 WHERE id=$1 RETURNING *", [id, resolvePendingV2LeaseMs(opts?.leaseMs ?? options?.leaseMs)]);
         events.push({ operationId: id, event: 'execute', actorId: identity.actorId, at: nowIso() });
         return next.rows[0]!;
       });
