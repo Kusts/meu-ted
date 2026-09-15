@@ -380,4 +380,95 @@ describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
     expect(items[0]!.pendingOperation).toBeUndefined();
   });
 
+  describe("T3.3 execution receipt (API → Agent → PWA)", () => {
+    const cleanReceipt = {
+      mutationId: "mut-1",
+      mutationKind: "transactions.expense.create",
+      status: "succeeded" as const,
+      affectedTargets: ["transactions", "accounts", "dashboard-summary", "budgets", "quick-insights"],
+      operationId: "op-1",
+      entity: { type: "transaction", id: "op-1" },
+    };
+
+    it("decidePendingOperation parses and exposes the real execution receipt", async () => {
+      vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+      vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+        new Response(
+          JSON.stringify({ operationId: "op-1", status: "succeeded", receipt: cleanReceipt }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+      await expect(decidePendingOperation("workspace-123", "op-1", "confirm")).resolves.toEqual({
+        operationId: "op-1",
+        status: "succeeded",
+        receipt: cleanReceipt,
+      });
+    });
+
+    it("a receipt carrying attestation is dropped wholesale — nothing tainted reaches the browser (INV-05)", async () => {
+      vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+      vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+        new Response(
+          JSON.stringify({
+            operationId: "op-1",
+            status: "succeeded",
+            receipt: { ...cleanReceipt, attestation: "must-never-reach-browser" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+      const result = await decidePendingOperation("workspace-123", "op-1", "confirm");
+      expect(result.receipt).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain("attestation");
+    });
+
+    it("a receipt with an unknown key is dropped (strict browser allowlist)", async () => {
+      vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+      vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+        new Response(
+          JSON.stringify({
+            operationId: "op-1",
+            status: "succeeded",
+            receipt: { ...cleanReceipt, normalizedArgs: { amountCents: 8500 } },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+      const result = await decidePendingOperation("workspace-123", "op-1", "confirm");
+      expect(result.receipt).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain("normalizedArgs");
+    });
+
+    it("sendAgentMessage exposes pendingOperation.receipt from a succeeded chat turn", async () => {
+      vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+      vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+        new Response(
+          JSON.stringify({
+            turnId: "t1",
+            status: "completed",
+            output: "Lançamento registrado com sucesso.",
+            pendingOperation: {
+              id: "op-1",
+              status: "succeeded",
+              operation: "transactions.expense.create",
+              receipt: cleanReceipt,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+      const turn = await sendAgentMessage("ws-1", "confirma");
+      expect(turn.pendingOperation?.receipt).toEqual(cleanReceipt);
+      expect(JSON.stringify(turn)).not.toContain("attestation");
+    });
+  });
+
 });

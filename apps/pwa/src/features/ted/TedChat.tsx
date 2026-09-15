@@ -14,6 +14,8 @@ import { useRecordingState } from "./use-recording-state";
 import { getChatAttachmentCapabilities } from "@/lib/capabilities";
 import { useAppState } from "@/lib/state/app-state-context";
 import { resolveTedMutationKind } from "@/lib/state/mutation-reconciler";
+import type { MutationReceipt } from "@pi-finance/llm-contracts/types";
+import type { PendingOperationDecision } from "@/lib/api/agent-client";
 import { useBodyScrollLock } from "@/lib/ui/overlay-a11y";
 import { Sparkles, X, Send, Mic, MicOff, Image as ImageIcon, FileText, Paperclip, Trash2, RefreshCw } from "lucide-react";
 
@@ -148,25 +150,35 @@ export function TedChat({ open, onClose }: TedChatProps) {
   }, [activeWorkspace]);
 
   // Post-approval reconciliation (SPEC §15.4, T3.3): chat history AND
-  // financial UI refresh. The execution receipt is not exposed through
-  // agent-client yet (T3.4 owns that plumbing), so reconcile via the
-  // operation → mutationKind mapping; the single MutationReconciler still
-  // decides the targets. Safe outside AppStateProvider (launcher tests).
-  let reconcileFinancialUi: ((mutationKind: string) => Promise<unknown>) | null = null;
+  // financial UI refresh. The REAL execution receipt (API-emitted, relayed
+  // by the Agent through agent-client) drives the reconciler whenever the
+  // decision carries one; the operation → mutationKind mapping stays as a
+  // documented fallback for legacy turns without a receipt. Safe outside
+  // AppStateProvider (launcher tests).
+  let reconcileFinancialUi: ((input: { receipt?: MutationReceipt | null; mutationKind?: string }) => Promise<unknown>) | null = null;
   try {
     const { reconcileMutation } = useAppState();
     reconcileFinancialUi =
       reconcileMutation !== undefined
-        ? (mutationKind: string) => reconcileMutation({ mutationKind })
+        ? (input: { receipt?: MutationReceipt | null; mutationKind?: string }) => reconcileMutation(input)
         : null;
   } catch {
     reconcileFinancialUi = null;
   }
 
-  const handleApprovalResolved = async (operation: string): Promise<void> => {
+  const handleApprovalResolved = async (
+    operation: string,
+    decision?: PendingOperationDecision,
+  ): Promise<void> => {
     if (reconcileFinancialUi) {
       try {
-        await reconcileFinancialUi(resolveTedMutationKind(operation));
+        // Real receipt wins (mutationId enables dedup); without one the
+        // deterministic kind mapping applies — never an invented mutationId.
+        await reconcileFinancialUi(
+          decision?.receipt
+            ? { receipt: decision.receipt }
+            : { mutationKind: resolveTedMutationKind(operation) },
+        );
       } catch {
         // Reconciliation failure surfaces as stale in app-state;
         // the chat history must still reload below.
@@ -327,6 +339,17 @@ export function TedChat({ open, onClose }: TedChatProps) {
       if (turn.pendingOperation) {
         setPendingOps((previous) => [turn.pendingOperation!, ...previous.filter((operation) => operation.id !== turn.pendingOperation!.id)]);
       }
+      // T3.3 (§15.4): a natural-language confirmation turn that EXECUTED in
+      // the same round-trip carries the real execution receipt — reconcile
+      // from it immediately (same single reconciler as the button path).
+      const executedTurn = turn.pendingOperation?.status === "succeeded" ? turn.pendingOperation : undefined;
+      if (executedTurn?.receipt && reconcileFinancialUi) {
+        try {
+          await reconcileFinancialUi({ receipt: executedTurn.receipt });
+        } catch {
+          // Reconciliation failure surfaces as stale in app-state.
+        }
+      }
       await loadHistory();
     } catch {
       setError(MESSAGE_SEND_ERROR);
@@ -467,7 +490,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
                 key={op.id}
                 operation={op}
                 workspaceId={activeWorkspace.id}
-                onResolved={() => void handleApprovalResolved(op.operation)}
+                onResolved={(decision) => void handleApprovalResolved(op.operation, decision)}
               />
             ))}
 

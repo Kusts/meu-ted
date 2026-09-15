@@ -106,4 +106,38 @@ describe("TedApprovalCard V2", () => {
     expect(screen.getByText(/processando opera/i)).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
+
+  it("T3.3: onResolved receives the decision including the real execution receipt", async () => {
+    const user = userEvent.setup();
+    const onResolved = vi.fn();
+    const receipt = {
+      mutationId: "mut-1",
+      mutationKind: "transactions.expense.create",
+      status: "succeeded" as const,
+      affectedTargets: ["transactions", "accounts", "dashboard-summary", "budgets", "quick-insights"],
+      operationId: "op-1",
+      entity: { type: "transaction", id: "op-1" },
+    };
+    vi.mocked(agentClient.decidePendingOperation).mockResolvedValue({
+      operationId: "op-1",
+      status: "succeeded",
+      receipt,
+    });
+
+    render(
+      <TedApprovalCard
+        operation={{ id: "op-1", status: "proposed", operation: "transactions.expense.create" }}
+        workspaceId="workspace-1"
+        onResolved={onResolved}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Aprovar" }));
+
+    await waitFor(() =>
+      expect(onResolved).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "succeeded", receipt }),
+      ),
+    );
+  });
 });

@@ -27,7 +27,8 @@ export type TedPendingOperation = Readonly<{
 interface TedApprovalCardProps {
   operation: TedPendingOperation;
   workspaceId: string;
-  onResolved?: () => void;
+  /** T3.3: receives the resolved decision (carrying the real receipt, when present). */
+  onResolved?: (decision: PendingOperationDecision) => void;
 }
 
 const deriveFallbackTitle = (operation: TedPendingOperation): string => {
@@ -47,7 +48,7 @@ export function TedApprovalCard({ operation, workspaceId, onResolved }: TedAppro
   const resolve = async (decision: "confirm" | "cancel" | "retry") => {
     const resolved: PendingOperationDecision = await decidePendingOperation(workspaceId, operation.id, decision);
     setStatus(resolved.status);
-    onResolved?.();
+    onResolved?.(resolved);
   };
 
   const handleApprove = async () => {

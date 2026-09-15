@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { MutationReceipt } from "@pi-finance/llm-contracts/types";
 import { fetchAgentConnectionToken, clearAgentConnectionTokenCache, trackAgentConnection } from "./agent-auth";
 
 export const attachmentSchema = z.object({
@@ -96,6 +97,34 @@ const pendingOperationPresentationSchema = z
 
 export type PendingOperationPresentation = z.infer<typeof pendingOperationPresentationSchema>;
 
+/**
+ * T3.3 (SPEC §15.1): browser-safe execution receipt. Strict allowlist with
+ * the same shape as the shared `MutationReceipt` contract — a payload
+ * carrying attestation/authority material or ANY unknown key is dropped
+ * wholesale (fail-closed), never partially forwarded to the reconciler.
+ * Declared locally (not imported from the zod-bearing contracts entry) to
+ * honor the client bundle budget; the type IS the shared contract type.
+ */
+const mutationReceiptSchema = z
+  .object({
+    mutationId: z.string().min(1),
+    mutationKind: z.string().min(1),
+    status: z.literal("succeeded"),
+    affectedTargets: z.array(z.string()),
+    operationId: z.string().min(1).optional(),
+    entity: z.object({ type: z.string(), id: z.string() }).strict().optional(),
+  })
+  .strict();
+
+export type PendingOperationReceipt = MutationReceipt;
+
+/** Returns the receipt only when it exactly matches the browser-safe contract. */
+function sanitizeMutationReceipt(value: unknown): PendingOperationReceipt | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const parsed = mutationReceiptSchema.safeParse(value);
+  return parsed.success ? (parsed.data as PendingOperationReceipt) : undefined;
+}
+
 export const PENDING_OPERATION_STATUS = [
   "proposed",
   "confirmed",
@@ -120,6 +149,12 @@ export type AgentTurn = {
     operation: string;
     summary?: string;
     presentation?: PendingOperationPresentation;
+    /**
+     * T3.3: the REAL execution receipt (API-emitted, relayed by the Agent)
+     * on succeeded turns. Absent/invalid collapses to `undefined` — the
+     * reconciler then uses the documented mutationKind fallback.
+     */
+    receipt?: PendingOperationReceipt;
   }>;
 };
 
@@ -169,12 +204,14 @@ function sanitizePendingOperation(
     value.presentation && typeof value.presentation === "object"
       ? pendingOperationPresentationSchema.safeParse(value.presentation)
       : null;
+  const receipt = sanitizeMutationReceipt((value as { receipt?: unknown }).receipt);
   return {
     id,
     status,
     operation,
     ...(summary !== undefined ? { summary } : {}),
     ...(parsedPresentation && parsedPresentation.success ? { presentation: parsedPresentation.data } : {}),
+    ...(receipt ? { receipt } : {}),
   };
 }
 
@@ -263,10 +300,16 @@ const pendingDecisionSchema = z.object({
   operationId: z.string(),
   status: z.enum(["proposed", "succeeded", "failed", "cancelled", "expired"]),
   retryable: z.boolean().optional(),
+  // Raw receipt is parsed separately: the strict schema drops any payload
+  // carrying attestation or unknown keys WHOLESALE (INV-05, T3.3).
+  receipt: z.unknown().optional(),
 }).strict();
 
 /** Safe result of an approval decision. Attestations never cross the browser boundary. */
-export type PendingOperationDecision = z.infer<typeof pendingDecisionSchema>;
+export type PendingOperationDecision = Omit<z.infer<typeof pendingDecisionSchema>, "receipt"> & {
+  /** T3.3: real execution receipt when the decision executed successfully. */
+  receipt?: PendingOperationReceipt;
+};
 
 const agentHistoryExportSchema = z.object({
   version: z.number(),
@@ -435,7 +478,10 @@ export async function decidePendingOperation(
       body: JSON.stringify({ decision, requestId }),
     },
   );
-  return pendingDecisionSchema.parse(await parseJson<unknown>(response));
+  const parsed = pendingDecisionSchema.parse(await parseJson<unknown>(response));
+  const receipt = sanitizeMutationReceipt(parsed.receipt);
+  const { receipt: _rawReceipt, ...safe } = parsed;
+  return { ...safe, ...(receipt ? { receipt } : {}) };
 }
 
 export type AgentSessionRenewal = {

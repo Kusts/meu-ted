@@ -103,8 +103,12 @@ export function extractMutationReceipt(
 /**
  * Maps a TED pending-operation `operation` string to a registry mutation
  * kind for the approval-success path. Exact V2 approval-tool ids win; a
- * loose income/expense heuristic covers display-level operation labels
- * until T3.4 exposes the execution receipt through agent-client.
+ * loose income/expense heuristic covers display-level operation labels.
+ *
+ * T3.3: this is now the DOCUMENTED FALLBACK only — when the Agent relays
+ * the real API execution receipt, the reconciler consumes it directly
+ * (`{ receipt }`) and this mapping is not used. Without a receipt there is
+ * no mutationId, so the reconciler never dedupes the fallback path.
  */
 export function resolveTedMutationKind(operation: string): MutationKind {
   const tools = TED_APPROVAL_TOOLS as readonly string[];

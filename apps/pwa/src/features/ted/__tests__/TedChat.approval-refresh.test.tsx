@@ -131,4 +131,169 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
       expect(screen.queryByRole("button", { name: "Aprovar" })).toBeNull(),
     );
   });
+
+  it("real receipt wins: reconciliation consumes the receipt (mutationId dedup), not the kind fallback", async () => {
+    const user = userEvent.setup();
+    const receipt = {
+      mutationId: "mut-real-1",
+      mutationKind: "transactions.expense.create",
+      status: "succeeded" as const,
+      affectedTargets: ["transactions", "accounts", "dashboard-summary", "budgets", "quick-insights"],
+      operationId: "op-1",
+      entity: { type: "transaction", id: "op-1" },
+    };
+    // Authoritative history keeps the proposed card alive across reloads
+    // (loadHistory resets pendingOps from server state on every resolve).
+    const historyWithCard = [
+      {
+        id: "msg-1",
+        actorId: "user-1",
+        role: "user",
+        content: "registre mercado 850",
+        createdAt: "2026-09-14T10:00:00.000Z",
+        isOwn: true,
+        pendingOperation: { id: "op-1", status: "proposed", operation: "transactions.expense.create" },
+      },
+    ];
+    vi.spyOn(agentClient, "fetchAgentHistory").mockResolvedValue(historyWithCard);
+    vi.spyOn(agentClient, "sendAgentMessage").mockResolvedValue({
+      turnId: "turn-2",
+      status: "completed",
+      pendingOperation: {
+        id: "op-1",
+        status: "proposed",
+        operation: "transactions.expense.create",
+        summary: "Mercado",
+      },
+    });
+    vi.spyOn(agentClient, "decidePendingOperation").mockResolvedValue({
+      operationId: "op-1",
+      status: "succeeded",
+      receipt,
+    });
+
+    render(<TedChat open onClose={() => {}} />);
+
+    await user.type(
+      screen.getByLabelText("Mensagem para o assistente"),
+      "registre mercado 850",
+    );
+    await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
+    expect(await screen.findByRole("button", { name: "Aprovar" })).toBeInTheDocument();
+    reconcileMutation.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "Aprovar" }));
+
+    // The REAL API-emitted receipt flows to the reconciler: mutationId is
+    // present (dedup works), and no fallback kind mapping is used.
+    await waitFor(() =>
+      expect(reconcileMutation).toHaveBeenCalledWith({ receipt }),
+    );
+    expect(reconcileMutation).not.toHaveBeenCalledWith(
+      expect.objectContaining({ mutationKind: expect.anything() }),
+    );
+  });
+
+  it("receipt-carrying approval keeps the chat history reloading after a reconciliation failure (stale, §15.5)", async () => {
+    const user = userEvent.setup();
+    const receipt = {
+      mutationId: "mut-real-2",
+      mutationKind: "transactions.income.create",
+      status: "succeeded" as const,
+      affectedTargets: ["transactions", "accounts", "dashboard-summary", "budgets", "quick-insights"],
+      operationId: "op-2",
+      entity: { type: "transaction", id: "op-2" },
+    };
+    let historyCalls = 0;
+    vi.spyOn(agentClient, "fetchAgentHistory").mockImplementation(async () => {
+      historyCalls += 1;
+      return [
+        {
+          id: "msg-2",
+          actorId: "user-1",
+          role: "user",
+          content: "registre salário 2000",
+          createdAt: "2026-09-14T10:00:00.000Z",
+          isOwn: true,
+          pendingOperation: { id: "op-2", status: "proposed", operation: "transactions.income.create" },
+        },
+      ];
+    });
+    vi.spyOn(agentClient, "sendAgentMessage").mockResolvedValue({
+      turnId: "turn-3",
+      status: "completed",
+      pendingOperation: {
+        id: "op-2",
+        status: "proposed",
+        operation: "transactions.income.create",
+        summary: "Salário",
+      },
+    });
+    vi.spyOn(agentClient, "decidePendingOperation").mockResolvedValue({
+      operationId: "op-2",
+      status: "succeeded",
+      receipt,
+    });
+    reconcileMutation.mockRejectedValueOnce(new Error("refresh failed"));
+
+    render(<TedChat open onClose={() => {}} />);
+
+    await user.type(
+      screen.getByLabelText("Mensagem para o assistente"),
+      "registre salário 2000",
+    );
+    await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
+    expect(await screen.findByRole("button", { name: "Aprovar" })).toBeInTheDocument();
+    const callsBeforeApproval = historyCalls;
+    reconcileMutation.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "Aprovar" }));
+
+    // Reconciliation failed (app-state marks domains stale) but the chat
+    // history reload still happens — no rollback, no swallowed reload.
+    await waitFor(() =>
+      expect(historyCalls).toBeGreaterThan(callsBeforeApproval),
+    );
+    expect(reconcileMutation).toHaveBeenCalledWith({ receipt });
+  });
+
+  it("natural-language confirmation turn that already executed reconciles from the turn receipt", async () => {
+    const user = userEvent.setup();
+    const receipt = {
+      mutationId: "mut-real-3",
+      mutationKind: "transactions.expense.create",
+      status: "succeeded" as const,
+      affectedTargets: ["transactions", "accounts", "dashboard-summary", "budgets", "quick-insights"],
+      operationId: "op-3",
+      entity: { type: "transaction", id: "op-3" },
+    };
+    vi.spyOn(agentClient, "fetchAgentHistory").mockResolvedValue([]);
+    vi.spyOn(agentClient, "sendAgentMessage").mockResolvedValue({
+      turnId: "turn-4",
+      status: "completed",
+      output: "Lançamento registrado com sucesso.",
+      // The turn itself reports the execution: succeeded + real receipt.
+      pendingOperation: {
+        id: "op-3",
+        status: "succeeded",
+        operation: "transactions.expense.create",
+        receipt,
+      },
+    });
+
+    render(<TedChat open onClose={() => {}} />);
+
+    await user.type(
+      screen.getByLabelText("Mensagem para o assistente"),
+      "confirma",
+    );
+    await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
+
+    await waitFor(() =>
+      expect(reconcileMutation).toHaveBeenCalledWith({ receipt }),
+    );
+    expect(reconcileMutation).not.toHaveBeenCalledWith(
+      expect.objectContaining({ mutationKind: expect.anything() }),
+    );
+  });
 });
