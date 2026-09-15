@@ -5,6 +5,17 @@ export const renderEmpty = (subject: string): string => `Não há dados disponí
 export const renderUnavailable = (subject: string): string => `Não foi possível consultar ${subject} agora. Tente novamente mais tarde.`;
 
 /**
+ * TEDV3-003 remediation: deterministic clarification used when the tool-call
+ * sanitizer removed EVERY useful token of the model reply (the message was
+ * pure tool-invocation markup). Never an empty message, never raw markup:
+ * one short natural-language question inviting the user to rephrase. It
+ * ends in "?" so the SPEC §26.3 clarification contract still holds when
+ * small models persist in emitting tool-call markup on ambiguous reads.
+ */
+export const renderClarificationFallback = (subject = 'esta consulta'): string =>
+  `Não consegui processar ${subject} agora. Você pode reformular o que deseja consultar?`;
+
+/**
  * T3.1 fail-closed financeiro (SPEC §14 H-06): evidence null, timeout ou
  * todos os EvidenceItems com error → esta resposta determinística, sem
  * chamar o LLM. Wording fixo da SPEC, nunca número inventado.

@@ -1,7 +1,8 @@
 import type { EvidenceEnvelope } from '../evidence/evidence-envelope.js';
 import { validateGroundedClaims } from '../evidence/grounding-validator.js';
 import { emitSanitizedEvent } from '../observability/events.js';
-import { renderUnavailable } from './deterministic-responses.js';
+import { renderClarificationFallback, renderUnavailable } from './deterministic-responses.js';
+import { stripToolCallMarkup } from './tool-call-sanitizer.js';
 
 export type GroundedResponse = Readonly<{ text: string; grounded: boolean; rejected: boolean }>;
 export type GroundingEventSink = (eventType: string, fields: Record<string, unknown>) => void;
@@ -11,8 +12,13 @@ const defaultSink: GroundingEventSink = (eventType, fields) => {
 };
 
 export const createGroundedResponse = (text: string, evidence: EvidenceEnvelope, fallbackSubject = 'esta consulta'): GroundedResponse => {
-  const result = validateGroundedClaims(text, evidence);
-  return result.valid ? { text, grounded: true, rejected: false } : { text: renderUnavailable(fallbackSubject), grounded: false, rejected: true };
+  // TEDV3-003 defense #2: neutralize tool-call markup BEFORE grounding.
+  const sanitized = stripToolCallMarkup(text);
+  if (sanitized.changed && sanitized.text === '') {
+    return { text: renderClarificationFallback(fallbackSubject), grounded: false, rejected: true };
+  }
+  const result = validateGroundedClaims(sanitized.text, evidence);
+  return result.valid ? { text: sanitized.text, grounded: true, rejected: false } : { text: renderUnavailable(fallbackSubject), grounded: false, rejected: true };
 };
 
 export type GroundedRetryOptions = Readonly<{
@@ -29,6 +35,12 @@ export type GroundedRetryOptions = Readonly<{
  * failure falls back to a safe deterministic response and emits
  * `agent.grounding.rejected` with allowlisted fields only (counts and
  * sanitized codes — never the raw model text or financial payload).
+ *
+ * TEDV3-003: model text is sanitized (tool-call markup stripped) BEFORE
+ * grounding. A reply that was ONLY markup degrades to the deterministic
+ * clarification fallback (`renderClarificationFallback`) — never an empty
+ * message, never raw markup — and emits `agent.response.tool_call_sanitized`
+ * with counts only.
  */
 export const createGroundedResponseWithRetry = async (
   text: string,
@@ -37,21 +49,43 @@ export const createGroundedResponseWithRetry = async (
 ): Promise<GroundedResponse> => {
   const sink = options.sink ?? defaultSink;
   const fallbackSubject = options.fallbackSubject ?? 'esta consulta';
-  const first = validateGroundedClaims(text, evidence);
-  if (first.valid) return { text, grounded: true, rejected: false };
+  const sanitized = stripToolCallMarkup(text);
+  if (sanitized.removedBlocks > 0) {
+    sink('agent.response.tool_call_sanitized', {
+      ...(options.intentionId ? { intentionId: options.intentionId } : {}),
+      ...(options.traceId ? { traceId: options.traceId } : {}),
+      removedBlocks: sanitized.removedBlocks,
+    });
+  }
+  if (sanitized.changed && sanitized.text === '') {
+    return { text: renderClarificationFallback(fallbackSubject), grounded: false, rejected: true };
+  }
+  const first = validateGroundedClaims(sanitized.text, evidence);
+  if (first.valid) return { text: sanitized.text, grounded: true, rejected: false };
   if (options.retry) {
     try {
       const revised = await options.retry(first.unsupportedClaims);
       if (typeof revised === 'string' && revised.trim().length > 0) {
-        const second = validateGroundedClaims(revised, evidence);
-        if (second.valid) return { text: revised, grounded: true, rejected: false };
-        sink('agent.grounding.rejected', {
-          ...(options.intentionId ? { intentionId: options.intentionId } : {}),
-          ...(options.traceId ? { traceId: options.traceId } : {}),
-          status: 'rejected_after_retry',
-          unsupportedCount: second.unsupportedClaims.length,
-        });
-        return { text: renderUnavailable(fallbackSubject), grounded: false, rejected: true };
+        const revisedSanitized = stripToolCallMarkup(revised);
+        if (revisedSanitized.removedBlocks > 0) {
+          sink('agent.response.tool_call_sanitized', {
+            ...(options.intentionId ? { intentionId: options.intentionId } : {}),
+            ...(options.traceId ? { traceId: options.traceId } : {}),
+            removedBlocks: revisedSanitized.removedBlocks,
+            stage: 'correction_retry',
+          });
+        }
+        if (revisedSanitized.text.trim().length > 0) {
+          const second = validateGroundedClaims(revisedSanitized.text, evidence);
+          if (second.valid) return { text: revisedSanitized.text, grounded: true, rejected: false };
+          sink('agent.grounding.rejected', {
+            ...(options.intentionId ? { intentionId: options.intentionId } : {}),
+            ...(options.traceId ? { traceId: options.traceId } : {}),
+            status: 'rejected_after_retry',
+            unsupportedCount: second.unsupportedClaims.length,
+          });
+          return { text: renderUnavailable(fallbackSubject), grounded: false, rejected: true };
+        }
       }
     } catch {
       // A retry failure is operational: fall through to the safe fallback.

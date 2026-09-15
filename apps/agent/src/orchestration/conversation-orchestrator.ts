@@ -22,6 +22,7 @@ import { buildApprovalPresentation } from '../mutations/approval-presentation.js
 import { emitSanitizedEvent } from '../observability/events.js';
 import type { EvidenceEnvelope } from '../evidence/evidence-envelope.js';
 import { createGroundedResponseWithRetry } from '../responses/grounded-response.js';
+import { stripToolCallMarkup } from '../responses/tool-call-sanitizer.js';
 import { renderBalance, renderEmpty, renderInconclusive, renderMutationResult, renderStatement, renderUnavailable, FINANCIAL_EVIDENCE_UNAVAILABLE_TEXT } from '../responses/deterministic-responses.js';
 import { routeIntent } from './intent-router.js';
 import { makesUnverifiedFinancialClaim } from './financial-claim-guard.js';
@@ -1223,7 +1224,16 @@ export class ConversationOrchestrator {
       // swallowing it here would publish a fabricated success after an
       // authority, revocation, or inference failure.
       try {
-        const text = await this.dependencies.responseProvider(input, plan);
+        // TEDV3-003 defense #2 on the ungrounded publish path too: model
+        // text never reaches the user with tool-call markup, and a reply
+        // that was ONLY markup degrades to the deterministic fallback for
+        // this mode (never empty, never raw markup).
+        const raw = await this.dependencies.responseProvider(input, plan);
+        const sanitized = stripToolCallMarkup(raw);
+        if (sanitized.removedBlocks > 0) {
+          this.emit('agent.response.tool_call_sanitized', { intentionId: input.intentionId, traceId: input.traceId, removedBlocks: sanitized.removedBlocks });
+        }
+        const text = sanitized.changed && sanitized.text === '' ? responseText : sanitized.text;
         this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
         return freeze({ ...result, response: freeze({ text }) });
       } catch (error) {
