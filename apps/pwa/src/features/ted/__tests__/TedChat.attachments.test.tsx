@@ -1,15 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import { TedChat } from "../TedChat";
 import { TedMessage } from "../TedMessage";
 import * as agentAuth from "@/lib/api/agent-auth";
+import * as agentClient from "@/lib/api/agent-client";
+
+const wsState = vi.hoisted(() => ({ activeId: "ws-1", cache: {} as Record<string, unknown> }));
 
 vi.mock("@/lib/auth/workspace-context", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/auth/workspace-context")>();
-  const mockWs = {
-    workspaces: [{ id: "ws-1", name: "Minhas Finanças", kind: "shared" as const, role: "owner" }],
-    activeWorkspace: { id: "ws-1", name: "Minhas Finanças", kind: "shared" as const, role: "owner" },
+  const build = (id: string) => ({
+    workspaces: [{ id, name: `WS ${id}`, kind: "shared" as const, role: "owner" }],
+    activeWorkspace: { id, name: `WS ${id}`, kind: "shared" as const, role: "owner" },
     members: [{ userId: "user-1", name: "Walisson", email: "a@example.com", role: "owner" }],
     loading: false,
     membersLoading: false,
@@ -22,8 +25,12 @@ vi.mock("@/lib/auth/workspace-context", async (importOriginal) => {
     acceptInvite: vi.fn(),
     removeMember: vi.fn(),
     leave: vi.fn(),
+  });
+  const forId = (id: string) => {
+    if (!wsState.cache[id]) wsState.cache[id] = build(id);
+    return wsState.cache[id];
   };
-  return { ...actual, useWorkspace: () => mockWs, useWorkspaceSafe: () => mockWs };
+  return { ...actual, useWorkspace: () => forId(wsState.activeId), useWorkspaceSafe: () => forId(wsState.activeId) };
 });
 
 vi.mock("@/lib/api/agent-client", async (importOriginal) => {
@@ -32,65 +39,73 @@ vi.mock("@/lib/api/agent-client", async (importOriginal) => {
     ...actual,
     fetchAgentHistory: vi.fn().mockResolvedValue([]),
     sendAgentMessage: vi.fn().mockResolvedValue({ turnId: "t", status: "completed" }),
+    renewAgentSession: vi.fn().mockResolvedValue({ ok: true, sessionId: "s2" }),
     uploadAttachment: vi.fn().mockResolvedValue({ url: "https://cdn.test/img.png" }),
   };
 });
 
-describe("TedChat – áudio e anexos (imagem, PDF)", () => {
-  beforeEach(() => {
-    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("mock-token");
-    // Mock MediaRecorder on both globalThis and window.
-    // NOTE (SPEC §17): construtor fiel via `function` + `this` — um
-    // mockImplementation com arrow não é construível com `new`, e o hook
-    // corretamente recusa o estado "recording" nesse caso.
-    const mockRecorder = vi.fn(function (this: {
-      start: ReturnType<typeof vi.fn>;
-      stop: ReturnType<typeof vi.fn>;
-      addEventListener: ReturnType<typeof vi.fn>;
-      removeEventListener: ReturnType<typeof vi.fn>;
-      state: string;
-      ondataavailable: null;
-      onstop: (() => void) | null;
-    }) {
-      this.state = "inactive";
-      this.ondataavailable = null;
-      this.onstop = null;
-      this.addEventListener = vi.fn();
-      this.removeEventListener = vi.fn();
-      this.start = vi.fn(() => {
-        this.state = "recording";
-      });
-      const self = this;
-      this.stop = vi.fn(() => {
-        // Simulate onstop triggering
-        self.state = "inactive";
-        if (self.onstop) self.onstop();
-      });
+function installMediaMocks() {
+  const mockRecorder = vi.fn(function (this: {
+    start: ReturnType<typeof vi.fn>;
+    stop: ReturnType<typeof vi.fn>;
+    addEventListener: ReturnType<typeof vi.fn>;
+    removeEventListener: ReturnType<typeof vi.fn>;
+    state: string;
+    ondataavailable: null;
+    onstop: (() => void) | null;
+  }) {
+    this.state = "inactive";
+    this.ondataavailable = null;
+    this.onstop = null;
+    this.addEventListener = vi.fn();
+    this.removeEventListener = vi.fn();
+    this.start = vi.fn(() => {
+      this.state = "recording";
     });
-    (globalThis as unknown as { MediaRecorder?: unknown }).MediaRecorder = mockRecorder;
-    (window as unknown as { MediaRecorder?: unknown }).MediaRecorder = mockRecorder as unknown as typeof MediaRecorder;
-    // Ensure navigator.mediaDevices.getUserMedia resolves
-    const mockStream = { getTracks: () => [{ stop: vi.fn() }] };
-    if (!navigator.mediaDevices) {
-      Object.defineProperty(navigator, "mediaDevices", {
-        value: { getUserMedia: vi.fn().mockResolvedValue(mockStream) },
-        writable: true,
-        configurable: true,
-      });
-    } else {
-      vi.spyOn(navigator.mediaDevices, "getUserMedia").mockResolvedValue(mockStream as unknown as MediaStream);
-    }
+    const self = this;
+    this.stop = vi.fn(() => {
+      self.state = "inactive";
+      if (self.onstop) self.onstop();
+    });
+  });
+  (globalThis as unknown as { MediaRecorder?: unknown }).MediaRecorder = mockRecorder;
+  (window as unknown as { MediaRecorder?: unknown }).MediaRecorder = mockRecorder as unknown as typeof MediaRecorder;
+  const mockStream = { getTracks: () => [{ stop: vi.fn() }] };
+  Object.defineProperty(navigator, "mediaDevices", {
+    value: { getUserMedia: vi.fn().mockResolvedValue(mockStream) },
+    writable: true,
+    configurable: true,
+  });
+  (URL as unknown as { createObjectURL?: unknown }).createObjectURL = vi.fn(() => "blob:mock-url");
+  (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL = vi.fn();
+}
+
+describe("TedChat – attachment capability gate (SPEC §18, H-09)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    wsState.activeId = "ws-1";
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("mock-token");
+    installMediaMocks();
   });
 
-  it("renderiza botões de áudio, imagem e PDF", async () => {
-    render(<TedChat open={true} onClose={vi.fn()} />);
-    expect(await screen.findByRole("button", { name: /gravar áudio|microfone|áudio/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /anexar imagem|imagem/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /anexar pdf|pdf/i })).toBeInTheDocument();
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
-  it("possui inputs hidden com accept correto para imagem e pdf", async () => {
+  it("default (sem pipeline): nenhum botão de anexo de arquivo nem file input alcançável; microfone T4.1 intacto", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TED_ATTACHMENT_INGESTION", "");
     const { container } = render(<TedChat open={true} onClose={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: /gravar áudio/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /anexar imagem/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /anexar pdf/i })).toBeNull();
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+  });
+
+  it("com pipeline habilitado (flag=1): botões e inputs de imagem/PDF aparecem (gate é real, não remoção)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TED_ATTACHMENT_INGESTION", "1");
+    const { container } = render(<TedChat open={true} onClose={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: /anexar imagem/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /anexar pdf/i })).toBeInTheDocument();
     const imageInput = container.querySelector('input[type="file"][accept*="image"]') as HTMLInputElement | null;
     const pdfInput = container.querySelector('input[type="file"][accept*="pdf"]') as HTMLInputElement | null;
     expect(imageInput).not.toBeNull();
@@ -99,7 +114,8 @@ describe("TedChat – áudio e anexos (imagem, PDF)", () => {
     expect(pdfInput?.accept).toMatch(/pdf/);
   });
 
-  it("ao selecionar imagem, mostra preview e envia com mensagem", async () => {
+  it("com pipeline habilitado: selecionar imagem mostra preview; remover revoga a object URL", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TED_ATTACHMENT_INGESTION", "1");
     const user = userEvent.setup();
     const { container } = render(<TedChat open={true} onClose={vi.fn()} />);
     const imageInput = container.querySelector('input[type="file"][accept*="image"]') as HTMLInputElement;
@@ -109,18 +125,84 @@ describe("TedChat – áudio e anexos (imagem, PDF)", () => {
     await waitFor(() => {
       expect(container.innerHTML).toMatch(/foto\.png|preview|object-cover/i);
     });
+    expect(URL.createObjectURL).toHaveBeenCalled();
+    const removeBtn = await screen.findByRole("button", { name: /remover foto\.png/i });
+    await user.click(removeBtn);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /remover foto\.png/i })).toBeNull();
+    });
   });
 
-  it("botão de gravar áudio alterna estado de gravação", async () => {
+  it("envio com sucesso revoga as object URLs dos anexos", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TED_ATTACHMENT_INGESTION", "1");
     const user = userEvent.setup();
-    render(<TedChat open={true} onClose={vi.fn()} />);
-    const micBtn = await screen.findByRole("button", { name: /gravar áudio|microfone|áudio/i });
-    await user.click(micBtn);
-    // Should show gravando state or change aria-label to Parar
+    const { container } = render(<TedChat open={true} onClose={vi.fn()} />);
+    const imageInput = container.querySelector('input[type="file"][accept*="image"]') as HTMLInputElement;
+    await user.upload(imageInput, new File(["x"], "nota.png", { type: "image/png" }));
+    await screen.findByRole("button", { name: /remover nota\.png/i });
+    await user.click(screen.getByRole("button", { name: /enviar mensagem/i }));
     await waitFor(() => {
-      const html = document.body.innerHTML;
-      const btn = document.querySelector('button[aria-label*="Parar"], button[aria-label*="parar"]');
-      expect(html.match(/gravando|parar|recording/i) || btn).toBeTruthy();
+      expect(agentClient.sendAgentMessage).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+    });
+  });
+
+  it("fechar o chat revoga URLs e unmount revoga URLs restantes", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TED_ATTACHMENT_INGESTION", "1");
+    const user = userEvent.setup();
+    const { container, rerender, unmount } = render(<TedChat open={true} onClose={vi.fn()} />);
+    const imageInput = container.querySelector('input[type="file"][accept*="image"]') as HTMLInputElement;
+    await user.upload(imageInput, new File(["x"], "a.png", { type: "image/png" }));
+    await screen.findByRole("button", { name: /remover a\.png/i });
+    rerender(<TedChat open={false} onClose={vi.fn()} />);
+    await waitFor(() => {
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+    });
+
+    // Segundo ciclo: anexo pendente no unmount também é revogado.
+    vi.mocked(URL.revokeObjectURL).mockClear();
+    const second = render(<TedChat open={true} onClose={vi.fn()} />);
+    const secondInput = second.container.querySelector('input[type="file"][accept*="image"]') as HTMLInputElement;
+    await user.upload(secondInput, new File(["y"], "b.png", { type: "image/png" }));
+    await second.findByRole("button", { name: /remover b\.png/i });
+    second.unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+    unmount();
+  });
+
+  it("troca de workspace e nova sessão revogam URLs pendentes", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TED_ATTACHMENT_INGESTION", "1");
+    const user = userEvent.setup();
+    const { container, rerender } = render(<TedChat open={true} onClose={vi.fn()} />);
+    const imageInput = container.querySelector('input[type="file"][accept*="image"]') as HTMLInputElement;
+    await user.upload(imageInput, new File(["x"], "ws.png", { type: "image/png" }));
+    await screen.findByRole("button", { name: /remover ws\.png/i });
+
+    wsState.activeId = "ws-2";
+    rerender(<TedChat open={true} onClose={vi.fn()} />);
+    await waitFor(() => {
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /remover ws\.png/i })).toBeNull();
+    });
+
+    // Nova sessão também limpa e revoga.
+    wsState.activeId = "ws-1";
+    rerender(<TedChat open={true} onClose={vi.fn()} />);
+    const freshInput = container.querySelector('input[type="file"][accept*="image"]') as HTMLInputElement;
+    await user.upload(freshInput, new File(["z"], "sess.png", { type: "image/png" }));
+    await screen.findByRole("button", { name: /remover sess\.png/i });
+    vi.mocked(URL.revokeObjectURL).mockClear();
+    await user.click(screen.getByRole("button", { name: /nova sessão/i }));
+    await waitFor(() => {
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /remover sess\.png/i })).toBeNull();
     });
   });
 });

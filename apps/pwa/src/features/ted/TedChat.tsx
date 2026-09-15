@@ -11,6 +11,7 @@ import {
 import { TedMessage } from "./TedMessage";
 import { TedApprovalCard, type TedPendingOperation } from "./TedApprovalCard";
 import { useRecordingState } from "./use-recording-state";
+import { getChatAttachmentCapabilities } from "@/lib/capabilities";
 import { useBodyScrollLock } from "@/lib/ui/overlay-a11y";
 import { Sparkles, X, Send, Mic, MicOff, Image as ImageIcon, FileText, Paperclip, Trash2, RefreshCw } from "lucide-react";
 
@@ -57,6 +58,46 @@ export function TedChat({ open, onClose }: TedChatProps) {
   const isRecording = recordingState === "recording";
   const isRequestingMic = recordingState === "requesting";
 
+  // SPEC §18 (H-09): sem pipeline de ingestão real, anexos de arquivo ficam
+  // indisponíveis — botões e file inputs nem são renderizados (default: tudo
+  // false; `NEXT_PUBLIC_TED_ATTACHMENT_INGESTION=1` libera quando o pipeline
+  // existir). Leitura viva por render para respeitar o env em testes.
+  // O botão do microfone (captura de voz T4.1/SPEC §17) não é um file picker
+  // e permanece intacto; o código de preview/envio segue atrás do gate.
+  const caps = getChatAttachmentCapabilities();
+
+  // Registro de object URLs (INV-08): espelho dos anexos para revogar em
+  // todos os gatilhos de teardown, inclusive unmount com rascunho pendente.
+  const attachmentsRef = useRef<TedAttachment[]>([]);
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  const revokeAttachmentUrls = useCallback((list: readonly TedAttachment[]) => {
+    for (const att of list) {
+      try {
+        URL.revokeObjectURL(att.url);
+      } catch {
+        /* já revogada ou URL inválida — revoke é idempotente por natureza */
+      }
+    }
+  }, []);
+
+  const clearAttachments = useCallback(() => {
+    revokeAttachmentUrls(attachmentsRef.current);
+    attachmentsRef.current = [];
+    setAttachments([]);
+  }, [revokeAttachmentUrls]);
+
+  // Unmount: revoga URLs restantes (cobre logout/expiração com rascunho
+  // pendente — esses caminhos desmontam o chat sem passar pelo onClose).
+  useEffect(() => {
+    return () => {
+      revokeAttachmentUrls(attachmentsRef.current);
+      attachmentsRef.current = [];
+    };
+  }, [revokeAttachmentUrls]);
+
   const flashNotice = useCallback((text: string) => {
     setNotice(text);
     if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
@@ -95,14 +136,14 @@ export function TedChat({ open, onClose }: TedChatProps) {
     const newId = activeWorkspace?.id ?? null;
     if (prevWorkspaceIdRef.current !== null && prevWorkspaceIdRef.current !== newId) {
       cleanupRecordingMedia();
+      clearAttachments();
       setMessages([]);
       setPendingOps([]);
       setError(null);
       setStatus("ready");
-      setAttachments([]);
     }
     prevWorkspaceIdRef.current = newId;
-  }, [activeWorkspace?.id, cleanupRecordingMedia]);
+  }, [activeWorkspace?.id, cleanupRecordingMedia, clearAttachments]);
 
   useEffect(() => {
     if (open && activeWorkspace) {
@@ -110,21 +151,12 @@ export function TedChat({ open, onClose }: TedChatProps) {
       void loadHistory();
     }
     if (!open) {
-      // Limpar estado sensível ao fechar (SPEC §17: cleanup único do microfone
-      // + revogar URLs locais de áudio; demais anexos seguem com T4.2).
+      // Limpar estado sensível ao fechar (SPEC §17: cleanup único do microfone;
+      // SPEC §18/INV-08: revogar TODAS as object URLs locais de anexos).
       cleanupRecordingMedia();
-      setAttachments((prev) => {
-        for (const att of prev) {
-          if (att.type === "audio") {
-            try {
-              URL.revokeObjectURL(att.url);
-            } catch {}
-          }
-        }
-        return [];
-      });
+      clearAttachments();
     }
-  }, [open, activeWorkspace, loadHistory, cleanupRecordingMedia]);
+  }, [open, activeWorkspace, loadHistory, cleanupRecordingMedia, clearAttachments]);
 
   useEffect(() => {
     if (typeof messagesEndRef.current?.scrollIntoView === "function") {
@@ -143,6 +175,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
   }, [open, onClose]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!caps.image) return;
     const files = e.target.files;
     if (!files) return;
     const newAttachments: TedAttachment[] = [];
@@ -159,6 +192,7 @@ export function TedChat({ open, onClose }: TedChatProps) {
   };
 
   const handlePdfSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!caps.pdf) return;
     const files = e.target.files;
     if (!files) return;
     const newAttachments: TedAttachment[] = [];
@@ -176,7 +210,13 @@ export function TedChat({ open, onClose }: TedChatProps) {
   const handleRemoveAttachment = (index: number) => {
     setAttachments((prev) => {
       const toRemove = prev[index];
-      if (toRemove) URL.revokeObjectURL(toRemove.url);
+      if (toRemove) {
+        try {
+          URL.revokeObjectURL(toRemove.url);
+        } catch {
+          /* já revogada — ignore */
+        }
+      }
       return prev.filter((_, i) => i !== index);
     });
   };
@@ -248,6 +288,10 @@ export function TedChat({ open, onClose }: TedChatProps) {
       setStatus("error");
       await loadHistory(true);
     } finally {
+      // INV-08: o envio substitui a mensagem otimista pelo histórico do
+      // servidor (loadHistory acima), então as blob URLs locais podem ser
+      // revogadas aqui em ambos os caminhos.
+      revokeAttachmentUrls(attachmentsToSend);
       setLoading(false);
     }
   };
@@ -255,7 +299,9 @@ export function TedChat({ open, onClose }: TedChatProps) {
   const handleNewSession = async () => {
     if (!activeWorkspace || loading) return;
     // SPEC §17: nova sessão encerra o microfone via cleanup único.
+    // INV-08: nova sessão também descarta e revoga o rascunho pendente.
     cleanupRecordingMedia();
+    clearAttachments();
     setError(null);
     try {
       await renewAgentSession(activeWorkspace.id);
@@ -423,27 +469,35 @@ export function TedChat({ open, onClose }: TedChatProps) {
             </div>
           )}
 
-          {/* Hidden file inputs */}
-          <input ref={imageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImageSelect} aria-label="input imagem" />
-          <input ref={pdfInputRef} type="file" accept="application/pdf,.pdf" multiple className="hidden" onChange={handlePdfSelect} aria-label="input pdf" />
+          {/* Hidden file inputs — só existem quando a capability está ativa (SPEC §18) */}
+          {caps.image && (
+            <input ref={imageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImageSelect} aria-label="input imagem" />
+          )}
+          {caps.pdf && (
+            <input ref={pdfInputRef} type="file" accept="application/pdf,.pdf" multiple className="hidden" onChange={handlePdfSelect} aria-label="input pdf" />
+          )}
 
           <div className="flex items-end gap-1.5 rounded-[16px] border border-border-subtle bg-surface-2 px-2 py-2 shadow-xs transition-colors focus-within:border-primary focus-within:bg-surface-1">
-            <button
-              type="button"
-              onClick={() => imageInputRef.current?.click()}
-              aria-label="Anexar imagem"
-              className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-surface-3 text-text-secondary hover:bg-surface-4 hover:text-text-primary cursor-pointer"
-            >
-              <ImageIcon size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={() => pdfInputRef.current?.click()}
-              aria-label="Anexar PDF"
-              className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-surface-3 text-text-secondary hover:bg-surface-4 hover:text-text-primary cursor-pointer"
-            >
-              <FileText size={16} />
-            </button>
+            {caps.image && (
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                aria-label="Anexar imagem"
+                className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-surface-3 text-text-secondary hover:bg-surface-4 hover:text-text-primary cursor-pointer"
+              >
+                <ImageIcon size={16} />
+              </button>
+            )}
+            {caps.pdf && (
+              <button
+                type="button"
+                onClick={() => pdfInputRef.current?.click()}
+                aria-label="Anexar PDF"
+                className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-surface-3 text-text-secondary hover:bg-surface-4 hover:text-text-primary cursor-pointer"
+              >
+                <FileText size={16} />
+              </button>
+            )}
             <button
               type="button"
               onClick={handleToggleRecording}
