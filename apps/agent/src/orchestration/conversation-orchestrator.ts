@@ -24,6 +24,7 @@ import type { EvidenceEnvelope } from '../evidence/evidence-envelope.js';
 import { createGroundedResponseWithRetry } from '../responses/grounded-response.js';
 import { renderBalance, renderEmpty, renderInconclusive, renderMutationResult, renderStatement, renderUnavailable, FINANCIAL_EVIDENCE_UNAVAILABLE_TEXT } from '../responses/deterministic-responses.js';
 import { routeIntent } from './intent-router.js';
+import { makesUnverifiedFinancialClaim } from './financial-claim-guard.js';
 import {
   NO_FAILED_OPERATION_TEXT,
   PendingOperationCoordinator,
@@ -1184,6 +1185,15 @@ export class ConversationOrchestrator {
     if (plan.mode === 'read' && this.dependencies.evidenceProvider) {
       // Evidence-backed read: deterministic render or validated grounded text.
       return this.runGroundedRead(input, plan, startedAt, result);
+    }
+    // INV-06 fail-closed: an `unsupported` turn that still makes a financial
+    // claim (amount pattern or finance noun + claim cue) would otherwise
+    // reach the LLM with NO evidence, letting prompt injection fabricate
+    // balances. Reply deterministically without calling the provider.
+    // Mutation/draft turns return above, so this never intercepts them.
+    if (plan.mode === 'unsupported' && makesUnverifiedFinancialClaim(input.text)) {
+      this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', grounded: false, latencyMs: Date.now() - startedAt });
+      return freeze({ ...result, failClosed: true as const, response: freeze({ text: FINANCIAL_EVIDENCE_UNAVAILABLE_TEXT }) });
     }
     const responseText = plan.mode === 'read'
       ? `Consulta preparada para ${plan.domain}.`

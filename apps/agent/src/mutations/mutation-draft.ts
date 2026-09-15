@@ -352,13 +352,35 @@ export const initializeMutationDraftSchema = (sql: SqlExec): void => {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
-      last_intention_id TEXT NOT NULL
+      last_intention_id TEXT NOT NULL,
+      last_question TEXT NOT NULL DEFAULT ''
     );
   `);
   sql.exec(`
     CREATE INDEX IF NOT EXISTS idx_mutation_drafts_context
     ON mutation_drafts (workspace_id, actor_id, status);
   `);
+  // Idempotent compat for DOs created before `last_question` existed
+  // (CREATE TABLE IF NOT EXISTS never backfills columns): add it when
+  // missing. Duplicate-column races are swallowed, other errors propagate.
+  ensureLastQuestionColumn(sql);
+};
+
+const ensureLastQuestionColumn = (sql: SqlExec): void => {
+  try {
+    const rows = [
+      ...sql.exec<Record<string, unknown>>(`PRAGMA table_info(mutation_drafts)`),
+    ];
+    if (rows.some((row) => String(row.name ?? '') === 'last_question')) return;
+  } catch {
+    // PRAGMA unavailable on this storage shim — fall through to the
+    // ALTER attempt below, which is itself idempotency-guarded.
+  }
+  try {
+    sql.exec(`ALTER TABLE mutation_drafts ADD COLUMN last_question TEXT NOT NULL DEFAULT ''`);
+  } catch (error) {
+    if (!/duplicate/i.test(String((error as Error)?.message ?? error))) throw error;
+  }
 };
 
 /** DO-storage-backed draft store (SQLite in the conversation DO). */

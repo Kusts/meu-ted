@@ -295,4 +295,89 @@ describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
     expect(formatDateToBR("2026-09-14")).toBe("14/09/2026");
   });
 
+  it("T6.1 (§25.4): history items carry the authoritative pending operation for reload rehydration", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "msg-1",
+              actorId: "user-1",
+              role: "user",
+              content: "gastei 850 no mercado",
+              isOwn: true,
+            },
+            {
+              id: "msg-2",
+              actorId: "ted",
+              role: "assistant",
+              content: "Proposta: Mercado. Confirma?",
+              isOwn: false,
+              pendingOperation: {
+                id: "pending-v2-1",
+                status: "proposed",
+                operation: "transactions.expense.create",
+                summary: "Mercado",
+                // Unknown top-level keys never cross into the card.
+                attestation: "must-never-reach-card",
+                presentation: {
+                  id: "pending-v2-1",
+                  status: "proposed",
+                  tool: "transactions.expense.create",
+                  title: "Confirmar despesa",
+                  amountCents: 85000,
+                  description: "Mercado",
+                  date: "2026-09-14",
+                  account: { id: "acc-1", label: "Nubank" },
+                  category: { id: "cat-1", label: "Alimentação" },
+                  expiresAt: "2026-09-14T13:00:00.000Z",
+                  warnings: [],
+                },
+              },
+            },
+          ],
+          total: 2,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const items = await fetchAgentHistory("workspace-123");
+    expect(items).toHaveLength(2);
+    expect(items[0]!.pendingOperation).toBeUndefined();
+    expect(items[1]!.pendingOperation?.id).toBe("pending-v2-1");
+    expect(items[1]!.pendingOperation?.presentation?.amountCents).toBe(85000);
+    expect(JSON.stringify(items[1])).not.toContain("attestation");
+  });
+
+  it("T6.1 (§25.4): invalid pending operation on a history item collapses to no card — history still parses", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "msg-1",
+              actorId: "user-1",
+              role: "user",
+              content: "oi",
+              isOwn: true,
+              pendingOperation: { id: "op-bad", status: "invented-status", operation: "x" },
+            },
+          ],
+          total: 1,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const items = await fetchAgentHistory("workspace-123");
+    expect(items).toHaveLength(1);
+    expect(items[0]!.content).toBe("oi");
+    expect(items[0]!.pendingOperation).toBeUndefined();
+  });
+
 });

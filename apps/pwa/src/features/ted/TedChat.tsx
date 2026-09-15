@@ -121,12 +121,27 @@ export function TedChat({ open, onClose }: TedChatProps) {
       setStatus("connecting");
       const history = await fetchAgentHistory(activeWorkspace.id);
       setMessages(history);
-      setPendingOps([]);
+      // SPEC §25.4 (browser reload during proposed/executing): rehydrate
+      // in-flight approval cards from AUTHORITATIVE history only — never
+      // local optimistic residue. Terminal states stay in the message log;
+      // only proposed/confirmed/executing keep a live card.
+      const rehydrated = new Map<string, TedPendingOperation>();
+      for (const message of history) {
+        const op = message.pendingOperation;
+        if (
+          op &&
+          (op.status === "proposed" || op.status === "confirmed" || op.status === "executing") &&
+          !rehydrated.has(op.id)
+        ) {
+          rehydrated.set(op.id, op);
+        }
+      }
+      setPendingOps([...rehydrated.values()]);
       if (!preserveError) setError(null);
       setStatus("ready");
     } catch {
-      setMessages([]);
-      setPendingOps([]);
+      // SPEC §25.4: a failed reload keeps last-known server state and
+      // signals staleness — never invents a card, never wipes history.
       setError(HISTORY_LOAD_ERROR);
       setStatus("error");
     }

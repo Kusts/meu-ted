@@ -22,6 +22,7 @@ export const V2_APPROVAL_CAPABILITIES = {
   read: 'financial.approval.read',
   confirm: 'financial.approval.confirm',
   execute: 'financial.approval.execute',
+  reconcile: 'financial.approval.reconcile',
   retry: 'financial.approval.retry',
   cancel: 'financial.approval.cancel',
 } as const;
@@ -42,6 +43,13 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
       return reply.code(error.statusCode).send({ code: error.code, message: error.message });
     }
     if (error instanceof PendingOperationV2Error) {
+      // forbiddenOnMissing applies to V2 errors too: the V2 store raises
+      // approval.not_found as PendingOperationV2Error (404), and scoped
+      // routes (get/confirm/execute/reconcile/...) must answer a foreign
+      // or unknown id with 403 — never a 404 existence leak.
+      if (forbiddenOnMissing && error.code === 'approval.not_found') {
+        return reply.code(403).send({ code: 'approval.forbidden', message: 'Operação pendente fora do workspace do ator.' });
+      }
       const body: Record<string, unknown> = { code: error.code, message: error.message };
       if (error.details !== undefined) body.details = error.details;
       return reply.code(error.statusCode).send(body);
@@ -121,6 +129,14 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
     app.post('/pending-operations/v2/:id/cancel', reject);
     app.post('/pending-operations/v2/:id/execute', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.execute)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); const body = z.object({ attestation: z.string().min(32) }).strict().safeParse(req.body ?? {}); if (!body.success) return reply.code(400).send({ code: 'validation.error', issues: body.error.issues }); if (!v2Executor) return reply.code(501).send({ code: 'unsupported', message: 'Executor V2 não configurado.' }); try { return reply.send(await v2Store.execute(body.data.attestation, identity(ctx), v2Executor)); } catch (error) { return handleError(error, reply, true); } });
     app.post('/pending-operations/v2/:id/retry', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.retry)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.retry(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } });
+    // T6.1 (audit remediation, SPEC §11): controlled crash-recovery entry
+    // point — same Agent-only auth/capability model as the sibling V2 routes.
+    // Identity comes exclusively from the authenticated context; a foreign
+    // workspace's id maps to 403 via forbiddenOnMissing (no existence leak).
+    // Valid lease → 409 approval.execution_in_progress; terminal/confirmed →
+    // 409 approval.reconcile_not_allowed; expired lease → executor re-runs
+    // with the SAME persisted idempotencyKey (0/1 effect at the WriteStore).
+    app.post('/pending-operations/v2/:id/reconcile', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.reconcile)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); if (!v2Executor) return reply.code(501).send({ code: 'unsupported', message: 'Executor V2 não configurado.' }); try { return reply.send(await v2Store.reconcileExpiredExecuting(params.data.id, identity(ctx), v2Executor)); } catch (error) { return handleError(error, reply, true); } });
     app.post('/pending-operations/v2/:id/expire', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.cancel)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.expire(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } });
   }
 

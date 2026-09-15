@@ -146,10 +146,17 @@ export type PendingOperationV2Store = {
    * per §9/T2.2) → `approval.reconcile_not_allowed`. Terminal states never
    * re-enter execution.
    *
-   * HTTP attach point (NOT wired here — routes/pending-operations.ts is
-   * owned by a sibling task): e.g.
-   * `POST /pending-operations/v2/:id/reconcile` →
+   * HTTP attach point (wired in routes/pending-operations.ts):
+   * `POST /pending-operations/v2/:id/reconcile` (capability
+   * `financial.approval.reconcile`) →
    * `v2Store.reconcileExpiredExecuting(id, identity, v2Executor)`.
+   *
+   * Stale-finalization guard (T6.1): every TX2 write below (execute and
+   * reconcile, success and failure) is conditional on the operation STILL
+   * being `executing` with the attempt count captured at claim/renew. A
+   * late TX2 arriving after recovery already finalized the operation is a
+   * no-op returning the authoritative record — status, receipt and
+   * mutationId are never overwritten.
    */
   reconcileExpiredExecuting(
     id: string,
@@ -271,6 +278,15 @@ export const createPostgresPendingOperationV2Store = (
         events.push({ operationId: String(row.id), event: 'execute', actorId: identity.actorId, at: nowIso() });
         return row;
       });
+      // T6.1 stale-finalization guard: the attempt captured at claim. Every
+      // TX2 below only persists while the row is STILL `executing` with this
+      // attempt — a recovery that finalized first wins, the late TX2 is a
+      // no-op returning the authoritative record (never overwrites
+      // status/receipt/mutationId).
+      const claimAttempt = Number((claimed as PendingV2Row).execution_attempt_count ?? 0);
+      const stillOurs = (current: PendingV2Row): boolean =>
+        String(current.execution_status) === 'executing' &&
+        Number(current.execution_attempt_count ?? 0) === claimAttempt;
       // The executor runs OUTSIDE any transaction with the SAME persisted
       // idempotencyKey (WriteStore dedup unchanged).
       let result: unknown;
@@ -278,25 +294,40 @@ export const createPostgresPendingOperationV2Store = (
         result = await executor(mapV2(claimed));
       } catch (error) {
         // TX2 (failure). The terminal persist COMMITS before the error
-        // propagates: the consumed attestation is never resurrected.
-        await withTransaction(pool, async (client) => {
-          await read(client, String(claimed.id), identity, true);
+        // propagates: the consumed attestation is never resurrected. Guarded:
+        // when recovery already finalized, the late error still propagates
+        // (the caller's attempt genuinely failed) but persists nothing and
+        // records no fail event — the authoritative record is untouched.
+        const persistedFailure = await withTransaction(pool, async (client) => {
+          const current = await read(client, String(claimed.id), identity, true);
+          if (!stillOurs(current)) return false;
           await client.query("UPDATE pending_operations SET execution_status='failed', failed_at=NOW(), failure_code=$2 WHERE id=$1", [String(claimed.id), sanitizePendingV2FailureCode(error)]);
+          return true;
         });
-        events.push({ operationId: String(claimed.id), event: 'fail', actorId: identity.actorId, at: nowIso() });
+        if (persistedFailure) events.push({ operationId: String(claimed.id), event: 'fail', actorId: identity.actorId, at: nowIso() });
         throw error;
       }
       if (!result || typeof result !== 'object' || (result as { status?: unknown }).status !== 'succeeded' || typeof (result as { operationId?: unknown }).operationId !== 'string') {
-        await withTransaction(pool, async (client) => {
-          await read(client, String(claimed.id), identity, true);
-          await client.query("UPDATE pending_operations SET execution_status='failed', failed_at=NOW(), failure_code=$2 WHERE id=$1", [String(claimed.id), 'approval.incomplete_result']);
+        // Discriminated outcome: the guard must be evaluated against the row
+        // AS READ INSIDE the transaction. Checking it again against the
+        // post-update row would misclassify the fresh persist (already
+        // 'failed') as stale and silently swallow the protocol error.
+        const outcome = await withTransaction(pool, async (client) => {
+          const current = await read(client, String(claimed.id), identity, true);
+          if (!stillOurs(current)) return { stale: true as const, row: current };
+          const failed = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_status='failed', failed_at=NOW(), failure_code=$2 WHERE id=$1 RETURNING *", [String(claimed.id), 'approval.incomplete_result']);
+          return { stale: false as const, row: failed.rows[0]! };
         });
+        // Stale incomplete result after recovery finalized: authoritative
+        // record wins, no overwrite, no failure reported.
+        if (outcome.stale) return mapV2(outcome.row);
         events.push({ operationId: String(claimed.id), event: 'fail', actorId: identity.actorId, at: nowIso() });
         return fail('approval.incomplete_result', 'Executor retornou resultado incompleto.');
       }
-      // TX2 (success).
+      // TX2 (success). Guarded: recovery-finalized rows are returned as-is.
       const updated = await withTransaction(pool, async (client) => {
-        await read(client, String(claimed.id), identity, true);
+        const current = await read(client, String(claimed.id), identity, true);
+        if (!stillOurs(current)) return current;
         const { enriched, mutationId } = withTedReceipt(
           result as { status: string; operationId: string; receipt?: unknown },
           String(claimed.tool),
@@ -333,30 +364,45 @@ export const createPostgresPendingOperationV2Store = (
         return next.rows[0]!;
       });
       // The SAME executor runs OUTSIDE any transaction with the SAME
-      // persisted idempotencyKey (recovery, not a new approval).
+      // persisted idempotencyKey (recovery, not a new approval). T6.1
+      // stale-finalization guard mirrors execute(): the renew attempt is
+      // captured, and TX2 only persists while the row is STILL `executing`
+      // with that attempt (a concurrent direct TX2 that finalized first wins).
+      const renewAttempt = Number((renewed as PendingV2Row).execution_attempt_count ?? 0);
+      const stillRenewed = (current: PendingV2Row): boolean =>
+        String(current.execution_status) === 'executing' &&
+        Number(current.execution_attempt_count ?? 0) === renewAttempt;
       let result: unknown;
       try {
         result = await executor(mapV2(renewed));
       } catch (error) {
         // TX2 (failure). Same shape as execute(): sanitized code only.
-        await withTransaction(pool, async (client) => {
-          await read(client, id, identity, true);
+        const persistedFailure = await withTransaction(pool, async (client) => {
+          const current = await read(client, id, identity, true);
+          if (!stillRenewed(current)) return false;
           await client.query("UPDATE pending_operations SET execution_status='failed', failed_at=NOW(), failure_code=$2 WHERE id=$1", [id, sanitizePendingV2FailureCode(error)]);
+          return true;
         });
-        events.push({ operationId: id, event: 'fail', actorId: identity.actorId, at: nowIso() });
+        if (persistedFailure) events.push({ operationId: id, event: 'fail', actorId: identity.actorId, at: nowIso() });
         throw error;
       }
       if (!result || typeof result !== 'object' || (result as { status?: unknown }).status !== 'succeeded' || typeof (result as { operationId?: unknown }).operationId !== 'string') {
-        await withTransaction(pool, async (client) => {
-          await read(client, id, identity, true);
-          await client.query("UPDATE pending_operations SET execution_status='failed', failed_at=NOW(), failure_code=$2 WHERE id=$1", [id, 'approval.incomplete_result']);
+        // Same discriminated outcome as execute(): guard evaluated against
+        // the row AS READ, never against the post-update row.
+        const outcome = await withTransaction(pool, async (client) => {
+          const current = await read(client, id, identity, true);
+          if (!stillRenewed(current)) return { stale: true as const, row: current };
+          const failed = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_status='failed', failed_at=NOW(), failure_code=$2 WHERE id=$1 RETURNING *", [id, 'approval.incomplete_result']);
+          return { stale: false as const, row: failed.rows[0]! };
         });
+        if (outcome.stale) return mapV2(outcome.row);
         events.push({ operationId: id, event: 'fail', actorId: identity.actorId, at: nowIso() });
         return fail('approval.incomplete_result', 'Executor retornou resultado incompleto.');
       }
-      // TX2 (success).
+      // TX2 (success). Guarded: direct-TX2-finalized rows are returned as-is.
       const updated = await withTransaction(pool, async (client) => {
-        await read(client, id, identity, true);
+        const current = await read(client, id, identity, true);
+        if (!stillRenewed(current)) return current;
         const { enriched, mutationId } = withTedReceipt(
           result as { status: string; operationId: string; receipt?: unknown },
           String(renewed.tool),
@@ -469,24 +515,38 @@ export const createInMemoryPendingOperationV2Store = (
       record.executionClaimedAt = nowIso();
       record.executionLeaseExpiresAt = new Date(Date.now() + resolvePendingV2LeaseMs(options?.leaseMs)).toISOString();
       record.executionAttemptCount = (record.executionAttemptCount ?? 0) + 1;
+      // T6.1 stale-finalization guard (in-memory mirror of the Postgres
+      // status+attempt check): TX2 only persists while the record is STILL
+      // `executing` with this claim attempt.
+      const claimAttempt = record.executionAttemptCount ?? 0;
+      const stillOurs = (): boolean =>
+        record.status === 'executing' && (record.executionAttemptCount ?? 0) === claimAttempt;
       events.push({ operationId: record.id, event: 'execute', actorId: record.actorId, at: nowIso() });
       let result: unknown;
       try {
         result = await executor(record);
       } catch (error) {
         // TX2 (failure): terminal persist lands before the error propagates.
-        record.status = 'failed';
-        record.failureCode = sanitizePendingV2FailureCode(error);
-        events.push({ operationId: record.id, event: 'fail', actorId: record.actorId, at: nowIso() });
+        // Guarded: a recovery that finalized first wins; the late error still
+        // propagates but persists nothing.
+        if (stillOurs()) {
+          record.status = 'failed';
+          record.failureCode = sanitizePendingV2FailureCode(error);
+          events.push({ operationId: record.id, event: 'fail', actorId: record.actorId, at: nowIso() });
+        }
         throw error;
       }
       if (!result || typeof result !== 'object' || (result as { status?: unknown }).status !== 'succeeded' || typeof (result as { operationId?: unknown }).operationId !== 'string') {
+        // Stale incomplete result after recovery finalized: authoritative
+        // record wins, no overwrite.
+        if (!stillOurs()) return record;
         record.status = 'failed';
         record.failureCode = 'approval.incomplete_result';
         events.push({ operationId: record.id, event: 'fail', actorId: record.actorId, at: nowIso() });
         fail('approval.incomplete_result', 'Executor retornou resultado incompleto.');
       }
-      // TX2 (success).
+      // TX2 (success). Guarded: recovery-finalized records are returned as-is.
+      if (!stillOurs()) return record;
       const { enriched, mutationId } = withTedReceipt(
         result as { status: string; operationId: string; receipt?: unknown },
         record.tool,
@@ -512,23 +572,31 @@ export const createInMemoryPendingOperationV2Store = (
       if (!Number.isNaN(leaseExpiresAt) && leaseExpiresAt > Date.now()) return fail('approval.execution_in_progress', 'Execução já em andamento.');
       record.executionLeaseExpiresAt = new Date(Date.now() + resolvePendingV2LeaseMs(opts?.leaseMs ?? options?.leaseMs)).toISOString();
       record.executionAttemptCount = (record.executionAttemptCount ?? 0) + 1;
+      // T6.1 stale-finalization guard mirrors execute().
+      const renewAttempt = record.executionAttemptCount ?? 0;
+      const stillRenewed = (): boolean =>
+        record.status === 'executing' && (record.executionAttemptCount ?? 0) === renewAttempt;
       events.push({ operationId: id, event: 'execute', actorId: record.actorId, at: nowIso() });
       // The SAME executor runs with the SAME persisted idempotencyKey.
       let result: unknown;
       try {
         result = await executor(record);
       } catch (error) {
-        record.status = 'failed';
-        record.failureCode = sanitizePendingV2FailureCode(error);
-        events.push({ operationId: id, event: 'fail', actorId: record.actorId, at: nowIso() });
+        if (stillRenewed()) {
+          record.status = 'failed';
+          record.failureCode = sanitizePendingV2FailureCode(error);
+          events.push({ operationId: id, event: 'fail', actorId: record.actorId, at: nowIso() });
+        }
         throw error;
       }
       if (!result || typeof result !== 'object' || (result as { status?: unknown }).status !== 'succeeded' || typeof (result as { operationId?: unknown }).operationId !== 'string') {
+        if (!stillRenewed()) return record;
         record.status = 'failed';
         record.failureCode = 'approval.incomplete_result';
         events.push({ operationId: id, event: 'fail', actorId: record.actorId, at: nowIso() });
         return fail('approval.incomplete_result', 'Executor retornou resultado incompleto.');
       }
+      if (!stillRenewed()) return record;
       const { enriched, mutationId } = withTedReceipt(
         result as { status: string; operationId: string; receipt?: unknown },
         record.tool,

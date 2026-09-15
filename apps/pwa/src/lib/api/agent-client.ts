@@ -16,22 +16,47 @@ const historyItemSchema = z.object({
   createdAt: z.string().optional(),
   isOwn: z.boolean(),
   attachments: z.array(attachmentSchema).optional(),
-}).transform((item) => ({
-  id: item.id,
-  actorId: item.actorId ?? (item.role === "assistant" ? "ted" : "unknown"),
-  role: item.role,
-  content: item.content ?? item.text ?? "",
-  createdAt: item.createdAt,
-  isOwn: item.isOwn,
-  attachments: item.attachments,
-}));
+  // §25.4 (browser reload during proposed/executing): the server may attach
+  // the authoritative pending operation so the PWA rehydrates the approval
+  // card from SERVER state. Raw input — sanitized in the transform below.
+  pendingOperation: z.unknown().optional(),
+}).transform((item): AgentMessage => {
+  const pendingOperation = sanitizePendingOperation(
+    item.pendingOperation as AgentTurn["pendingOperation"],
+  );
+  return {
+    id: item.id,
+    actorId: item.actorId ?? (item.role === "assistant" ? "ted" : "unknown"),
+    role: item.role,
+    content: item.content ?? item.text ?? "",
+    createdAt: item.createdAt,
+    isOwn: item.isOwn,
+    attachments: item.attachments,
+    // Invalid/absent collapses to no card — never invented data.
+    ...(pendingOperation === undefined ? {} : { pendingOperation }),
+  };
+});
 
 const historySchema = z.object({
   items: z.array(historyItemSchema),
   total: z.number().optional(),
 });
 
-export type AgentMessage = z.infer<typeof historyItemSchema>;
+export type AgentMessage = {
+  id: string;
+  actorId: string;
+  role: string;
+  content: string;
+  createdAt: string | undefined;
+  isOwn: boolean;
+  attachments?: Array<z.infer<typeof attachmentSchema>>;
+  /**
+   * §25.4: authoritative pending operation attached to a history item, when
+   * the server emitted one. Same allowlist as the turn path — absent or
+   * invalid means `undefined` (no card), never invented data.
+   */
+  pendingOperation?: AgentTurn["pendingOperation"];
+};
 
 function agentBaseUrl(): string {  // ADR-011: canonical browser transport is the same-origin proxy /api/agent.
   // An explicitly configured direct URL is transient test-env compatibility
