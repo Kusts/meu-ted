@@ -70,7 +70,9 @@ export function lintAllDocumentation() {
     "docs/ROADMAP.md",
     "docs/adr/README.md",
     "docs/MEU-TED-SPEC-HARDENING-PONTA-A-PONTA-V3.md",
+    "docs/MEU-TED-SPEC-HARDENING-SIMPLIFICACAO-E-DESCOMISSIONAMENTO-V4.md",
     "docs/superpowers/plans/2026-09-14-meu-ted-v3-hardening.md",
+    "docs/superpowers/plans/2026-09-15-meu-ted-v4-hardening.md",
     "docs/runbooks/backup-restore.md",
   ];
 
