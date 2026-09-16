@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "test": "vitest run",
+    "lint": "biome check src tests",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit",
     "eval:ted-v2": "node evals/run-ted-v2-regression-evals.mjs",
@@ -23,6 +24,7 @@
     "@sinclair/typebox": "^0.34.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.2.4",
     "wrangler": "^4.104.0",
     "vitest": "^3.2.6"
   },

@@ -6,7 +6,6 @@
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
     "bindings": [
-      { "name": "AGENT", "class_name": "WorkspaceAgent" },
       { "name": "FINANCE_CHAT_AGENT", "class_name": "FinanceChatAgent" }
     ]
   },

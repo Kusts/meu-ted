@@ -279,7 +279,7 @@ describe('Postgres V047/V048 proof (M-10)', () => {
 
   itIfDatabase('intermediate failure leaves no partial rows; rerun is a no-op', async () => {
     const db = pool!;
-    const writes = createPostgresWriteStore({ pool: db });
+    const _writes = createPostgresWriteStore({ pool: db });
     const cards = createPostgresCardStore(db);
     const householdId = await seedHousehold(db, 'Atomic H');
     try {

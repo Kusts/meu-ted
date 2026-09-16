@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "test": "vitest run",
+    "lint": "biome check src tests",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js"
@@ -15,6 +16,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.2.4",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.6"

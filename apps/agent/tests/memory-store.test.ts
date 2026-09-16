@@ -9,7 +9,6 @@ import {
   containsCardNumber,
   textSimilarity,
   bumpTurnCount,
-  MEMORY_BUDGET_CHARS,
 } from '../src/agent-config/memory/store.js';
 
 type Row = Record<string, unknown>;

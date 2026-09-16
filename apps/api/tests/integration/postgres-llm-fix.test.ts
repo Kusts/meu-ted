@@ -26,7 +26,7 @@ const resetLlmTables = async (): Promise<void> => {
 };
 
 /** Applies every migration except V042 to simulate a legacy base. */
-const applyLegacyBase = async (): Promise<void> => {
+const _applyLegacyBase = async (): Promise<void> => {
   if (!pool) throw new Error('database pool not initialized');
   await pool.query(
     `CREATE TABLE IF NOT EXISTS _migrations (

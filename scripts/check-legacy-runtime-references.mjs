@@ -72,6 +72,16 @@ const EXCLUDED_FILES = new Set([
 const AGENT_DIR_PREFIX = "apps/agent/";
 const TEST_DOUBLE_RE = /(^|\/)(e2e|__tests__)(?:\/|$)|\.(spec|test)\.[^.]+$/;
 
+// E5/ADR-016: Cloudflare forbids editing/removing historical DO migration
+// tags — apps/agent/wrangler.jsonc v1 new_sqlite_classes ["WorkspaceAgent"]
+// must be preserved. Narrow exemption: ONLY lines carrying a DO migration
+// tag structure (new_sqlite_classes / old_tag / new_tag) inside a
+// wrangler.jsonc file. The WorkspaceAgent name is NOT exempted generically.
+function isDoMigrationTagLine(relativePath, line) {
+  if (!relativePath.endsWith("wrangler.jsonc")) return false;
+  return /new_sqlite_classes|old_tag|new_tag/.test(line);
+}
+
 export function scanLegacyReferences(options = {}) {
   const stage = options.stage ?? "pre-retirement";
   const findings = [];
@@ -221,6 +231,7 @@ export function scanWorkspaceAgentReferences(options = {}) {
     }
     const lines = content.split("\n");
     lines.forEach((line, index) => {
+      if (isDoMigrationTagLine(rel, line)) return;
       for (const item of WORKSPACE_AGENT_PATTERNS) {
         if (item.pattern.test(line)) {
           findings.push({ path: rel, line: index + 1, pattern: item.name, text: line.trim().slice(0, 160) });

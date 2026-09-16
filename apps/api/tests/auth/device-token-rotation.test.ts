@@ -1,5 +1,9 @@
-import { createHash } from 'node:crypto';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash, randomUUID } from 'node:crypto';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { Pool } from 'pg';
+import { createPool } from '../../src/db/pool.js';
+import { requireTestDatabase } from '../../src/db/db-guard.js';
+import { runMigrations } from '../../src/read-models/sql/migrate.js';
 import {
   createInMemoryDeviceTokenStore,
   createPostgresDeviceTokenStore,
@@ -259,8 +263,7 @@ describe('FIX-ROT RED — single-use predecessor (security review HIGH)', () => 
     expect(txCalls.filter((c) => c.sql.startsWith('INSERT INTO device_tokens'))).toHaveLength(1);
   });
 
-  it('postgres: legacy predecessor rotates once, re-rotation rejects 409', async () => {
-    // Legacy rows carry the V053 90-day backfill expiry: far-future expiry
+  it('postgres: legacy predecessor rotates once, re-rotation rejects 409', async () => {    // Legacy rows carry the V053 90-day backfill expiry: far-future expiry
     // means never-rotated (allowed once); a windowed expiry means consumed.
     let predecessorExpiresAt: string | null = new Date(Date.now() + 80 * 24 * 3_600_000).toISOString();
     const { pool, txCalls } = mockTxPool(async (sql, args) => {
@@ -283,5 +286,161 @@ describe('FIX-ROT RED — single-use predecessor (security review HIGH)', () => 
       code: 'auth.token_already_rotated',
     });
     expect(txCalls.filter((c) => c.sql.startsWith('INSERT INTO device_tokens'))).toHaveLength(1);
+  });
+});
+
+describe('FIX-USERID-LINEAGE — rotation inherits predecessor user_id (security review LOW)', () => {
+  const PREDECESSOR_USER_ID = '22222222-2222-4222-8222-222222222222';
+  const SESSION_USER_ID = '33333333-3333-4333-8333-333333333333';
+
+  it('postgres: rotate by device token inherits the predecessor user_id when no session opts', async () => {
+    const { pool, txCalls } = mockTxPool(async (sql) => {
+      if (sql.startsWith('SELECT')) {
+        return {
+          rowCount: 1,
+          rows: [{ device_id: 'dev-old', household_id: HOUSEHOLD_ID, expires_at: null, legacy: false, user_id: PREDECESSOR_USER_ID }],
+        };
+      }
+      return { rowCount: 1, rows: [] };
+    });
+    const store = createPostgresDeviceTokenStore(pool as never);
+
+    const created = await store.rotate('old-raw-token', 'phone v2', HOUSEHOLD_ID);
+    expect(typeof created.token).toBe('string');
+
+    // The predecessor SELECT locks the row AND reads user_id.
+    const select = txCalls.find((c) => c.sql.startsWith('SELECT'))!;
+    expect(select.sql).toMatch(/FOR UPDATE/);
+    expect(select.sql).toMatch(/user_id/);
+
+    // The successor INSERT carries the inherited user_id.
+    const insert = txCalls.find((c) => c.sql.startsWith('INSERT INTO device_tokens'))!;
+    expect(insert.sql).toMatch(/user_id/);
+    expect(insert.args).toContain(PREDECESSOR_USER_ID);
+  });
+
+  it('postgres: matching session userId verifies and proceeds with the same user', async () => {
+    const { pool, txCalls } = mockTxPool(async (sql) => {
+      if (sql.startsWith('SELECT')) {
+        return {
+          rowCount: 1,
+          rows: [{ device_id: 'dev-old', household_id: HOUSEHOLD_ID, expires_at: null, legacy: false, user_id: PREDECESSOR_USER_ID }],
+        };
+      }
+      return { rowCount: 1, rows: [] };
+    });
+    const store = createPostgresDeviceTokenStore(pool as never);
+
+    const created = await store.rotate('old-raw-token', 'phone v2', HOUSEHOLD_ID, { userId: PREDECESSOR_USER_ID });
+    expect(typeof created.token).toBe('string');
+    const insert = txCalls.find((c) => c.sql.startsWith('INSERT INTO device_tokens'))!;
+    expect(insert.args).toContain(PREDECESSOR_USER_ID);
+  });
+
+  it('postgres: mismatched session userId rejects 403 and never INSERTs (fail-closed)', async () => {
+    const { pool, txCalls } = mockTxPool(async (sql) => {
+      if (sql.startsWith('SELECT')) {
+        return {
+          rowCount: 1,
+          rows: [{ device_id: 'dev-old', household_id: HOUSEHOLD_ID, expires_at: null, legacy: false, user_id: PREDECESSOR_USER_ID }],
+        };
+      }
+      return { rowCount: 1, rows: [] };
+    });
+    const store = createPostgresDeviceTokenStore(pool as never);
+
+    await expect(
+      store.rotate('old-raw-token', 'phone v2', HOUSEHOLD_ID, { userId: SESSION_USER_ID }),
+    ).rejects.toMatchObject({ statusCode: 403, code: 'auth.user_mismatch' });
+    expect(txCalls.some((c) => c.sql.startsWith('INSERT INTO device_tokens'))).toBe(false);
+    expect(txCalls.map((c) => c.sql)).toContain('ROLLBACK');
+  });
+
+  it('postgres: null predecessor user_id + session opts adopts the session user', async () => {
+    const { pool, txCalls } = mockTxPool(async (sql) => {
+      if (sql.startsWith('SELECT')) {
+        return {
+          rowCount: 1,
+          rows: [{ device_id: 'dev-old', household_id: HOUSEHOLD_ID, expires_at: null, legacy: false, user_id: null }],
+        };
+      }
+      return { rowCount: 1, rows: [] };
+    });
+    const store = createPostgresDeviceTokenStore(pool as never);
+
+    await store.rotate('old-raw-token', 'phone v2', HOUSEHOLD_ID, { userId: SESSION_USER_ID });
+    const insert = txCalls.find((c) => c.sql.startsWith('INSERT INTO device_tokens'))!;
+    expect(insert.args).toContain(SESSION_USER_ID);
+  });
+
+  it('in-memory: rotate by device token inherits the predecessor user_id', async () => {
+    const store = createInMemoryDeviceTokenStore();
+    const prev = await store.register('phone', HOUSEHOLD_ID, { userId: PREDECESSOR_USER_ID });
+
+    const next = await store.rotate(prev.token, 'phone v2', HOUSEHOLD_ID);
+    expect(typeof next.token).toBe('string');
+    // Functional proof of inheritance: the successor verifies against the
+    // predecessor's user (match proceeds) and rejects a foreign session user.
+    await expect(
+      store.rotate(next.token, 'phone v3', HOUSEHOLD_ID, { userId: PREDECESSOR_USER_ID }),
+    ).resolves.toMatchObject({ householdId: HOUSEHOLD_ID });
+  });
+
+  it('in-memory: mismatched session userId rejects 403 without a successor', async () => {
+    const store = createInMemoryDeviceTokenStore();
+    const prev = await store.register('phone', HOUSEHOLD_ID, { userId: PREDECESSOR_USER_ID });
+
+    await expect(store.rotate(prev.token, 'phone v2', HOUSEHOLD_ID, { userId: SESSION_USER_ID })).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'auth.user_mismatch',
+    });
+  });
+});
+
+const PG_URL = process.env.DATABASE_URL_TEST;
+const PG_ENABLED = Boolean(PG_URL && process.env.DB_TEST_MARKER);
+const describeIfPg = PG_ENABLED ? describe : describe.skip;
+
+describeIfPg('FIX-USERID-LINEAGE — real Postgres: successor inherits predecessor user_id', () => {
+  let pool: Pool;
+  const householdId = randomUUID();
+  const deviceIds: string[] = [];
+
+  beforeAll(async () => {
+    pool = createPool({ connectionString: PG_URL!, max: 4 });
+    await requireTestDatabase(pool, 'device-token-userid-lineage');
+    await runMigrations(pool);
+  }, 60_000);
+
+  afterAll(async () => {
+    if (pool) {
+      for (const deviceId of deviceIds) {
+        await pool.query('DELETE FROM device_tokens WHERE device_id = $1', [deviceId]).catch(() => undefined);
+      }
+      await pool.end();
+    }
+  });
+
+  it('rotate by device token of a token with user_id → successor inherits user_id', async () => {
+    const store = createPostgresDeviceTokenStore(pool);
+    const userId = randomUUID();
+    const prev = await store.register('lineage phone', householdId, { userId });
+    deviceIds.push(prev.deviceId);
+
+    const next = await store.rotate(prev.token, 'lineage phone v2', householdId);
+    deviceIds.push(next.deviceId);
+
+    const rows = await pool.query<{ user_id: string | null }>(
+      'SELECT user_id FROM device_tokens WHERE device_id = $1',
+      [next.deviceId],
+    );
+    expect(rows.rowCount).toBe(1);
+    expect(rows.rows[0]!.user_id).toBe(userId);
+
+    // The predecessor is confined to the rotation window; the successor resolves.
+    await expect(store.resolve(next.token, householdId)).resolves.toMatchObject({
+      deviceId: next.deviceId,
+      householdId,
+    });
   });
 });

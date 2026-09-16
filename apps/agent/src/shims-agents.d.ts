@@ -33,7 +33,7 @@ declare module "agents/ai-chat-agent" {
 }
 declare module "agents" {
   export function routeAgentRequest(request: Request, env: Record<string, unknown>): Promise<Response | null>;
-  export type AgentNamespace<T = unknown> = { idFromName(name: string): unknown; get(id: unknown): unknown };
+  export type AgentNamespace<_T = unknown> = { idFromName(name: string): unknown; get(id: unknown): unknown };
 }
 declare module "ai" {
   export function streamText(...args: unknown[]): unknown;

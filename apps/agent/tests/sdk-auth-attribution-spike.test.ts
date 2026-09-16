@@ -3,7 +3,7 @@ import { FinanceChatAgent } from "../src/finance-chat-agent.js";
 
 describe("SDK Auth & Attribution Spike (Step 3)", () => {
   it("associates actor identity strictly from verified server-side connection state", async () => {
-    const agent = Object.create(FinanceChatAgent.prototype) as FinanceChatAgent;
+    const _agent = Object.create(FinanceChatAgent.prototype) as FinanceChatAgent;
     
     // Client sends spoofed actor metadata in message payload
     const spoofedPayload = {
@@ -27,7 +27,7 @@ describe("SDK Auth & Attribution Spike (Step 3)", () => {
 
   it("does not store ephemeral token in persisted messages or SQLite storage", async () => {
     const fakeToken = "agt_secret_ephemeral_token_xyz987";
-    const agent = Object.create(FinanceChatAgent.prototype) as FinanceChatAgent;
+    const _agent = Object.create(FinanceChatAgent.prototype) as FinanceChatAgent;
 
     // Simulate sending message with ephemeral header/metadata
     const message = "Qual meu saldo?";

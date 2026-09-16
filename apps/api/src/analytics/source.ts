@@ -79,8 +79,6 @@ export type StoreBackedDeps = {
   subscriptionStore?: SubscriptionStore;
 };
 
-type Row = Record<string, unknown>;
-
 export const createStoreAnalyticsSource = (deps: StoreBackedDeps): AnalyticsSource => {
   const loadLists = async (householdId: string): Promise<DomainLists> => {
     const [accounts, categories, statements, subscriptions, budgets, recurring, cards] = await Promise.all([

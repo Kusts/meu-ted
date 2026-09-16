@@ -16,13 +16,6 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
-interface TableInfo {
-  name: string;
-  columns: Array<{ name: string; type: string; nullable: boolean; default: string | null }>;
-  constraints: Array<{ name: string; type: string; definition: string }>;
-  indexes: Array<{ name: string; definition: string }>;
-}
-
 const main = async (): Promise<void> => {
   const pool = createPool({ connectionString: DATABASE_URL });
 

@@ -7,8 +7,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Pool, PoolClient } from 'pg';
-import type { Account, Transaction, Statement, StatementDetail, StatementPurchase, RecurringPurchase } from '../types/domain.js';
+import type { Pool, } from 'pg';
+import type { Account, Transaction, Statement, StatementPurchase, RecurringPurchase } from '../types/domain.js';
 import type { CardStore } from './store.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors } from '../writes/errors.js';

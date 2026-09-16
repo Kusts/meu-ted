@@ -95,7 +95,7 @@ describe('invite flow', () => {
   });
 
   it('lists only pending invites for the workspace and omits sensitive token hashes', async () => {
-    const { service, store, deliveries } = makeService([{ id: 'user-1', email: 'member1@example.com' }]);
+    const { service, deliveries } = makeService([{ id: 'user-1', email: 'member1@example.com' }]);
     const otherHousehold = '22222222-2222-4222-8222-222222222222';
 
     // 1. Create 2 invites in householdId
@@ -141,7 +141,7 @@ describe('invite flow', () => {
   });
 
   it('revokes a pending invite, removes it from pending listing and blocks acceptance', async () => {
-    const { service, store, deliveries } = makeService();
+    const { service, deliveries } = makeService();
 
     const created = await service.createInvite({
       householdId,
@@ -329,7 +329,7 @@ describe('invite flow', () => {
       expiresAt: new Date('2030-01-01T00:00:00.000Z'),
     });
 
-    const baseToken = deliveries[0]!.token;
+    const _baseToken = deliveries[0]!.token;
 
     // Simulate two concurrent resends starting from the same base state
     const pending = await store.getPendingInvite(householdId, created.id);

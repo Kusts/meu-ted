@@ -1,4 +1,4 @@
-export class DurableObject<Env = unknown> {
+export class DurableObject<_Env = unknown> {
   state: unknown;
   ctx: unknown;
   env: unknown;

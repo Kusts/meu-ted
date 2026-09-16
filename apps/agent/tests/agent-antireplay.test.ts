@@ -47,7 +47,7 @@ describe('C-01/C-02: anti-replay consumido + alias fail-closed no Worker', () =>
       AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN,
     } as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string; AGENT_AUTH_SERVICE_TOKEN?: string };
     const req = () =>
-      new Request(`https://worker.test/agents/workspace/${HOUSEHOLD}/message`, {
+      new Request(`https://worker.test/agents/finance-chat-agent/${HOUSEHOLD}/rpc/history`, {
         headers: { 'x-agent-connection-token': token },
       }) as unknown as Request;
 
@@ -79,7 +79,7 @@ describe('C-01/C-02: anti-replay consumido + alias fail-closed no Worker', () =>
       AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN,
     } as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string; AGENT_AUTH_SERVICE_TOKEN?: string };
     const out = await authorizeWorkspaceMembership(
-      new Request(`https://worker.test/agents/workspace/${HOUSEHOLD}/message`, {
+      new Request(`https://worker.test/agents/finance-chat-agent/${HOUSEHOLD}/rpc/history`, {
         headers: { 'x-agent-connection-token': token },
       }) as unknown as Request,
       env,
@@ -106,7 +106,7 @@ describe('C-01/C-02: anti-replay consumido + alias fail-closed no Worker', () =>
       AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN,
     } as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string; AGENT_AUTH_SERVICE_TOKEN?: string };
     const out = await authorizeWorkspaceMembership(
-      new Request(`https://worker.test/agents/workspace/${HOUSEHOLD}/message`, {
+      new Request(`https://worker.test/agents/finance-chat-agent/${HOUSEHOLD}/rpc/history`, {
         headers: { 'x-agent-connection-token': token },
       }) as unknown as Request,
       env,
@@ -129,10 +129,10 @@ describe('C-01/C-02: anti-replay consumido + alias fail-closed no Worker', () =>
       return new Response(JSON.stringify({ ok: true, consumed: true }), { status: 200 });
     }) as unknown as typeof fetch;
 
-    const env = {      API_ORIGIN: 'https://api.example.test',
+    const env = {
+      API_ORIGIN: 'https://api.example.test',
       AGENT_CONNECTION_TOKEN_SECRET: CONNECTION_SECRET,
       AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN,
-      AGENT: { idFromName: vi.fn((name: string) => ({ name })), get: vi.fn(() => ({ fetch: doFetch })) },
       FINANCE_CHAT_AGENT: { idFromName: vi.fn((name: string) => ({ name })), get: vi.fn(() => ({ fetch: doFetch })) },
     } as unknown as WorkerEnv;
     const res = await worker.fetch(
@@ -168,7 +168,7 @@ describe('C-01/C-02: anti-replay consumido + alias fail-closed no Worker', () =>
       AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN,
     } as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string; AGENT_AUTH_SERVICE_TOKEN?: string };
     const out = await authorizeWorkspaceMembership(
-      new Request(`https://worker.test/agents/workspace/${HOUSEHOLD}/message`, {
+      new Request(`https://worker.test/agents/finance-chat-agent/${HOUSEHOLD}/rpc/history`, {
         headers: { 'x-agent-connection-token': token },
       }) as unknown as Request,
       env,

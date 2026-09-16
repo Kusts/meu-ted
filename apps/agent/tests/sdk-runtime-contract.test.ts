@@ -30,7 +30,6 @@ describe("Agents SDK Runtime Contract & Isolation (Steps 2 & 6)", () => {
     it("worker exposes /health/agent and returns binding FINANCE_CHAT_AGENT", async () => {
       const req = new Request("http://localhost/health/agent");
       const res = await worker.fetch(req, {
-        AGENT: {} as DurableObjectNamespace,
         FINANCE_CHAT_AGENT: {} as DurableObjectNamespace,
         API_ORIGIN: "http://api.local",
       }, {});
@@ -48,7 +47,6 @@ describe("Agents SDK Runtime Contract & Isolation (Steps 2 & 6)", () => {
       globalThis.fetch = async () => new Response(JSON.stringify({ code: "agent.session_required" }), { status: 401 });
       try {
         const res = await worker.fetch(req, {
-          AGENT: {} as DurableObjectNamespace,
           FINANCE_CHAT_AGENT: {} as DurableObjectNamespace,
           API_ORIGIN: "http://api.local",
           AGENT_AUTH_SERVICE_TOKEN: "service-token",

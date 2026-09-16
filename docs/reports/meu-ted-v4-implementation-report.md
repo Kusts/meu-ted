@@ -68,15 +68,22 @@ Nenhuma divergência bloqueante da baseline: a branch está 100% verde nos gates
 
 ### Fase 4 — Descomissionamento (E + I)
 
-- **T4.1 — Arquitetura anti-regressão (E3, ARCH-V4-06):** A FAZER (RED de ARCH-V4-06a confinado a esta fase).
-- **T4.2 — Migração histórica e prova de 0 consumidores (E2):** A FAZER.
+- **T4.1 — Arquitetura anti-regressão (E3, ARCH-V4-06):** FEITO - guard estendido (patterns WorkspaceAgent + allowlist versionada com expiracao) e suite check-workspace-agent-guard.test.mjs. Nasceu RED por desenho (2 hits externos em `agent-client.ts`).
+- **T4.2 — Migração histórica e prova de 0 consumidores (E2):** FEITO (working tree, sem commit) - TDD REAL: RED observado (06a FAILED com 2 hits allowlisted em `agent-client.ts:336,341` + novo teste de contrato `agent-client.t4-2-legacy-removal.test.ts` falhando + golden list (d) atualizada falhando) e GREEN por remocao. Consumidores migrados: nenhum fluxo de producao usava as rotas legadas (TedChat/AgentTranscript ja operavam via `/rpc/chat` + `/rpc/history`); REMOVIDOS de `agent-client.ts` (nao re-pointed): `agentRequestUrl`/`agentHistoryUrl`, `cancelAgentTurn`, `streamAgentTurn`, `reconnectAgentTurn` (+ `AgentEvent`/`parseAgentEvents`), `exportAgentHistory`, `deleteAgentHistory`, `fetchAgentAccessLog` (+ tipos `AgentHistoryExport`, `DeleteAgentHistoryResult`, `AgentAccessLog`). Testes atualizados para o novo contrato: `agent-client.test.ts`, `TedChat.test.tsx`, `AgentTranscript.test.tsx`, `agent-session-h13.test.ts` (abort H-13 reprovado sobre o voo canonico `/rpc/chat`). Prova 06a = 0: guard PASS com allowlist esvaziada (`entries: []`, v2); guard tests verdes com golden list (d) = `[]`. 06b segue RED por desenho ate T4.3 (referencias internas em `apps/agent` intactas). Idempotencia do import: `importLegacyHistory`/`syncLegacyHistory` inalterados em producao; chave = `migration_hash` em `_history_migration_marker`; caso T4.2 de re-import triplo em `legacy-history-workspace-hash.test.ts` (importedCount estavel, persist 1x, 0 duplicadas). NOTA HONESTA: workspaces dependentes em PRODUCAO via access-log do DO (T0.4.3) so sao observaveis pos-deploy - registrado como validacao pendente de deploy antes de T4.3; dry-run do import = `exportFullWorkspaceHistory` + `computeHistoryHash` vs marcador (`already_migrated` faz skip sem persist), coberto pelos testes `legacy-history-*`; execucao real e deploy-time via `syncLegacyHistory`.
 - **T4.3 — Remoção do WorkspaceAgent (E4) com rollback planejado (E5):** A FAZER.
-- **T4.4 — Limpeza documental (I1–I5):** A FAZER.
+- **T4.4 — Limpeza documental (I1–I5):** FEITO (working tree, sem commit) — ver §8.
 
 ### Fase 5 — Qualidade (H, J, K)
 
 - **T5.1 — CI, deploy gate e evidência (H1–H5):** A FAZER.
-- **T5.2 — Lint real separado de typecheck (J1–J3, obrigatório para o fechamento):** A FAZER.
+- **T5.2 — Lint real separado de typecheck (J1–J3, obrigatório para o fechamento):** FEITO (working tree, sem commit). **Ferramenta:** Biome 2.2.4 (já em devDeps da API), config única na raiz (`biome.json`), `lint = biome check src tests` em api/agent/broker, `typecheck` intacto (`tsc`), `pnpm lint` raiz cobre os 4 apps (PWA mantém ESLint próprio, fora de escopo).
+  - **Baseline RED (linter real, antes de qualquer correção):** API 414 arquivos — 55 erros (28 `noUnusedImports`, 27 `noUnusedVariables`) + 135 warnings (100% `noExplicitAny`); Agent 171 arquivos — 14 erros (5 `noUnusedImports`, 9 `noUnusedVariables`) + 4 warnings (`noExplicitAny`); Broker 9 arquivos — 0/0. Zero achados nas demais categorias (fallthrough, floating promises, async-executor, double-equals, constant-condition) nos 3 apps.
+  - **Final:** 594 arquivos, **0 erros, 144 warnings** (139 `noExplicitAny` + 5 `correctness` dos paths diferidos, rebaixados a warn por override). Gate passa com warnings por construção.
+  - **Correções (mínimas, sem mudança comportamental):** 50 erros na API + 14 no Agent — remoção de imports mortos, exclusão de 3 type aliases/1 interface mortos (`RemoteCacheEntry`, `Row`, `TableInfo`), `_`-prefixo onde a remoção não era segura (catch param, type params de shim/mock, consts de scaffolding de teste). Nenhum arquivo diferido tocado.
+  - **DEFERRED (outro worker, paths `writes/**`, `approvals/pending-v2.ts`, `auth/device-token.ts`):** `apps/api/src/approvals/pending-v2.ts:261`, `apps/api/src/writes/in-memory.ts:21`, `apps/api/src/writes/legacy-postgres.ts:12`, `apps/api/src/writes/postgres.ts:25`, `apps/api/src/writes/postgres.ts:915` — cobertos por `overrides` temporário no `biome.json` (erro→warn nesses 3 paths); remover o override quando o dono corrigir. `device-token.ts` com 0 achados.
+  - **Decisões:** (1) `formatter`/`assist` OFF + `recommended: false` + só as 10 regras J3 — `biome check` vira linter puro, sem governance de estilo; (2) `noImportCycles` FORA: SPEC diz "quando viável" — avaliado e inviável (regra nursery trava o gate para 89s+ em 1 arquivo quando combinada com `noFloatingPromises`; isoladas rodam em <2s); (3) escopo `src tests` por app (evals da agent e scripts operacionais fora); (4) `biome.json` em JSON puro — Biome 2.x rejeita `//` e cai SILENCIOSAMENTE para defaults (formatter+organize+recommended), gotcha que custou uma rodada de baseline falsa; (5) warnings `noExplicitAny` ficam WARN documentado — limpar `any` em ~140 sites é refactor de tipagem, não "trivial".
+  - **Observação (não corrigida, dona T0.4/T2.2):** `apps/api/src/routes/index.ts` constrói `_event = buildObservabilityEvent('auth.request.legacy_bearer_used', …)` e nunca o usa — o sink usa `entry` separada. Objeto de telemetria morto pré-existente; avaliar se a emissão está completa.
+  - **Validação:** `pnpm lint` exit 0 (4 apps; PWA 0 errors + 25 warnings pré-existentes); `pnpm typecheck` exit 0; broker 12/12; agent 462 passed + 1 skipped; api 1639 passed + 14 skipped. Risco: T4.3 edita concorrentemente `worker.ts`/testes do agent na mesma tree — revalidar `pnpm lint` no fechamento.
 - **T5.3 — Modularização oportunista (K, único não bloqueante):** A FAZER.
 
 ## 5. Gates finais VAL-V4.1..VAL-V4.16 (a preencher no fechamento)
@@ -84,7 +91,7 @@ Nenhuma divergência bloqueante da baseline: a branch está 100% verde nos gates
 | Gate | Descrição | Status |
 |---|---|---|
 | VAL-V4.1 | frozen install | A EXECUTAR |
-| VAL-V4.2 | lint real | A EXECUTAR |
+| VAL-V4.2 | lint real | PASS (local — `pnpm lint` exit 0 nos 4 apps, 0 erros / 144 warnings documentados; ver T5.2) |
 | VAL-V4.3 | typecheck | A EXECUTAR |
 | VAL-V4.4 | API tests | A EXECUTAR |
 | VAL-V4.5 | Agent tests | A EXECUTAR |
@@ -109,7 +116,15 @@ PWA: microfone funcional em browser real; headers coerentes com capabilities; se
 Operação: CI do SHA implantado executado quando a infraestrutura permitir; SHA testado igual ao SHA implantado; docs canônicos atualizados; legado arquivado; lint real separado de typecheck.
 Não conclusão (§26): nenhum dos vetos pode estar ativo — mic bloqueado em browser real, bearer primário em localStorage, WorkspaceAgent necessário a tráfego novo, localhost aceito sem justificativa, Undo com duplo efeito demonstrável, docs instruindo arquitetura removida, gates remotos marcados verdes sem execução.
 
-## 7. Débitos
+## 8. T4.4 — Limpeza documental (I1–I5)
+
+- **Inventário arquivado (21 arquivos, `.pi/` → `docs/archive/legacy-pi/`, histórico via `git mv`):** `AGENTS.md` (contradição `:1-5`, `:173-176`); `prompts/` (12 arquivos: corpus do runtime Pi — formato `[WhatsApp Message]`, `pi --mode rpc`, tools do Agent Pi); `skills/` (7 arquivos: `README.md` + 6 `SKILL.md`, frontmatter YAML preservado, aviso de arquivamento inserido após o frontmatter); `settings.json` (referenciava `extensions/financial-tools`; era untracked — ignorado em `.gitignore:61` — e segue untracked no destino). Cada `.md` carrega o cabeçalho `STATUS: ARCHIVED — DO NOT USE AS CURRENT ARCHITECTURE` (I3); `docs/archive/legacy-pi/README.md` é o índice com data, motivo e este inventário. Nada restou em `.pi/` — o diretório ficou vazio e foi removido (o Git não rastreia vazios).
+- **Achado I4 adicional (além do `.env.example`):** `apps/api/package.json` ainda dizia `Demo-backed in-memory read models; persistence later.` — o narrowing REV-V4-1/SPEC §31.2 afirmava que nenhuma descrição dessas existia em `package.json` dos apps; refutado por este achado. Corrigido para `PostgreSQL-backed authoritative store; in-memory fallback for dev/test.` Micro-achado no mesmo arquivo: o comentário `DB_SCHEMA=legacy` atribuía o schema a `(from Agent Pi)` — reescrito sem a atribuição. `.env.example:7` agora declara Postgres como runtime de produção (`DATABASE_URL` obrigatório em produção) e in-memory como fallback explícito de dev/teste. Varredura `demo-backed|persistence later` em `apps/*/package.json`: só `apps/api` tinha `description` (demais apps sem `description`) — nenhum outro resquício.
+- **I5 (RED→GREEN):** `scripts/canonical-docs-contract.test.mjs` estendido (padrão `node:test` dos demais `scripts/*.test.mjs`, teste original intacto) com 4 blocos: I5(a) API como autoridade afirmada no corpus canônico; I5(b–e) docs canônicos sem runtime removido como ativo + menção a legado exige contexto de remoção; I5(I1–I3) nenhum `AGENTS.md` ativo (fora de `docs/archive/`) com frases contraditórias + `.pi/AGENTS.md` inexistente; I5(I4) `package.json`/`​.env.example`/varredura dos apps. RED com `.pi/AGENTS.md` no lugar: 5 falhas (I1–I3 + 3× I4). GREEN após a movimentação e as correções: 17/17.
+- **Decisão consciente (I2):** o arquivado manteve o nome `AGENTS.md` sob `docs/archive/legacy-pi/` (o plano T4.4 nomeia esse destino), embora a SPEC I2 prefira não manter o nome para conteúdo histórico. Risco mitigado: `docs/archive/` está fora de qualquer caminho de carga de instruções de agente, o arquivo carrega o header ARCHIVED e o contrato I5 exclui `docs/archive/` do scan ativo por construção — uma regressão (novo `AGENTS.md` contraditório fora do archive) falha o gate.
+- **Validação:** `node --test scripts/canonical-docs-contract.test.mjs` 17/17; `pnpm docs:lint`, `pnpm governance:check`, `pnpm typecheck` (ver §1 — reexecutados nesta tarefa).
+
+## 9. Débitos
 
 - **CI billing (externo, owner):** re-executar CI + PWA CI no SHA de fechamento quando o billing do GitHub Actions for resolvido; jamais marcar PASS sem execução.
 - **Branch protection H5:** ruleset da `main` indisponível no plano atual; perlindungan via processo manual até resolução.

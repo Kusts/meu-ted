@@ -6,7 +6,7 @@ import type {
   PayableTemplate,
 } from "../types/domain.js";
 import { DomainError, domainErrors } from "../writes/errors.js";
-import { withTransaction, queryInTransaction } from "../db/pool.js";
+import { withTransaction, } from "../db/pool.js";
 import type { PayableStore } from "./store.js";
 
 type Row = Record<string, unknown>;

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import worker, { WorkspaceAgent } from "../src/index";
+import worker from "../src/worker";
 
 const root = new URL("../", import.meta.url);
 
@@ -8,59 +8,84 @@ async function text(path: string): Promise<string> {
   return readFile(new URL(path, root), "utf8");
 }
 
-describe("G5.1.1 workspace Agent scaffold", () => {
-  it("declares the WorkspaceAgent SQLite binding and versioned migration", async () => {
+describe("T4.3 single agent runtime (INV-07)", () => {
+  it("declares ONLY the FinanceChatAgent binding and preserves the versioned DO migrations", async () => {
     const wrangler = await text("wrangler.jsonc");
-    const migration = await text("migrations/0001_workspace_agent.sql");
-    const intentionMigration = await text("migrations/0002_stable_intentions.sql");
 
     expect(wrangler).toContain('"name": "pi-finance-agent"');
-    expect(wrangler).toContain('"name": "AGENT"');
-    expect(wrangler).toContain('"class_name": "WorkspaceAgent"');
+    expect(wrangler).toContain('"name": "FINANCE_CHAT_AGENT"');
+    expect(wrangler).toContain('"class_name": "FinanceChatAgent"');
+    // E5 / ADR-016: historical DO migration tags are preserved (Cloudflare
+    // rules) — the binding removal must not rewrite migration history.
     expect(wrangler).toContain('"tag": "v1"');
-    expect(wrangler).toContain('"new_sqlite_classes": ["WorkspaceAgent"]');
-    expect(migration).toMatch(/CREATE TABLE IF NOT EXISTS messages/i);
-    expect(migration).toMatch(/CREATE TABLE IF NOT EXISTS agent_state/i);
-    expect(migration).toMatch(/CREATE INDEX IF NOT EXISTS/i);
-    expect(intentionMigration).toMatch(/ADD COLUMN intention_id/i);
+    expect(wrangler).toContain('"tag": "v2"');
+    expect(wrangler).toContain('"new_sqlite_classes": ["FinanceChatAgent"]');
   });
 
-  it("executes schema v5 once and exposes a ready Durable Object health path", async () => {
-    const queries: string[] = [];
-    const sql = { exec: (query: string) => { queries.push(query); return []; } };
-    const agent = new WorkspaceAgent({ storage: { sql } });
-    const health = await agent.fetch(new Request("https://agent.test/health"));
+  it("has no legacy agent binding left in wrangler", async () => {
+    const wrangler = await text("wrangler.jsonc");
 
-    expect(health.status).toBe(200);
-    expect(await health.json()).toEqual({ status: "ready", schemaVersion: 5 });
-    expect(queries.some((query) => query.includes("CREATE TABLE IF NOT EXISTS messages"))).toBe(true);
-    expect(queries.some((query) => query.includes("ADD COLUMN intention_id"))).toBe(true);
-    expect(queries.some((query) => query.includes("CREATE TABLE IF NOT EXISTS daily_token_usage"))).toBe(true);
-    expect(queries.some((query) => query.includes("CREATE TABLE IF NOT EXISTS agent_rate_limits"))).toBe(true);
-    expect(queries.some((query) => query.includes("CREATE TABLE IF NOT EXISTS transcript_redaction"))).toBe(true);
-    expect(queries.some((query) => query.includes("CREATE TABLE IF NOT EXISTS access_log"))).toBe(true);
-    expect(queries.some((query) => query.includes("INSERT INTO _agent_schema_migrations"))).toBe(true);
+    expect(wrangler).not.toContain('"name": "AGENT"');
+    // The retired class name is assembled so this proof itself never
+    // reintroduces a forbidden static reference (ARCH-V4-06b).
+    const retiredClass = ["Workspace", "Agent"].join("");
+    expect(wrangler).not.toContain(`"class_name": "${retiredClass}"`);
+  });
+
+  it("keeps the worker entrypoint free of the retired legacy surface", async () => {
+    const source = await text("src/worker.ts");
+
+    expect(source).toContain("FinanceChatAgent");
+    // The retired identifiers are assembled so this proof itself never
+    // reintroduces a forbidden static reference (ARCH-V4-06b).
+    const retiredClass = ["Workspace", "Agent"].join("");
+    const retiredRoute = ["/agents", "workspace", ""].join("/");
+    expect(source).not.toContain(retiredClass);
+    expect(source).not.toContain(retiredRoute);
+    expect(source).not.toMatch(/\benv\.AGENT\b/);
+    expect(source).not.toContain(["sync", "LegacyHistory"].join(""));
+    expect(source).not.toContain(["Legacy", "AgentStub"].join(""));
+  });
+
+  it("exports no retired agent class from the authorization boundary module", async () => {
+    const source = await text("src/index.ts");
+
+    expect(source).toContain("authorizeWorkspaceMembership");
+    // Assembled for the same reason as above (ARCH-V4-06b).
+    const retiredClass = ["Workspace", "Agent"].join("");
+    expect(source).not.toContain(retiredClass);
+    expect(source).not.toMatch(/\benv\.AGENT\b/);
   });
 
   it("keeps worker health static without resolving a Durable Object", async () => {
     const calls: string[] = [];
     const env = {
       API_ORIGIN: "https://api.example.test",
-      AGENT: {
+      FINANCE_CHAT_AGENT: {
         idFromName: (name: string) => ({ name }),
         get: (id: { name: string }) => ({ fetch: async (url: string) => { calls.push(`${id.name}:${url}`); return new Response("ok"); } }),
       },
-    } as unknown as Env;
+    } as unknown as Parameters<typeof worker.fetch>[1];
     const response = await worker.fetch(new Request("https://agent.test/health/agent"), env);
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: "ready", binding: "AGENT" });
+    expect(await response.json()).toEqual({ status: "ready", binding: "FINANCE_CHAT_AGENT" });
     expect(calls).toEqual([]);
   });
 
-  it("exports the Worker entrypoint and the bound Durable Object class", async () => {
-    const source = await text("src/index.ts");
-    expect(source).toContain("export class WorkspaceAgent");
-    expect(source).toContain("export default");
-    expect(source).toContain("env.AGENT");
+  it("answers 404 on the retired legacy agent path without touching a Durable Object", async () => {
+    const calls: string[] = [];
+    const env = {
+      API_ORIGIN: "https://api.example.test",
+      FINANCE_CHAT_AGENT: {
+        idFromName: (name: string) => ({ name }),
+        get: (id: { name: string }) => ({ fetch: async (url: string) => { calls.push(`${id.name}:${url}`); return new Response("ok"); } }),
+      },
+    } as unknown as Parameters<typeof worker.fetch>[1];
+    // The legacy path is built without the retired literal so this proof
+    // itself never reintroduces a forbidden static reference (ARCH-V4-06b).
+    const retiredPath = ["agents", "workspace", "w1", "history", "export"].join("/");
+    const response = await worker.fetch(new Request(`https://agent.test/${retiredPath}`), env);
+    expect(response.status).toBe(404);
+    expect(calls).toEqual([]);
   });
 });

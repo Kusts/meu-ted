@@ -301,7 +301,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
               cookieOnly.delete('authorization');
               const cookieSession = await getBetterAuthSessionContext(auth, cookieOnly).catch(() => undefined);
               if (!cookieSession) {
-                const event = buildObservabilityEvent('auth.request.legacy_bearer_used', {
+                const _event = buildObservabilityEvent('auth.request.legacy_bearer_used', {
                   workspaceId: access.householdId,
                 });
                 try {

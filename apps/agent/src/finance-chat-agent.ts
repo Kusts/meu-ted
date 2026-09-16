@@ -29,7 +29,6 @@ import {
   setMemoryEnabled,
   currentSession,
   endSession,
-  isExplicitConfirmation,
   type MemorySql,
 } from "./agent-config/index.js";
 import {

@@ -3,7 +3,7 @@ import { createPostgresCardStore } from '../../src/cards/postgres.js';
 import { createLegacyPostgresCardStore } from '../../src/cards/legacy-postgres.js';
 
 const HOUSEHOLD_A = '00000000-0000-4000-8000-00000000000a';
-const HOUSEHOLD_B = '00000000-0000-4000-8000-00000000000b';
+const _HOUSEHOLD_B = '00000000-0000-4000-8000-00000000000b';
 const ACCOUNT_ID = '11111111-1111-4111-8111-111111111114';
 const CATEGORY_B = '22222222-2222-4222-8222-222222222224';
 const STATEMENT_ID = '33333333-3333-4333-8333-333333333301';

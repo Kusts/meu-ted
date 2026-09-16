@@ -89,10 +89,12 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
      * predecessor stays valid until its windowed expiry.
      */
     rotated: boolean;
+    /** Owner lineage (FIX-USERID-LINEAGE): inherited by rotation successors. */
+    userId: string | null;
   };
   const tokens = new Map<string, MemTokenRecord>();
-  tokens.set('dev-token-1', { deviceId: 'dev-device-1', householdId: DEMO_HOUSEHOLD_ID, expiresAt: null, lastUsedAt: null, rotated: false });
-  tokens.set('dev-token-2', { deviceId: 'dev-device-2', householdId: DEMO_HOUSEHOLD_ID, expiresAt: null, lastUsedAt: null, rotated: false });
+  tokens.set('dev-token-1', { deviceId: 'dev-device-1', householdId: DEMO_HOUSEHOLD_ID, expiresAt: null, lastUsedAt: null, rotated: false, userId: null });
+  tokens.set('dev-token-2', { deviceId: 'dev-device-2', householdId: DEMO_HOUSEHOLD_ID, expiresAt: null, lastUsedAt: null, rotated: false, userId: null });
 
   const hasPredecessor = (currentToken: string | undefined): currentToken is string =>
     typeof currentToken === 'string' && currentToken.trim() !== '';
@@ -120,7 +122,7 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
     _opts?: RegisterDeviceTokenOptions,
   ): Promise<{ token: string; deviceId: string; householdId: string }> => {
     const tok = generateDeviceToken(); const devId = randomUUID();
-    tokens.set(tok, { deviceId: devId, householdId, expiresAt: null, lastUsedAt: null, rotated: false });
+    tokens.set(tok, { deviceId: devId, householdId, expiresAt: null, lastUsedAt: null, rotated: false, userId: _opts?.userId ?? null });
     return { token: tok, deviceId: devId, householdId };
   };
 
@@ -136,6 +138,12 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
     householdId: string,
     opts?: RotateDeviceTokenOptions,
   ): Promise<{ token: string; deviceId: string; householdId: string }> => {
+    // FIX-USERID-LINEAGE: owner carried from the predecessor; the session
+    // user (when present) only verifies. Resolved before the claim so a
+    // mismatch rejects without consuming the predecessor.
+    const predecessorUserId = hasPredecessor(currentToken)
+      ? (tokens.get(currentToken)?.userId ?? null)
+      : null;
     if (hasPredecessor(currentToken)) {
       // Scoped validation first: expired or foreign predecessors reject
       // before any successor exists (fail-closed, no resurrection).
@@ -145,14 +153,18 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
       // predecessor serialize here — exactly one wins, the other gets 409.
       const prev = tokens.get(currentToken);
       if (prev && prev.rotated) throw alreadyRotatedToken();
+      if (opts?.userId && predecessorUserId && opts.userId !== predecessorUserId) {
+        throw userMismatchToken();
+      }
       if (prev) prev.rotated = true;
     }
+    const successorUserId = resolveRotationSuccessorUserId(opts?.userId, predecessorUserId);
     let created: { token: string; deviceId: string; householdId: string };
     try {
       created = await register(
         deviceName,
         householdId,
-        opts?.userId ? { userId: opts.userId } : undefined,
+        successorUserId ? { userId: successorUserId } : undefined,
       );
     } catch (err) {
       // No successor was issued: release the claim so the predecessor stays
@@ -177,12 +189,32 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
   return { resolve, register, revoke, rotate };
 };
 
-type DeviceTokenRow = { device_id: string; household_id: string; expires_at: string | Date | null; legacy?: boolean | null };
+type DeviceTokenRow = { device_id: string; household_id: string; expires_at: string | Date | null; legacy?: boolean | null; user_id?: string | null };
 
 const invalidToken = (): AuthError => new AuthError('invalid or revoked device token', 401, 'auth.invalid_token');
 
 const alreadyRotatedToken = (): AuthError =>
   new AuthError('device token already rotated, use the successor', 409, 'auth.token_already_rotated');
+
+const userMismatchToken = (): AuthError =>
+  new AuthError('device token belongs to a different user', 403, 'auth.user_mismatch');
+
+/**
+ * FIX-USERID-LINEAGE: the successor keeps the predecessor's owner. An
+ * explicit session user (never the request body — rotateInput carries no
+ * userId) is an additional verification: a foreign session rotating another
+ * user's device token rejects; a missing predecessor owner adopts the
+ * verified session user (session-only path registers directly with it).
+ */
+const resolveRotationSuccessorUserId = (
+  sessionUserId: string | undefined,
+  predecessorUserId: string | null,
+): string | null => {
+  if (sessionUserId && predecessorUserId && sessionUserId !== predecessorUserId) {
+    throw userMismatchToken();
+  }
+  return sessionUserId ?? predecessorUserId;
+};
 
 const throwIfExpired = (row: DeviceTokenRow): void => {
   if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) throw invalidToken();
@@ -289,7 +321,7 @@ export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => 
 
       // 1. Lock the predecessor (hashed path first, legacy fallback).
       const hashed = await client.query<DeviceTokenRow>(
-        `SELECT device_id, household_id, expires_at, legacy FROM device_tokens WHERE token_hash = $1 AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL FOR UPDATE`,
+        `SELECT device_id, household_id, expires_at, legacy, user_id FROM device_tokens WHERE token_hash = $1 AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL FOR UPDATE`,
         [oldHash, scopeParam],
       );
       let row: DeviceTokenRow | undefined =
@@ -297,7 +329,7 @@ export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => 
       let isLegacy = false;
       if (!row) {
         const legacy = await client.query<DeviceTokenRow>(
-          `SELECT device_id, household_id, expires_at, legacy FROM device_tokens WHERE token = $1 AND legacy = TRUE AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL FOR UPDATE`,
+          `SELECT device_id, household_id, expires_at, legacy, user_id FROM device_tokens WHERE token = $1 AND legacy = TRUE AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL FOR UPDATE`,
           [predecessor, scopeParam],
         );
         if ((legacy.rowCount ?? 0) === 0) throw invalidToken();
@@ -327,14 +359,17 @@ export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => 
 
       // 4. INSERT the successor in the same transaction (V053 register
       // policy: opaque random secret, hash at rest, no forced expires_at).
+      // FIX-USERID-LINEAGE: the successor inherits the predecessor's owner
+      // read above under FOR UPDATE; a session user only verifies.
       const tok = generateDeviceToken();
       const tokenHash = hashDeviceToken(tok);
       const devId = randomUUID();
       const deadline = new Date(deadlineMs).toISOString();
+      const successorUserId = resolveRotationSuccessorUserId(opts?.userId, row.user_id ?? null);
       await client.query(
         `INSERT INTO device_tokens (token, device_id, household_id, token_hash, name, user_id, legacy)
          VALUES ($1, $2, $3, $4, $5, $6, FALSE)`,
-        [hashedTokenPlaceholder(tokenHash), devId, anchor, tokenHash, deviceName, opts?.userId ?? null],
+        [hashedTokenPlaceholder(tokenHash), devId, anchor, tokenHash, deviceName, successorUserId],
       );
 
       // 5. Confine the predecessor. LEAST never extends a tighter

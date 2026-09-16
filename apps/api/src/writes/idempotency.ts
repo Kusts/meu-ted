@@ -33,10 +33,28 @@ export type IdempotencyRequest = {
  */
 export type IdempotencyProducer<T> = (tx?: unknown) => Promise<T>;
 
+/**
+ * T3.2 (SPEC §12 F1 Opção A): claim lifecycle in parity with the Postgres
+ * claim→complete lifecycle (writes/postgres.ts `processing` INSERT … upgrade
+ * to `completed`). The claim is written SYNCHRONOUSLY as `processing` BEFORE
+ * the producer runs; success upgrades it to `completed`, a producer throw
+ * retains it as `failed`. A same-key/same-payload retry over a
+ * `processing` (orphan — the synchronous producer already settled) or
+ * `failed` claim TAKES OVER and re-executes the producer; a divergent
+ * payload raises `idempotency.conflict` (same rule as the Postgres
+ * payload_hash check). Torn intra-producer state is NOT representable in
+ * heap — a real process crash loses heap effect + heap claim together, and
+ * the in-memory producer is one synchronous atomic step — so there is no
+ * mid-point to roll back to; the store guarantees observable replay
+ * semantics, and the production atomicity proof stays on Postgres.
+ */
+export type IdempotencyClaimStatus = 'processing' | 'completed' | 'failed';
+
 export type IdempotencyEntry<T> = {
   payloadHash: string;
   response: T;
   createdAt: number;
+  status: IdempotencyClaimStatus;
 };
 
 export type IdempotencyStore = {
@@ -112,18 +130,32 @@ export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
       evictExpired(now);
       const existing = store.get(composite);
       const payloadHash = hashIdempotencyPayload(payload);
+      // Takeover target: a retained non-completed claim reuses its original
+      // creation time (retention still applies from the first claim).
+      let claimedAt = now;
 
       if (existing) {
         const age = now - existing.createdAt;
         if (age > IDEMPOTENCY_RETENTION_WINDOW_MS) {
           store.delete(composite);
-        } else if (age > IDEMPOTENCY_RETRY_WINDOW_MS) {
-          throw domainErrors.idempotencyConflict();
+        } else if (existing.status === 'completed') {
+          if (age > IDEMPOTENCY_RETRY_WINDOW_MS) {
+            throw domainErrors.idempotencyConflict();
+          } else {
+            if (existing.payloadHash !== payloadHash) {
+              throw domainErrors.idempotencyConflict();
+            }
+            return { response: existing.response as never, replayed: true };
+          }
         } else {
+          // Retained processing (orphan — no in-flight execution owns it
+          // anymore) or failed claim: same payload takes over below and
+          // re-executes the producer; divergent payload conflicts, mirroring
+          // the Postgres payload_hash rule.
           if (existing.payloadHash !== payloadHash) {
             throw domainErrors.idempotencyConflict();
           }
-          return { response: existing.response as never, replayed: true };
+          claimedAt = existing.createdAt;
         }
       }
 
@@ -145,13 +177,26 @@ export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
       flightPromise.catch(() => undefined);
 
       inFlight.set(composite, { payloadHash, promise: flightPromise });
+      // Claim BEFORE the producer (synchronous, mirrors the Postgres
+      // `processing` INSERT): a throw anywhere below leaves the claim
+      // retained as processing/failed for a same-payload takeover.
+      store.set(composite, {
+        payloadHash,
+        response: undefined as never,
+        createdAt: claimedAt,
+        status: 'processing',
+      });
 
       try {
         const response = await producer();
-        store.set(composite, { payloadHash, response, createdAt: Date.now() });
+        store.set(composite, { payloadHash, response, createdAt: claimedAt, status: 'completed' });
         resolveFlight(response);
         return { response, replayed: false };
       } catch (err) {
+        const claim = store.get(composite);
+        if (claim && claim.payloadHash === payloadHash && claim.status === 'processing') {
+          store.set(composite, { ...claim, status: 'failed' });
+        }
         rejectFlight(err);
         throw err;
       } finally {

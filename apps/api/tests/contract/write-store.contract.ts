@@ -19,7 +19,7 @@ export type WriteContractHarness = {
 const H1 = '00000000-0000-4000-8000-00000000000a';
 const H2 = '00000000-0000-4000-8000-00000000000b';
 const OTHER_ACC = '11111111-1111-4111-8111-111111111111';
-const OTHER_CAT = '22222222-2222-4222-8222-222222222221';
+const _OTHER_CAT = '22222222-2222-4222-8222-222222222221';
 
 export const runWriteStoreContract = (harness: WriteContractHarness): void => {
   describe(`WriteStore contract: ${harness.name}`, () => {

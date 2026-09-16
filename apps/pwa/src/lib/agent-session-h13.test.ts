@@ -3,7 +3,7 @@ import { clearSensitiveSession } from "@/lib/session";
 import { resetLocalSession } from "@/lib/reset-session";
 import * as client from "@/lib/api/client";
 import * as agentAuth from "@/lib/api/agent-auth";
-import { sendAgentMessage, streamAgentTurn } from "@/lib/api/agent-client";
+import { sendAgentMessage } from "@/lib/api/agent-client";
 
 describe("H-13: limpeza central do agent no logout/401/troca (+ abort)", () => {
   beforeEach(() => {
@@ -81,7 +81,11 @@ describe("H-13: limpeza central do agent no logout/401/troca (+ abort)", () => {
     expect(apiSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("stream SSE em curso é abortado na limpeza", async () => {
+  it("tracked canonical agent flight in progress is aborted on session clear", async () => {
+    // T4.2: the legacy SSE reconnect helper (streamAgentTurn) was REMOVED —
+    // the H-13 abort contract is now proven on the canonical /rpc/chat flight,
+    // which shares the same trackAgentConnection tracking.
+    vi.spyOn(client, "apiFetch").mockResolvedValue({ token: "agent-token-h13", expiresIn: 120 });
     vi.spyOn(globalThis, "fetch").mockImplementation(
       (_url, init) =>
         new Promise<Response>((_resolve, reject) => {
@@ -97,7 +101,7 @@ describe("H-13: limpeza central do agent no logout/401/troca (+ abort)", () => {
           }
         }),
     );
-    const flight = streamAgentTurn("ws-h13-stream", "turn-1");
+    const flight = sendAgentMessage("ws-h13-stream", "qual meu saldo?");
     await new Promise((resolve) => setTimeout(resolve, 20));
     await clearSensitiveSession({ clearToken: true });
     await expect(flight).rejects.toSatisfy(

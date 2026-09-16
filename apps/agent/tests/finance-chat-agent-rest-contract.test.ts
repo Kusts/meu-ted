@@ -434,19 +434,6 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
     let capturedDoRequest: Request | null = null;
 
     const mockEnv: WorkerEnv = {
-      AGENT: {
-        idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({
-          exportFullWorkspaceHistory: vi.fn(async () => ({
-            version: 1,
-            workspaceId: WORKSPACE_ID,
-            turns: [],
-            messages: [],
-            hasInFlightTurns: false,
-          })),
-          fetch: vi.fn(async () => new Response("legacy agent")),
-        })),
-      },
       FINANCE_CHAT_AGENT: {
         idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
         get: vi.fn(() => ({
@@ -587,19 +574,6 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
 
     const mockDoFetch = vi.fn();
     const mockEnv: WorkerEnv = {
-      AGENT: {
-        idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({
-          exportFullWorkspaceHistory: vi.fn(async () => ({
-            version: 1,
-            workspaceId: WORKSPACE_ID,
-            turns: [],
-            messages: [],
-            hasInFlightTurns: false,
-          })),
-          fetch: vi.fn(async () => new Response("legacy agent")),
-        })),
-      },
       FINANCE_CHAT_AGENT: {
         idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
         get: vi.fn(() => ({

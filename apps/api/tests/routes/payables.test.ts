@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildTestApp, TOKEN_A, TOKEN_B } from '../test-app.js';
-import { ACCOUNT_A1, ACCOUNT_A2, ACCOUNT_B1, CATEGORY_FOOD_A, HOUSEHOLD_A } from '../fixtures/seed.js';
+import { buildTestApp, TOKEN_A, } from '../test-app.js';
+import { ACCOUNT_A1, ACCOUNT_A2, ACCOUNT_B1, CATEGORY_FOOD_A, } from '../fixtures/seed.js';
 
 const seed = {
   accounts: [ACCOUNT_A1, ACCOUNT_A2, ACCOUNT_B1],
@@ -446,7 +446,7 @@ describe('GET /payables — filters', () => {
       const id = created.json().id;
       // Pay it
       await app.inject({ method: 'POST', url: `/payables/${id}/pay`, headers: auth(TOKEN_A) });
-      const paidRes = await app.inject({ method: 'GET', url: `/payables/${id}`, headers: auth(TOKEN_A) }).catch(() => null);
+      const _paidRes = await app.inject({ method: 'GET', url: `/payables/${id}`, headers: auth(TOKEN_A) }).catch(() => null);
 
       // Unpay
       const unpayRes = await app.inject({

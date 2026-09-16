@@ -240,10 +240,57 @@ const createIncomeLegacyInTx = async (
   return mapTransaction(res.rows[0]!);
 };
 
+/**
+ * Client-bound legacy reversals (no transaction handling).
+ * FIX-UNDO-LEGACY: lets the undo reversals join the idempotency claim tx
+ * instead of opening independent transactions — the same pattern as the
+ * canonical `*InTx` helpers in writes/postgres.ts.
+ */
+const deactivateAccountLegacyInTx = async (
+  client: PoolClient,
+  householdId: string,
+  id: string,
+): Promise<Account> => {
+  const used = await client.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM transactions WHERE household_id = $1 AND deleted_at IS NULL AND (from_account_id = $2 OR to_account_id = $2)`, [householdId, id]);
+  if (Number(used.rows[0]!.count) > 0) throw domainErrors.inUse('Conta', 'lançamentos');
+  const res = await client.query<Row>(
+    `UPDATE accounts SET active = false, deleted_at = NOW() WHERE id = $1 AND household_id = $2 RETURNING id, household_id, name, initial_balance_cents, active`, [id, householdId]);
+  if (res.rowCount === 0) throw domainErrors.notFound('Conta');
+  return mapAccount(res.rows[0]!);
+};
+
+const deactivateCategoryLegacyInTx = async (
+  client: PoolClient,
+  householdId: string,
+  id: string,
+): Promise<Category> => {
+  const used = await client.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM transactions WHERE household_id = $1 AND deleted_at IS NULL AND (category_id = $2 OR subcategory_id = $2)`, [householdId, id]);
+  if (Number(used.rows[0]!.count) > 0) throw domainErrors.inUse('Categoria', 'lançamentos');
+  const res = await client.query<Row>(
+    `UPDATE categories SET active = false, deleted_at = NOW() WHERE id = $1 AND household_id = $2 RETURNING ${LEGACY_CATEGORY_COLUMNS}`, [id, householdId]);
+  if (res.rowCount === 0) throw domainErrors.notFound('Categoria');
+  return mapCategory(res.rows[0]!);
+};
+
+const softDeleteTransactionLegacyInTx = async (
+  client: PoolClient,
+  householdId: string,
+  id: string,
+): Promise<Transaction> => {
+  const res = await client.query<Row>(
+    `UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
+     RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id`,
+    [id, householdId]);
+  if (res.rowCount === 0) throw domainErrors.notFound('Lançamento');
+  return mapTransaction(res.rows[0]!);
+};
+
 export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
   const { pool } = opts;
 
-  return {
+  const store: WriteStore = {
     async createAccount(householdId: string, input: CreateAccountInput) {
       return withTransaction(pool, async (client: PoolClient) => {
         const res = await client.query<Row>(
@@ -271,15 +318,8 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
       });
     },
     async deactivateAccount(householdId: string, id: string) {
-      return withTransaction(pool, async (client: PoolClient) => {
-        const used = await client.query<{ count: string }>(
-          `SELECT COUNT(*)::text AS count FROM transactions WHERE household_id = $1 AND deleted_at IS NULL AND (from_account_id = $2 OR to_account_id = $2)`, [householdId, id]);
-        if (Number(used.rows[0]!.count) > 0) throw domainErrors.inUse('Conta', 'lançamentos');
-        const res = await client.query<Row>(
-          `UPDATE accounts SET active = false, deleted_at = NOW() WHERE id = $1 AND household_id = $2 RETURNING id, household_id, name, initial_balance_cents, active`, [id, householdId]);
-        if (res.rowCount === 0) throw domainErrors.notFound('Conta');
-        return mapAccount(res.rows[0]!);
-      });
+      return withTransaction(pool, async (client: PoolClient) =>
+        deactivateAccountLegacyInTx(client, householdId, id));
     },
 
     async createCategory(householdId: string, input: CreateCategoryInput) {
@@ -355,15 +395,8 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
       });
     },
     async deactivateCategory(householdId: string, id: string) {
-      return withTransaction(pool, async (client: PoolClient) => {
-        const used = await client.query<{ count: string }>(
-          `SELECT COUNT(*)::text AS count FROM transactions WHERE household_id = $1 AND deleted_at IS NULL AND (category_id = $2 OR subcategory_id = $2)`, [householdId, id]);
-        if (Number(used.rows[0]!.count) > 0) throw domainErrors.inUse('Categoria', 'lançamentos');
-        const res = await client.query<Row>(
-          `UPDATE categories SET active = false, deleted_at = NOW() WHERE id = $1 AND household_id = $2 RETURNING ${LEGACY_CATEGORY_COLUMNS}`, [id, householdId]);
-        if (res.rowCount === 0) throw domainErrors.notFound('Categoria');
-        return mapCategory(res.rows[0]!);
-      });
+      return withTransaction(pool, async (client: PoolClient) =>
+        deactivateCategoryLegacyInTx(client, householdId, id));
     },
     async deleteCategory(householdId: string, id: string, input: DeleteCategoryInput) {
       return withTransaction(pool, async (client: PoolClient) => {
@@ -486,14 +519,21 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
       });
     },
     async softDeleteTransaction(householdId: string, id: string) {
-      return withTransaction(pool, async (client: PoolClient) => {
-        const res = await client.query<Row>(
-          `UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
-           RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id`,
-          [id, householdId]);
-        if (res.rowCount === 0) throw domainErrors.notFound('Lançamento');
-        return mapTransaction(res.rows[0]!);
-      });
+      return withTransaction(pool, async (client: PoolClient) =>
+        softDeleteTransactionLegacyInTx(client, householdId, id));
     },
   };
+  // FIX-UNDO-LEGACY (Fase 3 V4, SPEC §12 F3 opção 1): expose the
+  // client-bound reversals as non-contractual extensions under the SAME
+  // names as the canonical store (see PostgresReversalTxExtensions). The
+  // undo service duck-types these and runs the reversal on the claim-tx
+  // client, so claim + legacy reversal + completion commit atomically.
+  // Legacy balances are computed, so the legacy soft-delete is a bare
+  // tombstone (no balance restore). The declared factory return type stays
+  // WriteStore, so existing callers are unaffected.
+  return Object.assign(store, {
+    softDeleteTransactionInTx: softDeleteTransactionLegacyInTx,
+    deactivateAccountInTx: deactivateAccountLegacyInTx,
+    deactivateCategoryInTx: deactivateCategoryLegacyInTx,
+  });
 };

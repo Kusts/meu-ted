@@ -10,7 +10,7 @@ describe('Security: Worker exige AGENT_AUTH_SERVICE_TOKEN dedicado', () => {
   beforeEach(() => vi.restoreAllMocks());
 
   it('RED/GREEN: sem AGENT_AUTH_SERVICE_TOKEN deve falhar com 500, mesmo que CONNECTION_TOKEN_SECRET esteja presente (sem fallback)', async () => {
-    const req = new Request(`https://worker.test/agents/workspace/${ALIAS}/message`, {
+    const req = new Request(`https://worker.test/agents/finance-chat-agent/${ALIAS}/rpc/history`, {
       headers: { 'x-agent-connection-token': 'dummy', 'x-workspace-id': ALIAS },
     });
     const env = { API_ORIGIN: 'https://api.example.com', AGENT_CONNECTION_TOKEN_SECRET: CONNECTION_SECRET } as unknown as Record<string, string>;
@@ -31,10 +31,10 @@ describe('Security: Worker exige AGENT_AUTH_SERVICE_TOKEN dedicado', () => {
       return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
     }) as unknown as typeof fetch;
 
-    const req = new Request(`https://worker.test/agents/workspace/${ALIAS}/message`, {
+    const _req = new Request(`https://worker.test/agents/finance-chat-agent/${ALIAS}/rpc/history`, {
       headers: { 'x-agent-connection-token': 'dummy', 'x-workspace-id': ALIAS },
     });
-    const env = { API_ORIGIN: 'https://api.example.com', AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN, AGENT_CONNECTION_TOKEN_SECRET: CONNECTION_SECRET } as unknown as Record<string, string>;
+    const _env = { API_ORIGIN: 'https://api.example.com', AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN, AGENT_CONNECTION_TOKEN_SECRET: CONNECTION_SECRET } as unknown as Record<string, string>;
     // O Worker deve tentar resolver alias via endpoint com service token correto, mas se o token estiver errado, deve falhar
     // Aqui testamos que a chamada com token errado não vaza se alias existe — o helper deve retornar 401
     // C-02 fail-closed: token errado/resposta não-OK deve LANÇAR (negar),

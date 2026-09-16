@@ -7,7 +7,7 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto';
-import type { Account, Transaction, Statement, StatementDetail, StatementPurchase, RecurringPurchase } from '../types/domain.js';
+import type { Account, Transaction, Statement, StatementPurchase, RecurringPurchase } from '../types/domain.js';
 
 interface CardPurchase {
   id: string;

@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { describe, expect, it, beforeEach, } from 'vitest';
 import { FinanceChatAgent } from '../src/finance-chat-agent.js';
 import { buildMemoryTools } from '../src/agent-config/memory/tools.js';
 

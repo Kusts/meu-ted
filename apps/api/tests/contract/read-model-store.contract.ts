@@ -32,7 +32,7 @@ export type ContractHarness = {
   };
 };
 
-const typed = <T>(v: T): T => v;
+const _typed = <T>(v: T): T => v;
 
 const H1 = '00000000-0000-4000-8000-00000000000a';
 const H2 = '00000000-0000-4000-8000-00000000000b';

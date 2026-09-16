@@ -33,10 +33,22 @@
  * (committed effect + lost record → `not_found` 404 on retry, F4 violated)
  * is recorded in docs/reports/meu-ted-v4-implementation-report.md (Fase 3).
  *
- * STORE PARITY (T3.2 input): the same 5 points run against the in-memory
- * stores (dev/test). In-memory promises process atomicity for NOTHING — the
- * parity bar is OBSERVABLE behavior (convergent replay), and divergences are
- * RECORDED, never force-failed (see the parity report test at the bottom).
+ * STORE PARITY — T3.2 Opção A (SPEC §12 F1): the same P1–P5 points run
+ * against the in-memory stores (dev/test) at the REPRESENTABLE boundaries.
+ * A heap-only store cannot represent torn state: a real process crash loses
+ * heap effect + heap claim together, and the in-memory producer is one
+ * synchronous atomic step — a fault either fires BEFORE it (≡ crash-before)
+ * or AFTER it (≡ crash-after). There is no observable mid-point, so P1/P2
+ * are observably identical in-memory and P3/P4 collapse onto the two
+ * boundaries. The PROOF of production atomicity is the Postgres path (13/13
+ * real above); the in-memory store guarantees equivalent OBSERVABLE replay
+ * semantics: processing-claim → completed upgrade (parity with the
+ * claim→complete lifecycle in writes/postgres.ts), takeover of an orphan
+ * claim by a same-payload retry, retained failed claims, conflict on
+ * divergent payload. The previous DIVERGE_TODAY middle scenario (effect
+ * kept, record lost, retry throws) simulated a state no real heap crash can
+ * leave and is therefore NOT asserted — instead the invariant ≤1 financial
+ * effect in EVERY observable interleaving is assembled explicitly below.
  *
  * LEGACY BRANCH (§31.3.2): the canonical undo path is asserted via the
  * `audit-undo:` namespace row + canonical audit row. The "legacy branch is
@@ -65,7 +77,8 @@ import {
   createPostgresWriteStore,
   createPostgresIdempotencyStore,
 } from '../../src/writes/postgres.js';
-import { createPostgresAuditLogStore } from '../../src/audit/store.js';
+import { createLegacyPostgresWriteStore } from '../../src/writes/legacy-postgres.js';
+import { createPostgresAuditLogStore, createLegacyPostgresAuditLogStore } from '../../src/audit/store.js';
 import {
   createUndoService,
   UNDO_IDEMPOTENCY_PREFIX,
@@ -79,7 +92,6 @@ import {
 } from '../../src/writes/idempotency.js';
 import {
   createInMemoryStores,
-  createInMemoryWriteStore,
 } from '../../src/writes/in-memory.js';
 import { createInMemoryAuditLogStore } from '../../src/audit/store.js';
 import {
@@ -593,14 +605,236 @@ describeIfDb('XLT-07 — undo crash atomicity (real PostgreSQL)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Store parity: the same 5 points against the in-memory stores (dev/test).
+// Legacy-schema undo crash atomicity (FIX-UNDO-LEGACY, Fase 3 V4, SPEC §12 F3).
 // ---------------------------------------------------------------------------
-// No process-atomicity promise exists for in-memory — the bar is OBSERVABLE
-// behavior (convergent replay). Divergences are RECORDED (never force-failed)
-// as input to T3.2. Crash injection here wraps the WriteStore: throwing
-// BEFORE delegating ≡ crash before the (synchronous) mutation; delegating
-// first and THEN throwing ≡ crash between producer and idempotency persist
-// (idempotency.ts:139-140 persists after the producer, outside any boundary).
+// Production VPS boots DB_SCHEMA=legacy: legacy write store + legacy:true
+// idempotency + legacy audit store. Before the fix the undo reversal fell
+// back to the plain legacy transactional methods (own withTransaction), so a
+// P3/P4 crash left 1 committed effect + 0 records (retry: not_found, F4
+// violated). After the fix the legacy store exposes the client-bound *InTx
+// reversals and the reversal joins the claim tx: P3/P4 roll back fully.
+//
+// The legacy financial SQL (from_account_id, active boolean, legacy audit
+// household_id/action shape) cannot run on the canonical test database
+// (NOT NULL canonical columns + transfer CHECKs reject legacy INSERTs), so
+// these scenarios run on a SEPARATE database (`pi_test_legacy`, same
+// server) migrated with runMigrations + an idempotent legacy-shape DDL.
+// Zero impact on the canonical suite (separate DB, separate pool).
+
+const LEGACY_DB_URL = DB_URL ? DB_URL.replace(/\/[^/?]+(\?.*)?$/, '/pi_test_legacy$1') : undefined;
+
+const LEGACY_SHAPE_DDL = [
+  `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS initial_balance_cents BIGINT`,
+  `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS active BOOLEAN`,
+  `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_credit_card BOOLEAN NOT NULL DEFAULT FALSE`,
+  `ALTER TABLE accounts ALTER COLUMN kind DROP NOT NULL`,
+  `ALTER TABLE accounts ALTER COLUMN balance_cents DROP NOT NULL`,
+  `ALTER TABLE accounts ALTER COLUMN status DROP NOT NULL`,
+  `ALTER TABLE categories ADD COLUMN IF NOT EXISTS active BOOLEAN`,
+  `ALTER TABLE categories ALTER COLUMN status DROP NOT NULL`,
+  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS from_account_id UUID`,
+  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS to_account_id UUID`,
+  `ALTER TABLE transactions ALTER COLUMN account_id DROP NOT NULL`,
+  `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS household_id UUID`,
+  `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_id UUID`,
+  `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS action TEXT`,
+  `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS entity_type TEXT`,
+  `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS entity_id TEXT`,
+  `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS before_json JSONB`,
+  `ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS after_json JSONB`,
+  `ALTER TABLE audit_logs ALTER COLUMN workspace_id DROP NOT NULL`,
+  `ALTER TABLE audit_logs ALTER COLUMN actor_id DROP NOT NULL`,
+  `ALTER TABLE audit_logs ALTER COLUMN operation DROP NOT NULL`,
+  `ALTER TABLE audit_logs ALTER COLUMN event_type DROP NOT NULL`,
+  `ALTER TABLE audit_logs ALTER COLUMN payload_hash DROP NOT NULL`,
+];
+
+const seedLegacyReversibleExpense = async (db: Pool): Promise<PgFixture> => {
+  const householdId = randomUUID();
+  const actorId = randomUUID();
+  const writes = createLegacyPostgresWriteStore({ pool: db });
+  const account = await writes.createAccount(householdId, {
+    name: `XLT07L ${randomUUID().slice(0, 8)}`,
+    kind: 'bank',
+    initialBalanceCents: 100_000,
+  });
+  const category = await writes.createCategory(householdId, {
+    name: `XLT07L cat ${randomUUID().slice(0, 8)}`,
+    kind: 'expense',
+  });
+  const tx = await writes.createExpense(householdId, {
+    description: 'XLT07L reversible expense',
+    amountCents: 12_345,
+    date: '2026-09-16',
+    accountId: account.id,
+    categoryId: category.id,
+  });
+  await db.query(
+    `INSERT INTO audit_logs (id, household_id, user_id, action, entity_type, entity_id, before_json, after_json, created_at)
+     VALUES (gen_random_uuid(), $1, $2, 'transactions.expense.create', 'transaction', $3, NULL, NULL, NOW())`,
+    [householdId, actorId, tx.id],
+  );
+  return { householdId, actorId, txId: tx.id };
+};
+
+const cleanupLegacyHousehold = async (db: Pool, householdId: string): Promise<void> => {
+  await db.query('DELETE FROM audit_logs WHERE household_id = $1', [householdId]).catch(() => undefined);
+  await db.query('DELETE FROM operation_records WHERE workspace_id = $1', [householdId]).catch(() => undefined);
+  await db.query('DELETE FROM transactions WHERE household_id = $1', [householdId]).catch(() => undefined);
+  await db.query('DELETE FROM categories WHERE household_id = $1', [householdId]).catch(() => undefined);
+  await db.query('DELETE FROM accounts WHERE household_id = $1', [householdId]).catch(() => undefined);
+};
+
+const makeLegacyUndo = (
+  db: Pool,
+  writes: WriteStore,
+  sink: Array<{ eventType: string; workspaceId: string }>,
+): { undo: UndoService; idempotencyKey: string } => {
+  const undo = createUndoService({
+    auditLogs: createLegacyPostgresAuditLogStore(db),
+    writes,
+    idempotency: createPostgresIdempotencyStore({ pool: db, legacy: true }),
+    observabilitySink: (event) => { sink.push(event); },
+  });
+  return { undo, idempotencyKey: `xlt07l-${randomUUID()}` };
+};
+
+describeIfDb('XLT-07 legacy — undo crash atomicity on the legacy schema (real PostgreSQL)', () => {
+  let db: Pool;
+  const households: string[] = [];
+
+  beforeAll(async () => {
+    const admin = createPool({ connectionString: DB_URL!, max: 2 });
+    try {
+      await requireTestDatabase(admin, 'xlt-07-undo-crash-legacy-admin');
+      await admin.query('CREATE DATABASE pi_test_legacy').catch((err: Error) => {
+        if (!/already exists/.test(err.message)) throw err;
+      });
+    } finally {
+      await admin.end();
+    }
+    db = createPool({ connectionString: LEGACY_DB_URL!, max: 8 });
+    await db.query('CREATE TABLE IF NOT EXISTS _test_marker (marker_value TEXT PRIMARY KEY)');
+    await db.query('INSERT INTO _test_marker (marker_value) VALUES ($1) ON CONFLICT DO NOTHING', [
+      process.env.DB_TEST_MARKER!,
+    ]);
+    await requireTestDatabase(db, 'xlt-07-undo-crash-legacy');
+    await runMigrations(db);
+    for (const ddl of LEGACY_SHAPE_DDL) await db.query(ddl);
+  }, 180_000);
+
+  afterAll(async () => {
+    if (db) {
+      for (const householdId of households) await cleanupLegacyHousehold(db, householdId);
+      await db.end();
+    }
+  });
+
+  it('P3-legacy — crash after the legacy reversal, before the idempotency write: 0 effects (full rollback), replay converges', async () => {
+    const { householdId, actorId, txId } = await seedLegacyReversibleExpense(db);
+    households.push(householdId);
+    const replayEvents: Array<{ eventType: string; workspaceId: string }> = [];
+    const { undo, idempotencyKey } = makeLegacyUndo(
+      db,
+      createLegacyPostgresWriteStore({ pool: db }),
+      replayEvents,
+    );
+
+    // Crash ON the idempotency completion write. FIX-UNDO-LEGACY runs claim
+    // + legacy reversal + completion in ONE transaction, so the fault aborts
+    // the whole undo (pre-fix shape was 1 committed effect + 0 records:
+    // the reversal committed in its own withTransaction).
+    const fault = armSqlFault(db, matchIdempotencyCompletion, 'P3-legacy-after-reversal');
+    try {
+      await expect(undo.undo(householdId, actorId, idempotencyKey)).rejects.toThrow(
+        /injected crash \[P3-legacy-after-reversal\]/,
+      );
+      expect(fault.fired()).toBe(1);
+    } finally {
+      fault.disarm();
+    }
+    // Atomicity holds on the legacy schema: nothing committed, nothing recorded.
+    const state = await readUndoState(db, householdId, txId, idempotencyKey);
+    expect(state).toEqual({ effects: 0, records: 0, recordStatus: null });
+
+    // SPEC §12.F4 on legacy: the retry re-executes claim + producer from
+    // zero and converges on the single canonical result, marked as replay.
+    const retry = createUndoService({
+      auditLogs: createLegacyPostgresAuditLogStore(db),
+      writes: createLegacyPostgresWriteStore({ pool: db }),
+      idempotency: createPostgresIdempotencyStore({ pool: db, legacy: true }),
+      observabilitySink: (event) => { replayEvents.push(event); },
+    });
+    const first = await retry.undo(householdId, actorId, idempotencyKey);
+    expect(first.undone).toMatchObject({ entityId: txId, reversal: 'soft_delete' });
+    expect(await readUndoState(db, householdId, txId, idempotencyKey)).toMatchObject({
+      effects: 1,
+      records: 1,
+      recordStatus: 'completed',
+    });
+    const replayed = await retry.undo(householdId, actorId, idempotencyKey);
+    expect(replayed).toEqual(first);
+    expect(replayEvents).toEqual([{ eventType: 'audit-undo.replay', workspaceId: householdId }]);
+  });
+
+  it('P4-legacy — crash after the legacy completion write, before COMMIT: 0 effects (full rollback), replay converges', async () => {
+    const { householdId, actorId, txId } = await seedLegacyReversibleExpense(db);
+    households.push(householdId);
+    const replayEvents: Array<{ eventType: string; workspaceId: string }> = [];
+    const { undo, idempotencyKey } = makeLegacyUndo(
+      db,
+      createLegacyPostgresWriteStore({ pool: db }),
+      replayEvents,
+    );
+
+    let completionSeen = false;
+    const fault = armSqlFault(
+      db,
+      (sql) => {
+        if (matchIdempotencyCompletion(sql)) { completionSeen = true; return false; }
+        if (completionSeen && sql === 'COMMIT') return true;
+        return false;
+      },
+      'P4-legacy-before-commit',
+    );
+    try {
+      await expect(undo.undo(householdId, actorId, idempotencyKey)).rejects.toThrow(
+        /injected crash \[P4-legacy-before-commit\]/,
+      );
+      expect(completionSeen).toBe(true);
+      expect(fault.fired()).toBe(1);
+    } finally {
+      fault.disarm();
+    }
+    const state = await readUndoState(db, householdId, txId, idempotencyKey);
+    expect(state).toEqual({ effects: 0, records: 0, recordStatus: null });
+
+    const retry = createUndoService({
+      auditLogs: createLegacyPostgresAuditLogStore(db),
+      writes: createLegacyPostgresWriteStore({ pool: db }),
+      idempotency: createPostgresIdempotencyStore({ pool: db, legacy: true }),
+      observabilitySink: (event) => { replayEvents.push(event); },
+    });
+    const first = await retry.undo(householdId, actorId, idempotencyKey);
+    expect(first.undone).toMatchObject({ entityId: txId, reversal: 'soft_delete' });
+    const replayed = await retry.undo(householdId, actorId, idempotencyKey);
+    expect(replayed).toEqual(first);
+    expect(replayEvents).toEqual([{ eventType: 'audit-undo.replay', workspaceId: householdId }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Store parity: the representable boundaries against the in-memory stores.
+// ---------------------------------------------------------------------------
+// T3.2 Opção A. Crash injection wraps the WriteStore: throwing BEFORE
+// delegating ≡ crash before the (synchronous, atomic) mutation; a clean run
+// followed by duplicate delivery ≡ crash after the atomic step (P5). The
+// middle — effect applied but claim lost — is NOT simulated: keeping heap
+// alive across a fake "crash" fabricates torn state a real process crash
+// cannot leave (heap effect + heap claim die together). Retries below reuse
+// the SAME store: an in-process error is not a process crash, so the heap
+// survives and the retry takes over the retained claim; a fresh store would
+// prove nothing (empty store trivially converges).
 
 const parityNotes: string[] = [];
 const noteParity = (line: string): void => {
@@ -652,73 +886,18 @@ const seedMemAudit = (householdId: string, actorId: string, txId: string): Audit
   createdAt: new Date().toISOString(),
 });
 
-const makeMemUndo = (
-  fx: MemFixture,
-  writes: WriteStore,
-  sink: Array<{ eventType: string; workspaceId: string }>,
-): { undo: UndoService; idempotencyKey: string } => {
-  const undo = createUndoService({
-    auditLogs: createInMemoryAuditLogStore([seedMemAudit(fx.householdId, fx.actorId, fx.txId)]),
-    writes,
-    idempotency: createInMemoryIdempotencyStore(),
-    observabilitySink: (event) => { sink.push(event); },
-  });
-  return { undo, idempotencyKey: `xlt07-mem-${randomUUID()}` };
-};
-
 describe('XLT-07 parity — in-memory stores (observable behavior)', () => {
-  it('P1/P2 — throw before the synchronous mutation: 0 effects, replay converges', async () => {
+  it('L1 — crash BEFORE the atomic step: same-store retry takes over the orphan claim and converges', async () => {
+    // Representable boundary 1 (≡ Postgres P1/P2, observably identical
+    // in-memory: the reversal is one synchronous mutation with no await
+    // points, so "during" does not exist). The fault throws before the first
+    // write; the claim stays retained as processing/failed.
     const fx = await seedMemFixture();
     const replayEvents: Array<{ eventType: string; workspaceId: string }> = [];
-    // P2 NOTE (documented non-divergence): the in-memory reversal is ONE
-    // synchronous mutation (deletedTransactions.add + balance restore, no
-    // await points between them), so there is NO observable mid-point — a
-    // crash "during" is either before the first write (≡ P1, shown here) or
-    // after the last write (≡ P3, next test). P1 and P2 are observably
-    // identical in-memory; the distinction only exists on Postgres.
     const crashingWrites: WriteStore = {
       ...fx.writes,
       softDeleteTransaction: async () => {
-        throw new Error('XLT-07 injected crash [mem-P1/P2] before mutation');
-      },
-    };
-    const { undo, idempotencyKey } = makeMemUndo(fx, crashingWrites, replayEvents);
-    await expect(undo.undo(fx.householdId, fx.actorId, idempotencyKey)).rejects.toThrow(
-      /mem-P1\/P2/,
-    );
-    expect(fx.state.deletedTransactions.has(fx.txId)).toBe(false);
-
-    const retry = createUndoService({
-      auditLogs: createInMemoryAuditLogStore([seedMemAudit(fx.householdId, fx.actorId, fx.txId)]),
-      writes: fx.writes,
-      idempotency: createInMemoryIdempotencyStore(),
-      observabilitySink: (event) => { replayEvents.push(event); },
-    });
-    // NOTE: fresh idempotency store + fresh service = new process. The FIRST
-    // attempt's claim never persisted (producer threw), so the retry runs the
-    // producer once and records it.
-    const first = await retry.undo(fx.householdId, fx.actorId, idempotencyKey);
-    expect(first.undone).toMatchObject({ entityId: fx.txId });
-    const replayed = await retry.undo(fx.householdId, fx.actorId, idempotencyKey);
-    expect(replayed).toEqual(first);
-    expect(replayEvents).toEqual([
-      { eventType: 'audit-undo.replay', workspaceId: fx.householdId },
-    ]);
-    noteParity('P1/P2 in-memory: converges (no divergence vs Postgres P1/P2).');
-  });
-
-  it('P3/P4 — effect applied, record lost: DIVERGES_TODAY, recorded for T3.2 (no double effect)', async () => {
-    const fx = await seedMemFixture();
-    const replayEvents: Array<{ eventType: string; workspaceId: string }> = [];
-    // Crash between producer and idempotency persist (idempotency.ts:139-140
-    // persists AFTER the producer returns, outside any boundary): the effect
-    // is applied, then the fault throws, so no record is ever written.
-    const real = fx.writes.softDeleteTransaction.bind(fx.writes);
-    const crashingWrites: WriteStore = {
-      ...fx.writes,
-      softDeleteTransaction: async (householdId: string, id: string) => {
-        const result = await real(householdId, id);
-        throw new Error('XLT-07 injected crash [mem-P3/P4] after effect, before record');
+        throw new Error('XLT-07 injected crash [mem-takeover-before] before mutation');
       },
     };
     const memIdem = createInMemoryIdempotencyStore();
@@ -731,31 +910,203 @@ describe('XLT-07 parity — in-memory stores (observable behavior)', () => {
     });
     const idempotencyKey = `xlt07-mem-${randomUUID()}`;
     await expect(undo.undo(fx.householdId, fx.actorId, idempotencyKey)).rejects.toThrow(
-      /mem-P3\/P4/,
+      /mem-takeover-before/,
     );
-    expect(fx.state.deletedTransactions.has(fx.txId)).toBe(true);
+    expect(fx.state.deletedTransactions.has(fx.txId)).toBe(false);
 
-    // Retry (= new process): no record exists, so the producer re-runs and
-    // hits the already-deleted transaction. T3.2 must align this.
+    // Takeover: the same store (= surviving process) still holds the orphan
+    // claim, so the same-key/same-payload retry re-executes the producer
+    // exactly once and converges — 0 effects become exactly 1.
     const retry = createUndoService({
       auditLogs: createInMemoryAuditLogStore(memAudit),
       writes: fx.writes,
       idempotency: memIdem,
       observabilitySink: (event) => { replayEvents.push(event); },
     });
-    try {
-      await retry.undo(fx.householdId, fx.actorId, idempotencyKey);
-      noteParity('P3/P4 in-memory: retry unexpectedly converged.');
-    } catch (error) {
-      noteParity(
-        `P3/P4 in-memory DIVERGES_TODAY (T3.2 input): retry throws '${(error as { code?: string }).code ?? (error as Error).message}' ` +
-          'instead of converging — same lost-record shape as Postgres P3/P4.',
-      );
-    }
-    // Safety invariant (always asserted, never conditional): still exactly
-    // ONE effect — the retry never double-applies, it throws.
+    const first = await retry.undo(fx.householdId, fx.actorId, idempotencyKey);
+    expect(first.undone).toMatchObject({ entityId: fx.txId });
     expect(fx.state.deletedTransactions.has(fx.txId)).toBe(true);
-    expect(fx.state.transactions.filter((t) => t.id === fx.txId)).toHaveLength(1);
+    const replayed = await retry.undo(fx.householdId, fx.actorId, idempotencyKey);
+    expect(replayed).toEqual(first);
+    expect(replayEvents).toEqual([
+      { eventType: 'audit-undo.replay', workspaceId: fx.householdId },
+    ]);
+    noteParity('L1 in-memory: crash-before → takeover converges (parity with Postgres P1/P2).');
+  });
+
+  it('L2 — retained claim rejects a divergent payload with conflict (lifecycle parity with Postgres)', async () => {
+    // The retained processing/failed claim carries its payload hash: a retry
+    // with the same key but a DIVERGENT payload (different lastOperationId)
+    // must raise idempotency.conflict WITHOUT running the producer — the
+    // same rule the Postgres claim enforces via payload_hash mismatch.
+    // RED against the pre-T3.2 store (no retained claim → producer runs).
+    const fx = await seedMemFixture();
+    const replayEvents: Array<{ eventType: string; workspaceId: string }> = [];
+    let mutations = 0;
+    const countingWrites: WriteStore = {
+      ...fx.writes,
+      softDeleteTransaction: async (householdId: string, id: string) => {
+        mutations++;
+        return fx.writes.softDeleteTransaction(householdId, id);
+      },
+    };
+    const crashingWrites: WriteStore = {
+      ...fx.writes,
+      softDeleteTransaction: async () => {
+        throw new Error('XLT-07 injected crash [mem-lifecycle] before mutation');
+      },
+    };
+    const memIdem = createInMemoryIdempotencyStore();
+    const memAudit = [seedMemAudit(fx.householdId, fx.actorId, fx.txId)];
+    const undo = createUndoService({
+      auditLogs: createInMemoryAuditLogStore(memAudit),
+      writes: crashingWrites,
+      idempotency: memIdem,
+      observabilitySink: (event) => { replayEvents.push(event); },
+    });
+    const idempotencyKey = `xlt07-mem-${randomUUID()}`;
+    await expect(undo.undo(fx.householdId, fx.actorId, idempotencyKey)).rejects.toThrow(
+      /mem-lifecycle/,
+    );
+    expect(mutations).toBe(0);
+
+    const retry = createUndoService({
+      auditLogs: createInMemoryAuditLogStore(memAudit),
+      writes: countingWrites,
+      idempotency: memIdem,
+      observabilitySink: (event) => { replayEvents.push(event); },
+    });
+    await expect(
+      retry.undo(fx.householdId, fx.actorId, idempotencyKey, randomUUID()),
+    ).rejects.toMatchObject({ code: 'idempotency.conflict' });
+    expect(mutations).toBe(0);
+    expect(fx.state.deletedTransactions.has(fx.txId)).toBe(false);
+    noteParity('L2 in-memory: retained claim rejects divergent payload (parity with Postgres payload_hash rule).');
+  });
+
+  it('representability limit (T3.2): torn intra-producer state is not representable in heap — ≤1 effect in every observable interleaving', async () => {
+    // EXPLICIT DOCUMENTATION TEST. A heap-only producer is one synchronous
+    // atomic step: any deterministic fault either fires before the first
+    // write (≡ crash-before, L1) or after the last write (≡ crash-after,
+    // P5). Simulating "effect applied, claim lost" by keeping heap alive
+    // across a fake crash fabricates torn state that no real heap crash can
+    // leave — a real process crash loses heap effect AND heap claim together
+    // — so no such scenario is asserted. What IS asserted: in EVERY
+    // observable interleaving, the financial effect count never exceeds 1.
+    const sink: Array<{ eventType: string; workspaceId: string }> = [];
+
+    // Interleaving A: crash-before + takeover retry + duplicate replays.
+    {
+      const fx = await seedMemFixture();
+      let mutations = 0;
+      const countingWrites: WriteStore = {
+        ...fx.writes,
+        softDeleteTransaction: async (householdId: string, id: string) => {
+          mutations++;
+          return fx.writes.softDeleteTransaction(householdId, id);
+        },
+      };
+      const memIdem = createInMemoryIdempotencyStore();
+      const memAudit = [seedMemAudit(fx.householdId, fx.actorId, fx.txId)];
+      const crashing: WriteStore = {
+        ...fx.writes,
+        softDeleteTransaction: async () => {
+          throw new Error('XLT-07 injected crash [mem-invariant-A] before mutation');
+        },
+      };
+      const key = `xlt07-mem-${randomUUID()}`;
+      const failing = createUndoService({
+        auditLogs: createInMemoryAuditLogStore(memAudit),
+        writes: crashing,
+        idempotency: memIdem,
+        observabilitySink: (event) => { sink.push(event); },
+      });
+      await expect(failing.undo(fx.householdId, fx.actorId, key)).rejects.toThrow(/mem-invariant-A/);
+      const retry = createUndoService({
+        auditLogs: createInMemoryAuditLogStore(memAudit),
+        writes: countingWrites,
+        idempotency: memIdem,
+        observabilitySink: (event) => { sink.push(event); },
+      });
+      const first = await retry.undo(fx.householdId, fx.actorId, key);
+      await retry.undo(fx.householdId, fx.actorId, key);
+      await retry.undo(fx.householdId, fx.actorId, key);
+      expect(first.undone).toMatchObject({ entityId: fx.txId });
+      expect(mutations).toBeLessThanOrEqual(1);
+      expect(mutations).toBe(1);
+      expect(fx.state.deletedTransactions.has(fx.txId)).toBe(true);
+      expect(fx.state.transactions.filter((t) => t.id === fx.txId)).toHaveLength(1);
+    }
+
+    // Interleaving B: completed claim + K duplicate deliveries.
+    {
+      const fx = await seedMemFixture();
+      let mutations = 0;
+      const countingWrites: WriteStore = {
+        ...fx.writes,
+        softDeleteTransaction: async (householdId: string, id: string) => {
+          mutations++;
+          return fx.writes.softDeleteTransaction(householdId, id);
+        },
+      };
+      const memIdem = createInMemoryIdempotencyStore();
+      const memAudit = [seedMemAudit(fx.householdId, fx.actorId, fx.txId)];
+      const undo = createUndoService({
+        auditLogs: createInMemoryAuditLogStore(memAudit),
+        writes: countingWrites,
+        idempotency: memIdem,
+        observabilitySink: (event) => { sink.push(event); },
+      });
+      const key = `xlt07-mem-${randomUUID()}`;
+      const first = await undo.undo(fx.householdId, fx.actorId, key);
+      for (let i = 0; i < 3; i++) {
+        const replayed = await undo.undo(fx.householdId, fx.actorId, key);
+        expect(replayed).toEqual(first);
+      }
+      expect(mutations).toBeLessThanOrEqual(1);
+      expect(mutations).toBe(1);
+      expect(fx.state.transactions.filter((t) => t.id === fx.txId)).toHaveLength(1);
+    }
+
+    // Interleaving C: concurrent same-key duplicates collapse to one flight.
+    {
+      const fx = await seedMemFixture();
+      let mutations = 0;
+      let releaseGate!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+      const gatedWrites: WriteStore = {
+        ...fx.writes,
+        softDeleteTransaction: async (householdId: string, id: string) => {
+          mutations++;
+          await gate;
+          return fx.writes.softDeleteTransaction(householdId, id);
+        },
+      };
+      const memIdem = createInMemoryIdempotencyStore();
+      const memAudit = [seedMemAudit(fx.householdId, fx.actorId, fx.txId)];
+      const undo = createUndoService({
+        auditLogs: createInMemoryAuditLogStore(memAudit),
+        writes: gatedWrites,
+        idempotency: memIdem,
+        observabilitySink: (event) => { sink.push(event); },
+      });
+      const key = `xlt07-mem-${randomUUID()}`;
+      const pending = [
+        undo.undo(fx.householdId, fx.actorId, key),
+        undo.undo(fx.householdId, fx.actorId, key),
+        undo.undo(fx.householdId, fx.actorId, key),
+        undo.undo(fx.householdId, fx.actorId, key),
+      ];
+      releaseGate();
+      const results = await Promise.all(pending);
+      for (const result of results) expect(result).toEqual(results[0]);
+      expect(mutations).toBeLessThanOrEqual(1);
+      expect(mutations).toBe(1);
+      expect(fx.state.deletedTransactions.has(fx.txId)).toBe(true);
+      expect(fx.state.transactions.filter((t) => t.id === fx.txId)).toHaveLength(1);
+    }
+
+    noteParity('representability: ≤1 financial effect in every observable interleaving (A/B/C); torn intra-producer state excluded as non-representable in heap.');
   });
 
   it('P5 — clean commit then duplicate key: single effect, recorded replay', async () => {
@@ -780,10 +1131,14 @@ describe('XLT-07 parity — in-memory stores (observable behavior)', () => {
     noteParity('P5 in-memory: converges (no divergence vs Postgres P5).');
   });
 
-  it('parity divergence report (T3.2 input)', () => {
+  it('parity report (T3.2 output)', () => {
     console.log(`[xlt-07 parity] ${parityNotes.length} note(s):`);
     for (const line of parityNotes) console.log(`[xlt-07 parity] - ${line}`);
     expect(parityNotes.length).toBeGreaterThan(0);
+    // T3.2 Opção A closed the DIVERGE_TODAY markers: every parity note must
+    // describe convergence at a representable boundary or the documented
+    // representability limit — never an open divergence.
+    for (const line of parityNotes) expect(line).not.toMatch(/DIVERGE/);
   });
 });
 

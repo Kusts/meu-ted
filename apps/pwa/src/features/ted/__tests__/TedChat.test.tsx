@@ -39,8 +39,6 @@ vi.mock("@/lib/api/agent-client", async (importOriginal) => {
     ...actual,
     fetchAgentHistory: vi.fn(),
     sendAgentMessage: vi.fn(),
-    exportAgentHistory: vi.fn(),
-    deleteAgentHistory: vi.fn(),
   };
 });
 

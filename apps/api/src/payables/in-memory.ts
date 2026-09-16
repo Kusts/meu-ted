@@ -271,7 +271,7 @@ export const createInMemoryPayableStore = (
     },
 
     async createPayableWithTemplate(householdId, input) {
-      const t = await this.createTemplate(householdId, input.template);
+      const _t = await this.createTemplate(householdId, input.template);
       return this.createPayable(householdId, {
         ...input.payable,
         ...(input.payable.type ? { type: input.payable.type } : { type: 'recurring' }),

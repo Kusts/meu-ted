@@ -10,19 +10,6 @@ describe("FinanceChatAgent & Worker Integration (Task 4)", () => {
   const mockEnv: WorkerEnv = {
     API_ORIGIN,
     AGENT_AUTH_SERVICE_TOKEN: "test-auth-service-token",
-    AGENT: {
-      idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-      get: vi.fn(() => ({
-        exportFullWorkspaceHistory: vi.fn(async () => ({
-          version: 1,
-          workspaceId: WORKSPACE_ID,
-          turns: [],
-          messages: [],
-          hasInFlightTurns: false,
-        })),
-        fetch: vi.fn(async () => new Response("legacy agent")),
-      })),
-    },
     FINANCE_CHAT_AGENT: {
       idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
       get: vi.fn(() => ({

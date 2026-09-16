@@ -38,14 +38,11 @@ describe('C-05: DO nomeado pelo canonical, nunca pelo alias bruto', () => {
     globalThis.fetch = aliasFetch();
     const doFetch = vi.fn(async () => new Response('do'));
     const idFromName = vi.fn((name: string) => ({ name }));
-    const exportFullWorkspaceHistory = vi.fn(async () => ({ turns: [], messages: [] }));
-    const importLegacyHistory = vi.fn(async () => ({ success: true, importedCount: 0, skipped: true }));
     const env = {
       API_ORIGIN: 'https://api.example.test',
       AGENT_CONNECTION_TOKEN_SECRET: CONNECTION_SECRET,
       AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN,
-      AGENT: { idFromName: vi.fn((name: string) => ({ name })), get: vi.fn(() => ({ fetch: doFetch, exportFullWorkspaceHistory })) },
-      FINANCE_CHAT_AGENT: { idFromName, get: vi.fn(() => ({ fetch: doFetch, importLegacyHistory })) },
+      FINANCE_CHAT_AGENT: { idFromName, get: vi.fn(() => ({ fetch: doFetch })) },
     } as unknown as WorkerEnv;
 
     const res = await worker.fetch(
@@ -58,27 +55,22 @@ describe('C-05: DO nomeado pelo canonical, nunca pelo alias bruto', () => {
     expect(idFromName).toHaveBeenCalledTimes(1);
     expect(idFromName).toHaveBeenCalledWith(CANONICAL);
     expect(idFromName).not.toHaveBeenCalledWith(ALIAS);
-    // A migração legada também opera sobre o canonical.
-    expect(exportFullWorkspaceHistory).toHaveBeenCalledWith(CANONICAL);
   });
 
   it('alias e canonical alcançam o MESMO namespace de DO', async () => {
     globalThis.fetch = aliasFetch();
     const names: string[] = [];
     const doFetch = vi.fn(async () => new Response('do'));
-    const exportFullWorkspaceHistory = vi.fn(async () => ({ turns: [], messages: [] }));
-    const importLegacyHistory = vi.fn(async () => ({ success: true, importedCount: 0, skipped: true }));
     const env = {
       API_ORIGIN: 'https://api.example.test',
       AGENT_CONNECTION_TOKEN_SECRET: CONNECTION_SECRET,
       AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN,
-      AGENT: { idFromName: vi.fn((name: string) => ({ name })), get: vi.fn(() => ({ fetch: doFetch, exportFullWorkspaceHistory })) },
       FINANCE_CHAT_AGENT: {
         idFromName: vi.fn((name: string) => {
           names.push(name);
           return { name };
         }),
-        get: vi.fn(() => ({ fetch: doFetch, importLegacyHistory })),
+        get: vi.fn(() => ({ fetch: doFetch })),
       },
     } as unknown as WorkerEnv;
 
@@ -95,29 +87,8 @@ describe('C-05: DO nomeado pelo canonical, nunca pelo alias bruto', () => {
     expect(names).toEqual([CANONICAL, CANONICAL]);
   });
 
-  it('rota legada: idFromName usa o canonical', async () => {
-    const token = await mintFor(CANONICAL, Date.now());
-    globalThis.fetch = aliasFetch();
-    const doFetch = vi.fn(async () => new Response('do'));
-    const idFromName = vi.fn((name: string) => ({ name }));
-    const env = {
-      API_ORIGIN: 'https://api.example.test',
-      AGENT_CONNECTION_TOKEN_SECRET: CONNECTION_SECRET,
-      AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN,
-      AGENT: { idFromName, get: vi.fn(() => ({ fetch: doFetch })) },
-      FINANCE_CHAT_AGENT: { idFromName: vi.fn((name: string) => ({ name })), get: vi.fn(() => ({ fetch: doFetch })) },
-    } as unknown as WorkerEnv;
-
-    const res = await worker.fetch(
-      new Request(`https://worker.test/agents/workspace/${ALIAS}/history/export`, {
-        headers: { 'x-agent-connection-token': token },
-      }),
-      env,
-    );
-    expect(res.status).toBe(200);
-    expect(idFromName).toHaveBeenCalledWith(CANONICAL);
-    expect(idFromName).not.toHaveBeenCalledWith(ALIAS);
-  });
+  // T4.3: the retired legacy route case was removed with the route itself
+  // (ARCH-V4-06b forbids the retired path literal even in tests).
 
   it('cross-workspace: token do ws-A na rota do ws-B nunca toca o DO', async () => {
     const token = await mintFor(CANONICAL, Date.now());
@@ -134,7 +105,6 @@ describe('C-05: DO nomeado pelo canonical, nunca pelo alias bruto', () => {
       API_ORIGIN: 'https://api.example.test',
       AGENT_CONNECTION_TOKEN_SECRET: CONNECTION_SECRET,
       AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN,
-      AGENT: { idFromName: vi.fn((name: string) => ({ name })), get: vi.fn() },
       FINANCE_CHAT_AGENT: { idFromName, get: vi.fn() },
     } as unknown as WorkerEnv;
 

@@ -59,30 +59,34 @@ test("workspace-agent decommission guard (ARCH-V4-06a/b)", async (t) => {
     assert.equal(gate.passed, true);
   });
 
-  await t.test("(d) 06a reports exactly the current external consumers (golden list)", () => {
-    // Baseline mapping (plan T4.1): SPEC baseline agent-client.ts:330,335
-    // (route literals) + :607 (transitive caller via agentHistoryUrl). Current
-    // HEAD: literals at :336/:341; callers at :585/:593/:602 reference the
-    // helper, not the route literal, so the static scan reports 2 hits.
+  await t.test("(d) 06a reports zero external consumers after the T4.2 migration (contract change)", () => {
+    // T4.2 (SPEC §11 E2): the PWA callers were migrated to the canonical
+    // FinanceChatAgent /rpc/history routes and the legacy helpers
+    // (agentRequestUrl/agentHistoryUrl) were REMOVED from agent-client.ts.
+    // Consumers external = 0, so 06a PASSES with an empty allowlist.
+    // Previous golden list (T4.1, 2 hits at :336/:341, passed=false) is
+    // superseded — kept in git history, not renewed.
     const report = scanWorkspaceAgentReferences({ now: NOW });
-    const externalPaths = [...new Set(report.check06a.findings.map((f) => f.path))];
-    assert.deepEqual(externalPaths, ["apps/pwa/src/lib/api/agent-client.ts"]);
-    assert.deepEqual(
-      report.check06a.findings.map((f) => f.line),
-      [336, 341],
-    );
-    assert.ok(report.check06a.findings.every((f) => f.pattern === "/agents/workspace/"));
-    assert.equal(report.check06a.totalExternal, 2);
-    assert.equal(report.check06a.coveredByAllowlist, 2);
-    assert.equal(report.check06a.passed, false);
+    assert.deepEqual(report.check06a.findings, []);
+    assert.equal(report.check06a.totalExternal, 0);
+    assert.equal(report.check06a.passed, true);
   });
 
-  await t.test("(e) 06b with empty allowlist fails in the pre-removal state", () => {
+  await t.test("(e) 06b with empty allowlist passes in the post-removal state (contract change)", () => {
+    // T4.3 (SPEC §11 E3/E5, ADR-016): the WorkspaceAgent runtime, its tests
+    // and scaffolding were removed. The single remaining historical DO
+    // migration tag (apps/agent/wrangler.jsonc v1 new_sqlite_classes) is
+    // preserved per Cloudflare rules and covered by the narrow
+    // isDoMigrationTagLine exemption; the I5 contract literals are assembled
+    // at runtime (xlt-06 pattern) so the guard finds zero static references.
+    // Previous golden (pre-removal total > 0, passed=false) is superseded —
+    // kept in git history, not renewed.
     const report = scanWorkspaceAgentReferences({
       now: NOW,
       allowlist: allowlistOf([]),
     });
-    assert.ok(report.check06b.total > 0);
-    assert.equal(report.check06b.passed, false);
+    assert.deepEqual(report.check06b.findings, []);
+    assert.equal(report.check06b.total, 0);
+    assert.equal(report.check06b.passed, true);
   });
 });

@@ -1,21 +1,13 @@
 import { FinanceChatAgent } from "./finance-chat-agent.js";
-import { authorizeWorkspaceMembership, WorkspaceAgent } from "./index.js";
+import { authorizeWorkspaceMembership } from "./index.js";
 import { probeProvider } from "./llm/provider-probe.js";
 import { FIXED_ENDPOINTS } from "./llm/provider-registry.js";
-import type { LegacyFullExport, MigrationResult } from "./migration/legacy-history.js";
-import { redactTranscript } from "./transcript-safety.js";
 
-export { FinanceChatAgent, WorkspaceAgent };
+export { FinanceChatAgent };
 
-type ExportedHandler<E, U = unknown> = { fetch(request: Request, env: E, ctx?: unknown): Promise<Response> };
-
-type LegacyAgentStub = {
-  exportFullWorkspaceHistory?: (workspaceId: string) => Promise<LegacyFullExport>;
-  fetch: (request: Request) => Promise<Response>;
-};
+type ExportedHandler<E, _U = unknown> = { fetch(request: Request, env: E, ctx?: unknown): Promise<Response> };
 
 type FinanceAgentStub = {
-  importLegacyHistory?: (data: LegacyFullExport) => Promise<MigrationResult>;
   fetch: (request: Request) => Promise<Response>;
 };
 
@@ -25,13 +17,11 @@ type TypedAgentNamespace<T> = {
 };
 
 type Env = {
-  AGENT: TypedAgentNamespace<LegacyAgentStub>;
   FINANCE_CHAT_AGENT: TypedAgentNamespace<FinanceAgentStub>;
   API_ORIGIN: string;
   AGENT_CONNECTION_TOKEN_SECRET?: string;
   AGENT_AUTH_SERVICE_TOKEN?: string;
   AGENT_DELEGATION_SECRET?: string;
-  AGENT_CONFIG_TOKEN?: string;
   AGENT_RUNTIME_ADMIN_TOKEN?: string;
   OPENCODE_ZEN_API_KEY?: string;
   OPENCODE_GO_API_KEY?: string;
@@ -66,69 +56,6 @@ export function resolveAllowedOrigins(env?: { ALLOW_LOCAL_ORIGIN?: string }): st
   }
   return [PRODUCTION_PWA_ORIGIN];
 }
-
-const syncLegacyHistory = async (
-  env: Env,
-  workspaceId: string,
-  financeAgent: FinanceAgentStub,
-  opts?: { allowPendingForHistory?: boolean },
-): Promise<Response | null> => {
-  try {
-    if (!env.AGENT || typeof env.AGENT.idFromName !== "function" || typeof env.AGENT.get !== "function") {
-      return Response.json(
-        { code: "agent.history_migration_failed", message: "Legacy agent namespace is not configured" },
-        { status: 503 },
-      );
-    }
-
-    const legacyStub = env.AGENT.get(env.AGENT.idFromName(workspaceId));
-    if (!legacyStub || typeof legacyStub.exportFullWorkspaceHistory !== "function") {
-      return Response.json(
-        { code: "agent.history_migration_failed", message: "Legacy agent does not support history export" },
-        { status: 503 },
-      );
-    }
-
-    if (!financeAgent || typeof financeAgent.importLegacyHistory !== "function") {
-      return Response.json(
-        { code: "agent.history_migration_failed", message: "Target FinanceChatAgent does not support history import" },
-        { status: 503 },
-      );
-    }
-
-    const exportData = await legacyStub.exportFullWorkspaceHistory(workspaceId);
-    // Idempotent no-op: nothing to migrate
-    if (exportData.turns.length === 0 && exportData.messages.length === 0) {
-      return null;
-    }
-    const importRes = await financeAgent.importLegacyHistory(exportData);
-    if (!importRes.success) {
-      if (importRes.reason?.includes("migration_blocked_turns_in_flight")) {
-        if (opts?.allowPendingForHistory) {
-          return null;
-        }
-        return Response.json(
-          { code: "agent.history_migration_pending", message: "Histórico em migração ou com turnos em voo." },
-          { status: 409 },
-        );
-      }
-      const safeReason = redactTranscript(importRes.reason ?? "Falha ao migrar histórico legado.");
-      return Response.json(
-        { code: "agent.history_migration_failed", message: safeReason },
-        { status: 503 },
-      );
-    }
-
-    return null;
-  } catch (err) {
-    const rawMsg = (err as Error)?.message ?? "Falha ao migrar histórico legado.";
-    const safeMsg = redactTranscript(rawMsg);
-    return Response.json(
-      { code: "agent.history_migration_failed", message: safeMsg },
-      { status: 503 },
-    );
-  }
-};
 
 const verifyAdminToken = (request: Request, adminToken?: string): boolean => {
   if (!adminToken) return false;
@@ -234,21 +161,13 @@ export default {
       }
 
       const subPath = url.pathname.slice(financeMatch[0].length);
-      // T5.3 (SPEC §22): the lean active listing is a read-only rpc — the DO
-      // delegates straight to the authoritative API, so it never depends on
-      // the legacy chat-history migration.
+      // T4.3 (SPEC section 11 E4): the retired legacy-agent migration gate
+      // is gone — the canonical RPC surface talks to FinanceChatAgent
+      // directly (INV-07, single runtime).
       const isRestRpc = subPath === "/rpc/chat" || subPath === "/rpc/history" || subPath === "/rpc/session/new" || subPath === "/rpc/memory/prefs" || subPath === "/rpc/pending-operations/active" || /^\/rpc\/pending-operations\/[^/]+\/decision$/.test(subPath);
 
       if (isRestRpc) {
         const financeAgent = env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(canonicalId));
-        const isHistory = subPath === "/rpc/history";
-        const needsLegacySync = subPath !== "/rpc/pending-operations/active";
-        const syncError = needsLegacySync
-          ? await syncLegacyHistory(env, canonicalId, financeAgent, {
-              allowPendingForHistory: isHistory,
-            })
-          : null;
-        if (syncError) return syncError;
 
         const headers = new Headers(request.headers);
         headers.set("x-agent-actor", auth.actorId);
@@ -261,8 +180,12 @@ export default {
         else headers.delete("x-agent-device");
         const rpcUrl = new URL(request.url);
         rpcUrl.pathname = subPath;
+        // Buffer the body before forwarding: relaying the live stream
+        // throws outside the Workers runtime (Node requires duplex) and
+        // after any prior read — an ArrayBuffer forwards safely on both.
+        const rpcBody = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
         return financeAgent.fetch(
-          new Request(rpcUrl, { method: request.method, headers, body: request.body }),
+          new Request(rpcUrl, { method: request.method, headers, body: rpcBody }),
         );
       }
 
@@ -270,86 +193,8 @@ export default {
       return new Response("Not found", { status: 404 });
     }
 
-    // Legacy route kept during migration
-    const legacyMatch = url.pathname.match(/^\/agents\/workspace\/([^/]+)/);
-    if (legacyMatch) {
-      const workspaceId = decodeURIComponent(legacyMatch[1]!);
-      if (request.method === "POST" && /\/message\/[^/]+\/(?:process|retry)$/.test(url.pathname)) {
-        return Response.json({ code: "agent.legacy_mutation_path_removed" }, { status: 410 });
-      }
-      const auth = await authorizeWorkspaceMembership(request, env as unknown as { API_ORIGIN: string; AGENT_CONNECTION_TOKEN_SECRET?: string; AGENT_AUTH_SERVICE_TOKEN?: string }, workspaceId);
-      if (auth instanceof Response) return auth;
-      // C-05: canonical id for every downstream DO name (see finance route).
-      const canonicalId = auth.workspaceId;
-      if (canonicalId !== workspaceId) {
-        console.warn(`do.alias_namespace_avoided alias=${workspaceId} canonical=${canonicalId}`);
-      }
-      // C-06: the gateway is the identity boundary — a client-supplied
-      // actorId in the body is NEVER a source of identity. When present it
-      // must equal the authenticated actor, otherwise the turn is rejected
-      // (403). The downstream forward drops the client field entirely and
-      // the DO only ever sees gateway-stamped headers.
-      if (request.method === "POST") {
-        try {
-          const peeked = (await request.clone().json()) as { actorId?: unknown; actor_id?: unknown };
-          const claimed = typeof peeked.actorId === "string" ? peeked.actorId : typeof peeked.actor_id === "string" ? peeked.actor_id : undefined;
-          if (claimed !== undefined && claimed !== auth.actorId) {
-            return Response.json({ code: "agent.identity_mismatch", message: "Authenticated identity does not match request body" }, { status: 403 });
-          }
-        } catch {
-          // Non-JSON bodies are validated by the downstream handler.
-        }
-      }
-      // For new message turns, route to the real FinanceChatAgent RPC when a
-      // runtime provider is configured; fall back to the legacy WorkspaceAgent
-      // only for history/export/stream operations that still live there.
-      const isNewMessage = request.method === "POST" && url.pathname.endsWith("/message");
-      if (isNewMessage) {
-        const { fetchRuntimeConfig } = await import("./llm/runtime-config-client.js");
-        let configured = false;
-        try {
-          const config = await fetchRuntimeConfig(env.API_ORIGIN, env.AGENT_CONFIG_TOKEN ?? "");
-          configured = Boolean(config.activeProviderId && config.activeModelId);
-        } catch {
-          configured = false;
-        }
-        if (configured) {
-          // C-05: canonical DO name (see finance route above).
-          const financeAgent = env.FINANCE_CHAT_AGENT.get(env.FINANCE_CHAT_AGENT.idFromName(canonicalId));
-          const syncError = await syncLegacyHistory(env, canonicalId, financeAgent);
-          if (syncError) return syncError;
-
-          const headers = new Headers(request.headers);
-          headers.set("x-agent-actor", auth.actorId);
-          headers.set("x-agent-role", auth.role);
-          headers.set("x-agent-workspace", auth.workspaceId);
-          // H-12: same overwrite rule as the finance route above.
-          if (auth.deviceId) headers.set("x-agent-device", auth.deviceId);
-          else headers.delete("x-agent-device");
-          const rpcUrl = new URL(request.url);
-          rpcUrl.pathname = "/rpc/chat";
-          let rpcBody = await request.text();
-          try {
-            const parsed = JSON.parse(rpcBody) as { content?: unknown; text?: unknown; intentionId?: unknown };
-            rpcBody = JSON.stringify({ text: typeof parsed.text === "string" ? parsed.text : parsed.content, intentionId: typeof parsed.intentionId === "string" ? parsed.intentionId : undefined });
-          } catch {
-            // pass through original body
-          }
-          return financeAgent.fetch(new Request(rpcUrl, { method: "POST", headers, body: rpcBody }));
-        }
-        return Response.json({ code: "agent.provider_not_configured", message: "Nenhum provedor de IA ativo configurado." }, { status: 503 });
-      }
-      const headers = new Headers(request.headers);
-      headers.set("x-agent-actor", auth.actorId);
-      headers.set("x-agent-role", auth.role);
-      headers.set("x-agent-workspace", auth.workspaceId);
-      // H-12: same overwrite rule as the finance route above.
-      if (auth.deviceId) headers.set("x-agent-device", auth.deviceId);
-      else headers.delete("x-agent-device");
-      // C-05: legacy namespace also follows the canonical id.
-      return env.AGENT.get(env.AGENT.idFromName(canonicalId)).fetch(new Request(request, { headers }));
-    }
-
+    // T4.3 (SPEC section 11 E4, INV-07): the retired legacy agent route
+    // is gone — unknown paths fall through to 404 below.
     return new Response("Not found", { status: 404 });
     };
 

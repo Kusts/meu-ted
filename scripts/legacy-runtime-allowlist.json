@@ -1,15 +1,7 @@
 {
   "$schema": "legacy-runtime-allowlist",
-  "version": 1,
+  "version": 2,
   "owner": "planner",
-  "notes": "Temporary migration allowlist for T4.1 (MEU-TED V4 hardening, ARCH-V4-06a/b). Entries expire automatically; the guard FAILS on any expired entry at run time. Remove entries in T4.2 (external callers) / T4.3 (full removal) instead of renewing without planner approval.",
-  "entries": [
-    {
-      "path": "apps/pwa/src/lib/api/agent-client.ts",
-      "pattern": "/agents/workspace/",
-      "reason": "T4.2 migration: legacy helpers agentRequestUrl/agentHistoryUrl build /agents/workspace/* URLs; migrate to canonical /rpc/history routes, then delete this entry.",
-      "owner": "planner",
-      "expiresAt": "2026-09-23T23:59:59.000Z"
-    }
-  ]
+  "notes": "Temporary migration allowlist for T4.1 (MEU-TED V4 hardening, ARCH-V4-06a/b). Entries expire automatically; the guard FAILS on any expired entry at run time. T4.2 (2026-09-16): the agent-client.ts entry was REMOVED after the PWA callers migrated to the canonical FinanceChatAgent /rpc routes — ARCH-V4-06a is green with zero entries. Remaining entries (if any) are consumed in T4.3 (full removal); never renew without planner approval.",
+  "entries": []
 }

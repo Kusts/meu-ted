@@ -22,7 +22,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
+import type { QueryResult, QueryResultRow } from 'pg';
 import { createLegacyPostgresSubscriptionStore } from '../../src/subscriptions/legacy-postgres.js';
 import type { SubscriptionStore } from '../../src/subscriptions/store.js';
 

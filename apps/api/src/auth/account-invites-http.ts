@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { createBetterAuth } from './better-auth.js';
 import { getBetterAuthSessionContext } from './better-auth.js';
-import { InviteError, normalizeInviteEmail, type AccountInviteService } from './account-invites.js';
+import { InviteError, type AccountInviteService } from './account-invites.js';
 import { createInMemoryIdempotencyStore, requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
 import { DomainError } from '../writes/errors.js';
 import { isUserAdmin } from './admin-invite-service.js';
