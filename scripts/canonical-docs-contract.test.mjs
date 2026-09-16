@@ -162,3 +162,64 @@ test("I5(I4): package metadata and env example describe PostgreSQL as production
     }
   });
 });
+
+// ─── FIX-FINAL-3 (V4 decommission consistency) ───
+// runtime-facts.json must not list the removed agent binding, every archived
+// legacy-pi doc must carry the ARCHIVED header, and ARCHITECTURE-CURRENT
+// must not present the retired agent as active. Forbidden literals are
+// assembled at runtime (xlt-06 pattern) so this contract test itself carries
+// no static reference flaggable by ARCH-V4-06b.
+
+const RETIRED_AGENT = ["Workspace", "Agent"].join("");
+const RETIRED_AGENT_SNAKE = ["WORKSPACE", "AGENT"].join("_");
+
+function listArchiveMdFiles(dir, out = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      listArchiveMdFiles(fullPath, out);
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      out.push(path.relative(ROOT, fullPath).replace(/\\/g, "/"));
+    }
+  }
+  return out;
+}
+
+test("FIX-FINAL-3(a): runtime-facts.json lists no legacy agent binding", () => {
+  const facts = JSON.parse(readRepoDoc("docs/architecture/runtime-facts.json"));
+  const bindings = facts.apps?.agent?.bindings;
+  assert.ok(Array.isArray(bindings) && bindings.length > 0, "agent bindings must be declared in runtime-facts.json");
+  for (const binding of bindings) {
+    assert.doesNotMatch(
+      String(binding),
+      new RegExp(RETIRED_AGENT, "i"),
+      `runtime-facts.json lists a removed agent binding: ${binding}`,
+    );
+    assert.doesNotMatch(
+      String(binding),
+      new RegExp(RETIRED_AGENT_SNAKE, "i"),
+      `runtime-facts.json lists a removed agent binding: ${binding}`,
+    );
+  }
+});
+
+test("FIX-FINAL-3(b): every archived legacy-pi doc carries the ARCHIVED header", () => {
+  // settings.json is exempt: JSON admits no comment header, its archive
+  // marker is the docs/archive/legacy-pi/README.md inventory entry.
+  const mdFiles = listArchiveMdFiles(path.join(ROOT, "docs", "archive", "legacy-pi"));
+  assert.ok(mdFiles.length > 0, "expected archived legacy-pi docs");
+  for (const relPath of mdFiles) {
+    assert.match(readRepoDoc(relPath), /ARCHIVED/, `${relPath} is missing the ARCHIVED header`);
+  }
+});
+
+test("FIX-FINAL-3(c): ARCHITECTURE-CURRENT does not present the retired agent as active", () => {
+  const content = readRepoDoc("docs/ARCHITECTURE-CURRENT.md");
+  assert.doesNotMatch(
+    content,
+    new RegExp(`${RETIRED_AGENT}.{0,80}(existe|ativo|ativa|compatibilidade)`, "i"),
+    "ARCHITECTURE-CURRENT presents the removed agent as active",
+  );
+  assert.match(content, /removid[oa] na V4/i, "ARCHITECTURE-CURRENT must state the V4 removal");
+  assert.match(content, /ADR-016/, "ARCHITECTURE-CURRENT must point to ADR-016");
+});

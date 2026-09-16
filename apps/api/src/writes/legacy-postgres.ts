@@ -9,7 +9,6 @@
  * - balances are computed (no stored balance_cents update on write)
  */
 
-import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { Account, Category, Transaction } from '../types/domain.js';
 import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';

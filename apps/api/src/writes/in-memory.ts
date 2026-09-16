@@ -18,15 +18,9 @@ import { hashIdempotencyPayload } from './idempotency.js';
 import { namespacedPendingV2Key } from './pending-idempotency.js';
 import type { ApplyDefaultsResult, DeleteCategoryResult, WriteStore } from './store.js';
 import type {
-  CreateAccountInput,
-  CreateCategoryInput,
   CreateExpenseInput,
   CreateIncomeInput,
-  CreateTransferInput,
   DeleteCategoryInput,
-  UpdateAccountInput,
-  UpdateCategoryInput,
-  UpdateTransactionInput,
 } from './types.js';
 
 export type InMemoryState = {

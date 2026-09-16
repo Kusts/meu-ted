@@ -52,9 +52,19 @@ export const LEGACY_PATTERNS = [
   { name: "Legacy Pi Web App", pattern: /\.\.\/pi-finance-web/g, category: "historical-doc" },
 ];
 
-/** WorkspaceAgent decommission patterns (T4.1, SPEC section 11 E3). */
+/** WorkspaceAgent decommission patterns (T4.1, SPEC section 11 E3).
+ *
+ * FIX-FINAL-3: the "WorkspaceAgent" pattern intentionally has NO \b word
+ * boundaries — /\bWorkspaceAgent\b/ was a false-PASS footgun: it missed
+ * camelCase-interior residue such as initializeWorkspaceAgentSchema
+ * (prefix "initialize" is a word char, so \b never matched). The separate
+ * WORKSPACE_AGENT entry covers SNAKE_CASE residue such as
+ * WORKSPACE_AGENT_SCHEMA_V1. Both forms are forbidden post-removal; the only
+ * exemption is the historical DO migration tag line (isDoMigrationTagLine).
+ */
 export const WORKSPACE_AGENT_PATTERNS = [
-  { name: "WorkspaceAgent", pattern: /\bWorkspaceAgent\b/ },
+  { name: "WorkspaceAgent", pattern: /WorkspaceAgent/ },
+  { name: "WORKSPACE_AGENT", pattern: /WORKSPACE_AGENT/ },
   { name: "/agents/workspace/", pattern: /\/agents\/workspace\// },
   { name: "env.AGENT", pattern: /\benv\.AGENT\b/ },
   { name: "syncLegacyHistory", pattern: /\bsyncLegacyHistory\b/ },

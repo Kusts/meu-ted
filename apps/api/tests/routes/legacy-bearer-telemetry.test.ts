@@ -52,7 +52,7 @@ const workspaceAccess: WorkspaceAccessStore = {
   },
 };
 
-type SeenEvent = { eventType: string; workspaceId: string };
+type SeenEvent = { eventType: 'auth.request.legacy_bearer_used'; payload: { workspaceId: string } };
 
 const buildApp = (seen: SeenEvent[], withSink = true) => {
   const { writes } = createInMemoryStores({});
@@ -75,8 +75,8 @@ const buildApp = (seen: SeenEvent[], withSink = true) => {
     workspaceStore: createInMemoryWorkspaceStore(),
     ...(withSink
       ? {
-          legacyBearerAuditLog: (event: { eventType: string; workspaceId: string }) => {
-            seen.push({ eventType: event.eventType, workspaceId: event.workspaceId });
+          legacyBearerAuditLog: (event: SeenEvent) => {
+            seen.push({ eventType: event.eventType, payload: { workspaceId: event.payload.workspaceId } });
           },
         }
       : {}),
@@ -106,6 +106,8 @@ describe('T0.4.1 auth.request.legacy_bearer_used (V4 T2.2)', () => {
   });
 
   it('emits exactly 1 event when the legacy bearer is the effective authenticator', async () => {
+    // Flag ON (default): the legacy bearer is the effective authenticator.
+    delete process.env.SESSION_BEARER_FALLBACK_ENABLED;
     const app = buildApp(seen);
     await app.ready();
     const res = await app.inject({
@@ -115,10 +117,15 @@ describe('T0.4.1 auth.request.legacy_bearer_used (V4 T2.2)', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(seen).toHaveLength(1);
+    // End-to-end: the CANONICAL fail-closed contract event
+    // (buildObservabilityEvent) reached the sink — not a detached copy.
+    // Shape is { eventType, payload: { workspaceId } }; no credential,
+    // cookie, token, or header may leak into the payload.
     expect(seen[0]).toEqual({
       eventType: 'auth.request.legacy_bearer_used',
-      workspaceId: WS,
+      payload: { workspaceId: WS },
     });
+    expect(Object.keys(seen[0]!.payload)).toEqual(['workspaceId']);
     await app.close();
   });
 
@@ -180,8 +187,8 @@ describe('T0.4.1 auth.request.legacy_bearer_used (V4 T2.2)', () => {
       auth: buildAuthMock(),
       workspaceAccess,
       workspaceStore: createInMemoryWorkspaceStore(),
-      legacyBearerAuditLog: (event: { eventType: string; workspaceId: string }) => {
-        seen.push({ eventType: event.eventType, workspaceId: event.workspaceId });
+      legacyBearerAuditLog: (event: SeenEvent) => {
+        seen.push({ eventType: event.eventType, payload: { workspaceId: event.payload.workspaceId } });
       },
     });
     app.get('/_t22-probe', async (request) => request.authenticatedContext ?? { anonymous: true });

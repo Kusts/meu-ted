@@ -59,7 +59,7 @@ const workspaceAccess: WorkspaceAccessStore = {
   },
 };
 
-type SeenEvent = { eventType: string; workspaceId: string };
+type SeenEvent = { eventType: 'auth.request.legacy_bearer_used'; payload: { workspaceId: string } };
 
 const buildApp = (seen: SeenEvent[], calls: { register: number; rotate: number }) => {
   const { writes } = createInMemoryStores({});
@@ -94,8 +94,8 @@ const buildApp = (seen: SeenEvent[], calls: { register: number; rotate: number }
     auth: buildAuthMock(),
     workspaceAccess,
     workspaceStore: createInMemoryWorkspaceStore(),
-    legacyBearerAuditLog: (event: { eventType: string; workspaceId: string }) => {
-      seen.push({ eventType: event.eventType, workspaceId: event.workspaceId });
+    legacyBearerAuditLog: (event: SeenEvent) => {
+      seen.push({ eventType: event.eventType, payload: { workspaceId: event.payload.workspaceId } });
     },
   });
   app.get('/_ks-probe', async (request) => request.authenticatedContext ?? { anonymous: true });

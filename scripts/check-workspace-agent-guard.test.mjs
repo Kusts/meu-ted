@@ -4,6 +4,7 @@ import {
   scanWorkspaceAgentReferences,
   evaluateAllowlistGate,
   isCoveredByAllowlist,
+  WORKSPACE_AGENT_PATTERNS,
 } from "./check-legacy-runtime-references.mjs";
 
 const NOW = new Date("2026-09-16T12:00:00.000Z");
@@ -81,6 +82,9 @@ test("workspace-agent decommission guard (ARCH-V4-06a/b)", async (t) => {
     // at runtime (xlt-06 pattern) so the guard finds zero static references.
     // Previous golden (pre-removal total > 0, passed=false) is superseded —
     // kept in git history, not renewed.
+    // FIX-FINAL-3: this is a REAL pass, not the T4.3 false-PASS — the
+    // patterns below (f) now also match camelCase-interior and SNAKE_CASE
+    // residue, and the schema.ts residue that escaped them was removed.
     const report = scanWorkspaceAgentReferences({
       now: NOW,
       allowlist: allowlistOf([]),
@@ -88,5 +92,19 @@ test("workspace-agent decommission guard (ARCH-V4-06a/b)", async (t) => {
     assert.deepEqual(report.check06b.findings, []);
     assert.equal(report.check06b.total, 0);
     assert.equal(report.check06b.passed, true);
+  });
+
+  await t.test("(f) 06b patterns catch camelCase-interior and SNAKE_CASE residue (FIX-FINAL-3, no false-PASS)", () => {
+    // Regression: /\bWorkspaceAgent\b/ never matched
+    // "initializeWorkspaceAgentSchema" (no word boundary inside camelCase)
+    // nor "WORKSPACE_AGENT_SCHEMA_V1" (underscores, different case), so 06b
+    // reported PASS with residue still in apps/agent/src/schema.ts.
+    const matches = (line) => WORKSPACE_AGENT_PATTERNS.filter((item) => item.pattern.test(line)).map((item) => item.name);
+    assert.ok(matches("export function initializeWorkspaceAgentSchema(sql: SqlExecutor): void {").includes("WorkspaceAgent"));
+    assert.ok(matches("export const WORKSPACE_AGENT_SCHEMA_V1 = [").includes("WORKSPACE_AGENT"));
+    assert.ok(matches("for (const statement of WORKSPACE_AGENT_SCHEMA_V1) sql.exec(statement);").includes("WORKSPACE_AGENT"));
+    assert.ok(matches("class WorkspaceAgent extends Agent {}").includes("WorkspaceAgent"));
+    assert.deepEqual(matches("export function backfillTranscript(sql: SqlExecutor): void {"), []);
+    assert.deepEqual(matches("export function initializeMemorySchema(sql: MemorySql): void {"), []);
   });
 });

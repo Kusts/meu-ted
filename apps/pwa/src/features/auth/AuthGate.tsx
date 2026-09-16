@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
-import { getToken, setToken, setSessionToken } from "@/lib/auth/token-store";
+import { getToken, clearToken, setToken, setSessionToken } from "@/lib/auth/token-store";
 import { ApiError, clearActiveWorkspaceId } from "@/lib/api/client";
 import { signInWithEmail, registerDeviceToken, verifyDeviceToken, fetchSession } from "@/lib/api/auth";
 import { clearSensitiveSession } from "@/lib/session";
@@ -24,6 +24,19 @@ export function AuthGate({ children }: Props) {
     let cancelled = false;
 
     const init = async () => {
+      // FIX-FINAL-2 FINDING 1 (ADR-015 cookie-first): the boot ALWAYS probes
+      // the cookie session first (GET /auth/session). A stored device token
+      // is scoped (registration/verification/rotation) and never decides the
+      // session alone — an invalid device token (401) drops ONLY the device
+      // token; the cookie session is never cleared on this path.
+      let sessionUser: { id: string; email: string; name: string } | null = null;
+      try {
+        const session = await fetchSession();
+        sessionUser = session?.user ?? null;
+      } catch {
+        sessionUser = null;
+      }
+
       const token = getToken();
       if (!token) {
         // T2.5 (ADR-015 Opção C, session-first): the boot MUST NOT depend on
@@ -31,12 +44,7 @@ export function AuthGate({ children }: Props) {
         // operate — GET /auth/session is the scoped session check. Fail-closed:
         // no session means login; transport errors also mean login (unlike the
         // stored-token path, there is nothing offline-capable to unlock with).
-        try {
-          const session = await fetchSession();
-          if (!cancelled) setState(session?.user ? "unlocked" : "login");
-        } catch {
-          if (!cancelled) setState("login");
-        }
+        if (!cancelled) setState(sessionUser ? "unlocked" : "login");
         return;
       }
 
@@ -46,6 +54,18 @@ export function AuthGate({ children }: Props) {
       } catch (e) {
         if (cancelled) return;
         if (e instanceof ApiError && e.status === 401) {
+          // Scoped device token expired/rotated/revoked: drop ONLY it. When
+          // the cookie session is still valid the user stays unlocked; only
+          // a missing session falls through to the fail-closed login below.
+          try {
+            clearToken();
+          } catch {
+            /* noop */
+          }
+          if (sessionUser) {
+            if (!cancelled) setState("unlocked");
+            return;
+          }
           await clearSensitiveSession({
             clearToken: true,
             clearV1Snapshot: true,

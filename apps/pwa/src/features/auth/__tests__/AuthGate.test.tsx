@@ -96,11 +96,19 @@ describe("AuthGate", () => {
 
   it("shows login screen with expired msg when token returns 401", async () => {
     store["pi-finance:token"] = "expired-token";
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: false,
-      status: 401,
-      json: async () => ({ code: "auth.invalid_token" }),
-    } as Response);
+    vi.mocked(fetch)
+      // 0. Cookie-first session probe: no valid cookie session.
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: null }),
+      } as Response)
+      // 1. Scoped device verification: expired/rotated/revoked.
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ code: "auth.invalid_token" }),
+      } as Response);
 
     render(
       <AuthGate>
@@ -357,5 +365,35 @@ describe("AuthGate session-first boot (T2.5-client, ADR-015 Opção C)", () => {
 
     await screen.findByPlaceholderText(/seu\.email@exemplo\.com/, {}, { timeout: 3000 });
     expect(screen.queryByTestId("app")).not.toBeInTheDocument();
+  });
+
+  it("keeps a valid cookie session unlocked when the stored device token expired (401)", async () => {
+    // FIX-FINAL-2 FINDING 1 (RED): cookie-first boot — a valid cookie session
+    // must survive an expired/rotated/revoked device token. Only the device
+    // token is dropped; the cookie session is never cleared.
+    store["pi-finance:token"] = "expired-device-token";
+    vi.mocked(fetch)
+      // 0. Cookie-first session probe: valid cookie session.
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: "u1", email: "walis@example.com", name: "W" } }),
+      } as Response)
+      // 1. Scoped device verification: expired/rotated/revoked.
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ code: "auth.invalid_token" }),
+      } as Response);
+
+    render(
+      <AuthGate>
+        <div data-testid="app">App Content</div>
+      </AuthGate>,
+    );
+
+    expect(await screen.findByTestId("app", {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(store["pi-finance:token"]).toBeUndefined();
+    expect(screen.queryByText(/Sessão antiga expirada/)).not.toBeInTheDocument();
   });
 });

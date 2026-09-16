@@ -22,13 +22,8 @@ import { resolveApplicationUserId } from '../auth/resolve-user-id.js';
 import { resolveHouseholdId } from '../auth/resolve-household-id.js';
 import type {
   CreateAccountInput,
-  CreateCategoryInput,
   CreateExpenseInput,
   CreateIncomeInput,
-  CreateTransferInput,
-  UpdateAccountInput,
-  UpdateCategoryInput,
-  UpdateTransactionInput,
 } from './types.js';
 
 type Row = Record<string, unknown>;
@@ -912,14 +907,12 @@ export const createPostgresIdempotencyStore = (opts: { pool: Pool; legacy?: bool
       let payload: unknown;
       let producer: IdempotencyProducer<any>;
       let operation: string | undefined;
-      let actorType: string | undefined;
       let actorId: string | undefined;
 
       if (typeof scopeOrHouseholdId === 'object' && scopeOrHouseholdId !== null) {
         householdId = scopeOrHouseholdId.householdId ?? scopeOrHouseholdId.workspaceId;
         key = scopeOrHouseholdId.key;
         operation = scopeOrHouseholdId.operation;
-        actorType = scopeOrHouseholdId.actorType;
         actorId = scopeOrHouseholdId.actorId;
         payload = keyOrPayload;
         producer = payloadOrProducer;

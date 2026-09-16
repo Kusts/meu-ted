@@ -37,6 +37,68 @@ type Env = {
 /** Production PWA host — the only browser origin trusted in production. */
 export const PRODUCTION_PWA_ORIGIN = "https://pi-finance-pwa.walissonead.workers.dev";
 
+/**
+ * FIX-FINAL-2 FINDING 2: ceiling for RPC bodies buffered before forwarding
+ * to the Durable Object. Chat/mutation RPC payloads are small (short text
+ * plus metadata-only attachments), so 2MB leaves ample headroom while
+ * bounding memory per request. Oversized bodies are rejected with 413
+ * before a single byte reaches the DO.
+ */
+export const MAX_RPC_BODY_BYTES = 2 * 1024 * 1024;
+
+const rpcPayloadTooLarge = (): Response =>
+  Response.json(
+    { code: "agent.payload_too_large", message: `Request body exceeds ${MAX_RPC_BODY_BYTES} bytes` },
+    { status: 413 },
+  );
+
+/**
+ * Reads the request body up to MAX_RPC_BODY_BYTES. A declared
+ * Content-Length above the ceiling is rejected up front; otherwise the
+ * stream is consumed in chunks and aborted the moment the ceiling is
+ * crossed — the worker never buffers an unbounded body. GET/HEAD requests
+ * carry no body and resolve to an empty result.
+ */
+async function readBoundedBody(request: Request): Promise<{ body?: ArrayBuffer } | { response: Response }> {
+  if (request.method === "GET" || request.method === "HEAD") return {};
+  const declared = request.headers.get("content-length");
+  if (declared !== null) {
+    const length = Number(declared);
+    if (Number.isFinite(length) && length > MAX_RPC_BODY_BYTES) return { response: rpcPayloadTooLarge() };
+  }
+  const stream = request.body;
+  if (!stream) {
+    const buffered = await request.arrayBuffer();
+    if (buffered.byteLength > MAX_RPC_BODY_BYTES) return { response: rpcPayloadTooLarge() };
+    return buffered.byteLength === 0 ? {} : { body: buffered };
+  }
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_RPC_BODY_BYTES) {
+        await reader.cancel().catch(() => {});
+        return { response: rpcPayloadTooLarge() };
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (total === 0) return {};
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { body: merged.buffer as ArrayBuffer };
+}
+
 const LOCAL_ORIGINS = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",
@@ -183,7 +245,11 @@ export default {
         // Buffer the body before forwarding: relaying the live stream
         // throws outside the Workers runtime (Node requires duplex) and
         // after any prior read — an ArrayBuffer forwards safely on both.
-        const rpcBody = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
+        // Bounded (FIX-FINAL-2 FINDING 2): the body is read with a byte
+        // ceiling and rejected with 413 before reaching the DO.
+        const bounded = await readBoundedBody(request);
+        if ("response" in bounded) return bounded.response;
+        const rpcBody = bounded.body;
         return financeAgent.fetch(
           new Request(rpcUrl, { method: request.method, headers, body: rpcBody }),
         );

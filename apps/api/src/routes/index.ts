@@ -156,13 +156,13 @@ export type RouteDeps = {
 
 /**
  * V4 T2.2 / T0.4.1 (SPEC §24.1): evento de telemetria de uso EFETIVO do
- * fallback bearer legado. Dimensão mínima: workspace_id. Construído sempre
- * pelo contrato fail-closed (buildObservabilityEvent) — nunca carrega
- * credencial, cookie, token ou header.
+ * fallback bearer legado. É o evento CANÔNICO do contrato fail-closed
+ * (buildObservabilityEvent): { eventType, payload: { workspaceId } } —
+ * nunca carrega credencial, cookie, token ou header.
  */
 export type LegacyBearerUsedAuditEvent = {
   eventType: 'auth.request.legacy_bearer_used';
-  workspaceId: string;
+  payload: { workspaceId: string };
 };
 
 const SESSION_BEARER_FALLBACK_OFF_VALUES = new Set(['0', 'false', 'no', 'off']);
@@ -301,17 +301,16 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
               cookieOnly.delete('authorization');
               const cookieSession = await getBetterAuthSessionContext(auth, cookieOnly).catch(() => undefined);
               if (!cookieSession) {
-                const _event = buildObservabilityEvent('auth.request.legacy_bearer_used', {
+                // The CANONICAL contract event flows to the sink (same
+                // reference validated by buildObservabilityEvent) — never a
+                // detached copy.
+                const entry = buildObservabilityEvent('auth.request.legacy_bearer_used', {
                   workspaceId: access.householdId,
-                });
+                }) as LegacyBearerUsedAuditEvent;
                 try {
                   const sink = deps.legacyBearerAuditLog;
-                const entry: LegacyBearerUsedAuditEvent = {
-                  eventType: 'auth.request.legacy_bearer_used',
-                  workspaceId: access.householdId,
-                };
                   if (sink) sink(entry);
-                  else request.log.info({ event: entry.eventType, workspaceId: entry.workspaceId });
+                  else request.log.info({ event: entry.eventType, ...entry.payload });
                 } catch {
                   // Telemetry never breaks authentication.
                 }

@@ -258,7 +258,6 @@ export const createPostgresPendingOperationV2Store = (
     if (String(row.actor_id) !== identity.actorId || String(row.device_id) !== identity.deviceId) return fail('approval.binding_mismatch', 'A operação não pertence ao contexto autenticado.', 403);
     return row;
   };
-  const issue = (row: PendingV2Row): { row: PendingV2Row; token: string } => ({ row, token: attestation() });
   return {
     get audit() { return events; },
     async propose(operation) {

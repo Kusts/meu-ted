@@ -40,22 +40,5 @@
       "!**/generated/**",
       "!**/*.generated.*"
     ]
-  },
-  "overrides": [
-    {
-      "includes": [
-        "apps/api/src/writes/**",
-        "apps/api/src/approvals/pending-v2.ts",
-        "apps/api/src/auth/device-token.ts"
-      ],
-      "linter": {
-        "rules": {
-          "correctness": {
-            "noUnusedImports": "warn",
-            "noUnusedVariables": "warn"
-          }
-        }
-      }
-    }
-  ]
+  }
 }
