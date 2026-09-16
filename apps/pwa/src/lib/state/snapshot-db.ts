@@ -1,12 +1,24 @@
 /**
  * Snapshot DB — IndexedDB v2 offline snapshot.
  *
- * Stores domain data keyed by SHA-256 token fingerprint (no plaintext token).
- * Schema version 2. Supports migration from localStorage v1 to IndexedDB v2.
+ * Partitioned by offlineSubjectId (the active workspace/household UUID —
+ * opaque, non-credential, never derived from a credential — SPEC §8.B4,
+ * D-V4-11). The SHA-256 token fingerprint stays as an ADDITIONAL defense
+ * layer, never the primary key. Every envelope carries
+ * lastOnlineAuthenticatedAt (SPEC §10 D1); reads fail closed when the age
+ * exceeds MAX_OFFLINE_AUTH_AGE (SPEC §10 D2, default 72h, call-time env
+ * `NEXT_PUBLIC_MAX_OFFLINE_AUTH_AGE_HOURS`).
+ *
+ * Migration (T2.6): pre-T2.6 envelopes keyed by fingerprint only (no
+ * subject, no age) are treated as untrusted on read — invalidated (deleted)
+ * so the next online cycle re-syncs. Zero data loss: the snapshot is a
+ * re-syncable cache, never the source of truth (the API is).
  *
  * On corrupt/schema/owner mismatch: delete v2 and return no data,
  * forcing online sync.
  */
+import { getOfflineSubjectId } from "@/lib/auth/offline-subject";
+import { getMaxOfflineAuthAgeMs } from "@/lib/capabilities";
 // Local types — duplicated structurally from snapshot-store, but using the real
 // domain shapes from ./types (a leaf module, so no circular dependency).
 // Keeping the shapes identical to snapshot-store's SnapshotDomains lets
@@ -46,8 +58,136 @@ export const SNAPSHOT_OPERATION_TIMEOUT_MS = 5_000;
 interface V2Envelope {
   schema: 2;
   ownerFingerprint: string;
+  /**
+   * Partition key (T2.6 B4): active workspace/household UUID. Absent only
+   * on legacy (pre-T2.6) envelopes, which are treated as untrusted.
+   */
+  offlineSubjectId?: string;
+  /**
+   * Last online-authenticated instant (T2.6 D1, ISO). Refreshed on every
+   * online write/migration/revalidation. Absent only on legacy envelopes.
+   */
+  lastOnlineAuthenticatedAt?: string;
   domains: Partial<SnapshotDomains>;
   syncedAt: Partial<Record<DomainKey, string>>;
+}
+
+// ── Offline age policy (T2.6 D1-D3, ADR-015) ─────────────────────────
+
+/**
+ * Closed age-band enum for the `offline.locked` telemetry event (T0.4.4,
+ * SPEC §24.4): coarse bands only — never timestamps, durations or free
+ * text. Mirrors the API-side OFFLINE_AGE_BANDS allowlist.
+ */
+export const OFFLINE_AGE_BANDS = ["<1d", "1-7d", "7-30d", ">30d"] as const;
+
+export type OfflineAgeBand = (typeof OFFLINE_AGE_BANDS)[number];
+
+/**
+ * Clock-skew allowance (ADR-015: tolerance registered, never authority):
+ * max(5 minutes, 5% of the max age). A device clock slightly behind the
+ * stamping clock must not false-lock; the allowance only EXTENDS the
+ * limit, never bypasses the check.
+ */
+export function getOfflineClockSkewMs(maxAgeMs: number): number {
+  return Math.max(5 * 60_000, maxAgeMs * 0.05);
+}
+
+export function getOfflineAgeBand(ageMs: number): OfflineAgeBand {
+  const day = 24 * 3_600_000;
+  if (ageMs < day) return "<1d";
+  if (ageMs < 7 * day) return "1-7d";
+  if (ageMs < 30 * day) return "7-30d";
+  return ">30d";
+}
+
+export type OfflineLockState =
+  | { state: "empty" }
+  | { state: "ok"; offlineSubjectId: string; ageMs: number; ageBand: OfflineAgeBand }
+  | {
+      state: "locked";
+      reason: "no-subject" | "expired";
+      offlineSubjectId?: string;
+      ageMs?: number;
+      ageBand?: OfflineAgeBand;
+    }
+  | { state: "untrusted"; reason: "legacy-envelope" | "subject-mismatch" | "missing-age" };
+
+/**
+ * Pure lock evaluation (unit-tested; the offline shell mirrors this logic
+ * in plain JS — see public/offline-shell.js — with the same 72h default
+ * and skew rule, since the shell runs without the app bundle).
+ */
+export function evaluateOfflineLock(
+  env: { offlineSubjectId?: unknown; lastOnlineAuthenticatedAt?: unknown } | null,
+  subject: string | null,
+  nowMs: number,
+  maxAgeMs: number,
+): OfflineLockState {
+  if (!env) return { state: "empty" };
+  // No local subject: ownership cannot be verified → fail closed. The
+  // envelope is kept (it may belong to a subject restored on next login).
+  if (!subject) return { state: "locked", reason: "no-subject" };
+  if (typeof env.offlineSubjectId !== "string" || env.offlineSubjectId.length === 0) {
+    return { state: "untrusted", reason: "legacy-envelope" };
+  }
+  if (env.offlineSubjectId !== subject) {
+    return { state: "untrusted", reason: "subject-mismatch" };
+  }
+  if (typeof env.lastOnlineAuthenticatedAt !== "string") {
+    return { state: "untrusted", reason: "missing-age" };
+  }
+  const stamped = Date.parse(env.lastOnlineAuthenticatedAt);
+  if (Number.isNaN(stamped)) return { state: "untrusted", reason: "missing-age" };
+  // Future stamps (clock moved backwards) clamp to zero — never negative.
+  const ageMs = Math.max(0, nowMs - stamped);
+  if (ageMs > maxAgeMs + getOfflineClockSkewMs(maxAgeMs)) {
+    return {
+      state: "locked",
+      reason: "expired",
+      offlineSubjectId: subject,
+      ageMs,
+      ageBand: getOfflineAgeBand(ageMs),
+    };
+  }
+  return { state: "ok", offlineSubjectId: subject, ageMs, ageBand: getOfflineAgeBand(ageMs) };
+}
+
+/**
+ * Read the envelope and evaluate the offline lock with live clock and
+ * call-time max age. Never throws: storage failures report "empty"
+ * (fail-closed at the reader, which treats non-ok as no data).
+ */
+export async function getOfflineSnapshotLockState(
+  nowMs: number = Date.now(),
+  maxAgeMs: number = getMaxOfflineAuthAgeMs(),
+): Promise<OfflineLockState> {
+  try {
+    const env = await readV2Envelope();
+    return evaluateOfflineLock(env, getOfflineSubjectId(), nowMs, maxAgeMs);
+  } catch {
+    return { state: "empty" };
+  }
+}
+
+/**
+ * Online revalidation (T2.6 D3): refresh the envelope's age stamp to now
+ * after a successful online authentication, preserving domains. Returns
+ * false when there is nothing to refresh. Never creates an envelope —
+ * creation happens only through authenticated writes/migration.
+ */
+export async function refreshOfflineAuthAge(nowIso?: string): Promise<boolean> {
+  const at = nowIso ?? new Date().toISOString();
+  if (Number.isNaN(Date.parse(at))) return false;
+  let refreshed = false;
+  await withWriteLock(async () => {
+    const existing = await readV2Envelope();
+    if (!existing) return;
+    existing.lastOnlineAuthenticatedAt = at;
+    await writeV2Envelope(existing);
+    refreshed = true;
+  });
+  return refreshed;
 }
 
 // ── Database lifecycle ─────────────────────────────────────────────
@@ -202,7 +342,13 @@ export async function deleteV2Snapshot(): Promise<void> {
 
 /**
  * Read one domain from v2 snapshot.
- * Returns null on owner mismatch, corrupt data, or missing envelope.
+ *
+ * Fail-closed (T2.6): returns null on owner mismatch, corrupt data,
+ * missing envelope, subject partition miss, missing age stamp, or expired
+ * age (`offline session locked`). Untrusted envelopes (legacy without
+ * subject/age, subject mismatch) are invalidated so the next online cycle
+ * re-syncs; merely expired envelopes are KEPT so online revalidation can
+ * unlock without a full re-sync.
  */
 export async function readV2Snapshot<K extends DomainKey>(
   token: string,
@@ -218,6 +364,19 @@ export async function readV2Snapshot<K extends DomainKey>(
       return null;
     }
 
+    const lock = evaluateOfflineLock(
+      env,
+      getOfflineSubjectId(),
+      Date.now(),
+      getMaxOfflineAuthAgeMs(),
+    );
+    if (lock.state === "locked") return null; // kept for revalidation
+    if (lock.state !== "ok") {
+      // Untrusted (legacy / mismatch / missing age) — invalidate, re-sync online.
+      await deleteV2Snapshot();
+      return null;
+    }
+
     const data = env.domains[domain];
     const syncedAt = env.syncedAt[domain];
     if (data === undefined || syncedAt === undefined) return null;
@@ -229,24 +388,68 @@ export async function readV2Snapshot<K extends DomainKey>(
   }
 }
 
+export interface WriteV2SnapshotOptions {
+  /**
+   * Override the age stamp (tests / controlled re-stamps). Defaults to
+   * now. Invalid values fall back to now — a write is always an
+   * online-authenticated moment, so the stamp must exist.
+   */
+  lastOnlineAuthenticatedAt?: string;
+}
+
+/** Build a fresh envelope base stamped with subject + age. */
+function freshEnvelope(fp: string, authenticatedAt: string): V2Envelope {
+  const subject = getOfflineSubjectId();
+  return {
+    schema: 2,
+    ownerFingerprint: fp,
+    ...(subject ? { offlineSubjectId: subject } : {}),
+    lastOnlineAuthenticatedAt: authenticatedAt,
+    domains: {},
+    syncedAt: {},
+  };
+}
+
+function resolveAuthenticatedAt(override?: string): string {
+  if (override && !Number.isNaN(Date.parse(override))) return override;
+  return new Date().toISOString();
+}
+
 /**
  * Write one domain to the v2 snapshot.
- * Stamps with the token fingerprint (never the raw token).
+ * Stamps with the token fingerprint (never the raw token) plus the
+ * offlineSubjectId partition and the last-online-auth age stamp.
  */
 export async function writeV2Snapshot<K extends DomainKey>(
   token: string,
   domain: K,
   data: SnapshotDomains[K],
+  opts?: WriteV2SnapshotOptions,
 ): Promise<void> {
   const fp = await fingerprint(token);
+  const authenticatedAt = resolveAuthenticatedAt(opts?.lastOnlineAuthenticatedAt);
+  const subject = getOfflineSubjectId();
   // Serialize the read-modify-write so concurrent bootstrap writes (one per
   // domain) cannot read a stale envelope and overwrite each other's data.
   await withWriteLock(async () => {
     const existing = await readV2Envelope();
-    const base: V2Envelope = existing && existing.ownerFingerprint === fp
+    // Adopt only the same partition (fingerprint + subject). A subjectless
+    // writer never adopts a subject-stamped envelope (it may belong to a
+    // session whose subject was lost) — it starts a fresh base instead.
+    const samePartition =
+      existing &&
+      existing.ownerFingerprint === fp &&
+      (subject === null ? !existing.offlineSubjectId : existing.offlineSubjectId === subject);
+    const base: V2Envelope = samePartition
       ? existing
-      : { schema: 2, ownerFingerprint: fp, domains: {}, syncedAt: {} };
+      : freshEnvelope(fp, authenticatedAt);
 
+    // A new partition base already carries the stamp; an adopted envelope
+    // is refreshed because this write is an online-authenticated moment.
+    // Legacy adopted envelopes (no subject field) gain the current subject
+    // only when one is present — never a credential-derived value.
+    if (subject && !base.offlineSubjectId) base.offlineSubjectId = subject;
+    base.lastOnlineAuthenticatedAt = authenticatedAt;
     base.domains[domain] = data;
     base.syncedAt[domain] = new Date().toISOString();
 
@@ -313,9 +516,15 @@ export async function migrateV1toV2(token: string): Promise<void> {
   try {
     const fp = await fingerprint(token);
     const existing = await readV2Envelope();
-    const base: V2Envelope = existing && existing.ownerFingerprint === fp
+    const subject = getOfflineSubjectId();
+    const authenticatedAt = new Date().toISOString();
+    const samePartition =
+      existing &&
+      existing.ownerFingerprint === fp &&
+      (subject === null ? !existing.offlineSubjectId : existing.offlineSubjectId === subject);
+    const base: V2Envelope = samePartition
       ? existing
-      : { schema: 2, ownerFingerprint: fp, domains: {}, syncedAt: {} };
+      : freshEnvelope(fp, authenticatedAt);
 
     for (const domain of Object.keys(v1.data)) {
       base.domains[domain as keyof SnapshotDomains] = v1.data[domain] as never;
@@ -326,6 +535,10 @@ export async function migrateV1toV2(token: string): Promise<void> {
       base.syncedAt[domain as DomainKey] =
         v1.syncedAt[domain] ?? new Date().toISOString();
     }
+    // Migration runs inside an authenticated bootstrap: the adopted or fresh
+    // base carries the current subject partition and a fresh age stamp.
+    if (subject && !base.offlineSubjectId) base.offlineSubjectId = subject;
+    base.lastOnlineAuthenticatedAt = authenticatedAt;
 
     await writeV2Envelope(base);
 

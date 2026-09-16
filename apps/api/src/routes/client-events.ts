@@ -81,6 +81,20 @@ export const registerClientEventsRoutes = (
       }
       throw error;
     }
+    // FIX-F1 session binding: the offline lock subject is the session
+    // household — a client must not attribute lock state to another subject.
+    if (event.eventType === 'offline.locked') {
+      const subject = event.payload['offlineSubjectId'];
+      if (
+        typeof subject !== 'string' ||
+        subject.toLowerCase() !== context.householdId.toLowerCase()
+      ) {
+        return reply.code(400).send({
+          code: 'observability.subject_mismatch',
+          message: "event 'offline.locked' field 'offlineSubjectId' must match the session household",
+        });
+      }
+    }
     request.log.info({
       event: 'client.event',
       eventType: event.eventType,

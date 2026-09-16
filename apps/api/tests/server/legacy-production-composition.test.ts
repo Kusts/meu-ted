@@ -22,7 +22,8 @@ const legacyPool = {
   async query(sql: string, values: unknown[] = []) {
     if (sql.includes('information_schema.columns')) return { rows: legacyColumns };
     if (sql.includes('FROM _migrations')) return { rows: expectedMigrationManifest(true) };
-    if (sql.includes('FROM device_tokens')) return { rows: [{ device_id: 'legacy-device', household_id: HOUSEHOLD_A }] };
+    if (sql.includes('UPDATE device_tokens SET last_used_at')) return { rowCount: 1, rows: [] };
+    if (sql.includes('FROM device_tokens')) return { rowCount: 1, rows: [{ device_id: 'legacy-device', household_id: HOUSEHOLD_A, expires_at: null }] };
     if (sql.includes('FROM audit_logs')) {
       const matches = values.includes('account') && values.includes('00000000-0000-4000-8000-0000000000a1');
       return { rows: matches ? [{
@@ -113,7 +114,8 @@ describe('legacy production composition', () => {
       async query(sql: string, values: unknown[] = []) {
         if (sql.includes('information_schema.columns')) return { rows: legacyColumns };
         if (sql.includes('FROM _migrations')) return { rows: expectedMigrationManifest(false) };
-        if (sql.includes('FROM device_tokens')) return { rows: [{ device_id: 'canonical-device', household_id: HOUSEHOLD_A }] };
+        if (sql.includes('UPDATE device_tokens SET last_used_at')) return { rowCount: 1, rows: [] };
+        if (sql.includes('FROM device_tokens')) return { rowCount: 1, rows: [{ device_id: 'canonical-device', household_id: HOUSEHOLD_A, expires_at: null }] };
         if (sql.includes('FROM audit_logs')) {
           const matches = values.includes('account') && values.includes('00000000-0000-4000-8000-0000000000a1');
           return { rows: matches ? [{

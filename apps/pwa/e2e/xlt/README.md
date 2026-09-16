@@ -49,9 +49,10 @@ nunca executa XLTs por acidente — e vice-versa.
 | XLT-00 | `xlt-00-headers-contract.spec.ts` | T0.2 (fumaça da categoria) |
 | XLT-01 | `xlt-01-ted-microphone.spec.ts` | T1.2 |
 | XLT-02 | auth cookie-first (futuro) | T2.2/T2.3 |
-| XLT-03/04/05 | borda/CSP/localhost (futuro) | T2.7 |
+| XLT-03/04/05 | borda/CSP/localhost | T2.7 |
 | XLT-06 | pós-descomissionamento (futuro) | T4.3 |
-| XLT-08/09 | offline/logout (futuro) | T2.6 (+T3.x onde couber) |
+| XLT-08 | `xlt-08-offline-lock.spec.ts` | T2.6 |
+| XLT-09 | `xlt-09-logout-cleanup.spec.ts` | T2.6 |
 
 XLT-07 e XLT-10 são da API — ver `apps/api/tests/xlt/README.md`.
 Detalhe canônico da categoria: `docs/testing/xlt-category.md`.

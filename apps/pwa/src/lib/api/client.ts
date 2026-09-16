@@ -4,11 +4,11 @@
  * via Set-Cookie passthrough, allowlisted headers, Origin check, upstream
  * timeout, `no-store` responses).
  *
- * `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL`, when explicitly set, overrides the
- * proxy — transient compatibility for test/development environments only
- * (ADR-011 "Decisão": compatibilidade transitória). It is never a silent
- * production default: without it, production origins use the proxy and any
- * other origin stays unconfigured (fail closed).
+ * `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL`, when explicitly set OFF the
+ * production host, overrides the proxy — explicit dev/test escape hatch only
+ * (ADR-011 "Decisão": compatibilidade transitória; T2.1/ADR-015 session-first
+ * Option C). It is never a published production default: the production host
+ * always uses the proxy, with or without the env set.
  *
  * Auth transport (ADR-011 compat window): the proxy forwards `cookie` (plus
  * `authorization`/`x-device-token` when present) with `credentials: "include"`,
@@ -25,6 +25,12 @@
 import { z, type ZodType } from "zod";
 import { closeAllSockets } from "@/lib/auth/socket-registry";
 import { CLIENT_EVENTS_STORAGE_KEY } from "@/lib/telemetry/client-events";
+import {
+  getSessionToken as getStoredSessionToken,
+  getToken as getStoredDeviceToken,
+} from "@/lib/auth/token-store";
+import { setOfflineSubjectId } from "@/lib/auth/offline-subject";
+import { noteLegacyAuthUsage } from "@/lib/auth/legacy-usage";
 
 export const responseSchema = z
   .object({
@@ -37,7 +43,7 @@ export const responseSchema = z
     { message: "Invalid API response envelope" },
   );
 
-const PRODUCTION_PWA_HOST = "pi-finance-pwa.walissonead.workers.dev";
+export const PRODUCTION_PWA_HOST = "pi-finance-pwa.walissonead.workers.dev";
 /** Canonical same-origin proxy base (ADR-011) — never a cross-origin default. */
 const SAME_ORIGIN_BACKEND_PROXY = "/api/backend";
 
@@ -45,18 +51,33 @@ let activeWorkspaceId: string | undefined;
 
 export function setActiveWorkspaceId(workspaceId: string | undefined): void {
   activeWorkspaceId = workspaceId;
+  // T2.2 B4/D-V4-11: o id do workspace ativo (UUID opaco, não-credencial) é
+  // persistido como offlineSubjectId no momento em que é definido após auth
+  // válida — todo set passa por este choke point (workspace-context). Chave
+  // dedicada, nunca IndexedDB de credencial. Best-effort, nunca quebra o fluxo.
+  if (workspaceId !== undefined) {
+    try {
+      setOfflineSubjectId(workspaceId);
+    } catch {
+      /* noop */
+    }
+  }
 }
 
 export function clearActiveWorkspaceId(): void {
   activeWorkspaceId = undefined;
 }
 function baseUrl(): string | undefined {
-  const configured = process.env.NEXT_PUBLIC_PI_FINANCE_API_BASE_URL?.replace(/\/$/, "");
-  if (configured) return configured;
-
+  // T2.1 (ADR-015 session-first, Option C): the production host always uses
+  // the same-origin proxy so the HttpOnly session cookie reaches the API.
+  // The explicit env below is a dev/test-only escape hatch and is ignored
+  // in production.
   if (typeof window !== "undefined" && window.location.hostname === PRODUCTION_PWA_HOST) {
     return SAME_ORIGIN_BACKEND_PROXY;
   }
+
+  const configured = process.env.NEXT_PUBLIC_PI_FINANCE_API_BASE_URL?.replace(/\/$/, "");
+  if (configured) return configured;
 
   return undefined;
 }
@@ -66,26 +87,28 @@ export function isApiConfigured(): boolean {
 }
 
 /**
- * Returns the session token from localStorage (safe for client-side only).
+ * Returns the session token from the token-store (única abstração, T2.2 B2).
  * ADR-011 compat fallback: the same-origin proxy authenticates via the
  * HttpOnly cookie first — this Bearer is only a fallback for origins where
  * the Secure cookie is not persisted. See the TODO(ADR-011) in the header.
+ * T2.3 B3.5: com NEXT_PUBLIC_LEGACY_BEARER_COMPAT=off a token-store retorna
+ * null (leitura removida) e nenhum Authorization de sessão é anexado.
  */
 export function getSessionToken(): string | undefined {
   try {
-    return localStorage.getItem("pi-finance:session-token") ?? undefined;
+    return getStoredSessionToken() ?? undefined;
   } catch {
     return undefined;
   }
 }
 
 /**
- * Returns the auth token from localStorage (safe for client-side only).
+ * Returns the auth token from the token-store (única abstração, T2.2 B2).
  * ADR-011 compat fallback — see getSessionToken / header TODO(ADR-011).
  */
 export function getAuthToken(): string | undefined {
   try {
-    return localStorage.getItem("pi-finance:token") ?? undefined;
+    return getStoredDeviceToken() ?? undefined;
   } catch {
     return undefined;
   }
@@ -169,6 +192,9 @@ export async function apiFetch<T>(
   // ADR-011: cookie session (credentials: "include" below) is primary on the
   // same-origin proxy path; localStorage headers are compat fallback only and
   // are omitted entirely when absent — the proxy MUST NOT require them.
+  // T2.2: cada anexo de fallback conta na telemetria local (só contadores).
+  if (sessionToken) noteLegacyAuthUsage("session");
+  if (resolvedToken) noteLegacyAuthUsage("device");
   const requestHeaders: Record<string, string> = {
     Accept: "application/json",
     ...(rest.body ? { "Content-Type": "application/json" } : {}),

@@ -143,3 +143,70 @@ describe("client-events flush (FIX-F0 POST /client-events)", () => {
     expect(CLIENT_EVENTS_STORAGE_KEY).toBe("pi-finance:client-events");
   });
 });
+
+describe("client-events flush concurrency (FIX-F1 single in-flight sender)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("coalesces two simultaneous flushes into a single sender call", async () => {
+    recordClientEvent("mic.error", { reason: "denied", microphoneEnabled: true });
+    let resolveSender!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resolveSender = resolve;
+    });
+    const sender = vi.fn(async () => {
+      await gate;
+    });
+
+    const first = flushQueuedClientEvents(sender);
+    const second = flushQueuedClientEvents(sender);
+    resolveSender();
+    const [flushedA, flushedB] = await Promise.all([first, second]);
+
+    expect(sender).toHaveBeenCalledTimes(1);
+    expect(flushedA).toHaveLength(1);
+    expect(flushedB).toHaveLength(1);
+    expect(getQueuedClientEvents()).toHaveLength(0);
+  });
+
+  it("keeps events appended while the sender is pending (no wipe)", async () => {
+    recordClientEvent("mic.error", { reason: "denied", microphoneEnabled: true });
+    let resolveSender!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resolveSender = resolve;
+    });
+    const sender = vi.fn(async () => {
+      await gate;
+    });
+
+    const pending = flushQueuedClientEvents(sender);
+    // Event recorded DURING the in-flight send — must survive the flush.
+    recordClientEvent("mic.error", { reason: "busy", microphoneEnabled: false });
+    resolveSender();
+    await pending;
+
+    const remaining = getQueuedClientEvents();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]).toMatchObject({ reason: "busy" });
+  });
+
+  it("preserves the queue when the sender fails", async () => {
+    recordClientEvent("mic.error", { reason: "denied", microphoneEnabled: true });
+    const failing = vi.fn(async () => {
+      throw new Error("no ack");
+    });
+    await expect(flushQueuedClientEvents(failing)).rejects.toThrow();
+    expect(getQueuedClientEvents()).toHaveLength(1);
+    // A retry after the failure still sends the preserved event.
+    const retry = vi.fn(async () => {});
+    await flushQueuedClientEvents(retry);
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(getQueuedClientEvents()).toHaveLength(0);
+  });
+});

@@ -43,6 +43,12 @@ import * as endpoints from "@/lib/api/endpoints";
 import { runBootstrap, type SnapshotPreload } from "./sync-engine";
 import type { AppStateAction } from "./state-reducer";
 import { migrateV1toV2, loadSnapshotDomain } from "./snapshot-store";
+import {
+  getOfflineSnapshotLockState,
+  refreshOfflineAuthAge,
+} from "./snapshot-db";
+import { stampLastOnlineAuthenticatedAt } from "@/lib/session";
+import { recordClientEvent } from "@/lib/telemetry/client-events";
 import { createCommands, type Commands } from "./commands";
 import {
   createMutationReconciler,
@@ -86,6 +92,15 @@ export interface AppState {
   // Sync / mode
   sync: Record<DomainKey, DomainSync>;
   readOnly: boolean;
+  /**
+   * Offline session lock (V4 T2.6, SPEC §10 D2-D3): true when the snapshot
+   * age exceeds MAX_OFFLINE_AUTH_AGE or the subject partition cannot be
+   * verified. Locked UI must not render financial data; revalidation
+   * online (revalidateOfflineSession) unlocks.
+   */
+  offlineLocked: boolean;
+  /** Online revalidation: refresh the age stamp and unlock. False on failure. */
+  revalidateOfflineSession: () => Promise<boolean>;
   // Fetch state
   loading: boolean;
   error: string | null;
@@ -497,6 +512,58 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return preload;
   }, []);
 
+  // ── Offline session lock (V4 T2.6, SPEC §10 D2-D3) ──────────────
+  // Locked UI must not render financial data. The envelope age is
+  // refreshed automatically by every live snapshot write (writeV2Snapshot);
+  // the session stamp below records the login/refresh/authenticated-request
+  // moments (session.ts). Unlock requires a proven online authentication.
+  const [offlineLocked, setOfflineLocked] = useState(false);
+
+  /**
+   * Online revalidation: refresh the session stamp + envelope age and
+   * unlock. Call only after an online authentication succeeded (login,
+   * refresh, fulfilled strict fetch, manual retry). False on failure.
+   */
+  const revalidateOfflineSession = useCallback(async (): Promise<boolean> => {
+    try {
+      stampLastOnlineAuthenticatedAt();
+      await refreshOfflineAuthAge().catch(() => false);
+      setOfflineLocked(false);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  /**
+   * Evaluate the snapshot lock and reflect it in UI state. Attributable
+   * expiries are reported via the offline.locked client event (T0.4.4),
+   * queued durably for the next authenticated flush. Never throws.
+   */
+  const reportOfflineLock = useCallback(async (): Promise<void> => {
+    try {
+      const lock = await getOfflineSnapshotLockState();
+      if (lock.state === "locked") {
+        setOfflineLocked(true);
+        if (lock.reason === "expired" && lock.offlineSubjectId && lock.ageBand) {
+          try {
+            recordClientEvent("offline.locked", {
+              offlineSubjectId: lock.offlineSubjectId,
+              ageBand: lock.ageBand,
+            });
+          } catch {
+            /* telemetry never blocks boot */
+          }
+        }
+      } else if (lock.state === "ok") {
+        setOfflineLocked(false);
+      }
+      // "untrusted"/"empty": leave the flag untouched — no data to gate.
+    } catch {
+      /* lock evaluation never blocks boot */
+    }
+  }, []);
+
   // ── Write boundary: commands factory (offline-safe) ───────────────
   // Every UI write goes through `commands.x(...)`; when `online` is false
   // the command throws `OfflineWriteError` with zero network/optimistic
@@ -533,6 +600,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         // 2. Preload existing v2 snapshot for offline fallback
         const snapshotPreload = await preloadSnapshot(token).catch(() => ({}));
 
+        // 2b. T2.6: reflect a locked snapshot in UI state before bootstrapping
+        // (offline boot with an expired/unverifiable snapshot shows the lock,
+        // never the data; attributable expiries queue offline.locked).
+        await reportOfflineLock().catch(() => {});
+
         // 3. Run bootstrap with preloaded snapshot data. Profile and quick
         // insights are fetched by the bootstrap and returned in `boot` —
         // the provider must NOT re-fetch them (boot dedupe).
@@ -546,6 +618,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           snapshotPreload,
         );
 
+        if (cancelled) return;
+
+        // T2.6: a fulfilled profile fetch proves online + authenticated —
+        // stamp the session record and unlock (live domain writes already
+        // refreshed the envelope age). Otherwise re-evaluate the lock.
+        if (boot.profile) {
+          try {
+            stampLastOnlineAuthenticatedAt();
+          } catch {
+            /* noop */
+          }
+          if (!cancelled) setOfflineLocked(false);
+        } else {
+          await reportOfflineLock().catch(() => {});
+        }
         if (cancelled) return;
 
         // Profile and insights come from the bootstrap's own fetches. A null
@@ -1798,6 +1885,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         data,
         syncedAt: new Date().toISOString(),
       });
+      // T2.6: a fulfilled strict fetch proves online + authenticated — stamp
+      // the session record and unlock (envelope age is refreshed by the
+      // snapshot write path). Best-effort: never breaks the refresh.
+      try {
+        stampLastOnlineAuthenticatedAt();
+        setOfflineLocked(false);
+      } catch {
+        /* noop */
+      }
     },
     [bootstrapDispatch, setSyncFor],
   );
@@ -1964,6 +2060,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       refreshDashboardSummary,
       sync,
       readOnly,
+      offlineLocked,
+      revalidateOfflineSession,
       loading,
       error,
       writeError,
@@ -2024,6 +2122,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       refreshDashboardSummary,
       sync,
       readOnly,
+      offlineLocked,
+      revalidateOfflineSession,
       loading,
       error,
       writeError,

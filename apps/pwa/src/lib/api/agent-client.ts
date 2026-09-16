@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { MutationReceipt } from "@pi-finance/llm-contracts/types";
 import { fetchAgentConnectionToken, clearAgentConnectionTokenCache, trackAgentConnection } from "./agent-auth";
+import { PRODUCTION_PWA_HOST } from "./client";
 
 export const attachmentSchema = z.object({
   type: z.enum(["image", "pdf", "audio"]),
@@ -60,8 +61,13 @@ export type AgentMessage = {
 };
 
 function agentBaseUrl(): string {  // ADR-011: canonical browser transport is the same-origin proxy /api/agent.
-  // An explicitly configured direct URL is transient test-env compatibility
-  // only — never a silent production default.
+  // T2.1 (ADR-015 session-first, Option C): the production host always uses
+  // the proxy so the chat stays same-origin (T2.7 connect-src 'self'). An
+  // explicitly configured direct URL is a dev/test-only escape hatch
+  // (ADR-011 transient compat) — never a published production default.
+  if (typeof window !== "undefined" && window.location.hostname === PRODUCTION_PWA_HOST) {
+    return "/api/agent";
+  }
   const direct = process.env.NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL?.replace(/\/$/, "");
   if (direct) return direct;
   // Fallback seguro ao proxy Next.js /api/agent quando a URL direta não estiver configurada.

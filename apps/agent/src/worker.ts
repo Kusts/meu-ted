@@ -36,7 +36,36 @@ type Env = {
   OPENCODE_ZEN_API_KEY?: string;
   OPENCODE_GO_API_KEY?: string;
   OPENAI_API_KEY?: string;
+  /**
+   * V4 T2.7 G3: dev/test-only escape hatch. When "1", localhost origins
+   * join the CORS allowlist for local testing through the PWA proxy;
+   * production (flag absent) stays fail-closed on the PWA origin alone.
+   */
+  ALLOW_LOCAL_ORIGIN?: string;
 };
+
+/** Production PWA host — the only browser origin trusted in production. */
+export const PRODUCTION_PWA_ORIGIN = "https://pi-finance-pwa.walissonead.workers.dev";
+
+const LOCAL_ORIGINS = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:3001",
+  "http://127.0.0.1:3001",
+];
+
+/**
+ * V4 T2.7 G3 — CORS allowlist with the localhost environment gate.
+ * Production (no explicit flag) accepts the production PWA origin only;
+ * localhost joins exclusively behind ALLOW_LOCAL_ORIGIN=1. No route
+ * contract changes: callers keep passing the same env through.
+ */
+export function resolveAllowedOrigins(env?: { ALLOW_LOCAL_ORIGIN?: string }): string[] {
+  if (env?.ALLOW_LOCAL_ORIGIN === "1") {
+    return [PRODUCTION_PWA_ORIGIN, ...LOCAL_ORIGINS];
+  }
+  return [PRODUCTION_PWA_ORIGIN];
+}
 
 const syncLegacyHistory = async (
   env: Env,
@@ -127,13 +156,7 @@ export default {
   async fetch(request: Request, env: Env, _ctx?: unknown): Promise<Response> {
     const url = new URL(request.url);
 
-    const ALLOWED_ORIGINS = [
-      "https://pi-finance-pwa.walissonead.workers.dev",
-      "http://localhost:3000",
-      "http://127.0.0.1:3000",
-      "http://localhost:3001",
-      "http://127.0.0.1:3001",
-    ];
+    const ALLOWED_ORIGINS = resolveAllowedOrigins(env);
     const requestOrigin = request.headers.get("origin") ?? "";
     const isAllowedOrigin = ALLOWED_ORIGINS.includes(requestOrigin);
     const corsHeaders = (): Record<string, string> => ({

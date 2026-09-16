@@ -178,20 +178,20 @@ const message =
     try {
       const signUpRes = await signUpWithEmail({ email: normalizedEmail, password, name: name.trim() });
       const signUpToken = (signUpRes as unknown as { token?: string })?.token;
+      // T2.2 B2/B3 (ADR-015): bearer legado só via token-store, atrás da
+      // janela de compat (NEXT_PUBLIC_LEGACY_BEARER_COMPAT, review
+      // 2026-12-01) — sem writes diretos em localStorage neste fluxo.
       if (signUpToken) {
         setSessionToken(signUpToken);
-        try { localStorage.setItem("pi-finance:session-token", signUpToken); } catch { /* noop */ }
       }
       const signInRes = await signInWithEmail({ email: normalizedEmail, password });
       const sessionToken = (signInRes as unknown as { token?: string })?.token ?? signUpToken;
       if (sessionToken) {
         setSessionToken(sessionToken);
-        try { localStorage.setItem("pi-finance:session-token", sessionToken); } catch { /* noop */ }
       }
       const deviceRes = await registerDeviceToken(sessionToken);
       if (deviceRes?.token) {
         setToken(deviceRes.token);
-        try { localStorage.setItem("pi-finance:token", deviceRes.token); } catch { /* noop */ }
       }
       if (inviteKind === "workspace") {
         await acceptWorkspaceInvite(token);

@@ -17,12 +17,55 @@
  */
 
 import { clearToken, clearSessionToken } from "@/lib/auth/token-store";
+import { clearOfflineSubjectId } from "@/lib/auth/offline-subject";
 import { deleteV2Snapshot } from "@/lib/state/snapshot-db";
 import { clearActiveWorkspaceId } from "@/lib/api/client";
 import { clearAgentSession } from "@/lib/api/agent-auth";
 
 const SNAPSHOT_KEY = "pi-finance:snapshot:v1";
 const PROFILE_KEY = "pi-finance:profile";
+
+/**
+ * Last online-authenticated instant (V4 T2.6, SPEC §10 D1, ADR-015).
+ *
+ * ISO instant persisted at every online-authenticated moment (login,
+ * refresh, successful authenticated bootstrap) and consumed by the offline
+ * age check (`MAX_OFFLINE_AUTH_AGE`): `now - lastOnlineAuthenticatedAt`
+ * beyond the limit locks the offline session. Writes offline stay
+ * prohibited regardless. Opaque timestamp, never a credential.
+ */
+export const LAST_ONLINE_AUTH_STORAGE_KEY = "pi-finance:last-online-authenticated-at";
+
+/** Stamp the last online-authenticated instant (defaults to now). Fail-closed: invalid instants are refused without writing. */
+export function stampLastOnlineAuthenticatedAt(isoNow?: string): boolean {
+  const at = isoNow ?? new Date().toISOString();
+  if (Number.isNaN(Date.parse(at))) return false;
+  try {
+    localStorage.setItem(LAST_ONLINE_AUTH_STORAGE_KEY, at);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Read the stamped instant; null when absent or corrupt (no implicit trust). */
+export function getLastOnlineAuthenticatedAt(): string | null {
+  try {
+    const raw = localStorage.getItem(LAST_ONLINE_AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    return Number.isNaN(Date.parse(raw)) ? null : raw;
+  } catch {
+    return null;
+  }
+}
+
+export function clearLastOnlineAuthenticatedAt(): void {
+  try {
+    localStorage.removeItem(LAST_ONLINE_AUTH_STORAGE_KEY);
+  } catch {
+    /* noop */
+  }
+}
 
 export interface ClearSessionOptions {
   clearToken?: boolean;
@@ -63,6 +106,18 @@ export async function clearSensitiveSession(
     );
     tasks.push(
       Promise.resolve().then(() => { try { clearActiveWorkspaceId(); } catch { /* noop */ } }),
+    );
+    // T2.2 B4: logout com limpeza de token também limpa o offlineSubjectId
+    // (a repartição offline cai junto com a sessão; T2.6 detalha o lock).
+    // Troca de workspace (sem clearToken) preserva o subject até o re-set.
+    tasks.push(
+      Promise.resolve().then(() => { try { clearOfflineSubjectId(); } catch { /* noop */ } }),
+    );
+    // T2.6 D1: o carimbo de última autenticação online cai junto — sem ele,
+    // qualquer snapshot residual seria avaliado contra idade ausente
+    // (não-confiável) em vez de parecer válido.
+    tasks.push(
+      Promise.resolve().then(() => { try { clearLastOnlineAuthenticatedAt(); } catch { /* noop */ } }),
     );
   }
   if (doSnapshot) {

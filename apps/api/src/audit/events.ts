@@ -26,7 +26,10 @@
 //       AND the legacy bearer was the effective authenticator of the
 //       fallback; header presence, attempts, and logins do not count)
 //   - device.tokens.legacy_active .... T2.4 (API rotation/job, periodic log)
-//   - offline.locked ................. T2.6 (PWA authenticated client report)
+//   - offline.locked ................. T2.6 (PWA authenticated client report;
+//       dimensions are fail-closed: offlineSubjectId is a strict UUID bound
+//       to the session householdId at POST /client-events, ageBand is the
+//       closed enum '<1d|1-7d|7-30d|>30d' — no free text reaches the logs)
 //   - audit-undo.replay + mutation.reconcile.enqueued .. T3.1 (API)
 //   - csp.violation .................. T2.7 (same-origin POST /api/csp-report)
 //   - agent.workspace.legacy_access .. T4.1 (derived from the DO access-log:
@@ -238,6 +241,16 @@ const requireNonNegativeInt = (
 const MIC_REASONS = ['denied', 'notfound', 'busy'] as const;
 const MIC_CAPABILITIES = ['on', 'off'] as const;
 
+/**
+ * FIX-F1 closed age-band enum for `offline.locked` (SPEC §24): the client
+ * reports how stale the offline lock snapshot is, in coarse bands only —
+ * never timestamps, durations, or free text (log-pollution fail-closed).
+ */
+export const OFFLINE_AGE_BANDS = ['<1d', '1-7d', '7-30d', '>30d'] as const;
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const sanitizeCspPayload = (
   payload: Record<string, unknown>,
   eventType: ObservabilityEventType,
@@ -304,10 +317,19 @@ const sanitizePayload = (
       return sanitized;
     }
     case 'offline.locked': {
-      return {
-        offlineSubjectId: requireNonEmptyString(payload, 'offlineSubjectId', eventType),
-        ageBand: requireNonEmptyString(payload, 'ageBand', eventType),
-      };
+      const offlineSubjectId = requireNonEmptyString(payload, 'offlineSubjectId', eventType);
+      if (!UUID_PATTERN.test(offlineSubjectId.trim())) {
+        throw new ObservabilityPrivacyError(
+          `event '${eventType}' field 'offlineSubjectId' must be a strict UUID`,
+        );
+      }
+      const ageBand = requireNonEmptyString(payload, 'ageBand', eventType);
+      if (!(OFFLINE_AGE_BANDS as readonly string[]).includes(ageBand)) {
+        throw new ObservabilityPrivacyError(
+          `event '${eventType}' field 'ageBand' must be one of ${OFFLINE_AGE_BANDS.join('|')}`,
+        );
+      }
+      return { offlineSubjectId, ageBand };
     }
     case 'mutation.reconcile.enqueued': {
       return {

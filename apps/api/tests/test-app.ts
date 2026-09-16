@@ -16,7 +16,7 @@ import {
   type InMemoryState,
 } from "../src/writes/in-memory.js";
 import { createInMemoryIdempotencyStore } from "../src/writes/idempotency.js";
-import { type DeviceTokenStore } from "../src/auth/device-token.js";
+import { type DeviceTokenStore, getDeviceRotationWindowMs } from "../src/auth/device-token.js";
 import { registerCors } from "../src/server/cors.js";
 import { HOUSEHOLD_A, HOUSEHOLD_B } from "./fixtures/seed.js";
 import type { Account, Category, Transaction } from "../src/types/domain.js";
@@ -42,14 +42,16 @@ export type TestApp = {
 };
 
 const createTestTokenStore = (): DeviceTokenStore => {
-  const tokens = new Map<string, { deviceId: string; householdId: string }>();
+  const tokens = new Map<string, { deviceId: string; householdId: string; expiresAt: number | null }>();
   tokens.set("dev-token-1", {
     deviceId: "dev-device-1",
     householdId: HOUSEHOLD_A,
+    expiresAt: null,
   });
   tokens.set("dev-token-2", {
     deviceId: "dev-device-2",
     householdId: HOUSEHOLD_B,
+    expiresAt: null,
   });
   return {
     async resolve(token) {
@@ -64,16 +66,52 @@ const createTestTokenStore = (): DeviceTokenStore => {
           statusCode: 401,
           code: "auth.invalid_token",
         });
+      if (ctx.expiresAt !== null && ctx.expiresAt <= Date.now()) {
+        tokens.delete(token);
+        throw Object.assign(new Error("invalid"), {
+          statusCode: 401,
+          code: "auth.invalid_token",
+        });
+      }
       return ctx;
     },
     async register(deviceName, householdId) {
       const tok = crypto.randomUUID();
       const devId = crypto.randomUUID();
-      tokens.set(tok, { deviceId: devId, householdId });
+      tokens.set(tok, { deviceId: devId, householdId, expiresAt: null });
       return { token: tok, deviceId: devId, householdId };
     },
     async revoke(token) {
       tokens.delete(token);
+    },
+    async rotate(currentToken, deviceName, householdId) {
+      if (typeof currentToken === "string" && currentToken.trim() !== "") {
+        const prev = tokens.get(currentToken);
+        if (!prev || (prev.expiresAt !== null && prev.expiresAt <= Date.now())) {
+          if (prev) tokens.delete(currentToken);
+          throw Object.assign(new Error("invalid"), {
+            statusCode: 401,
+            code: "auth.invalid_token",
+          });
+        }
+        if (householdId && prev.householdId !== householdId) {
+          throw Object.assign(new Error("invalid"), {
+            statusCode: 401,
+            code: "auth.invalid_token",
+          });
+        }
+      }
+      const tok = crypto.randomUUID();
+      const devId = crypto.randomUUID();
+      tokens.set(tok, { deviceId: devId, householdId, expiresAt: null });
+      if (typeof currentToken === "string" && currentToken.trim() !== "") {
+        const prev = tokens.get(currentToken);
+        if (prev) {
+          const deadline = Date.now() + getDeviceRotationWindowMs();
+          prev.expiresAt = prev.expiresAt === null ? deadline : Math.min(prev.expiresAt, deadline);
+        }
+      }
+      return { token: tok, deviceId: devId, householdId };
     },
   };
 };

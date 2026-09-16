@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { isApiConfigured } from "@/lib/api/client";
+import { cleanupOrphanedLegacyTokens } from "@/lib/auth/token-store";
 import { ApiUnconfiguredScreen } from "@/components/ApiUnconfiguredScreen";
 import { AuthGate } from "@/features/auth/AuthGate";
 import { AppStateProvider } from "@/lib/state/app-state-context";
@@ -22,6 +23,14 @@ import { initRUM } from "@/lib/observability/web-vitals";
 export function RootProviders({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     initRUM();
+    // T2.3 B3 (caminho de limpeza do B2): com NEXT_PUBLIC_LEGACY_BEARER_COMPAT
+    // off, remove os tokens órfãos legados do boot; com a flag on, no-op
+    // (coexistência). Best-effort, nunca quebra o boot.
+    try {
+      cleanupOrphanedLegacyTokens();
+    } catch {
+      /* noop */
+    }
   }, []);
   const pathname = usePathname();
 

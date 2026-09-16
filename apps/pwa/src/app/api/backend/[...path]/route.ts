@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  isBrowserOriginAllowed,
+  resolveForwardOrigin,
+} from "@/proxy-utils";
 
 /** Overridable for local development (e.g. PWA_BACKEND_PROXY_ORIGIN=http://127.0.0.1:3001). */
 const API_ORIGIN = process.env.PWA_BACKEND_PROXY_ORIGIN?.trim() || "https://api.synkroo.com.br";
@@ -32,28 +36,19 @@ function forwardHeaders(request: Request): Headers {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
-  // Spoof origin to production PWA host so upstream Better-Auth trustedOrigins check passes
-  // when testing locally via /api/backend proxy (bypasses browser CORS and origin allowlist).
-  // The proxy itself is same-origin, so browser CORS is not involved.
+  // V4 T2.7 G3: the spoof to the production host (upstream Better-Auth
+  // trustedOrigins escape hatch for local testing via the same-origin
+  // proxy) happens ONLY when the localhost bypass is enabled
+  // (non-production + explicit ALLOW_LOCAL_ORIGIN=1). In production the
+  // origin is forwarded unchanged so the upstream allowlist decides
+  // (fail-closed); the proxy itself is same-origin, so browser CORS is
+  // not involved.
   const origin = request.headers.get("origin");
-  if (origin && isLocalOrigin(origin)) {
-    headers.set("origin", "https://pi-finance-pwa.walissonead.workers.dev");
-  } else if (origin) {
-    headers.set("origin", origin);
+  const forwarded = resolveForwardOrigin(origin, process.env);
+  if (forwarded) {
+    headers.set("origin", forwarded);
   }
   return headers;
-}
-
-function isLocalOrigin(origin: string): boolean {
-  try {
-    const url = new URL(origin);
-    return (
-      (url.protocol === "http:" || url.protocol === "https:") &&
-      (url.hostname === "localhost" || url.hostname === "127.0.0.1")
-    );
-  } catch {
-    return false;
-  }
 }
 
 function upstreamErrorResponse(status: number, code: string, message: string): NextResponse {
@@ -64,10 +59,7 @@ function upstreamErrorResponse(status: number, code: string, message: string): N
 }
 
 function hasValidBrowserOrigin(request: Request): boolean {
-  const origin = request.headers.get("origin");
-  if (!origin) return true;
-  try { return new URL(origin).origin === new URL(request.url).origin || isLocalOrigin(origin); }
-  catch { return false; }
+  return isBrowserOriginAllowed(request.headers.get("origin"), request.url, process.env);
 }
 
 function isTimeoutError(cause: unknown): boolean {

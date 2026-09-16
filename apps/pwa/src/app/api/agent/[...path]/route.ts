@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  isBrowserOriginAllowed,
+  resolveForwardOrigin,
+} from "@/proxy-utils";
 
 const AGENT_ORIGIN = "https://pi-finance-agent.walissonead.workers.dev";
 /** Upstream budget: generous for streaming/LLM agent responses. */
@@ -35,27 +39,16 @@ function forwardHeaders(request: Request): Headers {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
-  // Spoof origin to production PWA host so upstream Cloudflare Worker allows request
-  // when testing locally via /api/agent proxy.
+  // V4 T2.7 G3: spoof to the production PWA host (upstream Cloudflare
+  // Worker escape hatch for local testing via the same-origin proxy)
+  // ONLY when the localhost bypass is enabled (non-production + explicit
+  // ALLOW_LOCAL_ORIGIN=1); production forwards unchanged (fail-closed).
   const origin = request.headers.get("origin");
-  if (origin && isLocalOrigin(origin)) {
-    headers.set("origin", "https://pi-finance-pwa.walissonead.workers.dev");
-  } else if (origin) {
-    headers.set("origin", origin);
+  const forwarded = resolveForwardOrigin(origin, process.env);
+  if (forwarded) {
+    headers.set("origin", forwarded);
   }
   return headers;
-}
-
-function isLocalOrigin(origin: string): boolean {
-  try {
-    const url = new URL(origin);
-    return (
-      (url.protocol === "http:" || url.protocol === "https:") &&
-      (url.hostname === "localhost" || url.hostname === "127.0.0.1")
-    );
-  } catch {
-    return false;
-  }
 }
 
 function upstreamErrorResponse(status: number, code: string, message: string): NextResponse {
@@ -66,10 +59,7 @@ function upstreamErrorResponse(status: number, code: string, message: string): N
 }
 
 function hasValidBrowserOrigin(request: Request): boolean {
-  const origin = request.headers.get("origin");
-  if (!origin) return true;
-  try { return new URL(origin).origin === new URL(request.url).origin || isLocalOrigin(origin); }
-  catch { return false; }
+  return isBrowserOriginAllowed(request.headers.get("origin"), request.url, process.env);
 }
 
 function isTimeoutError(cause: unknown): boolean {

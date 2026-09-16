@@ -334,9 +334,9 @@ describe("canonical same-origin base (ADR-011)", () => {
     expect(calledUrl.startsWith("/api/backend/")).toBe(true);
   });
 
-  it("keeps the explicitly configured URL as transient test-env override", async () => {
+  it("keeps the explicitly configured URL as transient dev-only override", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
-    stubHostname(PRODUCTION_HOST);
+    stubHostname("localhost");
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));

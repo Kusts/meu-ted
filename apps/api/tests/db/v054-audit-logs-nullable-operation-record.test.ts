@@ -13,8 +13,8 @@ describe('V054 audit_logs nullable operation_record (FIX-F0, SPEC §24)', () => 
     expect(expectedMigrationManifest(true).map(({ version }) => version)).toContain(54);
   });
 
-  it('keeps V053 reserved for the device-token migration (T2.4)', () => {
-    expect(expectedMigrationManifest(false).map(({ version }) => version)).not.toContain(53);
+  it('no longer reserves V053: the device-token migration landed (T2.4)', () => {
+    expect(expectedMigrationManifest(false).map(({ version }) => version)).toContain(53);
   });
 
   it('drops NOT NULL on the real V013 column (operation_record_id), additively', () => {

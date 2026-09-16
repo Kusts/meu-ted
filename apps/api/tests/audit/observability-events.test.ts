@@ -144,12 +144,14 @@ describe('V4 observability contract (SPEC §24)', () => {
   it('requires offline.locked dimensions (offlineSubjectId + age band)', () => {
     expect(() => buildObservabilityEvent('offline.locked', {})).toThrow(/offlineSubjectId/i);
     expect(() =>
-      buildObservabilityEvent('offline.locked', { offlineSubjectId: 'subject-1' }),
+      buildObservabilityEvent('offline.locked', {
+        offlineSubjectId: '00000000-0000-4000-8000-0000000000a1',
+      }),
     ).toThrow(/ageBand/i);
     expect(
       buildObservabilityEvent('offline.locked', {
-        offlineSubjectId: 'subject-1',
-        ageBand: 'over-24h',
+        offlineSubjectId: '00000000-0000-4000-8000-0000000000a1',
+        ageBand: '1-7d',
       }),
     ).toMatchObject({ eventType: 'offline.locked' });
   });
@@ -173,6 +175,37 @@ describe('V4 observability contract (SPEC §24)', () => {
         reason: 'replay-after-restart',
       }),
     ).toThrow(/operationId/i);
+  });
+});
+
+describe('FIX-F1 offline.locked strict dimensions (review Fase 1)', () => {
+  const SUBJECT = '00000000-0000-4000-8000-0000000000a1';
+
+  it('accepts a UUID subject with a closed age band', () => {
+    expect(
+      buildObservabilityEvent('offline.locked', {
+        offlineSubjectId: SUBJECT,
+        ageBand: '1-7d',
+      }),
+    ).toMatchObject({ eventType: 'offline.locked' });
+  });
+
+  it('rejects a non-UUID offlineSubjectId', () => {
+    expect(() =>
+      buildObservabilityEvent('offline.locked', {
+        offlineSubjectId: 'subject-1',
+        ageBand: '1-7d',
+      }),
+    ).toThrow(/offlineSubjectId/i);
+  });
+
+  it('rejects an ageBand outside the closed enum', () => {
+    expect(() =>
+      buildObservabilityEvent('offline.locked', {
+        offlineSubjectId: SUBJECT,
+        ageBand: 'over-24h',
+      }),
+    ).toThrow(/ageBand/i);
   });
 });
 
@@ -216,8 +249,8 @@ describe('V4 observability adversarial privacy (FIX-F0, SPEC §24)', () => {
     ).toThrow(/cookie/i);
     expect(() =>
       buildObservabilityEvent('offline.locked', {
-        offlineSubjectId: 'subject-1',
-        ageBand: 'over-24h',
+        offlineSubjectId: '00000000-0000-4000-8000-0000000000a1',
+        ageBand: '1-7d',
         'X-Device-Token': 'tok_abcdef1234567890',
       }),
     ).toThrow(/token/i);
@@ -275,8 +308,8 @@ describe('V4 observability adversarial privacy (FIX-F0, SPEC §24)', () => {
     ).toThrow(/unknown|allowlist|not allowed/i);
     expect(() =>
       buildObservabilityEvent('offline.locked', {
-        offlineSubjectId: 'subject-1',
-        ageBand: 'over-24h',
+        offlineSubjectId: '00000000-0000-4000-8000-0000000000a1',
+        ageBand: '1-7d',
         session: 'abc',
       }),
     ).toThrow(/unknown|allowlist|not allowed|session|cookie/i);

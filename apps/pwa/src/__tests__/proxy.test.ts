@@ -77,11 +77,19 @@ describe("buildCspValue", () => {
     expect(productionCsp).not.toContain("http://127.0.0.1:3001");
   });
 
-  it("includes connect-src with self and production API", () => {
+  it("keeps production connect-src same-origin only (V4 T2.7 G1)", () => {
     const csp = buildCspValue(nonce);
     expect(csp).toContain("connect-src");
-    expect(csp).toContain("'self'");
-    expect(csp).toContain(PRODUCTION_API_ORIGIN);
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).not.toContain(PRODUCTION_API_ORIGIN);
+  });
+
+  it("emits the production hardening directives and the same-origin report target (V4 T2.7 G2/T0.4.8)", () => {
+    const csp = buildCspValue(nonce);
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("form-action 'self'");
+    expect(csp).toContain("report-uri /api/csp-report");
   });
 
   it("allows same-origin stylesheet assets and Tailwind inline styles", () => {

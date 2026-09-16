@@ -86,7 +86,9 @@ export const SHELL_PRECACHE_ENTRIES: ReadonlyArray<{
   },
   {
     url: OFFLINE_JS,
-    revision: "sha256-905f8b62693becd3756ba6d576c0b76e5e2a6e81f9acd22011f8d9c2f11d82c5",
+    // T2.6: shell now enforces the offline lock (subject partition + age
+    // check) before rendering — revision bumped to the new content hash.
+    revision: "sha256-b51a4571410f6d634572597e795fa28ca0d7e7a9bd541382055fbccf6f5ac9c5",
   },
 ];
 

@@ -38,6 +38,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import {
+  buildCspValue,
   buildProductionEmissionHeaders,
   buildPermissionsPolicy,
   generateNonce,
@@ -132,6 +133,24 @@ test("[XLT-00] emitted CSP binds a fresh per-response nonce (builder executes)",
     expect(csp).not.toContain("unsafe-eval");
     expect(csp).not.toContain("127.0.0.1");
   }
+});
+
+test("[XLT-00] emitted CSP equals the production same-origin config (T2.7 G1/G2)", async () => {
+  const res = await fetch(baseURL);
+  expect(res.ok).toBe(true);
+  const nonce = res.headers.get("x-nonce")!;
+  const csp = res.headers.get("content-security-policy")!;
+  // Essence preserved (emitted === config): the wire carries byte-for-byte
+  // what the shared builder produces for the response nonce in production.
+  expect(csp).toBe(buildCspValue(nonce, false));
+  // Production contract: same-origin only, hardened directives, report target.
+  expect(csp).toContain("connect-src 'self'");
+  expect(csp).not.toContain("api.synkroo.com.br");
+  expect(csp).not.toContain("workers.dev");
+  expect(csp).toContain("default-src 'self'");
+  expect(csp).toContain("object-src 'none'");
+  expect(csp).toContain("form-action 'self'");
+  expect(csp).toContain("report-uri /api/csp-report");
 });
 
 test("[XLT-00] built _headers artifact does not shadow runtime security headers", async () => {

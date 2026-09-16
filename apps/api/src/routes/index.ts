@@ -78,6 +78,7 @@ import type { AccountInviteService } from "../auth/account-invites.js";
 
 import type { WorkspaceAccessStore } from "../auth/workspace-access.js";
 import { getBetterAuthSessionContext } from "../auth/better-auth.js";
+import { buildObservabilityEvent } from "../audit/events.js";
 import { createInMemoryPriceAlertStore, type PriceAlertStore } from "../price-alerts/store.js";
 import { registerPriceAlertRoutes } from "./price-alerts.js";
 import { registerAgentAuthRoutes } from "./agent-auth.js";
@@ -138,11 +139,54 @@ export type RouteDeps = {
   trustedOrigins?: string[];
   /** Fase 3 item 9: optional audit sink for sensitive admin LLM reads. */
   adminLlmAuditLog?: (event: AdminLlmReadAudit) => void;
+  /**
+   * V4 T2.2 / T0.4.1 (SPEC §24.1): sink para `auth.request.legacy_bearer_used`
+   * — emitido SOMENTE quando o cookie/session não autenticou a request E o
+   * bearer legado foi o autenticador efetivo do fallback (dimensão:
+   * workspace_id; contrato via buildObservabilityEvent, sem credenciais).
+   * Segue o padrão de injeção existente das rotas (cf. adminLlmAuditLog):
+   * sem sink, o default é o structured logger (best-effort, nunca quebra auth).
+   */
+  legacyBearerAuditLog?: (event: LegacyBearerUsedAuditEvent) => void;
   inviteSignupGuard?: import('../auth/invite-signup-guard.js').InviteSignupGuard;
   pool?: { query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }> } | null;
   /** Overrides the analytics source (SQL-backed in production, store-backed by default). */
   analyticsSource?: AnalyticsSource;
 };
+
+/**
+ * V4 T2.2 / T0.4.1 (SPEC §24.1): evento de telemetria de uso EFETIVO do
+ * fallback bearer legado. Dimensão mínima: workspace_id. Construído sempre
+ * pelo contrato fail-closed (buildObservabilityEvent) — nunca carrega
+ * credencial, cookie, token ou header.
+ */
+export type LegacyBearerUsedAuditEvent = {
+  eventType: 'auth.request.legacy_bearer_used';
+  workspaceId: string;
+};
+
+const SESSION_BEARER_FALLBACK_OFF_VALUES = new Set(['0', 'false', 'no', 'off']);
+
+/**
+ * V4 T2.3 B3.7 (SPEC §8 B3 passo 7, ADR-015): gate do fallback bearer de
+ * sessão server-side. Default TRUE durante a janela de compatibilidade
+ * (janela ADR-011, review 2026-12-01). Com `SESSION_BEARER_FALLBACK_ENABLED`
+ * off, o bearer de sessão legado é rejeitado como autenticador — a sessão
+ * resolve SOMENTE via cookie HttpOnly (session-first); bearer-only resulta
+ * em 401 (ou fallback a device token quando aplicável). Leitura em
+ * call-time para permitir toggle em teste. Device tokens e tokens delegados
+ * (`pi-agent`) seguem seus próprios caminhos e não são afetados.
+ */
+export function isSessionBearerFallbackEnabled(env?: Record<string, string | undefined>): boolean {
+  try {
+    const source = env ?? (typeof process !== 'undefined' ? process.env : undefined);
+    const raw = source?.['SESSION_BEARER_FALLBACK_ENABLED'];
+    if (raw === undefined) return true;
+    return !SESSION_BEARER_FALLBACK_OFF_VALUES.has(raw.trim().toLowerCase());
+  } catch {
+    return true;
+  }
+}
 
 /**
  * The API-owned V2 executor is the only bridge from a canonical pending tool
@@ -215,6 +259,10 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       for (const [key, val] of Object.entries(request.headers)) {
         if (val !== undefined) headers.set(key, Array.isArray(val) ? val.join(', ') : val);
       }
+      // T2.3 B3.7: fallback desligado => resolução de sessão cookie-only
+      // (o bearer legado não autentica; pi-agent já retornou acima e o
+      // device token resolve no branch próprio abaixo).
+      if (!isSessionBearerFallbackEnabled()) headers.delete('authorization');
       const session = await getBetterAuthSessionContext(auth, headers);
 
       if (workspaceId) {
@@ -222,6 +270,39 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
           const access = await workspaceAccess.resolve(session.userId, workspaceId);
           if (!access) {
             return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Acesso ao workspace proibido.' });
+          }
+
+          // T2.2 / T0.4.1 (SPEC §24.1): conta o uso EFETIVO do fallback bearer
+          // legado — somente quando o cookie/session NÃO autenticaria sozinho
+          // e o bearer foi o autenticador efetivo. Sonda fail-closed: qualquer
+          // falha → nenhuma emissão (nunca superconta, nunca quebra auth).
+          // Login nunca chega aqui (early-return de /auth/* acima); fallback
+          // de device token tem telemetria própria (T2.4) e não emite.
+          const authorization = request.headers.authorization;
+          if (typeof authorization === 'string' && authorization.toLowerCase().startsWith('bearer ')) {
+            try {
+              const cookieOnly = new Headers(headers);
+              cookieOnly.delete('authorization');
+              const cookieSession = await getBetterAuthSessionContext(auth, cookieOnly).catch(() => undefined);
+              if (!cookieSession) {
+                const event = buildObservabilityEvent('auth.request.legacy_bearer_used', {
+                  workspaceId: access.householdId,
+                });
+                try {
+                  const sink = deps.legacyBearerAuditLog;
+                const entry: LegacyBearerUsedAuditEvent = {
+                  eventType: 'auth.request.legacy_bearer_used',
+                  workspaceId: access.householdId,
+                };
+                  if (sink) sink(entry);
+                  else request.log.info({ event: entry.eventType, workspaceId: entry.workspaceId });
+                } catch {
+                  // Telemetry never breaks authentication.
+                }
+              }
+            } catch {
+              // Probe failure → no emission (fail-closed against overcounting).
+            }
           }
 
           request.betterAuthContext = session;

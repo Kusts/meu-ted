@@ -64,13 +64,12 @@ export function AuthGate({ children }: Props) {
     try {
       const signInRes = await signInWithEmail(credentials);
       const sessionToken = signInRes?.token;
+      // T2.2 B2/B3 (ADR-015): escrita do bearer legado atrás da janela de
+      // compat (NEXT_PUBLIC_LEGACY_BEARER_COMPAT, review 2026-12-01) dentro
+      // da token-store — sem writes diretos em localStorage aqui. Com a
+      // flag off, a sessão opera 100% via cookie HttpOnly.
       if (sessionToken) {
         setSessionToken(sessionToken);
-        try {
-          localStorage.setItem("pi-finance:session-token", sessionToken);
-        } catch {
-          /* noop */
-        }
       }
 
       const res = await registerDeviceToken(sessionToken);
@@ -80,11 +79,6 @@ export function AuthGate({ children }: Props) {
       }
 
       setToken(res.token);
-      try {
-        localStorage.setItem("pi-finance:token", res.token);
-      } catch {
-        /* noop */
-      }
 
       setState("unlocked");
     } catch (e: unknown) {

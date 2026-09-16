@@ -2,8 +2,9 @@
  * XLT-01 — Microfone ponta a ponta em Chromium real (V4 T1.2, SPEC §7 A3/A4).
  *
  * Camadas reais atravessadas (3):
- *   (a) configuração de produção — `isMicrophoneEnabled()` + `buildPermissionsPolicy()`
- *       + `buildCspValue()` de `src/proxy-utils.ts` / `src/lib/capabilities.ts`
+ *   (a) configuração de produção — `isMicrophoneEnabled()` +
+ *       `buildProductionEmissionHeaders()` de `src/proxy-utils.ts` /
+ *       `src/lib/capabilities.ts`
  *       (a MESMA fonte que `src/middleware.ts` usa; flag REAL exercitada via
  *       `NEXT_PUBLIC_TED_MICROPHONE=true` no processo do teste — mesmo valor
  *       do deploy da Fase 1 em `apps/pwa/wrangler.jsonc`; leitura em call-time,
@@ -36,7 +37,11 @@
  * `use-recording-state-mic-error`); este XLT prova o que units não alcançam:
  * header real + getUserMedia real + MediaRecorder real no mesmo browser.
  * A gravação contra o build Cloudflare será validada no smoke do deploy da
- * Fase 1 (R3).
+ * Fase 1 (R3) — débito consciente registrado em
+ * `docs/reports/meu-ted-v4-implementation-report.md` (Fase 1): este spec prova
+ * header real + mídia real no mesmo browser via a função compartilhada, e o
+ * crossing contra o artefato build/OpenNext/Cloudflare é coberto pelo smoke
+ * do deploy, não por este spec.
  */
 
 import { test, expect, chromium } from "@playwright/test";
@@ -44,10 +49,9 @@ import type { Browser, Page } from "@playwright/test";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import {
-  buildCspValue,
   buildPermissionsPolicy,
+  buildProductionEmissionHeaders,
   generateNonce,
-  SECURITY_HEADERS,
 } from "../../src/proxy-utils";
 import { isMicrophoneEnabled } from "../../src/lib/capabilities";
 
@@ -60,7 +64,13 @@ process.env.NEXT_PUBLIC_TED_MICROPHONE = "true";
 const RECORDING_ERROR_MESSAGE =
   "Não foi possível acessar o microfone. Verifique as permissões.";
 
-/** Emissão equivalente à de src/middleware.ts em produção. */
+/**
+ * Emissão de produção via a MESMA função que `src/middleware.ts` usa
+ * (`buildProductionEmissionHeaders` de `src/proxy-utils.ts` — zero duplicação
+ * de lógica de emissão; XLT-00 usa a mesma referência): CSP por resposta com
+ * nonce fresco + headers estáticos, com Permissions-Policy construída da
+ * capability vigente. O harness HTML recebe o nonce via substituição.
+ */
 function emitProductionHeaders(
   _req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -68,13 +78,13 @@ function emitProductionHeaders(
   micEnabled: boolean,
 ): void {
   const nonce = generateNonce();
-  res.setHeader("Content-Security-Policy", buildCspValue(nonce, false));
-  res.setHeader("x-nonce", nonce);
-  for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
-    res.setHeader(
-      key,
-      key === "Permissions-Policy" ? buildPermissionsPolicy(micEnabled) : value,
-    );
+  const emission = buildProductionEmissionHeaders({
+    nonce,
+    isDevelopment: false,
+    micEnabled,
+  });
+  for (const [key, value] of Object.entries(emission)) {
+    res.setHeader(key, value);
   }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(body.replaceAll("__NONCE__", nonce));
