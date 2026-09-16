@@ -20,6 +20,8 @@ Este diretório contém o registro imutável de decisões de arquitetura do proj
 | [ADR-012](ADR-012-approval-contract-propose-validation-and-effects-registry.md) | Contrato de ferramentas de aprovação e Effects Registry | accepted | 2026-09-14 | — |
 | [ADR-013](ADR-013-execution-recovery-lease.md) | Protocolo de execução com lease e recuperação | accepted | 2026-09-14 | — |
 | [ADR-014](ADR-014-mutation-draft-multi-turno.md) | MutationDraft multi-turno e handoff recuperável | accepted | 2026-09-14 | — |
+| [ADR-015](ADR-015-session-hardening.md) | Hardening de sessão e convergência session-first do device token | accepted | 2026-09-16 | D-V4-05, D-V4-06, D-V4-11 |
+| [ADR-016](ADR-016-workspace-agent-decommissioning.md) | Descomissionamento do WorkspaceAgent | accepted | 2026-09-16 | D-V4-04 |
 
 ## Template para Novos ADRs
 

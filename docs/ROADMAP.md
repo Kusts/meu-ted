@@ -11,6 +11,7 @@
 | CI e containers V2 | Preparado; remoto bloqueado | API, Agent, Broker, PWA, segurança e documentação estão em workflows; CI/PWA CI remotos bloqueados por billing/spending limit do GitHub Actions. |
 | Rollout operacional V2 | Parcial | API autoritativa em produção com rollback tagado (`pi-finance-api:rollback-pre-v2` + backup DB). PWA/Agent na Cloudflare ainda servem o deploy anterior; re-executar CI + PWA CI do SHA após resolver billing. |
 | Hardening TED V3 | Planejado | SPEC [`MEU-TED-SPEC-HARDENING-PONTA-A-PONTA-V3.md`](MEU-TED-SPEC-HARDENING-PONTA-A-PONTA-V3.md) + plano [`superpowers/plans/2026-09-14-meu-ted-v3-hardening.md`](superpowers/plans/2026-09-14-meu-ted-v3-hardening.md); reauditoria confirmou H-01..H-16 na baseline `main@e5f21177`; blocos A (P0) a F (release). |
+| Hardening TED V4 | Planejado | SPEC [`MEU-TED-SPEC-HARDENING-SIMPLIFICACAO-E-DESCOMISSIONAMENTO-V4.md`](MEU-TED-SPEC-HARDENING-SIMPLIFICACAO-E-DESCOMISSIONAMENTO-V4.md) + plano [`superpowers/plans/2026-09-15-meu-ted-v4-hardening.md`](superpowers/plans/2026-09-15-meu-ted-v4-hardening.md); branch `feat/meu-ted-v4-hardening`; decisões ADR-015 (session-first) e ADR-016 (descomissionamento do WorkspaceAgent); blocos A–K. |
 
 ## Próximo passo autorizado
 
