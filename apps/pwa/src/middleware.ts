@@ -26,20 +26,25 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import {
   generateNonce,
-  SECURITY_HEADERS,
-  buildCspValue,
+  buildProductionEmissionHeaders,
 } from "./proxy-utils";
+import { isMicrophoneEnabled } from "./lib/capabilities";
 
 // experimental-edge required for OpenNext/Cloudflare deployment.
 // Proxy.ts (Next.js 16 native) is Node.js-only and rejected by OpenNext.
 export const runtime = "experimental-edge";
 
 export function middleware(request: NextRequest) {
-  const nonce = generateNonce();
-  const csp = buildCspValue(nonce, process.env.NODE_ENV === "development");
+  // Single source of emission (V4 FIX-F0): the exact function XLT-00
+  // executes over a real HTTP server — middleware and test share it.
+  const emission = buildProductionEmissionHeaders({
+    nonce: generateNonce(),
+    isDevelopment: process.env.NODE_ENV === "development",
+    micEnabled: isMicrophoneEnabled(),
+  });
   const requestHeaders = new Headers(request.headers);
-  requestHeaders.set("x-nonce", nonce);
-  requestHeaders.set("Content-Security-Policy", csp);
+  requestHeaders.set("x-nonce", emission["x-nonce"]!);
+  requestHeaders.set("Content-Security-Policy", emission["Content-Security-Policy"]!);
 
   const response = NextResponse.next({
     request: {
@@ -47,14 +52,11 @@ export function middleware(request: NextRequest) {
     },
   });
 
-  // Set CSP with nonce
-  response.headers.set("Content-Security-Policy", csp);
-
-  // Expose nonce to client (React uses it for <script> nonce injection)
-  response.headers.set("x-nonce", nonce);
-
-  // Apply all static security headers
-  for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
+  // Apply the shared emission (CSP with nonce + static security headers;
+  // Permissions-Policy already built from the microphone capability inside
+  // buildProductionEmissionHeaders — V4 T1.1, INV-08: header and record-button
+  // UI read the SAME flag, so they never diverge).
+  for (const [key, value] of Object.entries(emission)) {
     response.headers.set(key, value);
   }
 

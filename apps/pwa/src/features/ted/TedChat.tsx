@@ -122,8 +122,10 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
   // indisponíveis — botões e file inputs nem são renderizados (default: tudo
   // false; `NEXT_PUBLIC_TED_ATTACHMENT_INGESTION=1` libera quando o pipeline
   // existir). Leitura viva por render para respeitar o env em testes.
-  // O botão do microfone (captura de voz T4.1/SPEC §17) não é um file picker
-  // e permanece intacto; o código de preview/envio segue atrás do gate.
+  // V4 T1.1 (INV-08): o botão do microfone (captura de voz T4.1/SPEC §17)
+  // segue o mesmo padrão atrás de `caps.microphone`
+  // (`NEXT_PUBLIC_TED_MICROPHONE=1|true`) — a mesma flag que a
+  // Permissions-Policy do middleware lê.
   const caps = getChatAttachmentCapabilities();
 
   // Registro de object URLs (INV-08): espelho dos anexos para revogar em
@@ -761,6 +763,11 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
                 <FileText size={16} />
               </button>
             )}
+            {/* V4 T1.1 (INV-08 bidirectional): the record button exists ONLY
+                when the microphone capability is on — absent from the render
+                when off (never disabled), reading the SAME flag as the
+                Permissions-Policy header so UI and header never diverge. */}
+            {caps.microphone && (
             <button
               type="button"
               onClick={handleToggleRecording}
@@ -769,6 +776,7 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
             >
               {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
             </button>
+            )}
             {isRecording && <span className="text-[11px] font-bold text-danger animate-pulse">gravando…</span>}
             {isRequestingMic && <span className="text-[11px] font-medium text-text-muted">solicitando permissão…</span>}
             <textarea

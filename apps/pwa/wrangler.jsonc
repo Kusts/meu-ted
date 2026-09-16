@@ -27,6 +27,7 @@
   "vars": {
     "NEXT_PRIVATE_MINIMAL_MODE": "1",
     "NEXT_PUBLIC_PI_FINANCE_API_BASE_URL": "https://api.synkroo.com.br",
-    "NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL": "https://pi-finance-agent.walissonead.workers.dev"
+    "NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL": "https://pi-finance-agent.walissonead.workers.dev",
+    "NEXT_PUBLIC_TED_MICROPHONE": "true"
   }
 }

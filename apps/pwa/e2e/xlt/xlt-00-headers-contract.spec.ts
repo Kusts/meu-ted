@@ -2,23 +2,34 @@
  * XLT-00 (fumaça da categoria XLT, SPEC V4 §18 / INV-10).
  *
  * Camadas reais atravessadas (2):
- *   (a) configuração de segurança de produção — SECURITY_HEADERS +
- *       buildCspValue() de src/proxy-utils.ts (a mesma fonte que
- *       src/middleware.ts usa para carimbar cada resposta);
+ *   (a) configuração de segurança de produção — buildProductionEmissionHeaders()
+ *       de src/proxy-utils.ts, a MESMA função que src/middleware.ts chama para
+ *       carimbar cada resposta (importada aqui por referência, sem
+ *       reimplementação paralela);
  *   (b) header efetivamente emitido no fio — um servidor HTTP real aplica a
- *       semântica de emissão do middleware (headers estáticos + CSP com
- *       nonce por resposta) e o teste assera o HTTP observado, não a
- *       constante em memória.
+ *       emissão e o teste assera o HTTP observado (navegação real do browser
+ *       + fetch global), não a constante em memória.
+ *
+ * POR QUE NÃO EXECUTAR middleware() DIRETAMENTE: src/middleware.ts importa
+ * next/server (NextRequest/NextResponse) e roda no runtime experimental-edge
+ * via OpenNext/Cloudflare. Fora do runtime Next, NextResponse.next() não tem
+ * contrato de execução isolada (requer o pipeline de request/response do
+ * Next), então invocar o handler num processo node puro do Playwright
+ * exerceria um stub, não o middleware. O invariante que o XLT-00 protege é
+ * config→emissão (o que o browser recebe é o que a config produz, por
+ * resposta, com nonce fresco); esse invariante vive integralmente na função
+ * pura de emissão, que é a mesma referência usada pelo middleware. A
+ * plumagem Next-específica (NextResponse.next, request headers) é coberta
+ * pelos units de proxy/headers.
  *
  * Diferença para os units (proxy.test.ts / headers.test.ts): eles travam o
  * VALOR da config ou do artefato de build isoladamente. Este XLT prova o
- * CROSSING config→emissão: o que o browser recebe é o que a config produz,
- * por resposta, sem cópia estática no meio.
+ * CROSSING config→emissão por resposta, sem cópia estática no meio.
  *
- * Estado atual: Permissions-Policy nega microphone (baseline pré-T1.1). O
- * teste assera o crossing (emitido === config), não o valor literal, para
- * sobreviver à T1.1 (policy condicional por capability) sem reescrita —
- * a tarefa T1.1 cobre a relação capability↔header nos dois sentidos.
+ * Estado pós-T1.1: Permissions-Policy é condicional por capability
+ * (buildPermissionsPolicy). O teste assera o crossing (emitido === config
+ * vigente), não o valor literal — a relação capability↔header nos dois
+ * sentidos é coberta pelos units de T1.1.
  */
 
 import { test, expect } from "@playwright/test";
@@ -27,10 +38,11 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import {
-  SECURITY_HEADERS,
-  buildCspValue,
+  buildProductionEmissionHeaders,
+  buildPermissionsPolicy,
   generateNonce,
 } from "../../src/proxy-utils";
+import { isMicrophoneEnabled } from "../../src/lib/capabilities";
 
 // Artefato do build Cloudflare/OpenNext (ausente sem build — check opcional).
 const HEADERS_PATH = path.resolve(
@@ -43,23 +55,29 @@ const HEADERS_PATH = path.resolve(
 );
 
 /**
- * Emissão equivalente à de src/middleware.ts: CSP por resposta com nonce
- * fresco (modo produção: sem unsafe-eval, sem localhost) + headers estáticos.
+ * Emissão via a MESMA função que src/middleware.ts usa, sobre um servidor
+ * HTTP real: CSP por resposta com nonce fresco (modo produção: sem
+ * unsafe-eval, sem localhost) + headers estáticos, com Permissions-Policy
+ * construída da capability vigente.
  */
 function emitProductionHeaders(
   _req: http.IncomingMessage,
   res: http.ServerResponse,
 ): void {
-  const nonce = generateNonce();
-  res.setHeader(
-    "Content-Security-Policy",
-    buildCspValue(nonce, false),
-  );
-  res.setHeader("x-nonce", nonce);
-  for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
+  const emission = buildProductionEmissionHeaders({
+    nonce: generateNonce(),
+    isDevelopment: false,
+    micEnabled: isMicrophoneEnabled(),
+  });
+  for (const [key, value] of Object.entries(emission)) {
     res.setHeader(key, value);
   }
   res.end("ok");
+}
+
+/** Valor de Permissions-Policy esperado para a capability vigente. */
+function expectedPermissionsPolicy(): string {
+  return buildPermissionsPolicy(isMicrophoneEnabled());
 }
 
 let server: http.Server;
@@ -85,10 +103,9 @@ test("[XLT-00] emitted Permissions-Policy equals the production config", async (
   expect(response).not.toBeNull();
   const headers = response!.headers();
 
-  // Crossing (a)→(b): o fio carrega exatamente o valor da config.
-  expect(headers["permissions-policy"]).toBe(
-    SECURITY_HEADERS["Permissions-Policy"],
-  );
+  // Crossing (a)→(b): o fio carrega exatamente o valor da config vigente
+  // (capability → policy construída, V4 T1.1).
+  expect(headers["permissions-policy"]).toBe(expectedPermissionsPolicy());
   expect(headers["x-content-type-options"]).toBe("nosniff");
   expect(headers["x-frame-options"]).toBe("DENY");
 });

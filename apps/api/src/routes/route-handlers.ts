@@ -86,6 +86,7 @@ export const ROUTE_HANDLER_MAP: Readonly<Record<string, string>> = {
   'pending-operations-undo': 'src/routes/pending-operations.ts:registerPendingOperationRoutes',
   'notifications-create': 'src/routes/payables.ts:registerPayableRoutes',
   'adoption-events-create': 'src/routes/adoption.ts:registerAdoptionRoutes',
+  'client-events-create': 'src/routes/client-events.ts:registerClientEventsRoutes',
   'adoption-funnel-get': 'src/routes/adoption.ts:registerAdoptionRoutes',
   'insights-quick': 'src/routes/insights.ts:registerInsightRoutes',
   'insights-spending': 'src/routes/insights.ts:registerInsightRoutes',

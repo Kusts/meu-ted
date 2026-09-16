@@ -3,6 +3,7 @@ import {
   generateNonce,
   SECURITY_HEADERS,
   buildCspValue,
+  buildPermissionsPolicy,
   PRODUCTION_API_ORIGIN,
 } from "../proxy-utils";
 
@@ -36,9 +37,18 @@ describe("SECURITY_HEADERS", () => {
     );
   });
 
-  it("includes Permissions-Policy denying camera, microphone, geolocation", () => {
+  it("SECURITY_HEADERS stays the deny-by-default base (microphone denied)", () => {
     expect(SECURITY_HEADERS["Permissions-Policy"]).toBe(
       "camera=(), microphone=(), geolocation=()",
+    );
+  });
+
+  it("buildPermissionsPolicy reflects the microphone capability both ways", () => {
+    expect(buildPermissionsPolicy(false)).toBe(
+      SECURITY_HEADERS["Permissions-Policy"],
+    );
+    expect(buildPermissionsPolicy(true)).toBe(
+      "camera=(), microphone=(self), geolocation=()",
     );
   });
 

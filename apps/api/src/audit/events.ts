@@ -10,6 +10,15 @@
 // (V026), the Agent Durable Object access-log (schema.ts), and the Fastify
 // structured logger (server/index.ts).
 //
+// FAIL-CLOSED PRIVACY MODEL (FIX-F0): every event type declares a strict
+// field allowlist. buildObservabilityEvent returns ONLY the allowlisted
+// dimensions — any unknown field throws, any non-plain object / toJSON /
+// cycle throws, and only JSON primitives, arrays, and plain objects are
+// accepted. Key matching is case-insensitive (PaSs_WoRd === password);
+// financial amount+description is rejected globally across the whole
+// payload tree (distinct nesting levels do NOT bypass it); raw session
+// cookies are rejected with or without Set-Cookie attributes.
+//
 // Point emitters are born alongside their own flows, not here:
 //   - mic.error .................... T1.1 (PWA client event)
 //   - auth.request.legacy_bearer_used  T2.2 (API central auth resolution;
@@ -51,6 +60,9 @@ export class ObservabilityPrivacyError extends Error {
 const JWT_PATTERN = /^[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}$/;
 const BEARER_SCHEME_PATTERN = /\bBearer\s+[A-Za-z0-9\-._~+/=]{8,}/i;
 const COOKIE_VALUE_PATTERN = /^[^=\s][^=]*=[^;]+;\s*(Path|Expires|Max-Age|Domain|Secure|HttpOnly)/i;
+// Raw session cookie without Set-Cookie attributes, e.g. { context: "session=abc" }.
+const RAW_SESSION_COOKIE_PATTERN =
+  /\b(session|sessionid|jsessionid|phpsessid|session_token)\s*=\s*[^\s;]+/i;
 
 const normalizeKey = (key: string): string => key.toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -80,37 +92,65 @@ const isForbiddenKey = (key: string): { forbidden: true; label: string } | { for
 const FINANCIAL_AMOUNT_KEYS = new Set(['amount', 'amountcents', 'valuecents']);
 const FINANCIAL_DESCRIPTION_KEYS = new Set(['description']);
 
-const assertNoFinancialPayload = (value: Record<string, unknown>, path: string): void => {
-  const keys = new Set(Object.keys(value).map(normalizeKey));
-  const hasAmount = [...FINANCIAL_AMOUNT_KEYS].some((key) => keys.has(key));
-  const hasDescription = [...FINANCIAL_DESCRIPTION_KEYS].some((key) => keys.has(key));
-  if (hasAmount && hasDescription) {
-    throw new ObservabilityPrivacyError(
-      `complete financial payload (amount+description) is forbidden at '${path}'`,
-    );
-  }
+const isPlainObject = (value: object): value is Record<string, unknown> => {
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 };
 
-const assertPrivacy = (value: unknown, path: string): void => {
+type PrivacyScan = {
+  seen: WeakSet<object>;
+  /** Every normalized key found anywhere in the payload tree. */
+  keys: Set<string>;
+};
+
+const assertPrivacyValue = (value: unknown, path: string, scan: PrivacyScan): void => {
   if (typeof value === 'string') {
-    if (JWT_PATTERN.test(value.trim())) {
+    const trimmed = value.trim();
+    if (JWT_PATTERN.test(trimmed)) {
       throw new ObservabilityPrivacyError(`JWT-shaped bearer/session token string is forbidden at '${path}'`);
     }
     if (BEARER_SCHEME_PATTERN.test(value)) {
       throw new ObservabilityPrivacyError(`bearer credential string is forbidden at '${path}'`);
     }
-    if (COOKIE_VALUE_PATTERN.test(value.trim())) {
-      throw new ObservabilityPrivacyError(`raw cookie string is forbidden at '${path}'`);
+    if (COOKIE_VALUE_PATTERN.test(trimmed) || RAW_SESSION_COOKIE_PATTERN.test(value)) {
+      throw new ObservabilityPrivacyError(`raw cookie/session string is forbidden at '${path}'`);
     }
     return;
   }
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) => assertPrivacy(entry, `${path}[${index}]`));
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new ObservabilityPrivacyError(`non-finite number is not JSON-serializable at '${path}'`);
+    }
     return;
   }
-  if (typeof value === 'object' && value !== null) {
+  if (typeof value === 'boolean' || value === null) return;
+  if (typeof value === 'undefined' || typeof value === 'function' || typeof value === 'symbol' || typeof value === 'bigint') {
+    throw new ObservabilityPrivacyError(`non-JSON value of type '${typeof value}' is forbidden at '${path}'`);
+  }
+  if (Array.isArray(value)) {
+    if (scan.seen.has(value)) {
+      throw new ObservabilityPrivacyError(`cyclic payload reference is forbidden at '${path}'`);
+    }
+    scan.seen.add(value);
+    value.forEach((entry, index) => assertPrivacyValue(entry, `${path}[${index}]`, scan));
+    return;
+  }
+  if (typeof value === 'object') {
+    if (scan.seen.has(value)) {
+      throw new ObservabilityPrivacyError(`cyclic payload reference is forbidden at '${path}'`);
+    }
+    scan.seen.add(value);
+    if ((value as { toJSON?: unknown }).toJSON !== undefined) {
+      throw new ObservabilityPrivacyError(
+        `object with a toJSON serializer is not a plain JSON object at '${path}'`,
+      );
+    }
+    if (!isPlainObject(value)) {
+      throw new ObservabilityPrivacyError(
+        `non-plain object (class instance, Date, Map, or exotic) is forbidden at '${path}'`,
+      );
+    }
     const record = value as Record<string, unknown>;
-    assertNoFinancialPayload(record, path);
     for (const [key, entry] of Object.entries(record)) {
       const verdict = isForbiddenKey(key);
       if (verdict.forbidden) {
@@ -118,7 +158,51 @@ const assertPrivacy = (value: unknown, path: string): void => {
           `${verdict.label} field '${key}' is forbidden at '${path}'`,
         );
       }
-      assertPrivacy(entry, path === '$' ? `$.${key}` : `${path}.${key}`);
+      scan.keys.add(normalizeKey(key));
+      assertPrivacyValue(entry, path === '$' ? `$.${key}` : `${path}.${key}`, scan);
+    }
+  }
+};
+
+/**
+ * Deep fail-closed privacy scan: recursive key AND value validation
+ * (case-insensitive keys), plus a GLOBAL amount+description check — the two
+ * halves in distinct nesting levels are still a complete financial payload.
+ */
+const assertPrivacy = (value: Record<string, unknown>, path: string): void => {
+  const scan: PrivacyScan = { seen: new WeakSet(), keys: new Set() };
+  assertPrivacyValue(value, path, scan);
+  const hasAmount = [...FINANCIAL_AMOUNT_KEYS].some((key) => scan.keys.has(key));
+  const hasDescription = [...FINANCIAL_DESCRIPTION_KEYS].some((key) => scan.keys.has(key));
+  if (hasAmount && hasDescription) {
+    throw new ObservabilityPrivacyError(
+      `complete financial payload (amount+description anywhere in the tree) is forbidden at '${path}'`,
+    );
+  }
+};
+
+/** Strict per-event allowlist: the ONLY top-level fields each event accepts. */
+const EVENT_ALLOWLISTS: Record<ObservabilityEventType, readonly string[]> = {
+  'auth.request.legacy_bearer_used': ['workspaceId'],
+  'audit-undo.replay': ['workspaceId'],
+  'agent.workspace.legacy_access': ['workspaceId'],
+  'device.tokens.legacy_active': ['legacyCount', 'vintage'],
+  'offline.locked': ['offlineSubjectId', 'ageBand'],
+  'mutation.reconcile.enqueued': ['workspaceId', 'operationId', 'reason'],
+  'mic.error': ['reason', 'capability'],
+  'csp.violation': ['effectiveDirective', 'blockedURL', 'blockedUrl', 'blockedHost', 'disposition', 'statusCode'],
+};
+
+const assertAllowlist = (
+  eventType: ObservabilityEventType,
+  payload: Record<string, unknown>,
+): void => {
+  const allowed = new Set(EVENT_ALLOWLISTS[eventType]);
+  for (const key of Object.keys(payload)) {
+    if (!allowed.has(key)) {
+      throw new ObservabilityPrivacyError(
+        `event '${eventType}' rejects unknown field '${key}' (strict allowlist: ${EVENT_ALLOWLISTS[eventType].join(', ')})`,
+      );
     }
   }
 };
@@ -132,6 +216,20 @@ const requireNonEmptyString = (
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new ObservabilityPrivacyError(
       `event '${eventType}' requires dimension '${field}' (non-empty string)`,
+    );
+  }
+  return value;
+};
+
+const requireNonNegativeInt = (
+  payload: Record<string, unknown>,
+  field: string,
+  eventType: ObservabilityEventType,
+): number => {
+  const value = payload[field];
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new ObservabilityPrivacyError(
+      `event '${eventType}' requires dimension '${field}' (non-negative integer)`,
     );
   }
   return value;
@@ -165,8 +263,22 @@ const sanitizeCspPayload = (
     effectiveDirective,
     blockedHost,
   };
-  if (payload['disposition'] !== undefined) sanitized['disposition'] = payload['disposition'];
-  if (payload['statusCode'] !== undefined) sanitized['statusCode'] = payload['statusCode'];
+  if (payload['disposition'] !== undefined) {
+    if (typeof payload['disposition'] !== 'string' || payload['disposition'].trim().length === 0) {
+      throw new ObservabilityPrivacyError(
+        `event '${eventType}' field 'disposition' must be a non-empty string when present`,
+      );
+    }
+    sanitized['disposition'] = payload['disposition'];
+  }
+  if (payload['statusCode'] !== undefined) {
+    if (typeof payload['statusCode'] !== 'number' || !Number.isSafeInteger(payload['statusCode'])) {
+      throw new ObservabilityPrivacyError(
+        `event '${eventType}' field 'statusCode' must be an integer when present`,
+      );
+    }
+    sanitized['statusCode'] = payload['statusCode'];
+  }
   return sanitized;
 };
 
@@ -175,26 +287,34 @@ const sanitizePayload = (
   payload: Record<string, unknown>,
 ): Record<string, unknown> => {
   assertPrivacy(payload, '$');
+  assertAllowlist(eventType, payload);
   switch (eventType) {
     case 'auth.request.legacy_bearer_used':
     case 'audit-undo.replay':
     case 'agent.workspace.legacy_access': {
-      const workspaceId = requireNonEmptyString(payload, 'workspaceId', eventType);
-      return { ...payload, workspaceId };
+      return { workspaceId: requireNonEmptyString(payload, 'workspaceId', eventType) };
     }
     case 'device.tokens.legacy_active': {
-      return { ...payload };
+      const sanitized: Record<string, unknown> = {
+        legacyCount: requireNonNegativeInt(payload, 'legacyCount', eventType),
+      };
+      if (payload['vintage'] !== undefined) {
+        sanitized['vintage'] = requireNonEmptyString(payload, 'vintage', eventType);
+      }
+      return sanitized;
     }
     case 'offline.locked': {
-      const offlineSubjectId = requireNonEmptyString(payload, 'offlineSubjectId', eventType);
-      const ageBand = requireNonEmptyString(payload, 'ageBand', eventType);
-      return { ...payload, offlineSubjectId, ageBand };
+      return {
+        offlineSubjectId: requireNonEmptyString(payload, 'offlineSubjectId', eventType),
+        ageBand: requireNonEmptyString(payload, 'ageBand', eventType),
+      };
     }
     case 'mutation.reconcile.enqueued': {
-      const workspaceId = requireNonEmptyString(payload, 'workspaceId', eventType);
-      const operationId = requireNonEmptyString(payload, 'operationId', eventType);
-      const reason = requireNonEmptyString(payload, 'reason', eventType);
-      return { ...payload, workspaceId, operationId, reason };
+      return {
+        workspaceId: requireNonEmptyString(payload, 'workspaceId', eventType),
+        operationId: requireNonEmptyString(payload, 'operationId', eventType),
+        reason: requireNonEmptyString(payload, 'reason', eventType),
+      };
     }
     case 'mic.error': {
       const reason = requireNonEmptyString(payload, 'reason', eventType);
@@ -209,7 +329,7 @@ const sanitizePayload = (
           `event '${eventType}' field 'capability' must be one of ${MIC_CAPABILITIES.join('|')}`,
         );
       }
-      return { ...payload, reason, capability };
+      return { reason, capability };
     }
     case 'csp.violation': {
       return sanitizeCspPayload(payload, eventType);

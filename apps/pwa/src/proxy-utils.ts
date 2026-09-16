@@ -20,6 +20,21 @@ export const SECURITY_HEADERS: Record<string, string> = {
 };
 
 /**
+ * Build the Permissions-Policy value from the microphone capability
+ * (V4 T1.1, INV-08 bidirectional).
+ *
+ * - mic enabled → `microphone=(self)`: live capture works in a real browser.
+ * - mic disabled (default) → `microphone=()`: denied, matching the absent UI.
+ *
+ * Camera and geolocation stay blocked in every configuration, and no
+ * cross-origin value is ever emitted for the microphone directive.
+ */
+export function buildPermissionsPolicy(micEnabled: boolean): string {
+  const microphone = micEnabled ? "microphone=(self)" : "microphone=()";
+  return `camera=(), ${microphone}, geolocation=()`;
+}
+
+/**
  * Generate a CSP nonce — 32 random hex characters.
  * Unique per request.
  */
@@ -31,6 +46,34 @@ export function generateNonce(): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
+}
+
+/**
+ * Production header emission shared by src/middleware.ts and XLT-00.
+ *
+ * This is the SAME function the middleware calls (not a reimplementation):
+ * per-response CSP with a fresh nonce + the static security headers, with
+ * Permissions-Policy built from the microphone capability (V4 T1.1).
+ * Kept pure (no Next.js imports) so both the edge middleware and a plain
+ * node:http server in tests can execute it.
+ */
+export interface ProductionEmissionInput {
+  nonce: string;
+  isDevelopment: boolean;
+  micEnabled: boolean;
+}
+
+export function buildProductionEmissionHeaders(
+  input: ProductionEmissionInput,
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  headers["Content-Security-Policy"] = buildCspValue(input.nonce, input.isDevelopment);
+  headers["x-nonce"] = input.nonce;
+  const permissionsPolicy = buildPermissionsPolicy(input.micEnabled);
+  for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
+    headers[key] = key === "Permissions-Policy" ? permissionsPolicy : value;
+  }
+  return headers;
 }
 
 /**

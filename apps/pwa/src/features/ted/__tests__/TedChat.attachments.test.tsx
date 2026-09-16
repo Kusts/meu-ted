@@ -91,10 +91,12 @@ describe("TedChat – attachment capability gate (SPEC §18, H-09)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("default (sem pipeline): nenhum botão de anexo de arquivo nem file input alcançável; microfone T4.1 intacto", async () => {
+  it("default (sem pipeline, mic off): nenhum botão de anexo de arquivo nem file input alcançável; microfone T1.1 ausente", async () => {
     vi.stubEnv("NEXT_PUBLIC_TED_ATTACHMENT_INGESTION", "");
+    vi.stubEnv("NEXT_PUBLIC_TED_MICROPHONE", "");
     const { container } = render(<TedChat open={true} onClose={vi.fn()} />);
-    expect(await screen.findByRole("button", { name: /gravar áudio/i })).toBeInTheDocument();
+    await screen.findByRole("button", { name: /enviar mensagem/i });
+    expect(screen.queryByRole("button", { name: /gravar áudio/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /anexar imagem/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /anexar pdf/i })).toBeNull();
     expect(container.querySelector('input[type="file"]')).toBeNull();

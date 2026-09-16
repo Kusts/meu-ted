@@ -68,10 +68,10 @@ describe('V4 observability contract (SPEC §24)', () => {
   it('rejects JWT-shaped bearer strings', () => {
     const jwt =
       'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c';
+    // Smuggled through the allowlisted dimension: privacy scans values first.
     expect(() =>
       buildObservabilityEvent('audit-undo.replay', {
-        workspaceId: '00000000-0000-4000-8000-0000000000a1',
-        proof: jwt,
+        workspaceId: jwt,
       }),
     ).toThrow(/token/i);
   });
@@ -79,8 +79,7 @@ describe('V4 observability contract (SPEC §24)', () => {
   it('rejects Bearer-scheme credential strings', () => {
     expect(() =>
       buildObservabilityEvent('audit-undo.replay', {
-        workspaceId: '00000000-0000-4000-8000-0000000000a1',
-        authHeader: 'Bearer abcdefgh12345678',
+        workspaceId: 'Bearer abcdefgh12345678',
       }),
     ).toThrow(/token|bearer|credential/i);
   });
@@ -174,5 +173,157 @@ describe('V4 observability contract (SPEC §24)', () => {
         reason: 'replay-after-restart',
       }),
     ).toThrow(/operationId/i);
+  });
+});
+
+describe('V4 observability adversarial privacy (FIX-F0, SPEC §24)', () => {
+  const WS = '00000000-0000-4000-8000-0000000000a1';
+  const OP = '00000000-0000-4000-8000-0000000000b2';
+
+  it('rejects amount+description split across distinct nesting levels', () => {
+    expect(() =>
+      buildObservabilityEvent('audit-undo.replay', {
+        workspaceId: WS,
+        left: { nested: { amount: 1999 } },
+        right: { deeper: { still: { description: 'Mercado' } } },
+      }),
+    ).toThrow(/financial/i);
+  });
+
+  it('rejects amount+description split across arrays and objects', () => {
+    expect(() =>
+      buildObservabilityEvent('audit-undo.replay', {
+        workspaceId: WS,
+        items: [{ pricing: { amountCents: 500 } }],
+        notes: ['plain', { text: { description: 'Padaria' } }],
+      }),
+    ).toThrow(/financial/i);
+  });
+
+  it('rejects mixed-case forbidden keys (PaSs_WoRd, Set_Cookie, X-Device-Token)', () => {
+    expect(() =>
+      buildObservabilityEvent('mic.error', {
+        reason: 'denied',
+        capability: 'on',
+        'PaSs_WoRd': 'supersecret',
+      }),
+    ).toThrow(/password/i);
+    expect(() =>
+      buildObservabilityEvent('auth.request.legacy_bearer_used', {
+        workspaceId: WS,
+        'Set_Cookie': 'session=abc123; Path=/; HttpOnly',
+      }),
+    ).toThrow(/cookie/i);
+    expect(() =>
+      buildObservabilityEvent('offline.locked', {
+        offlineSubjectId: 'subject-1',
+        ageBand: 'over-24h',
+        'X-Device-Token': 'tok_abcdef1234567890',
+      }),
+    ).toThrow(/token/i);
+  });
+
+  it('rejects a raw cookie without Set-Cookie attributes under a neutral key', () => {
+    expect(() =>
+      buildObservabilityEvent('audit-undo.replay', {
+        workspaceId: WS,
+        context: 'session=abc123',
+      }),
+    ).toThrow(/cookie|session/i);
+  });
+
+  it('rejects objects with toJSON (non-plain serialization smuggling)', () => {
+    const sneaky = {
+      reason: 'denied',
+      toJSON: () => ({ password: 'supersecret' }),
+    };
+    expect(() =>
+      buildObservabilityEvent('mic.error', {
+        reason: 'denied',
+        capability: 'on',
+        meta: sneaky,
+      }),
+    ).toThrow(/privacy|toJSON|non-plain|plain/i);
+  });
+
+  it('rejects class instances (non-plain objects)', () => {
+    class Holder {
+      constructor(public value = 'x') {}
+    }
+    expect(() =>
+      buildObservabilityEvent('mic.error', {
+        reason: 'denied',
+        capability: 'on',
+        meta: new Holder() as unknown as Record<string, unknown>,
+      }),
+    ).toThrow(/privacy|non-plain|plain/i);
+  });
+
+  it('rejects cyclic payloads instead of recursing forever', () => {
+    const cyclic: Record<string, unknown> = { reason: 'denied', capability: 'on' };
+    cyclic['self'] = cyclic;
+    expect(() => buildObservabilityEvent('mic.error', cyclic)).toThrow(/privacy|cycl/i);
+  });
+
+  it('rejects unknown fields per event (strict allowlist)', () => {
+    expect(() =>
+      buildObservabilityEvent('mic.error', {
+        reason: 'denied',
+        capability: 'on',
+        provesNothing: 'hello',
+      }),
+    ).toThrow(/unknown|allowlist|not allowed/i);
+    expect(() =>
+      buildObservabilityEvent('offline.locked', {
+        offlineSubjectId: 'subject-1',
+        ageBand: 'over-24h',
+        session: 'abc',
+      }),
+    ).toThrow(/unknown|allowlist|not allowed|session|cookie/i);
+    expect(() =>
+      buildObservabilityEvent('mutation.reconcile.enqueued', {
+        workspaceId: WS,
+        operationId: OP,
+        reason: 'replay-after-restart',
+        extra: { nested: 'object' },
+      }),
+    ).toThrow(/unknown|allowlist|not allowed/i);
+  });
+
+  it('rejects Bearer credential values in any nested field', () => {
+    expect(() =>
+      buildObservabilityEvent('audit-undo.replay', {
+        workspaceId: WS,
+        context: { deep: { note: 'Bearer abcdefgh12345678' } },
+      }),
+    ).toThrow(/bearer|credential|token/i);
+  });
+
+  it('rejects JWT-shaped strings nested inside arrays', () => {
+    const jwt =
+      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c';
+    expect(() =>
+      buildObservabilityEvent('audit-undo.replay', {
+        workspaceId: WS,
+        hints: ['first', { second: [jwt] }],
+      }),
+    ).toThrow(/token/i);
+  });
+
+  it('rejects non-JSON values (functions, undefined, symbols)', () => {
+    expect(() =>
+      buildObservabilityEvent('mic.error', {
+        reason: 'denied',
+        capability: 'on',
+        callback: (() => {}) as unknown as string,
+      }),
+    ).toThrow(/privacy|json|function/i);
+    expect(() =>
+      buildObservabilityEvent('mic.error', {
+        reason: 'denied',
+        capability: 'on',
+        missing: undefined as unknown as string,
+      }),
+    ).toThrow(/privacy|json|undefined/i);
   });
 });

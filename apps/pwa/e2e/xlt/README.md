@@ -47,7 +47,7 @@ nunca executa XLTs por acidente — e vice-versa.
 | ID | Arquivo | Dono |
 |---|---|---|
 | XLT-00 | `xlt-00-headers-contract.spec.ts` | T0.2 (fumaça da categoria) |
-| XLT-01 | `xlt-01-ted-microphone.spec.ts` (futuro) | T1.2 |
+| XLT-01 | `xlt-01-ted-microphone.spec.ts` | T1.2 |
 | XLT-02 | auth cookie-first (futuro) | T2.2/T2.3 |
 | XLT-03/04/05 | borda/CSP/localhost (futuro) | T2.7 |
 | XLT-06 | pós-descomissionamento (futuro) | T4.3 |

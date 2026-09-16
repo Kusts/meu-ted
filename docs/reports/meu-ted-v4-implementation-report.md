@@ -40,14 +40,15 @@ Nenhuma divergência bloqueante da baseline: a branch está 100% verde nos gates
 ### Fase 0 — Baseline, instrumentação XLT e governança
 
 - **T0.1 — Registro de baseline e gates de entrada:** EM PROGRESSO (este relatório; gates capturados, falta fechar o esqueleto com `docs:lint` final).
-- **T0.2 — Infraestrutura da categoria Cross-Layer Invariant Tests:** EM PROGRESSO (scaffolding `apps/api/tests/xlt/`, `apps/pwa/e2e/xlt/`, `docs/testing/xlt-category.md` presente no working tree como untracked; branch deve voltar a 100% verde ao fim da tarefa).
-- **T0.3 — ADRs e governança documental:** A FAZER (ADR-015 session hardening, ADR-016 descomissionamento WorkspaceAgent).
-- **T0.4 — Contrato e instrumentação de observabilidade V4 (SPEC §24):** A FAZER (8 eventos/métricas, teste de privacidade).
+- **T0.2 — Infraestrutura da categoria Cross-Layer Invariant Tests:** FEITO (scaffolding `apps/api/tests/xlt/`, `apps/pwa/e2e/xlt/`, `docs/testing/xlt-category.md` + fumaça XLT-00 verde atravessando a emissão real do middleware).
+- **T0.3 — ADRs e governança documental:** FEITO (ADR-015 session hardening, ADR-016 descomissionamento WorkspaceAgent entregues).
+- **T0.4 — Contrato e instrumentação de observabilidade V4 (SPEC §24):** FEITO no contrato (8 eventos/métricas, validador de privacidade fail-closed com allowlist estrita por evento, `POST /client-events` autenticado, V054, fila PWA com flush via proxy same-origin); emissores pontuais pendentes por bloco dono (T1.1, T2.2, T2.4, T2.6, T2.7, T3.1, T4.1) — ver `docs/reports/observability-v4-queries.md` (contrato, disponível-após-emissor).
 
 ### Fase 1 — BLOCO A (P1, bloqueante): microfone funcional
 
-- **T1.1 — Capability flag de microfone + Permissions-Policy condicional + UI gated:** A FAZER.
-- **T1.2 — E2E real de gravação (XLT-01):** A FAZER.
+- **T1.1 — Capability flag de microfone + Permissions-Policy condicional + UI gated:** EM PROGRESSO (working tree; units `microphone-policy`, `TedChat.microphone`, `use-recording-state-mic-error` verdes — 31/31 nos arquivos do bloco).
+- **T1.2 — E2E real de gravação (XLT-01):** CONCLUÍDO — `apps/pwa/e2e/xlt/xlt-01-ted-microphone.spec.ts` (4 testes, Chromium real headless): header `microphone=(self)` servido da capability REAL (`NEXT_PUBLIC_TED_MICROPHONE=true`, call-time, sem mock) + `getUserMedia` resolvendo com trilha viva; fluxo idle → click → recording → stop → 1 attachment `audio/*`; denied via enforcement real da policy `microphone=()` → `NotAllowedError` genuíno → error/`denied`, `recording` nunca alcançado, sem resíduo. XLT total 7/7; `pnpm --filter pwa test` 1696/1696 (2ª execução; 1ª teve 4 falhas flaky em arquivos fora do bloco, sem relação com T1.2).
+  - **Nota honesta:** `--deny-permission-prompts` NÃO gera denial neste Chromium (sem fake device → `NotFoundError`; com → `NotSupportedError`) — a denial autêntica vem da policy servida. O fluxo de UI usa harness servido espelhando o contrato de `use-recording-state.ts` (XLT proíbe webServer/Next); hook real travado pelos units; gravação contra o build Cloudflare fica para o smoke do deploy da Fase 1 (R3).
 
 ### Fase 2 — Segurança da sessão (B → C → D → G)
 

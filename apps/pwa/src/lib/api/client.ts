@@ -24,6 +24,7 @@
 
 import { z, type ZodType } from "zod";
 import { closeAllSockets } from "@/lib/auth/socket-registry";
+import { CLIENT_EVENTS_STORAGE_KEY } from "@/lib/telemetry/client-events";
 
 export const responseSchema = z
   .object({
@@ -125,6 +126,30 @@ export class ApiError extends Error {
  */
 export const UNAUTHORIZED_EVENT = "pi-finance:unauthorized";
 
+// ── Telemetry flush on the authenticated cycle ─────────────────────────────
+// Queued mic.error events (V4 T0.4.7, SPEC §24.7) flush on the next
+// successful same-origin request — that success IS the authenticated cycle.
+// Best-effort and non-blocking: the peek is a single localStorage read, the
+// flush itself never rejects into the request path, and the /client-events
+// request itself never re-triggers (no recursion). Dynamic import keeps the
+// transport one-directional (client-events → client) with no static cycle.
+
+function maybeFlushClientEvents(path: string): void {
+  if (path.startsWith("/client-events")) return;
+  try {
+    if (typeof localStorage === "undefined") return;
+    const raw = localStorage.getItem(CLIENT_EVENTS_STORAGE_KEY);
+    if (!raw || raw === "[]") return;
+  } catch {
+    return;
+  }
+  void import("@/lib/telemetry/client-events")
+    .then((events) => events.flushQueuedClientEvents())
+    .catch(() => {
+      /* queue stays durable for the next cycle */
+    });
+}
+
 export async function apiFetch<T>(
   path: string,
   options: ApiClientOptions = {},
@@ -187,7 +212,10 @@ export async function apiFetch<T>(
       );
     }
 
-    if (res.status === 204) return undefined as T;
+    if (res.status === 204) {
+      maybeFlushClientEvents(path);
+      return undefined as T;
+    }
 
     if (!res.ok) {
       let body: Record<string, unknown> = {};
@@ -200,6 +228,7 @@ export async function apiFetch<T>(
     }
 
     const payload: unknown = await res.json();
+    maybeFlushClientEvents(path);
     return (responseSchema ? responseSchema.parse(payload) : payload) as T;
   };
 

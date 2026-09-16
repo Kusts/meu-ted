@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import { TedChat } from "../TedChat";
@@ -118,8 +118,14 @@ describe("TedChat – ciclo de vida do microfone (SPEC §17, H-08)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     wsState.activeId = "ws-1";
+    // V4 T1.1: the record button only renders with the mic capability on.
+    vi.stubEnv("NEXT_PUBLIC_TED_MICROPHONE", "true");
     vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("mock-token");
     installMediaMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("permissão negada nunca mostra gravando (vai para erro)", async () => {

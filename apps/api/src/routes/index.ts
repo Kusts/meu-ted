@@ -58,6 +58,7 @@ import { registerGoalRoutes } from "./goals.js";
 import { registerSubscriptionRoutes } from "./subscriptions.js";
 import { registerPushRoutes } from "./push.js";
 import { registerAdoptionRoutes } from "./adoption.js";
+import { registerClientEventsRoutes } from "./client-events.js";
 import { registerAuditRoutes } from "./audit.js";
 import { registerDuplicateDetectRoutes } from "./duplicate-detect.js";
 import { registerOwnershipTransferRoutes } from "../auth/ownership-transfers-http.js";
@@ -421,6 +422,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     store: deps.adoptionStore ?? createInMemoryAdoptionStore(),
     resolveToken,
   });
+  registerClientEventsRoutes(app, { resolveToken });
 
   registerShadowObservabilityRoutes(app, {
     shadowDivergence: deps.shadowDivergenceStore ?? createInMemoryShadowDivergenceStore(),
