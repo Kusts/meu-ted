@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { MutationReceipt } from "@pi-finance/llm-contracts/types";
 import { fetchAgentConnectionToken, clearAgentConnectionTokenCache, trackAgentConnection } from "./agent-auth";
+import { PRODUCTION_PWA_HOST } from "./client";
 
 export const attachmentSchema = z.object({
   type: z.enum(["image", "pdf", "audio"]),
@@ -60,8 +61,13 @@ export type AgentMessage = {
 };
 
 function agentBaseUrl(): string {  // ADR-011: canonical browser transport is the same-origin proxy /api/agent.
-  // An explicitly configured direct URL is transient test-env compatibility
-  // only — never a silent production default.
+  // T2.1 (ADR-015 session-first, Option C): the production host always uses
+  // the proxy so the chat stays same-origin (T2.7 connect-src 'self'). An
+  // explicitly configured direct URL is a dev/test-only escape hatch
+  // (ADR-011 transient compat) — never a published production default.
+  if (typeof window !== "undefined" && window.location.hostname === PRODUCTION_PWA_HOST) {
+    return "/api/agent";
+  }
   const direct = process.env.NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL?.replace(/\/$/, "");
   if (direct) return direct;
   // Fallback seguro ao proxy Next.js /api/agent quando a URL direta não estiver configurada.
@@ -311,30 +317,6 @@ export type PendingOperationDecision = Omit<z.infer<typeof pendingDecisionSchema
   receipt?: PendingOperationReceipt;
 };
 
-const agentHistoryExportSchema = z.object({
-  version: z.number(),
-  exportedAt: z.string(),
-  turns: z.array(z.unknown()),
-  messages: z.array(z.unknown()),
-  actions: z.array(z.unknown()),
-  events: z.array(z.unknown()),
-});
-export type AgentHistoryExport = z.infer<typeof agentHistoryExportSchema>;
-const deleteAgentHistorySchema = z.object({ deleted: z.boolean(), recordCount: z.number() });
-export type DeleteAgentHistoryResult = z.infer<typeof deleteAgentHistorySchema>;
-const accessLogSchema = z.object({ items: z.array(z.object({ id: z.number(), actor_id: z.string(), action: z.string(), record_count: z.number(), created_at: z.string() })) });
-export type AgentAccessLog = z.infer<typeof accessLogSchema>;
-
-function agentRequestUrl(workspaceId: string, suffix: string): string {
-  const baseUrl = agentBaseUrl();
-  return `${baseUrl}/agents/workspace/${encodeURIComponent(workspaceId)}/message${suffix}`;
-}
-
-function agentHistoryUrl(workspaceId: string, suffix: string): string {
-  const baseUrl = agentBaseUrl();
-  return `${baseUrl}/agents/workspace/${encodeURIComponent(workspaceId)}/history${suffix}`;
-}
-
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let errorMsg = "Operação do agente falhou.";
@@ -517,88 +499,13 @@ export async function renewAgentSession(workspaceId: string): Promise<AgentSessi
   return (await response.json()) as AgentSessionRenewal;
 }
 
-export async function cancelAgentTurn(workspaceId: string, turnId: string): Promise<AgentTurn> {
-  const response = await fetch(agentRequestUrl(workspaceId, `/${encodeURIComponent(turnId)}/abort`), {
-    method: "POST", credentials: "include", headers: { "X-Workspace-Id": workspaceId },
-  });
-  return parseJson<AgentTurn>(response);
-}
-
-export type AgentEvent = { id: number; type: string; data: string };
-
-function parseAgentEvents(body: string): AgentEvent[] {
-  return body.trim().split(/\n\n+/).filter(Boolean).map((chunk) => {
-    const lines = chunk.split("\n");
-    const id = Number(lines.find((line) => line.startsWith("id:"))?.slice(3).trim() ?? 0);
-    const type = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() ?? "status";
-    const data = lines.find((line) => line.startsWith("data:"))?.slice(5).trim() ?? "{}";
-    return { id, type, data };
-  });
-}
-
-export async function reconnectAgentTurn(workspaceId: string, turnId: string, lastEventId = 0): Promise<AgentEvent[]> {
-  let cursor = lastEventId;
-  const events: AgentEvent[] = [];
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    let body: string;
-    try {
-      body = await streamAgentTurn(workspaceId, turnId, cursor);
-    } catch (error) {
-      if (attempt === 2) throw error;
-      continue;
-    }
-    const next = parseAgentEvents(body);
-    events.push(...next);
-    if (next.length === 0) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      continue;
-    }
-    cursor = next[next.length - 1]!.id;
-    if (next.some((event) => ["completed", "failed", "aborted"].includes(event.type))) break;
-  }
-  return events;
-}
-
-export async function streamAgentTurn(workspaceId: string, turnId: string, lastEventId = 0): Promise<string> {
-  // H-13: tracked so session clears abort a hanging SSE reconnect.
-  const { signal, release } = trackAgentConnection();
-  try {
-    const response = await fetch(agentRequestUrl(workspaceId, `/stream/${encodeURIComponent(turnId)}`), {
-      credentials: "include",
-      headers: { "Accept": "text/event-stream", "Last-Event-ID": String(lastEventId), "X-Workspace-Id": workspaceId },
-      signal,
-    });
-    if (!response.ok) throw new Error("Reconexão do agente falhou.");
-    return await response.text();
-  } finally {
-    release();
-  }
-}
-
-export async function exportAgentHistory(workspaceId: string): Promise<AgentHistoryExport> {
-  const response = await fetch(agentHistoryUrl(workspaceId, "/export"), {
-    credentials: "include",
-    headers: { "X-Workspace-Id": workspaceId },
-  });
-  return parseJson<AgentHistoryExport>(response).then((body) => agentHistoryExportSchema.parse(body));
-}
-
-export async function deleteAgentHistory(workspaceId: string): Promise<DeleteAgentHistoryResult> {
-  const response = await fetch(agentHistoryUrl(workspaceId, ""), {
-    method: "DELETE",
-    credentials: "include",
-    headers: { "X-Workspace-Id": workspaceId },
-  });
-  return parseJson<DeleteAgentHistoryResult>(response).then((body) => deleteAgentHistorySchema.parse(body));
-}
-
-export async function fetchAgentAccessLog(workspaceId: string): Promise<AgentAccessLog> {
-  const response = await fetch(agentHistoryUrl(workspaceId, "/access-log"), {
-    credentials: "include",
-    headers: { "X-Workspace-Id": workspaceId },
-  });
-  return parseJson<AgentAccessLog>(response).then((body) => accessLogSchema.parse(body));
-}
+/**
+ * T4.2 (SPEC section 11 E2): the legacy helpers were REMOVED, not re-pointed.
+ * Cancel/stream/reconnect of legacy turns, history export, history delete and
+ * the access-log reader lived on the retired runtime routes, which have no
+ * canonical FinanceChatAgent equivalent. Chat/history flows use
+ * sendAgentMessage/fetchAgentHistory (/rpc/chat, /rpc/history) above.
+ */
 
 export async function fetchAgentHistory(workspaceId: string): Promise<AgentMessage[]> {
   const baseUrl = agentBaseUrl();

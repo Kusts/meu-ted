@@ -58,6 +58,7 @@ import { registerGoalRoutes } from "./goals.js";
 import { registerSubscriptionRoutes } from "./subscriptions.js";
 import { registerPushRoutes } from "./push.js";
 import { registerAdoptionRoutes } from "./adoption.js";
+import { registerClientEventsRoutes } from "./client-events.js";
 import { registerAuditRoutes } from "./audit.js";
 import { registerDuplicateDetectRoutes } from "./duplicate-detect.js";
 import { registerOwnershipTransferRoutes } from "../auth/ownership-transfers-http.js";
@@ -77,6 +78,7 @@ import type { AccountInviteService } from "../auth/account-invites.js";
 
 import type { WorkspaceAccessStore } from "../auth/workspace-access.js";
 import { getBetterAuthSessionContext } from "../auth/better-auth.js";
+import { buildObservabilityEvent } from "../audit/events.js";
 import { createInMemoryPriceAlertStore, type PriceAlertStore } from "../price-alerts/store.js";
 import { registerPriceAlertRoutes } from "./price-alerts.js";
 import { registerAgentAuthRoutes } from "./agent-auth.js";
@@ -137,12 +139,71 @@ export type RouteDeps = {
   trustedOrigins?: string[];
   /** Fase 3 item 9: optional audit sink for sensitive admin LLM reads. */
   adminLlmAuditLog?: (event: AdminLlmReadAudit) => void;
+  /**
+   * V4 T2.2 / T0.4.1 (SPEC §24.1): sink para `auth.request.legacy_bearer_used`
+   * — emitido SOMENTE quando o cookie/session não autenticou a request E o
+   * bearer legado foi o autenticador efetivo do fallback (dimensão:
+   * workspace_id; contrato via buildObservabilityEvent, sem credenciais).
+   * Segue o padrão de injeção existente das rotas (cf. adminLlmAuditLog):
+   * sem sink, o default é o structured logger (best-effort, nunca quebra auth).
+   */
+  legacyBearerAuditLog?: (event: LegacyBearerUsedAuditEvent) => void;
   inviteSignupGuard?: import('../auth/invite-signup-guard.js').InviteSignupGuard;
   pool?: { query: (text: string, values?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }> } | null;
   /** Overrides the analytics source (SQL-backed in production, store-backed by default). */
   analyticsSource?: AnalyticsSource;
 };
 
+/**
+ * V4 T2.2 / T0.4.1 (SPEC §24.1): evento de telemetria de uso EFETIVO do
+ * fallback bearer legado. É o evento CANÔNICO do contrato fail-closed
+ * (buildObservabilityEvent): { eventType, payload: { workspaceId } } —
+ * nunca carrega credencial, cookie, token ou header.
+ */
+export type LegacyBearerUsedAuditEvent = {
+  eventType: 'auth.request.legacy_bearer_used';
+  payload: { workspaceId: string };
+};
+
+const SESSION_BEARER_FALLBACK_OFF_VALUES = new Set(['0', 'false', 'no', 'off']);
+
+/**
+ * V4 T2.3 B3.7 (SPEC §8 B3 passo 7, ADR-015): gate do fallback bearer de
+ * sessão server-side. Default TRUE durante a janela de compatibilidade
+ * (janela ADR-011, review 2026-12-01). Com `SESSION_BEARER_FALLBACK_ENABLED`
+ * off, o bearer de sessão legado é rejeitado como autenticador — a sessão
+ * resolve SOMENTE via cookie HttpOnly (session-first); bearer-only resulta
+ * em 401 (ou fallback a device token quando aplicável). Leitura em
+ * call-time para permitir toggle em teste. Device tokens e tokens delegados
+ * (`pi-agent`) seguem seus próprios caminhos e não são afetados.
+ */
+export function isSessionBearerFallbackEnabled(env?: Record<string, string | undefined>): boolean {
+  try {
+    const source = env ?? (typeof process !== 'undefined' ? process.env : undefined);
+    const raw = source?.['SESSION_BEARER_FALLBACK_ENABLED'];
+    if (raw === undefined) return true;
+    return !SESSION_BEARER_FALLBACK_OFF_VALUES.has(raw.trim().toLowerCase());
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * True when `authorization` carries a pi-agent delegated turn token
+ * (`iss: "pi-agent"`). Delegated tokens follow their own verification path
+ * and are NEVER treated as legacy session bearers (kill-switch exempt).
+ */
+function isPiAgentBearer(authorization: unknown): boolean {
+  if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) return false;
+  try {
+    const [, p] = authorization.slice('Bearer '.length).trim().split('.');
+    if (!p) return false;
+    const j = JSON.parse(Buffer.from(p, 'base64url').toString('utf8')) as { iss?: string };
+    return j.iss === 'pi-agent';
+  } catch {
+    return false;
+  }
+}
 /**
  * The API-owned V2 executor is the only bridge from a canonical pending tool
  * to financial WriteStore methods. It deliberately accepts only the two TED
@@ -184,28 +245,28 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     const auth = deps.auth;
     const workspaceAccess = deps.workspaceAccess;
     app.addHook("preHandler", async (request, reply) => {
+      const isAuthRoute =
+        request.url.startsWith('/auth/') ||
+        request.url.startsWith('/api/auth');
+      // FIX-AUTH-BOOT FINDING 1 (HIGH): o kill-switch do fallback bearer
+      // legado (T2.3) vale para TODA chamada a Better-Auth, incluindo /auth/*
+      // e /api/auth/* — sem exceção para auth. Com a flag OFF, o bearer de
+      // sessão legado é removido do request ANTES de qualquer resolução, de
+      // modo que register/rotate/session por bearer legado falham
+      // fail-closed (nenhum device token mintado). Preservados: pi-agent
+      // (delegated), X-Device-Token e cookie (só `authorization` é removido).
+      if (!isSessionBearerFallbackEnabled() && !isPiAgentBearer(request.headers.authorization)) {
+        delete request.headers.authorization;
+      }
       if (
         request.url === '/health' ||
-        request.url.startsWith('/auth/') ||
-        request.url.startsWith('/api/auth') ||
+        isAuthRoute ||
         request.url.startsWith('/bridge/')
       ) {
         return;
       }
 
-      const authHeader = request.headers.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const rawToken = authHeader.slice('Bearer '.length).trim();
-        try {
-          const [, p] = rawToken.split('.');
-          if (p) {
-            const j = JSON.parse(Buffer.from(p, 'base64url').toString('utf8')) as { iss?: string };
-            if (j.iss === 'pi-agent') return;
-          }
-        } catch {
-          // non-jwt or error, proceed
-        }
-      }
+      if (isPiAgentBearer(request.headers.authorization)) return;
 
       const workspaceIdHeader = request.headers['x-workspace-id'];
       const workspaceId = Array.isArray(workspaceIdHeader) ? workspaceIdHeader[0] : workspaceIdHeader;
@@ -214,6 +275,10 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       for (const [key, val] of Object.entries(request.headers)) {
         if (val !== undefined) headers.set(key, Array.isArray(val) ? val.join(', ') : val);
       }
+      // T2.3 B3.7: fallback desligado => resolução de sessão cookie-only
+      // (o bearer legado não autentica; pi-agent já retornou acima e o
+      // device token resolve no branch próprio abaixo).
+      if (!isSessionBearerFallbackEnabled()) headers.delete('authorization');
       const session = await getBetterAuthSessionContext(auth, headers);
 
       if (workspaceId) {
@@ -221,6 +286,38 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
           const access = await workspaceAccess.resolve(session.userId, workspaceId);
           if (!access) {
             return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Acesso ao workspace proibido.' });
+          }
+
+          // T2.2 / T0.4.1 (SPEC §24.1): conta o uso EFETIVO do fallback bearer
+          // legado — somente quando o cookie/session NÃO autenticaria sozinho
+          // e o bearer foi o autenticador efetivo. Sonda fail-closed: qualquer
+          // falha → nenhuma emissão (nunca superconta, nunca quebra auth).
+          // Login nunca chega aqui (early-return de /auth/* acima); fallback
+          // de device token tem telemetria própria (T2.4) e não emite.
+          const authorization = request.headers.authorization;
+          if (typeof authorization === 'string' && authorization.toLowerCase().startsWith('bearer ')) {
+            try {
+              const cookieOnly = new Headers(headers);
+              cookieOnly.delete('authorization');
+              const cookieSession = await getBetterAuthSessionContext(auth, cookieOnly).catch(() => undefined);
+              if (!cookieSession) {
+                // The CANONICAL contract event flows to the sink (same
+                // reference validated by buildObservabilityEvent) — never a
+                // detached copy.
+                const entry = buildObservabilityEvent('auth.request.legacy_bearer_used', {
+                  workspaceId: access.householdId,
+                }) as LegacyBearerUsedAuditEvent;
+                try {
+                  const sink = deps.legacyBearerAuditLog;
+                  if (sink) sink(entry);
+                  else request.log.info({ event: entry.eventType, ...entry.payload });
+                } catch {
+                  // Telemetry never breaks authentication.
+                }
+              }
+            } catch {
+              // Probe failure → no emission (fail-closed against overcounting).
+            }
           }
 
           request.betterAuthContext = session;
@@ -421,6 +518,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     store: deps.adoptionStore ?? createInMemoryAdoptionStore(),
     resolveToken,
   });
+  registerClientEventsRoutes(app, { resolveToken });
 
   registerShadowObservabilityRoutes(app, {
     shadowDivergence: deps.shadowDivergenceStore ?? createInMemoryShadowDivergenceStore(),

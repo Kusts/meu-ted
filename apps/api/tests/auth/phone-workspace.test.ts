@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   createInMemoryPhoneWorkspaceStore,
   normalizePhone,
-  PhoneResolutionError,
   type PhoneWorkspaceStore,
 } from "../../src/auth/phone-workspace.js";
 

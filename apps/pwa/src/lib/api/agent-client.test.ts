@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decidePendingOperation,
-  deleteAgentHistory,
   describePendingOperationStatus,
-  exportAgentHistory,
   fetchAgentHistory,
   formatCentsToBRL,
   formatDateToBR,
@@ -181,15 +179,33 @@ describe("FinanceChatAgent Canonical REST Client & Legacy Adapters", () => {
     );
   });
 
-  it("legacy helpers remain available for backwards compatibility", async () => {
+  it("T4.2 (SPEC section 11 E2, contract change): the retired-runtime helpers are gone — history flows use /rpc/history only", async () => {
+    // exportAgentHistory/deleteAgentHistory/fetchAgentAccessLog (and the
+    // turn helpers cancel/stream/reconnect) were REMOVED in T4.2, not
+    // re-pointed: the retired routes have no canonical equivalent. The
+    // dedicated contract lives in __tests__/agent-client.t4-2-legacy-removal.test.ts.
+    const ns = (await import("./agent-client")) as Record<string, unknown>;
+    for (const name of [
+      "exportAgentHistory",
+      "deleteAgentHistory",
+      "fetchAgentAccessLog",
+      "cancelAgentTurn",
+      "streamAgentTurn",
+      "reconnectAgentTurn",
+    ]) {
+      expect(ns).not.toHaveProperty(name);
+    }
 
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(JSON.stringify({ version: 1, exportedAt: "now", turns: [], messages: [], actions: [], events: [] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ deleted: true, recordCount: 2 }), { status: 200 }));
+    vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("signed-token-123");
+    let capturedUrl = "";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      capturedUrl = String(url);
+      return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
+    });
 
-    await expect(exportAgentHistory("w1")).resolves.toMatchObject({ version: 1 });
-    await expect(deleteAgentHistory("w1")).resolves.toEqual({ deleted: true, recordCount: 2 });
+    await fetchAgentHistory("w1");
+    expect(capturedUrl).toBe("https://agent.example.test/agents/finance-chat-agent/w1/rpc/history");
   });
 
   it("defaults to the same-origin /api/agent proxy (ADR-011 canonical) without explicit env", async () => {

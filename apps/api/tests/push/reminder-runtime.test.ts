@@ -51,6 +51,7 @@ describe("Postgres reminder runtime", () => {
     await scheduler.run(new Date("2026-08-13T12:00:00.000Z"));
     expect(updateNotificationExecution).toHaveBeenCalledWith(
       "config-1",
+      "household-1",
       expect.objectContaining({
         status: "sent",
         sent: 1,
@@ -59,6 +60,7 @@ describe("Postgres reminder runtime", () => {
     );
     expect(updateNotificationExecution).toHaveBeenCalledWith(
       "config-1",
+      "household-1",
       expect.objectContaining({
         status: "sent",
         sent: 1,

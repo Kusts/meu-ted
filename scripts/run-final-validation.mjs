@@ -15,6 +15,7 @@ export const VAL_GATES = [
   { id: "VAL.6", name: "Codex Broker", command: "pnpm --filter pi-finance-codex-broker --fail-if-no-match typecheck && pnpm --filter pi-finance-codex-broker --fail-if-no-match test && pnpm --filter pi-finance-codex-broker --fail-if-no-match build" },
   { id: "VAL.7", name: "PWA Unit & Contract Tests", command: "pnpm --filter pwa --fail-if-no-match test" },
   { id: "VAL.8", name: "Architecture Invariants", command: "pnpm architecture:check" },
+  { id: "VAL-V4.9", name: "Workspace Agent Decommission Guards (ARCH-V4-06a/b)", command: "node scripts/check-legacy-runtime-references.mjs --check=all" },
   { id: "VAL.9", name: "Capabilities, Write Policy & Governance", command: "pnpm capabilities:check && pnpm write-policy:check && pnpm governance:check" },
   { id: "VAL.10", name: "Canonical Documentation Contracts", command: "node --test scripts/canonical-docs-contract.test.mjs scripts/documentation-facts-contract.test.mjs" },
   { id: "VAL.11", name: "Builds & Distribution Artifacts", command: "pnpm build:all" },

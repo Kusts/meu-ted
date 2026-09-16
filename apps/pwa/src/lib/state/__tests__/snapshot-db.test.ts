@@ -18,11 +18,15 @@ import {
 STORE_NAME,
   V2_ENVELOPE_KEY,
 } from "../snapshot-db";
+import { setOfflineSubjectId } from "@/lib/auth/offline-subject";
 
 afterEach(() => vi.restoreAllMocks());
 
 const TEST_TOKEN = "device-auth-token-sample-xyz";
 const ALT_TOKEN = "different-user-token-abc-987";
+// T2.6: v2 reads require the subject partition — an authenticated session
+// always carries one (set at login via setActiveWorkspaceId).
+const TEST_SUBJECT = "22222222-3333-4444-8555-666666666666";
 
 function seedV1(token: string, domain = "accounts", data = [{ id: "acc-1", name: "Conta 1" }]): void {
   localStorage.setItem(
@@ -43,6 +47,8 @@ describe("PWA State Snapshot DB — snapshot-db.ts", () => {
       if (db.name) indexedDB.deleteDatabase(db.name);
     }
     localStorage.clear();
+    // T2.6 contract: reads verify the subject partition.
+    setOfflineSubjectId(TEST_SUBJECT);
   });
 
   // ── 1. HAPPY PATH (>= 3 cases) ──────────────────────────────────────────────

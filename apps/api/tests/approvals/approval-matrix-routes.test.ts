@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { expect, it } from 'vitest';
 import { buildTestApp, TOKEN_A } from '../test-app.js';
 import { createApprovalPolicy } from '../../src/approvals/policy.js';
-import { ACCOUNT_A1, CARD_A1, CATEGORY_FOOD_A, HOUSEHOLD_A } from '../fixtures/seed.js';
+import { ACCOUNT_A1, CARD_A1, CATEGORY_FOOD_A, } from '../fixtures/seed.js';
 
 const approvalApp = () => buildTestApp({
   accounts: [ACCOUNT_A1, CARD_A1],

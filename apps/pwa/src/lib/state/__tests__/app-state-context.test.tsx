@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from "@/lib/test-utils";
 import { AppStateProvider, useAppState } from "../app-state-context";
 import * as endpoints from "@/lib/api/endpoints";
 import { ApiError, apiFetch } from "@/lib/api/client";
+import { setOfflineSubjectId } from "@/lib/auth/offline-subject";
 import { SessionProvider } from "@/lib/auth/session-context";
 import type { Account, Category, Transaction, Payable } from "@/lib/state/types";
 import type { MutationReceipt } from "@pi-finance/llm-contracts/types";
@@ -101,6 +102,9 @@ const mockP1: Payable = {
 function apiReady() {
   vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "http://localhost:3001");
   localStorage.setItem("pi-finance:token", "test-token-abc");
+  // T2.6 contract: v2 reads verify the subject partition — an
+  // authenticated session always carries one (set at login).
+  setOfflineSubjectId("66666666-7777-4888-8999-aaaaaaaaaaaa");
 }
 
 function apiNotConfigured() {

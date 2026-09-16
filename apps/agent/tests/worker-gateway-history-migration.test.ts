@@ -1,40 +1,15 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import worker from "../src/worker.js";
 import { createAgentConnectionToken } from "../../api/src/auth/agent-connection-token.js";
-import type { LegacyFullExport } from "../src/migration/legacy-history.js";
 
 type WorkerEnv = Parameters<typeof worker.fetch>[1];
 
-describe("Gateway history_migration_failed/idempotency (RED for live block)", () => {
+describe("Gateway post-removal passthrough (T4.3 single runtime, INV-07)", () => {
   afterEach(() => vi.restoreAllMocks());
 
   const SECRET = "secret-for-testing-purposes-at-least-32-chars!";
   const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
   const GENUINE_USER = "user-authenticated-uuid";
-
-  const emptyExport: LegacyFullExport = {
-    version: 5,
-    workspaceId: WORKSPACE_ID,
-    turns: [],
-    messages: [],
-    hasInFlightTurns: false,
-  };
-
-  const pendingExport: LegacyFullExport = {
-    version: 5,
-    workspaceId: WORKSPACE_ID,
-    turns: [{ id: "turn-pending", actor_id: GENUINE_USER, status: "queued", attempts: 0, tokens_used: 10 }],
-    messages: [
-      {
-        id: "msg-pending",
-        actor_id: GENUINE_USER,
-        role: "user",
-        content_json: JSON.stringify("hello pending"),
-        created_at: new Date().toISOString(),
-      },
-    ],
-    hasInFlightTurns: true,
-  };
 
   // C-01/C-02: Worker auth resolves the canonical workspace and consumes
   // the single-use token before routing — mock both internal endpoints.
@@ -57,30 +32,20 @@ describe("Gateway history_migration_failed/idempotency (RED for live block)", ()
     });
   };
 
-  it("RED: GET /rpc/history should NOT be blocked by migration_blocked_turns_in_flight (history is read-only, must remain available)", async () => {
-    const token = await createAgentConnectionToken({ sub: GENUINE_USER, workspace: WORKSPACE_ID, role: "owner" }, SECRET);
-    const legacyExportSpy = vi.fn(async () => pendingExport);
-    const financeImportSpy = vi.fn(async () => ({
-      success: false,
-      importedCount: 0,
-      skipped: false,
-      reason: "migration_blocked_turns_in_flight: workspace has active turns in queued/running state",
-    }));
-    const financeFetchSpy = vi.fn(async () => new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 }));
-
-    const env: WorkerEnv = {
-      AGENT: {
-        idFromName: vi.fn((n: string) => ({ name: n }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({ exportFullWorkspaceHistory: legacyExportSpy, fetch: vi.fn() } as unknown as never)),
-      },
+  const mockEnv = (financeFetchSpy: ReturnType<typeof vi.fn>) =>
+    ({
       FINANCE_CHAT_AGENT: {
         idFromName: vi.fn((n: string) => ({ name: n }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({ importLegacyHistory: financeImportSpy, fetch: financeFetchSpy } as unknown as never)),
+        get: vi.fn(() => ({ fetch: financeFetchSpy }) as unknown as never),
       },
       API_ORIGIN: "https://api.test.local",
       AGENT_CONNECTION_TOKEN_SECRET: SECRET,
       AGENT_AUTH_SERVICE_TOKEN: "service-token",
-    };
+    }) as unknown as WorkerEnv;
+
+  it("GET /rpc/history reaches FinanceChatAgent directly — no retired migration gate", async () => {
+    const token = await createAgentConnectionToken({ sub: GENUINE_USER, workspace: WORKSPACE_ID, role: "owner" }, SECRET);
+    const financeFetchSpy = vi.fn(async () => new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 }));
 
     const req = new Request(`https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/history`, {
       method: "GET",
@@ -88,36 +53,14 @@ describe("Gateway history_migration_failed/idempotency (RED for live block)", ()
     });
 
     mockAuthEndpoints();
-    const res = await worker.fetch(req, env);
-    // After fix, history should be allowed (200) even when migration is pending; before fix it was 409
+    const res = await worker.fetch(req, mockEnv(financeFetchSpy));
     expect(res.status).toBe(200);
-    expect(financeFetchSpy).toHaveBeenCalled();
+    expect(financeFetchSpy).toHaveBeenCalledOnce();
   });
 
-  it("POST /rpc/chat SHOULD still be blocked with 409 when migration has in-flight turns", async () => {
+  it("POST /rpc/chat reaches FinanceChatAgent directly — never 409 from a retired migration", async () => {
     const token = await createAgentConnectionToken({ sub: GENUINE_USER, workspace: WORKSPACE_ID, role: "owner" }, SECRET);
-    const legacyExportSpy = vi.fn(async () => pendingExport);
-    const financeImportSpy = vi.fn(async () => ({
-      success: false,
-      importedCount: 0,
-      skipped: false,
-      reason: "migration_blocked_turns_in_flight: workspace has active turns in queued/running state",
-    }));
     const financeFetchSpy = vi.fn(async () => new Response(JSON.stringify({ status: "completed" }), { status: 200 }));
-
-    const env: WorkerEnv = {
-      AGENT: {
-        idFromName: vi.fn((n: string) => ({ name: n }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({ exportFullWorkspaceHistory: legacyExportSpy, fetch: vi.fn() } as unknown as never)),
-      },
-      FINANCE_CHAT_AGENT: {
-        idFromName: vi.fn((n: string) => ({ name: n }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({ importLegacyHistory: financeImportSpy, fetch: financeFetchSpy } as unknown as never)),
-      },
-      API_ORIGIN: "https://api.test.local",
-      AGENT_CONNECTION_TOKEN_SECRET: SECRET,
-      AGENT_AUTH_SERVICE_TOKEN: "service-token",
-    };
 
     const req = new Request(`https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/chat`, {
       method: "POST",
@@ -126,44 +69,10 @@ describe("Gateway history_migration_failed/idempotency (RED for live block)", ()
     });
 
     mockAuthEndpoints();
-    const res = await worker.fetch(req, env);
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { code: string };
-    expect(body.code).toBe("agent.history_migration_pending");
-    expect(financeFetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("RED: empty legacy export should NOT trigger importLegacyHistory (idempotent, no-op)", async () => {
-    const token = await createAgentConnectionToken({ sub: GENUINE_USER, workspace: WORKSPACE_ID, role: "owner" }, SECRET);
-    const legacyExportSpy = vi.fn(async () => emptyExport);
-    const financeImportSpy = vi.fn(async () => ({ success: true, importedCount: 0, skipped: true, migrationHash: "empty-hash" }));
-    const financeFetchSpy = vi.fn(async () => new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 }));
-
-    const env: WorkerEnv = {
-      AGENT: {
-        idFromName: vi.fn((n: string) => ({ name: n }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({ exportFullWorkspaceHistory: legacyExportSpy, fetch: vi.fn() } as unknown as never)),
-      },
-      FINANCE_CHAT_AGENT: {
-        idFromName: vi.fn((n: string) => ({ name: n }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({ importLegacyHistory: financeImportSpy, fetch: financeFetchSpy } as unknown as never)),
-      },
-      API_ORIGIN: "https://api.test.local",
-      AGENT_CONNECTION_TOKEN_SECRET: SECRET,
-      AGENT_AUTH_SERVICE_TOKEN: "service-token",
-    };
-
-    const req = new Request(`https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/history`, {
-      method: "GET",
-      headers: { "x-agent-connection-token": token, origin: "https://pi-finance-pwa.walissonead.workers.dev" },
-    });
-
-    mockAuthEndpoints();
-    const res = await worker.fetch(req, env);
+    const res = await worker.fetch(req, mockEnv(financeFetchSpy));
     expect(res.status).toBe(200);
-    expect(legacyExportSpy).toHaveBeenCalled();
-    // After fix, empty export should skip import entirely (idempotent)
-    expect(financeImportSpy).not.toHaveBeenCalled();
-    expect(financeFetchSpy).toHaveBeenCalled();
+    const body = (await res.json()) as { code?: string; status?: string };
+    expect(body.code).toBeUndefined();
+    expect(financeFetchSpy).toHaveBeenCalledOnce();
   });
 });

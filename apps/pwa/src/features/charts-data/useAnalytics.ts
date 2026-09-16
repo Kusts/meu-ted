@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiFetch } from "@/lib/api/client";
+import { fetchAnalyticsJson } from "@/lib/api/endpoints";
 import type { AnalyticsFilters } from "@/components/filters/analytics-filters";
 
 export type AnalyticsKpis = {
@@ -77,11 +77,11 @@ const toQuery = (filters: AnalyticsFilters): string => {
 };
 
 export async function fetchKpis(filters: AnalyticsFilters, signal?: AbortSignal): Promise<AnalyticsKpis> {
-  return apiFetch<AnalyticsKpis>(`/analytics/kpis?${toQuery(filters)}`, signal ? { signal } : {});
+  return fetchAnalyticsJson<AnalyticsKpis>(`/analytics/kpis?${toQuery(filters)}`, signal);
 }
 
 export async function fetchCashflowSeries(filters: AnalyticsFilters, signal?: AbortSignal): Promise<CashflowSeries> {
-  return apiFetch<CashflowSeries>(`/analytics/cashflow-series?${toQuery(filters)}`, signal ? { signal } : {});
+  return fetchAnalyticsJson<CashflowSeries>(`/analytics/cashflow-series?${toQuery(filters)}`, signal);
 }
 
 export async function fetchCategoryBreakdown(
@@ -90,11 +90,11 @@ export async function fetchCategoryBreakdown(
   signal?: AbortSignal,
 ): Promise<CategoryBreakdown> {
   const query = toQuery(filters);
-  return apiFetch<CategoryBreakdown>(`/analytics/category-breakdown?${query}&kind=${kind}`, signal ? { signal } : {});
+  return fetchAnalyticsJson<CategoryBreakdown>(`/analytics/category-breakdown?${query}&kind=${kind}`, signal);
 }
 
 export async function fetchBudgetConsumption(signal?: AbortSignal): Promise<BudgetConsumptionItem[]> {
-  const res = await apiFetch<{ items: BudgetConsumptionItem[] }>("/analytics/budget-consumption", signal ? { signal } : {});
+  const res = await fetchAnalyticsJson<{ items: BudgetConsumptionItem[] }>("/analytics/budget-consumption", signal);
   return res.items;
 }
 
@@ -102,16 +102,16 @@ export async function fetchDailyHeatmap(
   filters: AnalyticsFilters,
   signal?: AbortSignal,
 ): Promise<{ endDate: string; weeks: HeatmapWeek[] }> {
-  return apiFetch(`/analytics/daily-heatmap?${toQuery(filters)}`, signal ? { signal } : {});
+  return fetchAnalyticsJson(`/analytics/daily-heatmap?${toQuery(filters)}`, signal);
 }
 
 export async function fetchNetWorthHistory(
   filters: AnalyticsFilters,
   signal?: AbortSignal,
 ): Promise<{ month: string; netWorthCents: number }[]> {
-  const res = await apiFetch<{ months: { month: string; netWorthCents: number }[] }>(
+  const res = await fetchAnalyticsJson<{ months: { month: string; netWorthCents: number }[] }>(
     `/analytics/net-worth-history?${toQuery(filters)}`,
-    signal ? { signal } : {},
+    signal,
   );
   return res.months;
 }

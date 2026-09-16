@@ -13,7 +13,7 @@ import { failoverReasonOf, isRetryableLlmError } from './failover.js';
  * - throws a sanitized composite error (reason codes only, never prompts,
  *   transcripts or secrets) when both legs fail.
  *
- * The legacy `WorkspaceAgent` queue performs no upstream model invocation
+ * The retired legacy turn queue performs no upstream model invocation
  * (default processor echoes), so there are no legacy attempts to unify —
  * every real inference flows through this executor.
  */

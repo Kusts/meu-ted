@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildTestApp, TOKEN_A, TOKEN_B } from '../test-app.js';
 import { HOUSEHOLD_A, HOUSEHOLD_B } from '../fixtures/seed.js';
-import { createInMemoryAuditLogStore } from '../../src/audit/store.js';
 import type { AuditLog } from '../../src/audit/store.js';
 import type { Account, Category, Transaction } from '../../src/types/domain.js';
 

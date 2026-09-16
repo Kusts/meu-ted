@@ -31,7 +31,7 @@ export const createPostgresReminderScheduler = (options: {
     dedupe: createPostgresReminderDedupeStore(options.pool),
     lock: createPostgresReminderLock(options.pool),
     onExecution: async (config, state, executedAt) =>
-      options.payableStore.updateNotificationExecution(config.id, {
+      options.payableStore.updateNotificationExecution(config.id, config.householdId, {
         ...state,
         executedAt,
       }),

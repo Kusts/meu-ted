@@ -52,6 +52,8 @@ function defaultState(): AppState {
     updateCategory: vi.fn(), deactivateCategory: vi.fn(), deleteCategory: vi.fn(),
     applyCategoryDefaults: vi.fn(), updateSubscription: vi.fn(), refreshSubscriptions: vi.fn(),
     refreshDomains: vi.fn(),
+    offlineLocked: false,
+    revalidateOfflineSession: vi.fn(),
   };
 }
 

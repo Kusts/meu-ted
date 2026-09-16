@@ -20,8 +20,6 @@ type CredentialRecord = { masked: string; updatedAt: string };
 
 const records = new Map<string, CredentialRecord>();
 
-type RemoteCacheEntry = { at: number; models: Array<{ id: string; ownedBy?: string | null }>; cached?: never };
-
 const remoteCache = new Map<string, { at: number; models: Array<{ id: string; ownedBy?: string | null }> }>();
 
 export const REMOTE_MODELS_TTL_MS = 60_000;

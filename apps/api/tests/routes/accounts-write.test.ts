@@ -6,12 +6,12 @@ const isoDate = '2026-06-10';
 
 describe('POST /accounts', () => {
   let app: ReturnType<typeof buildTestApp>['app'];
-  let state: ReturnType<typeof buildTestApp>['state'];
+  let _state: ReturnType<typeof buildTestApp>['state'];
 
   beforeEach(() => {
     const t = buildTestApp();
     app = t.app;
-    state = t.state;
+    _state = t.state;
   });
 
   it('creates an account and returns 201', async () => {

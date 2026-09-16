@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, } from 'vitest';
 import { createRateLimiter, type RateLimiter } from '../../src/server/rate-limit.js';
 
 describe('G0.1.6 — rate limiter', () => {

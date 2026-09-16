@@ -12,8 +12,12 @@ import {
   STORE_NAME,
 } from "../snapshot-db";
 import type { Account } from "@/lib/state/types";
+import { setOfflineSubjectId } from "@/lib/auth/offline-subject";
 
 const TOKEN = "test-token-v2";
+// T2.6: v2 reads require the subject partition (an authenticated session
+// always carries one).
+const TEST_SUBJECT = "55555555-6666-4777-8888-999999999999";
 
 function mockAccount(id: string, name: string): Account {
   return {
@@ -38,6 +42,7 @@ async function readRawEnvelope(): Promise<unknown> {
 function stubEnvAndToken(): void {
   vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "http://localhost:3001");
   localStorage.setItem("pi-finance:token", TOKEN);
+  setOfflineSubjectId(TEST_SUBJECT);
 }
 
 function seedV1(domain: string, data: unknown[]): void {

@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
-import { getToken, setToken, setSessionToken } from "@/lib/auth/token-store";
+import { getToken, clearToken, setToken, setSessionToken } from "@/lib/auth/token-store";
 import { ApiError, clearActiveWorkspaceId } from "@/lib/api/client";
-import { signInWithEmail, registerDeviceToken, verifyDeviceToken } from "@/lib/api/auth";
+import { signInWithEmail, registerDeviceToken, verifyDeviceToken, fetchSession } from "@/lib/api/auth";
 import { clearSensitiveSession } from "@/lib/session";
 import { SessionProvider } from "@/lib/auth/session-context";
 import { Lock, Mail, ArrowRight } from "lucide-react";
@@ -24,9 +24,27 @@ export function AuthGate({ children }: Props) {
     let cancelled = false;
 
     const init = async () => {
+      // FIX-FINAL-2 FINDING 1 (ADR-015 cookie-first): the boot ALWAYS probes
+      // the cookie session first (GET /auth/session). A stored device token
+      // is scoped (registration/verification/rotation) and never decides the
+      // session alone — an invalid device token (401) drops ONLY the device
+      // token; the cookie session is never cleared on this path.
+      let sessionUser: { id: string; email: string; name: string } | null = null;
+      try {
+        const session = await fetchSession();
+        sessionUser = session?.user ?? null;
+      } catch {
+        sessionUser = null;
+      }
+
       const token = getToken();
       if (!token) {
-        if (!cancelled) setState("login");
+        // T2.5 (ADR-015 Opção C, session-first): the boot MUST NOT depend on
+        // the device token. Without one, a valid cookie session is enough to
+        // operate — GET /auth/session is the scoped session check. Fail-closed:
+        // no session means login; transport errors also mean login (unlike the
+        // stored-token path, there is nothing offline-capable to unlock with).
+        if (!cancelled) setState(sessionUser ? "unlocked" : "login");
         return;
       }
 
@@ -36,6 +54,18 @@ export function AuthGate({ children }: Props) {
       } catch (e) {
         if (cancelled) return;
         if (e instanceof ApiError && e.status === 401) {
+          // Scoped device token expired/rotated/revoked: drop ONLY it. When
+          // the cookie session is still valid the user stays unlocked; only
+          // a missing session falls through to the fail-closed login below.
+          try {
+            clearToken();
+          } catch {
+            /* noop */
+          }
+          if (sessionUser) {
+            if (!cancelled) setState("unlocked");
+            return;
+          }
           await clearSensitiveSession({
             clearToken: true,
             clearV1Snapshot: true,
@@ -64,13 +94,12 @@ export function AuthGate({ children }: Props) {
     try {
       const signInRes = await signInWithEmail(credentials);
       const sessionToken = signInRes?.token;
+      // T2.2 B2/B3 (ADR-015): escrita do bearer legado atrás da janela de
+      // compat (NEXT_PUBLIC_LEGACY_BEARER_COMPAT, review 2026-12-01) dentro
+      // da token-store — sem writes diretos em localStorage aqui. Com a
+      // flag off, a sessão opera 100% via cookie HttpOnly.
       if (sessionToken) {
         setSessionToken(sessionToken);
-        try {
-          localStorage.setItem("pi-finance:session-token", sessionToken);
-        } catch {
-          /* noop */
-        }
       }
 
       const res = await registerDeviceToken(sessionToken);
@@ -80,11 +109,6 @@ export function AuthGate({ children }: Props) {
       }
 
       setToken(res.token);
-      try {
-        localStorage.setItem("pi-finance:token", res.token);
-      } catch {
-        /* noop */
-      }
 
       setState("unlocked");
     } catch (e: unknown) {

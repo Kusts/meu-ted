@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTestApp, TOKEN_A, TOKEN_B } from '../test-app.js';
+import { buildTestApp, TOKEN_A, } from '../test-app.js';
 import { ACCOUNT_A1, CATEGORY_FOOD_A, CATEGORY_RENT_A } from '../fixtures/seed.js';
 
 const seed = { accounts: [ACCOUNT_A1], categories: [CATEGORY_FOOD_A, CATEGORY_RENT_A], transactions: [] };
@@ -99,7 +99,7 @@ describe('GET /budgets/check', () => {
 
 describe('GET /budgets/:id/trends', () => {
   it('returns N months of trend data', async () => {
-    const { app, state } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
+    const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const create = await app.inject({
       method: 'POST', url: '/budgets',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },

@@ -54,15 +54,20 @@ describe("RootProviders — no API env (fail closed)", () => {
 });
 
 describe("RootProviders — API env configured", () => {
-  it("wraps content in AuthGate when API configured", () => {
+  it("wraps content in AuthGate when API configured", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
+    // T2.5 session-first boot probes GET /auth/session (no device token stored).
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ user: null }), { status: 200 }),
+    );
     render(
       <RootProviders>
         <div data-testid="cfg-app">Cfg App</div>
       </RootProviders>,
     );
-    // API configured → AuthGate path renders (login UI, children gated)
-    expect(screen.getByRole("button", { name: /Entrar/i })).toBeInTheDocument();
+    // API configured → AuthGate path renders (login UI after the session probe, children gated)
+    expect(await screen.findByRole("button", { name: /Entrar/i }, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.queryByTestId("cfg-app")).not.toBeInTheDocument();
   });
 });
 

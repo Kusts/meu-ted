@@ -51,7 +51,7 @@ export const createPostgresBudgetStore = (pool: Pool): BudgetStore => {
       await query(`INSERT INTO budgets (id,household_id,category_id,name,amount_cents,period,start_date,alert_threshold) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [id, householdId, input.categoryId, input.name, input.amountCents, input.period, input.startDate, input.alertThreshold ?? 80]);
       const rows = await query<Row>(`SELECT * FROM budgets WHERE id=$1 AND household_id=$2`, [id, householdId]);
-      const r = rows[0]!;
+      const _r = rows[0]!;
       return { id, householdId, categoryId: input.categoryId, name: input.name, amountCents: input.amountCents, period: input.period, startDate: input.startDate, alertThreshold: input.alertThreshold ?? 80, rollover: false };
     },
 

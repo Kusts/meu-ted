@@ -141,6 +141,7 @@ export type PayableStore = {
   listAllNotifications(): Promise<NotificationConfig[]>;
   updateNotificationExecution(
     notificationId: string,
+    householdId: string,
     state: {
       status: "sent" | "deduplicated" | "failed";
       sent: number;

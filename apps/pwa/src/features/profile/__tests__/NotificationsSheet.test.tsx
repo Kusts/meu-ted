@@ -41,6 +41,8 @@ function baseState(): AppState {
     refreshSubscriptions: vi.fn(),
     createTransfer: vi.fn(), payStatement: vi.fn(), createInstallments: vi.fn(),
     createCardPurchase: vi.fn(), refreshDomains: vi.fn(),
+    offlineLocked: false,
+    revalidateOfflineSession: vi.fn(),
     writeError: null, clearWriteError: vi.fn(),
     sync: {
       accounts: { source: "mock", syncedAt: null },

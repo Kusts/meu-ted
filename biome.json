@@ -1,7 +1,44 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.2.4/schema.json",
   "formatter": {
-    "indentStyle": "space",
-    "indentWidth": 2
+    "enabled": false
+  },
+  "assist": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": false,
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error",
+        "noConstantCondition": "warn"
+      },
+      "suspicious": {
+        "noFallthroughSwitchClause": "error",
+        "noExplicitAny": "warn",
+        "noAsyncPromiseExecutor": "warn",
+        "noDoubleEquals": "warn",
+        "noSelfCompare": "warn",
+        "noCompareNegZero": "warn"
+      },
+      "nursery": {
+        "noFloatingPromises": "warn"
+      }
+    }
+  },
+  "files": {
+    "includes": [
+      "**",
+      "!**/node_modules/**",
+      "!**/dist/**",
+      "!**/build/**",
+      "!**/coverage/**",
+      "!**/.wrangler/**",
+      "!**/.open-next/**",
+      "!**/generated/**",
+      "!**/*.generated.*"
+    ]
   }
 }

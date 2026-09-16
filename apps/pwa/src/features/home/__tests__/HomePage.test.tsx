@@ -20,6 +20,8 @@ function defaultState(): AppState {
     dashboardSummary: mockDashboardSummary,
     saveProfile: vi.fn(), refreshProfile: vi.fn(), refreshDashboardSummary: vi.fn(),
     refreshDomains: vi.fn().mockResolvedValue(undefined),
+    offlineLocked: false,
+    revalidateOfflineSession: vi.fn(),
     profile: null,
     addTransaction: vi.fn(), updateTransaction: vi.fn(), deleteTransaction: vi.fn(), markPayablePaid: vi.fn(),
     cancelPayable: vi.fn(), updatePayable: vi.fn(), undoPayablePayment: vi.fn(), createPayable: vi.fn(),

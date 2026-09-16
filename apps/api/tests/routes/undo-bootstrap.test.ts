@@ -80,6 +80,9 @@ const tokenStore: DeviceTokenStore = {
     return { token: 'dev-token-1', deviceId: 'dev-device-1', householdId };
   },
   async revoke() {},
+  async rotate(_currentToken, _deviceName, householdId) {
+    return { token: 'dev-token-1', deviceId: 'dev-device-1', householdId };
+  },
 };
 
 /** Monta o app como o bootstrap de produção: sem `undoService` injetado. */

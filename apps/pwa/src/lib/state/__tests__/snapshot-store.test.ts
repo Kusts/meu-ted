@@ -14,9 +14,12 @@ import {
   migrateV1toV2,
 } from "../snapshot-store";
 import type { SnapshotDomains } from "../snapshot-store";
+import { setOfflineSubjectId } from "@/lib/auth/offline-subject";
 
 const TEST_TOKEN = "wrapper-token-xyz";
 const V1_KEY = "pi-finance:snapshot:v1";
+// T2.6: v2 reads require the subject partition.
+const TEST_SUBJECT = "33333333-4444-4555-8666-777777777777";
 
 function seedV1(token: string, data: Partial<SnapshotDomains>): void {
   localStorage.setItem(
@@ -30,6 +33,8 @@ describe("snapshot-store wrapper — v2 canonical API", () => {
     const dbs = await indexedDB.databases();
     for (const db of dbs) if (db.name) indexedDB.deleteDatabase(db.name);
     localStorage.clear();
+    // T2.6 contract: reads verify the subject partition.
+    setOfflineSubjectId(TEST_SUBJECT);
   });
 
   it("round-trips a domain through save/load snapshot (v2)", async () => {

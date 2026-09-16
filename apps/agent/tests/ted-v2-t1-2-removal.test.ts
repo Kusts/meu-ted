@@ -18,11 +18,16 @@ describe('TED V2 T1.2 removal invariants', () => {
   });
 
   it('does not expose legacy HTTP process or retry execution paths', async () => {
-    const [legacyDo, gateway] = await Promise.all([source('index.ts'), source('worker.ts')]);
-    expect(legacyDo).toContain('agent.legacy_mutation_path_removed');
-    expect(legacyDo).not.toContain('return this.processTurn(path.split("/message/")');
-    expect(legacyDo).not.toContain('return this.retryTurn(path.split("/message/")');
-    expect(gateway).toContain('agent.legacy_mutation_path_removed');
+    const [authBoundary, gateway] = await Promise.all([source('index.ts'), source('worker.ts')]);
+    // T4.3 (SPEC section 11 E4): the retired 410 stubs left with the routes
+    // themselves — the paths are gone, not stubbed. Neither the execution
+    // paths nor the stub markers may remain.
+    expect(authBoundary).not.toContain('agent.legacy_mutation_path_removed');
+    expect(gateway).not.toContain('agent.legacy_mutation_path_removed');
+    expect(authBoundary).not.toContain('processTurn');
+    expect(authBoundary).not.toContain('retryTurn');
+    expect(gateway).not.toContain('processTurn');
+    expect(gateway).not.toContain('retryTurn');
   });
 
   it('rejects every write call, including a forged legacy approval object', () => {

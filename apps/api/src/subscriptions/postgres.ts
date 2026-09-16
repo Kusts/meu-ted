@@ -9,7 +9,7 @@ import type { Pool } from 'pg';
 import type { Subscription } from '../types/domain.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors } from '../writes/errors.js';
-import type { SubscriptionStore, CreateSubscriptionInput } from './store.js';
+import type { SubscriptionStore, } from './store.js';
 
 type Row = Record<string, unknown>;
 

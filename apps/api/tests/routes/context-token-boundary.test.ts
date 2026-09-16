@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createContextToken } from "../../src/auth/context-token.js";
-import { buildTestApp, TOKEN_A, TOKEN_B } from "../test-app.js";
+import { buildTestApp, TOKEN_A, } from "../test-app.js";
 import { HOUSEHOLD_A, HOUSEHOLD_B } from "../fixtures/seed.js";
 
 const secret = "context-boundary-test-secret";

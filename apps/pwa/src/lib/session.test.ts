@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook } from "@testing-library/react";
 import "fake-indexeddb/auto";
 import { getToken, setToken } from "@/lib/auth/token-store";
+import { setOfflineSubjectId } from "@/lib/auth/offline-subject";
 import { clearSensitiveSession } from "./session";
 import { useSession } from "@/lib/auth/session-context";
 import { writeV2Snapshot, readV2Snapshot } from "@/lib/state/snapshot-db";
@@ -44,6 +45,8 @@ describe("clearSensitiveSession", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.restoreAllMocks();
+    // T2.6 contract: v2 reads verify the subject partition.
+    setOfflineSubjectId("44444444-5555-4666-8777-888888888888");
   });
 
   it("removes token, v1 snapshot, and profile; does NOT delete Cache Storage", async () => {

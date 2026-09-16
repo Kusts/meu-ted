@@ -49,8 +49,11 @@ graph TD
 
 ## Legado e estado de implantação
 
-`WorkspaceAgent` existe somente para compatibilidade de histórico; não é uma
-rota de write financeiro. O WhatsApp Bridge e a extensão Pi foram removidos
-dos workspaces, CI e runtime ativo. A implementação V2 foi validada localmente
-em 2026-09-13; esta documentação não afirma deploy, migration ou alteração de
-segredos em produção.
+O `WorkspaceAgent` foi removido na V4 (ver
+`docs/adr/ADR-016-workspace-agent-decommissioning.md`); não restam binding,
+rota ou símbolo desse runtime — apenas a tag histórica de migração do
+Durable Object no `wrangler.jsonc`, preservada por exigência da Cloudflare.
+O WhatsApp Bridge e a extensão Pi foram removidos dos workspaces, CI e
+runtime ativo. A implementação V2 foi validada localmente em 2026-09-13;
+esta documentação não afirma deploy, migration ou alteração de segredos em
+produção.

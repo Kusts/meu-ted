@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { normalizeInviteEmail, InviteError, hashInviteToken } from './invites.js';
 import type { InviteDelivery } from './invites.js';
 

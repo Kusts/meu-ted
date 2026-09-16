@@ -278,14 +278,6 @@ describe("T5.3 — worker gateway routes the active listing", () => {
       API_ORIGIN: "https://api.example.test",
       AGENT_CONNECTION_TOKEN_SECRET: CONNECTION_SECRET,
       AGENT_AUTH_SERVICE_TOKEN: SERVICE_TOKEN,
-      AGENT_CONFIG_TOKEN: "config-test-token",
-      AGENT: {
-        idFromName: vi.fn((n: string) => ({ n })),
-        get: vi.fn(() => ({
-          fetch: vi.fn(async () => new Response("legacy-do", { status: 200 })),
-          exportFullWorkspaceHistory: vi.fn(async () => ({ turns: [], messages: [] })),
-        })),
-      },
       FINANCE_CHAT_AGENT: {
         idFromName: vi.fn((n: string) => ({ n })),
         get: vi.fn(() => ({ fetch: financeFetch })),
@@ -328,10 +320,9 @@ describe("T5.3 — worker gateway routes the active listing", () => {
     expect(forwarded.headers.get("x-agent-actor")).toBe(ACTOR);
     expect(forwarded.headers.get("x-agent-workspace")).toBe(WS);
     expect(forwarded.headers.get("x-agent-device")).toBe(DEVICE);
-    // Listing reads the authoritative API — the legacy history migration is
-    // NOT a dependency of this hot path.
-    const legacyStub = (env as unknown as { AGENT: { get: () => { fetch: ReturnType<typeof vi.fn> } } }).AGENT.get();
-    expect(legacyStub.fetch).not.toHaveBeenCalled();
+    // Listing reads the authoritative API — T4.3 removed the retired
+    // legacy history migration, so this hot path has no legacy dependency
+    // by construction (single runtime, INV-07).
   });
 
   it("rejects the listing without a connection token (unauthorized path, DO untouched)", async () => {

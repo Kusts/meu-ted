@@ -1,0 +1,7 @@
+{
+  "$schema": "legacy-runtime-allowlist",
+  "version": 2,
+  "owner": "planner",
+  "notes": "Temporary migration allowlist for T4.1 (MEU-TED V4 hardening, ARCH-V4-06a/b). Entries expire automatically; the guard FAILS on any expired entry at run time. T4.2 (2026-09-16): the agent-client.ts entry was REMOVED after the PWA callers migrated to the canonical FinanceChatAgent /rpc routes — ARCH-V4-06a is green with zero entries. Remaining entries (if any) are consumed in T4.3 (full removal); never renew without planner approval.",
+  "entries": []
+}

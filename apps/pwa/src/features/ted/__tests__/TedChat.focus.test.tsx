@@ -137,6 +137,9 @@ describe("TedChat focus management (SPEC §21)", () => {
 
   it("does not close on Escape while recording (mic flow owns the keyboard)", async () => {
     installMediaMocks();
+    // V4 T1.1: the record button only renders with the mic capability on.
+    vi.stubEnv("NEXT_PUBLIC_TED_MICROPHONE", "true");
+    try {
     const onClose = vi.fn();
     const user = userEvent.setup();
     render(<TedChat open onClose={onClose} />);
@@ -148,6 +151,9 @@ describe("TedChat focus management (SPEC §21)", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog", { name: "Chat com TED" })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
-import type { Goal, GoalContribution } from '../types/domain.js';
+import type { Goal, } from '../types/domain.js';
 import type { GoalStore } from './store.js';
 import { domainErrors } from '../writes/errors.js';
 import { withTransaction } from '../db/pool.js';

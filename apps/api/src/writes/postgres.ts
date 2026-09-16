@@ -10,25 +10,20 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { Account, Category, Transaction } from '../types/domain.js';
 import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors, DomainError } from './errors.js';
-import { buildIdempotencyKey } from './idempotency.js';
+import { buildIdempotencyKey, type IdempotencyProducer } from './idempotency.js';
 import { runKeyedMutation } from './pending-idempotency.js';
 import type { WriteStore } from './store.js';
 import { resolveApplicationUserId } from '../auth/resolve-user-id.js';
 import { resolveHouseholdId } from '../auth/resolve-household-id.js';
 import type {
   CreateAccountInput,
-  CreateCategoryInput,
   CreateExpenseInput,
   CreateIncomeInput,
-  CreateTransferInput,
-  UpdateAccountInput,
-  UpdateCategoryInput,
-  UpdateTransactionInput,
 } from './types.js';
 
 type Row = Record<string, unknown>;
@@ -385,28 +380,144 @@ const createIncomeInTx = async (
   return mapTransaction(txRes.rows[0]!);
 };
 
+/**
+ * Client-bound account creation (no transaction handling): shared by the
+ * plain path (own tx) and idempotency producers that join the claim
+ * transaction (FIX-UNDO atomic path, 0.4.1 rollback proof).
+ *
+ * Exported so idempotency producers under test can run inside the passed
+ * claim client instead of opening an independent transaction.
+ */
+export const createAccountInTx = async (
+  client: PoolClient,
+  householdId: string,
+  input: CreateAccountInput,
+): Promise<Account> => {
+  const res = await client.query<Row>(
+    `INSERT INTO accounts (id, household_id, name, kind, balance_cents, status)
+      VALUES (gen_random_uuid(), $1, $2, $3, $4, 'active')
+      RETURNING id, household_id, name, kind, balance_cents, status`,
+    [householdId, input.name, input.kind, input.initialBalanceCents],
+  );
+  // Item 11: bootstrap the default set for households without categories.
+  const existing = await client.query(
+    `SELECT 1 FROM categories WHERE household_id = $1 AND status = 'active' AND deleted_at IS NULL LIMIT 1`,
+    [householdId],
+  );
+  if ((existing.rowCount ?? 0) === 0) {
+    await applyDefaultsInTx(client, householdId);
+  }
+  return mapAccount(res.rows[0]!);
+};
+
+/**
+ * Client-bound account deactivation (no transaction handling).
+ * FIX-UNDO: lets the `accounts.create` undo reversal join the claim tx.
+ */
+const deactivateAccountInTx = async (
+  client: PoolClient,
+  householdId: string,
+  id: string,
+): Promise<Account> => {
+  const existing = await findAccountInHousehold(client, id, householdId);
+  if (existing.status !== 'active') throw domainErrors.notFound('Conta');
+  const used = await client.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+        FROM transactions
+       WHERE household_id = $1
+         AND deleted_at IS NULL
+         AND (account_id = $2 OR transfer_to_account_id = $2)`,
+    [householdId, id],
+  );
+  if (Number(used.rows[0]!.count) > 0) {
+    throw domainErrors.inUse('Conta', 'lançamentos');
+  }
+  const res = await client.query<Row>(
+    `UPDATE accounts
+        SET status = 'inactive'
+      WHERE id = $1 AND household_id = $2
+      RETURNING id, household_id, name, kind, balance_cents, status`,
+    [id, householdId],
+  );
+  return mapAccount(res.rows[0]!);
+};
+
+/**
+ * Client-bound category deactivation (no transaction handling).
+ * FIX-UNDO: lets the `categories.create` undo reversal join the claim tx.
+ */
+const deactivateCategoryInTx = async (
+  client: PoolClient,
+  householdId: string,
+  id: string,
+): Promise<Category> => {
+  const existing = await findCategoryInHousehold(client, id, householdId);
+  if (existing.status !== 'active') throw domainErrors.notFound('Categoria');
+  const used = await client.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+        FROM transactions
+       WHERE household_id = $1
+         AND deleted_at IS NULL
+         AND (category_id = $2 OR subcategory_id = $2)`,
+    [householdId, id],
+  );
+  if (Number(used.rows[0]!.count) > 0) {
+    throw domainErrors.inUse('Categoria', 'lançamentos');
+  }
+  const res = await client.query<Row>(
+    `UPDATE categories
+        SET status = 'inactive'
+      WHERE id = $1 AND household_id = $2
+      RETURNING ${CATEGORY_COLUMNS}`,
+    [id, householdId],
+  );
+  return mapCategory(res.rows[0]!);
+};
+
+/**
+ * Client-bound transaction soft-delete (no transaction handling).
+ * FIX-UNDO: lets the `transactions.*.create` undo reversal join the
+ * claim tx instead of opening an independent transaction.
+ */
+const softDeleteTransactionInTx = async (
+  client: PoolClient,
+  householdId: string,
+  id: string,
+): Promise<Transaction> => {
+  const tx = await findActiveTransaction(client, id, householdId);
+  // Restore balance effect (shared with category cascade, C-04).
+  await reverseBalanceForDelete(client, householdId, tx);
+  const res = await client.query<Row>(
+    `UPDATE transactions
+        SET deleted_at = NOW()
+      WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
+      RETURNING id, household_id, kind, description, amount_cents, date, account_id, category_id, transfer_to_account_id`,
+    [id, householdId],
+  );
+  if (res.rowCount === 0) throw domainErrors.notFound('Lançamento');
+  return mapTransaction(res.rows[0]!);
+};
+
+/**
+ * FIX-UNDO (F3, SPEC §12 F3 opção 1): non-contractual client-bound
+ * reversal extensions of the Postgres write store. The undo service
+ * duck-types these (with fallback to the plain transactional methods)
+ * when its idempotency producer receives the claim transaction client,
+ * so claim + financial reversal + completion commit atomically.
+ * NOT part of `WriteStore` — existing callers are unaffected.
+ */
+export type PostgresReversalTxExtensions = {
+  softDeleteTransactionInTx(client: PoolClient, householdId: string, id: string): Promise<Transaction>;
+  deactivateAccountInTx(client: PoolClient, householdId: string, id: string): Promise<Account>;
+  deactivateCategoryInTx(client: PoolClient, householdId: string, id: string): Promise<Category>;
+};
+
 export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
   const { pool } = opts;
 
-  return {
+  const store: WriteStore = {
     async createAccount(householdId, input) {
-      return withTransaction(pool, async (client) => {
-        const res = await client.query<Row>(
-          `INSERT INTO accounts (id, household_id, name, kind, balance_cents, status)
-           VALUES (gen_random_uuid(), $1, $2, $3, $4, 'active')
-           RETURNING id, household_id, name, kind, balance_cents, status`,
-          [householdId, input.name, input.kind, input.initialBalanceCents],
-        );
-        // Item 11: bootstrap the default set for households without categories.
-        const existing = await client.query(
-          `SELECT 1 FROM categories WHERE household_id = $1 AND status = 'active' AND deleted_at IS NULL LIMIT 1`,
-          [householdId],
-        );
-        if ((existing.rowCount ?? 0) === 0) {
-          await applyDefaultsInTx(client, householdId);
-        }
-        return mapAccount(res.rows[0]!);
-      });
+      return withTransaction(pool, async (client) => createAccountInTx(client, householdId, input));
     },
 
     async updateAccount(householdId, id, patch) {
@@ -425,29 +536,7 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
     },
 
     async deactivateAccount(householdId, id) {
-      return withTransaction(pool, async (client) => {
-        const existing = await findAccountInHousehold(client, id, householdId);
-        if (existing.status !== 'active') throw domainErrors.notFound('Conta');
-        const used = await client.query<{ count: string }>(
-          `SELECT COUNT(*)::text AS count
-             FROM transactions
-            WHERE household_id = $1
-              AND deleted_at IS NULL
-              AND (account_id = $2 OR transfer_to_account_id = $2)`,
-          [householdId, id],
-        );
-        if (Number(used.rows[0]!.count) > 0) {
-          throw domainErrors.inUse('Conta', 'lançamentos');
-        }
-        const res = await client.query<Row>(
-          `UPDATE accounts
-              SET status = 'inactive'
-            WHERE id = $1 AND household_id = $2
-            RETURNING id, household_id, name, kind, balance_cents, status`,
-          [id, householdId],
-        );
-        return mapAccount(res.rows[0]!);
-      });
+      return withTransaction(pool, async (client) => deactivateAccountInTx(client, householdId, id));
     },
 
     async createCategory(householdId, input) {
@@ -520,29 +609,7 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
     },
 
     async deactivateCategory(householdId, id) {
-      return withTransaction(pool, async (client) => {
-        const existing = await findCategoryInHousehold(client, id, householdId);
-        if (existing.status !== 'active') throw domainErrors.notFound('Categoria');
-        const used = await client.query<{ count: string }>(
-          `SELECT COUNT(*)::text AS count
-             FROM transactions
-            WHERE household_id = $1
-              AND deleted_at IS NULL
-              AND (category_id = $2 OR subcategory_id = $2)`,
-          [householdId, id],
-        );
-        if (Number(used.rows[0]!.count) > 0) {
-          throw domainErrors.inUse('Categoria', 'lançamentos');
-        }
-        const res = await client.query<Row>(
-          `UPDATE categories
-              SET status = 'inactive'
-            WHERE id = $1 AND household_id = $2
-           RETURNING ${CATEGORY_COLUMNS}`,
-          [id, householdId],
-        );
-        return mapCategory(res.rows[0]!);
-      });
+      return withTransaction(pool, async (client) => deactivateCategoryInTx(client, householdId, id));
     },
 
     async deleteCategory(householdId, id, input) {
@@ -806,22 +873,17 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
     },
 
     async softDeleteTransaction(householdId, id) {
-      return withTransaction(pool, async (client) => {
-        const tx = await findActiveTransaction(client, id, householdId);
-        // Restore balance effect (shared with category cascade, C-04).
-        await reverseBalanceForDelete(client, householdId, tx);
-        const res = await client.query<Row>(
-          `UPDATE transactions
-              SET deleted_at = NOW()
-            WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
-            RETURNING id, household_id, kind, description, amount_cents, date, account_id, category_id, transfer_to_account_id`,
-          [id, householdId],
-        );
-        if (res.rowCount === 0) throw domainErrors.notFound('Lançamento');
-        return mapTransaction(res.rows[0]!);
-      });
+      return withTransaction(pool, async (client) => softDeleteTransactionInTx(client, householdId, id));
     },
   };
+  // FIX-UNDO: expose the client-bound reversals as non-contractual
+  // extensions (see PostgresReversalTxExtensions). The declared factory
+  // return type stays WriteStore, so existing callers are unaffected.
+  return Object.assign(store, {
+    softDeleteTransactionInTx,
+    deactivateAccountInTx,
+    deactivateCategoryInTx,
+  });
 };
 
 /**
@@ -843,16 +905,14 @@ export const createPostgresIdempotencyStore = (opts: { pool: Pool; legacy?: bool
       let householdId: string;
       let key: string;
       let payload: unknown;
-      let producer: () => Promise<any>;
+      let producer: IdempotencyProducer<any>;
       let operation: string | undefined;
-      let actorType: string | undefined;
       let actorId: string | undefined;
 
       if (typeof scopeOrHouseholdId === 'object' && scopeOrHouseholdId !== null) {
         householdId = scopeOrHouseholdId.householdId ?? scopeOrHouseholdId.workspaceId;
         key = scopeOrHouseholdId.key;
         operation = scopeOrHouseholdId.operation;
-        actorType = scopeOrHouseholdId.actorType;
         actorId = scopeOrHouseholdId.actorId;
         payload = keyOrPayload;
         producer = payloadOrProducer;
@@ -886,7 +946,11 @@ export const createPostgresIdempotencyStore = (opts: { pool: Pool; legacy?: bool
 
           if (claim.rowCount === 1) {
             const recordId = claim.rows[0]!.id;
-            const response = await producer();
+            // FIX-UNDO: the producer receives the open claim client, so a
+            // client-bound effect (undo reversals, InTx helpers) joins this
+            // transaction and commits atomically with claim + completion.
+            // Producers that ignore the argument keep their own boundary.
+            const response = await producer(client);
             const effectRef = (response as { transactionId?: string } | null)?.transactionId ?? null;
             await client.query(
               `UPDATE operation_records
@@ -938,7 +1002,9 @@ const resolvedUserId = await resolveApplicationUserId(client, actorId);
 
         if (claim.rowCount === 1) {
           const recordId = claim.rows[0]!.id;
-          const response = await producer();
+          // FIX-UNDO: same claim-client passthrough as the legacy branch —
+          // the undo reversal joins this transaction (SPEC §12 F3 opção 1).
+          const response = await producer(client);
           const effectRef = (response as { transactionId?: string } | null)?.transactionId ?? null;
           await client.query(
             `UPDATE operation_records

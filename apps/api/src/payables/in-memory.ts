@@ -271,7 +271,7 @@ export const createInMemoryPayableStore = (
     },
 
     async createPayableWithTemplate(householdId, input) {
-      const t = await this.createTemplate(householdId, input.template);
+      const _t = await this.createTemplate(householdId, input.template);
       return this.createPayable(householdId, {
         ...input.payable,
         ...(input.payable.type ? { type: input.payable.type } : { type: 'recurring' }),
@@ -323,9 +323,9 @@ export const createInMemoryPayableStore = (
     async listAllNotifications() {
       return notifications.filter((n) => n.enabled);
     },
-    async updateNotificationExecution(notificationId, state) {
+    async updateNotificationExecution(notificationId, householdId, state) {
       const notification = notifications.find(
-        (item) => item.id === notificationId,
+        (item) => item.id === notificationId && item.householdId === householdId,
       );
       if (!notification) return;
       notification.lastRunAt = state.executedAt;

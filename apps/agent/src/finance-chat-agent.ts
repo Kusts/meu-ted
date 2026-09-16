@@ -29,7 +29,6 @@ import {
   setMemoryEnabled,
   currentSession,
   endSession,
-  isExplicitConfirmation,
   type MemorySql,
 } from "./agent-config/index.js";
 import {
@@ -86,6 +85,16 @@ export type Env = {
   TAVILY_API_KEY?: string;
   BRAVE_API_KEY?: string;
 };
+
+/**
+ * FIX-FINAL-2 FINDING 2 (defense in depth): semantic ceilings for the
+ * /rpc/chat ingress. The gateway (worker.ts) already rejects bodies above
+ * MAX_RPC_BODY_BYTES with 413 before forwarding; these caps keep a single
+ * turn cheap even for callers that reach the DO directly. Chat turns carry
+ * short text plus metadata-only attachments — never bulk content.
+ */
+export const MAX_CHAT_TEXT_CHARS = 32_000;
+export const MAX_CHAT_ATTACHMENTS = 10;
 
 export type IntentionSnapshotRow = {
   intention_id: string;
@@ -1197,6 +1206,16 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         body = (await request.json()) as { text?: unknown; content?: unknown; intentionId?: unknown; attachments?: unknown };
       } catch {
         return Response.json({ code: "agent.invalid_message" }, { status: 400 });
+      }
+      // FIX-FINAL-2 FINDING 2: semantic payload caps — fail fast with 413
+      // (same code as the gateway ceiling) before scrubbing, persistence,
+      // or any model call.
+      const candidateText = typeof body.text === "string" ? body.text : (typeof body.content === "string" ? body.content : "");
+      if (candidateText.length > MAX_CHAT_TEXT_CHARS) {
+        return Response.json({ code: "agent.payload_too_large", message: `Chat text exceeds ${MAX_CHAT_TEXT_CHARS} characters` }, { status: 413 });
+      }
+      if (Array.isArray(body.attachments) && body.attachments.length > MAX_CHAT_ATTACHMENTS) {
+        return Response.json({ code: "agent.payload_too_large", message: `Attachments exceed ${MAX_CHAT_ATTACHMENTS} items` }, { status: 413 });
       }
       const rawText = typeof body.text === "string" ? body.text : (typeof body.content === "string" ? body.content : "");
       const unredactedText = rawText.trim();

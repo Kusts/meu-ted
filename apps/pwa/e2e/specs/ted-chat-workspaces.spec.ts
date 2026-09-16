@@ -49,15 +49,12 @@ test.describe("TED Chat & Workspaces", () => {
       });
     });
 
-    await page.route("**/agents/workspace/**/message", async (route) => {
-      if (route.request().method() === "GET") {
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          headers: MOCK_CORS_HEADERS,
-          body: JSON.stringify({ items: [] }),
-        });
-      } else if (route.request().method() === "POST") {
+    // T4.3 (SPEC section 11 E4): the retired legacy agent route mock was
+    // removed with the route itself — the app only calls the canonical
+    // FinanceChatAgent surface (see fetchAgentHistory mock below). The chat
+    // turn is fulfilled on the canonical POST route.
+    await page.route("**/finance-chat-agent/**/rpc/chat", async (route) => {
+      if (route.request().method() === "POST") {
         await route.fulfill({
           status: 200,
           contentType: "application/json",

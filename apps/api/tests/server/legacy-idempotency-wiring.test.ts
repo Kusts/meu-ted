@@ -54,10 +54,13 @@ function makeLegacyPool(): { pool: Pool; sql: string[] } {
   const pool = {
     async query(text: string) {
       sql.push(text);
+      if (text.includes("UPDATE device_tokens SET last_used_at")) {
+        return { rowCount: 1, rows: [] };
+      }
       if (text.includes("FROM device_tokens")) {
         return {
           rowCount: 1,
-          rows: [{ device_id: "legacy-device", household_id: HOUSEHOLD_A }],
+          rows: [{ device_id: "legacy-device", household_id: HOUSEHOLD_A, expires_at: null }],
         };
       }
       if (text.includes("INSERT INTO push_subscriptions")) {

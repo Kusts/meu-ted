@@ -408,7 +408,7 @@ describe('POST /cards/statements/:id/pay', () => {
     const { app } = buildTestApp(freshSeed());
 
     // Create a purchase first
-    const purchaseRes = await app.inject({
+    const _purchaseRes = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
@@ -886,7 +886,7 @@ describe('DELETE /cards/purchases/:id', () => {
 
   it('hides canceled purchases from statement detail', async () => {
     const { app } = buildTestApp(freshSeed());
-    const c1 = await app.inject({
+    const _c1 = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
       headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },

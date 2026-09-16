@@ -4,6 +4,14 @@ import { describe, expect, it } from 'vitest';
 import { createInMemoryStores } from '../../src/writes/in-memory.js';
 import { createInMemoryPayableStore } from '../../src/payables/in-memory.js';
 
+// Global administrative scheduler loaders exempt from household scoping.
+// Each entry is "<relativePath>::<normalized SQL>" and must keep an inline
+// justification. Current entry:
+// - src/payables/postgres.ts listAllNotifications: global scheduler loader; privileged pool; no user credential; in-memory enabled filter; C5 targets user-scoped auth/data queries.
+const GLOBAL_ADMIN_LOADER_ALLOWLIST: ReadonlySet<string> = new Set([
+  'src/payables/postgres.ts::SELECT * FROM notification_configs WHERE enabled = true ORDER BY household_id, id',
+]);
+
 const ROOT = resolve(import.meta.dirname, '../..');
 const STORE_FILES = [
   'src/auth/device-token.ts',
@@ -53,6 +61,7 @@ describe('store workspace scoping contract', () => {
           continue;
         }
         if (/\bworkspace_id\s*=/i.test(sql)) continue;
+        if (GLOBAL_ADMIN_LOADER_ALLOWLIST.has(`${relativePath}::${sql}`)) continue;
         if (!/\bhousehold_id\s*=/i.test(sql)) violations.push(`${relativePath}: ${sql}`);
       }
     }

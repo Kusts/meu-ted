@@ -11,8 +11,8 @@ import EmptyState from "@/components/ui/EmptyState";
 import { useWorkspace } from "@/lib/auth/workspace-context";
 import type { Workspace } from "@/lib/api/workspaces";
 import { createWorkspaceInvite } from "@/lib/api/workspaces";
-import { ApiError, apiFetch } from "@/lib/api/client";
-import type { AuditLog } from "@/lib/api/endpoints";
+import { ApiError } from "@/lib/api/client";
+import { fetchAuditLogs, type AuditLog } from "@/lib/api/endpoints";
 
 type WorkspaceKind = Workspace["kind"];
 
@@ -100,9 +100,7 @@ export default function WorkspaceManagerPage() {
       setLogsLoading(true);
       setLogsError(null);
       try {
-        const result = await apiFetch<{ items: AuditLog[]; total: number }>(`/audit-logs?limit=20`, {
-          headers: { "X-Workspace-Id": logsWorkspace!.id },
-        });
+        const result = await fetchAuditLogs({ limit: 20, workspaceId: logsWorkspace!.id });
         if (!cancelled) setAuditLogs(result.items);
       } catch (cause) {
         if (!cancelled) setLogsError(cause instanceof Error ? cause.message : "Não foi possível carregar logs");

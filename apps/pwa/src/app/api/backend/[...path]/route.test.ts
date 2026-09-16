@@ -40,28 +40,64 @@ describe("same-origin backend proxy", () => {
     expect(headers.get("origin")).toBe("https://pwa.example");
   });
 
-  it("rewrites localhost origin to the trusted production PWA origin", async () => {
-    const upstream = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+  it("rewrites localhost origin to the trusted production PWA origin with the explicit dev flag", async () => {
+    vi.stubEnv("ALLOW_LOCAL_ORIGIN", "1");
+    try {
+      const upstream = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
 
-    const request = new Request("http://localhost:3000/api/backend/auth/sign-in/email", {
-      method: "POST",
-      headers: {
-        origin: "http://localhost:3000",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ email: "user@example.com", password: "secret" }),
-    });
+      const request = new Request("https://pwa.example/api/backend/auth/sign-in/email", {
+        method: "POST",
+        headers: {
+          origin: "http://localhost:3000",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ email: "user@example.com", password: "secret" }),
+      });
 
-    await POST(request, { params: Promise.resolve({ path: ["auth", "sign-in", "email"] }) });
+      await POST(request, { params: Promise.resolve({ path: ["auth", "sign-in", "email"] }) });
 
-    const [, init] = upstream.mock.calls[0] ?? [];
-    const headers = init?.headers as Headers;
-    expect(headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
+      const [, init] = upstream.mock.calls[0] ?? [];
+      const headers = init?.headers as Headers;
+      expect(headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("rejects localhost origin for state-changing requests without the explicit dev flag", async () => {
+    // Production-shaped URL (PWA host) with a localhost Origin: cross-origin,
+    // so only the explicit dev bypass could allow it.
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const response = await POST(new Request("https://pwa.example/api/backend/payables", {
+      method: "POST", headers: { origin: "http://localhost:3000", "content-type": "application/json" }, body: "{}",
+    }), { params: Promise.resolve({ path: ["payables"] }) });
+    expect(response.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("is fail-closed in production: localhost rejected and never spoofed even with the flag", async () => {
+    vi.stubEnv("ALLOW_LOCAL_ORIGIN", "1");
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const response = await POST(new Request("https://pwa.example/api/backend/payables", {
+        method: "POST", headers: { origin: "http://localhost:3000", "content-type": "application/json" }, body: "{}",
+      }), { params: Promise.resolve({ path: ["payables"] }) });
+      expect(response.status).toBe(403);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("rejects a foreign browser origin for state-changing requests", async () => {

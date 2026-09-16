@@ -1,21 +1,18 @@
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { UIMessage } from 'agents/ai-chat-agent';
 import {
-  transformLegacyMessages,
   computeHistoryHash,
-  migrateLegacyHistory,
   type LegacyFullExport,
 } from '../src/migration/legacy-history.js';
 import { FinanceChatAgent } from '../src/finance-chat-agent.js';
-import worker from '../src/worker.js';
-import { createAgentConnectionToken } from '../../api/src/auth/agent-connection-token.js';
 
-type WorkerEnv = Parameters<typeof worker.fetch>[1];
-
-describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+describe('Legacy History Migration into FinanceChatAgent (T4.3: import surface only)', () => {
+  // T4.3 (SPEC section 11 E4): the gateway migration gate and the retired
+  // message route are gone, so the worker-level fail-closed cases (2) and
+  // the retired-route passthrough case (4) were retired with them. What
+  // stays valid — and stays here — is the import proof: the idempotent
+  // re-import (1), the structural hash (3) and the fail-safe persist
+  // contract (5).
 
   const sampleExport: LegacyFullExport = {    version: 1,
     workspaceId: 'ws-test-123',
@@ -47,28 +44,6 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
       },
     ],
     hasInFlightTurns: false,
-  };
-
-  // C-01/C-02: Worker auth resolves the canonical workspace and consumes
-  // the single-use token before routing — mock both internal endpoints
-  // (always-200 consumption: each case mints/uses its own token).
-  const mockWorkerAuth = (workspaceId: string) => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (info) => {
-      const url = String(info);
-      if (url.includes('/internal/workspace-alias/')) {
-        return new Response(JSON.stringify({ canonicalHouseholdId: workspaceId }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      if (url.includes('/internal/agent/consume-token')) {
-        return new Response(JSON.stringify({ ok: true, consumed: true }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      return new Response('unexpected upstream', { status: 500 });
-    });
   };
 
   const createMockSql = () => {
@@ -154,139 +129,6 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
     expect(body.items[2]!.id).toBe('msg-2');
   });
 
-  it('(2) Worker fails closed with 503 if legacy stub or Finance stub lacks required export/import methods, without calling fetch or leaking sentinel error', async () => {
-    const SECRET = 'secret-for-testing-purposes-at-least-32-chars!';
-    const WORKSPACE_ID = '00000000-0000-4000-8000-000000000001';
-    mockWorkerAuth(WORKSPACE_ID);
-    const GENUINE_USER = 'user-authenticated-uuid';
-
-    const token = await createAgentConnectionToken(
-      {
-        sub: GENUINE_USER,
-        workspace: WORKSPACE_ID,
-        role: 'owner',
-      },
-      SECRET,
-    );
-
-    const financeFetchSpy = vi.fn(async () => new Response(JSON.stringify({ items: [] }), { status: 200 }));
-
-    // Case 2a: AGENT stub does NOT expose exportFullWorkspaceHistory
-    const mockEnvNoLegacyExport: WorkerEnv = {
-      AGENT: {
-        idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({
-          fetch: vi.fn(async () => new Response('legacy agent')),
-        })),
-      },
-      FINANCE_CHAT_AGENT: {
-        idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({
-          importLegacyHistory: vi.fn(async () => ({ success: true, importedCount: 0, skipped: true })),
-          fetch: financeFetchSpy,
-        })),
-      },
-      API_ORIGIN: 'https://api.test.local',
-      AGENT_CONNECTION_TOKEN_SECRET: SECRET,
-      AGENT_AUTH_SERVICE_TOKEN: 'test-auth-service-token',
-    };
-
-    const req1 = new Request(
-      `https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/history`,
-      {
-        method: 'GET',
-        headers: {
-          'x-agent-connection-token': token,
-          origin: 'https://pi-finance-pwa.walissonead.workers.dev',
-        },
-      },
-    );
-
-    const res1 = await worker.fetch(req1, mockEnvNoLegacyExport);    expect(res1.status).toBe(503);
-    const body1 = (await res1.json()) as { code: string };
-    expect(body1.code).toBe('agent.history_migration_failed');
-    expect(financeFetchSpy).not.toHaveBeenCalled();
-
-    // Case 2b: FINANCE_CHAT_AGENT stub does NOT expose importLegacyHistory
-    const mockEnvNoFinanceImport: WorkerEnv = {
-      AGENT: {
-        idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({
-          exportFullWorkspaceHistory: vi.fn(async () => sampleExport),
-          fetch: vi.fn(async () => new Response('legacy agent')),
-        })),
-      },
-      FINANCE_CHAT_AGENT: {
-        idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({
-          fetch: financeFetchSpy,
-        })),
-      },
-      API_ORIGIN: 'https://api.test.local',
-      AGENT_CONNECTION_TOKEN_SECRET: SECRET,
-      AGENT_AUTH_SERVICE_TOKEN: 'test-auth-service-token',
-    };
-
-    const req2 = new Request(
-      `https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/history`,
-      {
-        method: 'GET',
-        headers: {
-          'x-agent-connection-token': token,
-          origin: 'https://pi-finance-pwa.walissonead.workers.dev',
-        },
-      },
-    );
-
-    const res2 = await worker.fetch(req2, mockEnvNoFinanceImport);
-    expect(res2.status).toBe(503);
-    const body2 = (await res2.json()) as { code: string };
-    expect(body2.code).toBe('agent.history_migration_failed');
-    expect(financeFetchSpy).not.toHaveBeenCalled();
-
-    // Case 2c: Exception thrown with sentinel error (secret api key) -> must be redacted
-    const mockEnvSentinelError: WorkerEnv = {
-      AGENT: {
-        idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({
-          exportFullWorkspaceHistory: vi.fn(async () => {
-            throw new Error('Database crash with api_key: secret-sentinel-leak-999');
-          }),
-          fetch: vi.fn(async () => new Response('legacy agent')),
-        })),
-      },
-      FINANCE_CHAT_AGENT: {
-        idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({
-          importLegacyHistory: vi.fn(async () => ({ success: true, importedCount: 0, skipped: true })),
-          fetch: financeFetchSpy,
-        })),
-      },
-      API_ORIGIN: 'https://api.test.local',
-      AGENT_CONNECTION_TOKEN_SECRET: SECRET,
-      AGENT_AUTH_SERVICE_TOKEN: 'test-auth-service-token',
-    };
-
-    const req3 = new Request(
-      `https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/history`,
-      {
-        method: 'GET',
-        headers: {
-          'x-agent-connection-token': token,
-          origin: 'https://pi-finance-pwa.walissonead.workers.dev',
-        },
-      },
-    );
-
-    const res3 = await worker.fetch(req3, mockEnvSentinelError);
-    expect(res3.status).toBe(503);
-    const body3 = (await res3.json()) as { code: string; message: string };
-    expect(body3.code).toBe('agent.history_migration_failed');
-    expect(body3.message).not.toContain('secret-sentinel-leak-999');
-    expect(body3.message).toContain('[REDACTED]');
-    expect(financeFetchSpy).not.toHaveBeenCalled();
-  });
-
   it('(3) structural JSON hash prevents delimiter collision in content_json values', () => {
     // Delimiter collision test: If hash used naive `${id}:${actor}:${role}:${created_at}:${content}` with ':' or '|'
     const msgA = [
@@ -326,125 +168,6 @@ describe('Legacy History Migration & Worker Consistency (Task 8 Refinement)', ()
     const hashA = computeHistoryHash(msgA);
     const hashB = computeHistoryHash(msgB);
     expect(hashA).not.toBe(hashB);
-  });
-
-  it('(4) legacy POST /agents/workspace/:workspace/message when configured passes through the same migration gate before calling Finance', async () => {
-    const SECRET = 'secret-for-testing-purposes-at-least-32-chars!';
-    const WORKSPACE_ID = '00000000-0000-4000-8000-000000000001';
-    const GENUINE_USER = 'user-authenticated-uuid';
-
-    const token = await createAgentConnectionToken(
-      {
-        sub: GENUINE_USER,
-        workspace: WORKSPACE_ID,
-        role: 'owner',
-      },
-      SECRET,
-    );
-
-    // Mock runtime config as configured (plus C-01/C-02 worker auth endpoints)
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (info) => {
-      const url = String(info);
-      if (url.includes('/internal/workspace-alias/')) {
-        return new Response(JSON.stringify({ canonicalHouseholdId: WORKSPACE_ID }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      if (url.includes('/internal/agent/consume-token')) {
-        return new Response(JSON.stringify({ ok: true, consumed: true }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      if (url.includes('/internal/agent/llm-config')) {
-        return new Response(JSON.stringify({
-          runtime: {
-            singleton: 'active',
-            version: 2,
-            securityEpoch: 1,
-            activeProviderId: 'opencode-zen',
-            activeModelId: 'opencode-zen:zen-free',
-            activeProtocol: 'chat-completions',
-            activeRolloutPercentage: 100,
-            activeRolloutMode: 'all',
-            canaryAllowlist: [],
-            fallbackProviderId: null,
-            fallbackModelId: null,
-            updatedBy: 'admin@test.com',
-          },
-          activeProvider: {
-            id: 'opencode-zen',
-            kind: 'opencode-zen',
-            transport: 'direct',
-            authMode: 'api-key',
-            secretAlias: 'OPENCODE_ZEN_API_KEY',
-            serviceAlias: null,
-            eligibility: 'approved',
-          },
-          activeModel: {
-            id: 'opencode-zen:zen-free',
-            modelId: 'zen-free',
-            protocol: 'chat-completions',
-            privacyClass: 'training_prohibited',
-          },
-          fallbackProvider: null,
-          fallbackModel: null,
-          activeDisabled: false,
-          fallbackDisabled: false,
-        }), { status: 200, headers: { 'content-type': 'application/json' } });
-      }
-      return new Response('Not found', { status: 404 });
-    });
-
-    const legacyExportSpy = vi.fn(async (_wsId?: string) => sampleExport);
-    const financeImportSpyBlocked = vi.fn(async () => ({
-      success: false,
-      importedCount: 0,
-      skipped: false,
-      reason: 'migration_blocked_turns_in_flight: active turns in progress',
-    }));
-    const financeFetchSpy = vi.fn(async () => new Response(JSON.stringify({ status: 'completed' }), { status: 200 }));
-
-    const mockEnv: WorkerEnv = {
-      AGENT: {
-        idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({
-          exportFullWorkspaceHistory: legacyExportSpy,
-          fetch: vi.fn(async () => new Response('legacy agent')),
-        })),
-      },
-      FINANCE_CHAT_AGENT: {
-        idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-        get: vi.fn(() => ({
-          importLegacyHistory: financeImportSpyBlocked,
-          fetch: financeFetchSpy,
-        })),
-      },
-      API_ORIGIN: 'https://api.test.local',
-      AGENT_CONNECTION_TOKEN_SECRET: SECRET,
-      AGENT_AUTH_SERVICE_TOKEN: 'test-auth-service-token',
-      AGENT_CONFIG_TOKEN: 'test-config-token',
-    };
-
-    const req = new Request(
-      `https://agent.test.local/agents/workspace/${WORKSPACE_ID}/message`,
-      {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-agent-connection-token': token,
-          origin: 'https://pi-finance-pwa.walissonead.workers.dev',
-        },
-        body: JSON.stringify({ text: 'Olá assistente' }),
-      },
-    );
-
-    const res = await worker.fetch(req, mockEnv);
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { code: string };
-    expect(body.code).toBe('agent.history_migration_pending');
-    expect(financeFetchSpy).not.toHaveBeenCalled();
   });
 
   it('(5) RED: FinanceChatAgent.importLegacyHistory fails safely with error if persistMessages is absent rather than mutating in-memory array', async () => {

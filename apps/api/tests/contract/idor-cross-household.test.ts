@@ -11,7 +11,6 @@ import { thisMonth } from '../fixtures/dates.js';
 import {
   ACCOUNT_A1, ACCOUNT_B1, CARD_A1,
   CATEGORY_FOOD_A, CATEGORY_FOOD_B,
-  HOUSEHOLD_A, HOUSEHOLD_B,
 } from '../fixtures/seed.js';
 
 const auth = (t: string) => ({ 'x-device-token': t, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() });
@@ -155,7 +154,7 @@ describe('2.2 — IDOR: cross-household access rejected', () => {
       headers: auth(TOKEN_A),
       payload: { accountId: cardAId, description: 'Test', amountCents: 1000, date: DATE },
     });
-    const purchase = purchaseRes.json().items[0];
+    const _purchase = purchaseRes.json().items[0];
 
     // Get statement ID from purchase (statement_id or we need to list)
     const stmtList = await app.inject({

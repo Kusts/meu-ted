@@ -81,7 +81,45 @@ describe("Agent Next.js Proxy Route (/api/agent/[...path])", () => {
     expect(capturedBody).toBe(JSON.stringify({ text: "Qual o meu saldo?" }));
   });
 
-  it("spoofs local origin (localhost and 127.0.0.1) to production PWA host", async () => {
+  it("spoofs local origin (localhost and 127.0.0.1) to production PWA host with the explicit dev flag", async () => {
+    vi.stubEnv("ALLOW_LOCAL_ORIGIN", "1");
+    try {
+      let capturedUpstreamRequest: Request | null = null;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        capturedUpstreamRequest = new Request(input as string, init);
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      });
+
+      const context = {
+        params: Promise.resolve({
+          path: ["agents", "finance-chat-agent", "ws-1", "rpc", "history"],
+        }),
+      };
+
+      // 1. localhost origin
+      const reqLocalhost = new Request("http://localhost:3000/api/agent/agents/finance-chat-agent/ws-1/rpc/history", {
+        method: "GET",
+        headers: { origin: "http://localhost:3000" },
+      });
+      await GET(reqLocalhost, context);
+      expect(capturedUpstreamRequest!.headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
+
+      // 2. 127.0.0.1 origin
+      const req127 = new Request("http://127.0.0.1:3000/api/agent/agents/finance-chat-agent/ws-1/rpc/history", {
+        method: "GET",
+        headers: { origin: "http://127.0.0.1:3000" },
+      });
+      await GET(req127, context);
+      expect(capturedUpstreamRequest!.headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("forwards localhost origin unspoofed without the explicit dev flag (fail-closed)", async () => {
     let capturedUpstreamRequest: Request | null = null;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       capturedUpstreamRequest = new Request(input as string, init);
@@ -91,27 +129,32 @@ describe("Agent Next.js Proxy Route (/api/agent/[...path])", () => {
       });
     });
 
-    const context = {
-      params: Promise.resolve({
-        path: ["agents", "finance-chat-agent", "ws-1", "rpc", "history"],
-      }),
-    };
-
-    // 1. localhost origin
-    const reqLocalhost = new Request("http://localhost:3000/api/agent/agents/finance-chat-agent/ws-1/rpc/history", {
+    const req = new Request("http://localhost:3000/api/agent/agents/finance-chat-agent/ws-1/rpc/history", {
       method: "GET",
       headers: { origin: "http://localhost:3000" },
     });
-    await GET(reqLocalhost, context);
-    expect(capturedUpstreamRequest!.headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
-
-    // 2. 127.0.0.1 origin
-    const req127 = new Request("http://127.0.0.1:3000/api/agent/agents/finance-chat-agent/ws-1/rpc/history", {
-      method: "GET",
-      headers: { origin: "http://127.0.0.1:3000" },
+    const res = await GET(req, {
+      params: Promise.resolve({
+        path: ["agents", "finance-chat-agent", "ws-1", "rpc", "history"],
+      }),
     });
-    await GET(req127, context);
-    expect(capturedUpstreamRequest!.headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
+    expect(res.status).toBe(200);
+    expect(capturedUpstreamRequest!.headers.get("origin")).toBe("http://localhost:3000");
+  });
+
+  it("rejects localhost origin for state-changing requests in production even with the flag", async () => {
+    vi.stubEnv("ALLOW_LOCAL_ORIGIN", "1");
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+      const response = await POST(new Request("https://pwa.example/api/agent/turn", {
+        method: "POST", headers: { origin: "http://localhost:3000", "content-type": "application/json" }, body: "{}",
+      }), { params: Promise.resolve({ path: ["turn"] }) });
+      expect(response.status).toBe(403);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("rejects a foreign browser origin for state-changing requests", async () => {

@@ -9,6 +9,7 @@ import {
 } from '@pi-finance/llm-contracts';
 import { validateApprovalToolArgs } from './tool-registry.js';
 import { buildTedReceipt } from '../reconciliation/effects-registry.js';
+import { buildObservabilityEvent } from '../audit/events.js';
 
 export type PendingOperationV2Status = 'proposed' | 'confirmed' | 'executing' | 'succeeded' | 'failed' | 'cancelled' | 'expired';
 export type PendingIdentity = Pick<PendingOperationV2, 'workspaceId' | 'actorId' | 'deviceId'>;
@@ -100,6 +101,49 @@ export const PENDING_V2_EXECUTION_LEASE_MS = 60_000;
 export type PendingOperationV2StoreOptions = {
   /** Execution-lease window in milliseconds. Must be > 0 to take effect. */
   leaseMs?: number;
+  /**
+   * V4 T3.1 / T0.4.6 (SPEC §24.6): sink for `mutation.reconcile.enqueued` —
+   * emitted when an operation ENTERS reconcile (lease renewed, before the
+   * executor re-runs). Follows the T2.2 precedent: injected in tests,
+   * defaulting to best-effort structured JSON logging. Telemetry only —
+   * never throws, never alters the recovery path.
+   */
+  observabilitySink?: ReconcileEnqueuedSink;
+};
+
+/**
+ * V4 T3.1 / T0.4.6 (SPEC §24.6): telemetry emitted when an operation enters
+ * reconcile. Dimensions: workspaceId, operationId, reason. Built through the
+ * fail-closed buildObservabilityEvent contract.
+ */
+export type ReconcileEnqueuedTelemetryEvent = {
+  eventType: 'mutation.reconcile.enqueued';
+  workspaceId: string;
+  operationId: string;
+  reason: string;
+};
+
+export type ReconcileEnqueuedSink = (event: ReconcileEnqueuedTelemetryEvent) => void;
+
+/** Reason recorded when reconcile starts from an expired executing lease. */
+export const RECONCILE_REASON_LEASE_EXPIRED = 'executing-lease-expired';
+
+/** Best-effort emission (T2.2 pattern): validates, sinks-or-logs, never throws. */
+const emitReconcileEnqueued = (
+  sink: ReconcileEnqueuedSink | undefined,
+  event: ReconcileEnqueuedTelemetryEvent,
+): void => {
+  try {
+    buildObservabilityEvent('mutation.reconcile.enqueued', {
+      workspaceId: event.workspaceId,
+      operationId: event.operationId,
+      reason: event.reason,
+    });
+    if (sink) sink(event);
+    else console.info(JSON.stringify(event));
+  } catch {
+    // Telemetry never breaks recovery.
+  }
 };
 
 export const resolvePendingV2LeaseMs = (override?: number): number => {
@@ -214,7 +258,6 @@ export const createPostgresPendingOperationV2Store = (
     if (String(row.actor_id) !== identity.actorId || String(row.device_id) !== identity.deviceId) return fail('approval.binding_mismatch', 'A operação não pertence ao contexto autenticado.', 403);
     return row;
   };
-  const issue = (row: PendingV2Row): { row: PendingV2Row; token: string } => ({ row, token: attestation() });
   return {
     get audit() { return events; },
     async propose(operation) {
@@ -362,6 +405,14 @@ export const createPostgresPendingOperationV2Store = (
         const next = await client.query<PendingV2Row>("UPDATE pending_operations SET execution_lease_expires_at=NOW() + ($2 * INTERVAL '1 millisecond'), execution_attempt_count=execution_attempt_count+1 WHERE id=$1 RETURNING *", [id, resolvePendingV2LeaseMs(opts?.leaseMs ?? options?.leaseMs)]);
         events.push({ operationId: id, event: 'execute', actorId: identity.actorId, at: nowIso() });
         return next.rows[0]!;
+      });
+      // V4 T3.1 / T0.4.6: the operation ENTERS reconcile here (lease renewed,
+      // executor about to re-run). Telemetry only.
+      emitReconcileEnqueued(options?.observabilitySink, {
+        eventType: 'mutation.reconcile.enqueued',
+        workspaceId: identity.workspaceId,
+        operationId: id,
+        reason: RECONCILE_REASON_LEASE_EXPIRED,
       });
       // The SAME executor runs OUTSIDE any transaction with the SAME
       // persisted idempotencyKey (recovery, not a new approval). T6.1
@@ -580,6 +631,14 @@ export const createInMemoryPendingOperationV2Store = (
       if (!Number.isNaN(leaseExpiresAt) && leaseExpiresAt > Date.now()) return fail('approval.execution_in_progress', 'Execução já em andamento.');
       record.executionLeaseExpiresAt = new Date(Date.now() + resolvePendingV2LeaseMs(opts?.leaseMs ?? options?.leaseMs)).toISOString();
       record.executionAttemptCount = (record.executionAttemptCount ?? 0) + 1;
+      // V4 T3.1 / T0.4.6: the operation ENTERS reconcile here (lease renewed,
+      // executor about to re-run). Telemetry only.
+      emitReconcileEnqueued(options?.observabilitySink, {
+        eventType: 'mutation.reconcile.enqueued',
+        workspaceId: identity.workspaceId,
+        operationId: id,
+        reason: RECONCILE_REASON_LEASE_EXPIRED,
+      });
       // T6.1 stale-finalization guard mirrors execute().
       const renewAttempt = record.executionAttemptCount ?? 0;
       const stillRenewed = (): boolean =>

@@ -77,6 +77,33 @@ describe('M-07: hash de migração inclui o workspace', () => {
     expect(persist).toHaveBeenCalledTimes(1);
   });
 
+  it('T4.2 (E2): re-import idempotente não duplica mensagens — importedCount estável, persist chamado uma vez', async () => {
+    // Idempotency key = migration_hash (sha256 do transcript + workspace, M-07)
+    // gravada em _history_migration_marker: o segundo import com o mesmo
+    // export retorna skipped sem re-persistir, então nenhuma mensagem duplica.
+    const sql = createMockSql();
+    const persisted: Array<{ id: string }> = [];
+    const persist = vi.fn(async (msgs: Array<{ id: string }>) => {
+      persisted.push(...msgs);
+    });
+
+    const first = await migrateLegacyHistory(exportFor('ws-a'), sql, persist);
+    expect(first).toMatchObject({ success: true, skipped: false });
+    expect(first.importedCount).toBe(messages.length);
+    expect(persisted.map((m) => m.id)).toEqual(messages.map((m) => m.id));
+
+    const second = await migrateLegacyHistory(exportFor('ws-a'), sql, persist);
+    expect(second).toMatchObject({ success: true, skipped: true, reason: 'already_migrated' });
+    expect(second.importedCount).toBe(first.importedCount);
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(persisted).toHaveLength(messages.length);
+
+    const third = await migrateLegacyHistory(exportFor('ws-a'), sql, persist);
+    expect(third.skipped).toBe(true);
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(persisted).toHaveLength(messages.length);
+  });
+
   it('marcador legado (hash sem workspace) não reimporta — reconhece e atualiza', async () => {
     const sql = createMockSql();
     const persist = vi.fn(async () => {});

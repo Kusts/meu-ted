@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Budget, BudgetStatus, BudgetTrend } from '../types/domain.js';
+import type { Budget, BudgetTrend } from '../types/domain.js';
 import type { BudgetStore } from './store.js';
 import type { InMemoryState } from '../writes/in-memory.js';
 import { domainErrors } from '../writes/errors.js';

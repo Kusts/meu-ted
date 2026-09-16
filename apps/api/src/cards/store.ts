@@ -6,7 +6,7 @@
  * expense/income/transfer CRUD.
  */
 
-import type { Account, Statement, StatementDetail, StatementPurchase, RecurringPurchase } from '../types/domain.js';
+import type { Account, Statement, StatementDetail, RecurringPurchase } from '../types/domain.js';
 
 export type CardStore = {
   /** List credit-card accounts for a household (kind='credit_card'). */

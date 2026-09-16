@@ -20,7 +20,7 @@
     "test:api": "pnpm --filter meu-ted-api test",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "pnpm --filter meu-ted-api lint && pnpm --filter pwa lint",
+    "lint": "pnpm --filter meu-ted-api lint && pnpm --filter pi-finance-agent lint && pnpm --filter pi-finance-codex-broker lint && pnpm --filter pwa lint",
     "test:unit": "pnpm --filter meu-ted-api test && pnpm --filter pwa test",
     "test:integration": "pnpm --filter meu-ted-api test:integration",
     "test:e2e": "pnpm --filter pwa test",

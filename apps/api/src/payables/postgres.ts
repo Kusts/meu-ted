@@ -6,7 +6,7 @@ import type {
   PayableTemplate,
 } from "../types/domain.js";
 import { DomainError, domainErrors } from "../writes/errors.js";
-import { withTransaction, queryInTransaction } from "../db/pool.js";
+import { withTransaction, } from "../db/pool.js";
 import type { PayableStore } from "./store.js";
 
 type Row = Record<string, unknown>;
@@ -577,11 +577,11 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
 
     async listAllNotifications() {
       const rows = await query<Row>(
-        `SELECT * FROM notification_configs WHERE enabled = true AND household_id = household_id ORDER BY household_id, id`,
+        `SELECT * FROM notification_configs WHERE enabled = true ORDER BY household_id, id`,
       );
       return rows.map(mapNotification);
     },
-    async updateNotificationExecution(notificationId, state) {
+    async updateNotificationExecution(notificationId, householdId, state) {
       await query(
         `UPDATE notification_configs SET
            last_run_at = $1,
@@ -592,7 +592,7 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
            last_success_at = CASE WHEN $2 IN ('sent', 'deduplicated') THEN $1 ELSE last_success_at END,
            last_failure_at = CASE WHEN $2 = 'failed' THEN $1 ELSE last_failure_at END,
            updated_at = NOW()
-         WHERE id = $6 AND household_id = household_id`,
+          WHERE id = $6 AND household_id = $7`,
         [
           state.executedAt,
           state.status,
@@ -600,6 +600,7 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
           state.removed,
           state.error ?? null,
           notificationId,
+          householdId,
         ],
       );
     },

@@ -65,7 +65,7 @@ const mapPayable = (r: Row): Payable => {
 
 export const createLegacyPostgresPayableStore = (pool: Pool): PayableStore => {
   const base = createPostgresPayableStore(pool);
-  const query = async <R extends Row = Row>(t: string, v: unknown[] = []): Promise<R[]> => {
+  const _query = async <R extends Row = Row>(t: string, v: unknown[] = []): Promise<R[]> => {
     const r = await pool.query<R>(t, v);
     return r.rows;
   };

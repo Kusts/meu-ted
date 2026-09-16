@@ -43,6 +43,8 @@ function defaultState(): AppState {
     createCardPurchase: vi.fn(), updateTransaction: vi.fn(), updatePayable: vi.fn(),
     undoPayablePayment: vi.fn(), updateGoal: vi.fn(), updateSubscription: vi.fn(),
     refreshSubscriptions: vi.fn(), refreshDomains: vi.fn(),
+    offlineLocked: false,
+    revalidateOfflineSession: vi.fn(),
   };
 }
 function mockState(o: Partial<AppState>): AppState { return { ...defaultState(), ...o }; }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildTestApp, TOKEN_A, TOKEN_B } from '../test-app.js';
 
 const H = { 'x-device-token': TOKEN_A, 'content-type': 'application/json' };
-const HB = { 'x-device-token': TOKEN_B, 'content-type': 'application/json' };
+const _HB = { 'x-device-token': TOKEN_B, 'content-type': 'application/json' };
 const CLOCK = () => new Date('2026-09-07T12:00:00.000Z');
 
 /**

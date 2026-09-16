@@ -8,7 +8,7 @@ declare module 'better-auth' {
 }
 
 declare module 'kysely' {
-  export class Kysely<Database = unknown> {
+  export class Kysely<_Database = unknown> {
     constructor(options: unknown);
     destroy(): Promise<void>;
   }

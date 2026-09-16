@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildTestApp, TOKEN_A, TOKEN_B } from '../test-app.js';
 
 const authA = { 'x-device-token': TOKEN_A, 'content-type': 'application/json' };
-const authB = { 'x-device-token': TOKEN_B, 'content-type': 'application/json' };
+const _authB = { 'x-device-token': TOKEN_B, 'content-type': 'application/json' };
 
 describe('GET /subscriptions', () => {
   it('returns empty list when no subscriptions exist', async () => {

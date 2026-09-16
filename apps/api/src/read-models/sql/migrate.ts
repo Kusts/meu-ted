@@ -68,6 +68,8 @@ export const LEGACY_SAFE_PREFIXES = [
   "V050",
   "V051",
   "V052",
+  "V053",
+  "V054",
 ];
 
 /**

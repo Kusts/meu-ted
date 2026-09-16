@@ -10,6 +10,14 @@ export function generateRuntimeFacts() {
   const apiPkg = JSON.parse(fs.readFileSync(path.join(ROOT, "apps", "api", "package.json"), "utf8"));
   const agentPkg = JSON.parse(fs.readFileSync(path.join(ROOT, "apps", "agent", "package.json"), "utf8"));
 
+  // FIX-FINAL-3 (V4, ADR-016): agent bindings are derived from the current
+  // apps/agent/wrangler.jsonc instead of a hardcoded legacy list, so a
+  // regenerated runtime-facts.json can never reintroduce the removed V1
+  // agent binding as active. The historical v1 DO migration tag stays in
+  // wrangler.jsonc per Cloudflare rules but is NOT a binding.
+  const wrangler = JSON.parse(fs.readFileSync(path.join(ROOT, "apps", "agent", "wrangler.jsonc"), "utf8"));
+  const agentBindings = (wrangler.durable_objects?.bindings ?? []).map((b) => `${b.name} (${b.class_name})`);
+
   const sqlDir = path.join(ROOT, "apps", "api", "src", "read-models", "sql");
   const migrations = fs.existsSync(sqlDir)
     ? fs.readdirSync(sqlDir).filter((f) => f.startsWith("V") && f.endsWith(".sql")).sort()
@@ -20,9 +28,9 @@ export function generateRuntimeFacts() {
   const uniqueRoutes = Array.from(new Set(routeMatches));
 
   return {
-    version: "1.0.0",
-    lastVerified: "2026-08-24",
-    activeWorkspaces: ["apps/api", "apps/pwa", "apps/agent", "apps/whatsapp-bridge"],
+    version: "1.2.0",
+    lastVerified: new Date().toISOString().slice(0, 10),
+    activeWorkspaces: ["apps/api", "apps/pwa", "apps/agent"],
     apps: {
       api: {
         name: apiPkg.name || "@pi-financeiro/api",
@@ -36,12 +44,10 @@ export function generateRuntimeFacts() {
       },
       agent: {
         name: agentPkg.name || "@pi-financeiro/agent",
-        framework: "Cloudflare Workers / Agents SDK",
-        runtime: "Cloudflare Workers / Durable Objects",
-      },
-      bridge: {
-        name: "@pi-financeiro/whatsapp-bridge",
-        status: "transitional / staged retirement",
+        framework: "Cloudflare Workers / Agents SDK (FinanceChatAgent extends AIChatAgent)",
+        runtime: "Cloudflare Workers / Durable Objects (v2 FinanceChatAgent)",
+        bindings: agentBindings,
+        llmConfig: "V034 global, providers opencode-zen/go, openai-api, openai-codex-subscription experimental_blocked",
       },
     },
     counts: {

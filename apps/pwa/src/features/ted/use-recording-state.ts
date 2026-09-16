@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isMicrophoneEnabled } from "@/lib/capabilities";
+import { recordClientEvent, type MicErrorReason } from "@/lib/telemetry/client-events";
 
 /**
  * Microphone lifecycle state machine (SPEC §17, H-08).
@@ -25,6 +27,28 @@ interface UseRecordingStateApi {
   stop: () => void;
   /** Single idempotent teardown: stops recorder + tracks, clears refs, discards result. */
   cleanupMedia: () => void;
+}
+
+/**
+ * Map a capture failure to the SPEC §24.7 reason code vocabulary
+ * (denied / notfound / busy).
+ */
+function mapMicErrorReason(error: unknown): MicErrorReason {
+  const name = error instanceof DOMException ? error.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") return "denied";
+  if (name === "NotFoundError" || name === "OverconstrainedError" || name === "TypeError") {
+    return "notfound";
+  }
+  return "busy";
+}
+
+/** T0.4.7: queue a `mic.error` client event; never throws, never blocks teardown. */
+function emitMicError(reason: MicErrorReason): void {
+  try {
+    recordClientEvent("mic.error", { reason, microphoneEnabled: isMicrophoneEnabled() });
+  } catch {
+    /* telemetry must never break the error path */
+  }
 }
 
 function stopTracks(stream: MediaStream | null): void {
@@ -71,12 +95,13 @@ export function useRecordingState(options: UseRecordingStateOptions = {}): UseRe
   }, []);
 
   const fail = useCallback(
-    (stream: MediaStream | null, message: string) => {
+    (stream: MediaStream | null, message: string, reason: MicErrorReason) => {
       stopTracks(stream);
       streamRef.current = null;
       recorderRef.current = null;
       chunksRef.current = [];
       setBoth("error");
+      emitMicError(reason);
       try {
         onErrorRef.current?.(message);
       } catch {
@@ -119,7 +144,7 @@ export function useRecordingState(options: UseRecordingStateOptions = {}): UseRe
     const current = stateRef.current;
     if (current === "requesting" || current === "recording" || current === "processing") return;
     if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      fail(null, RECORDING_MIC_ERROR);
+      fail(null, RECORDING_MIC_ERROR, "notfound");
       return;
     }
     suppressResultRef.current = false;
@@ -128,8 +153,8 @@ export function useRecordingState(options: UseRecordingStateOptions = {}): UseRe
     let stream: MediaStream | null = null;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      fail(null, RECORDING_MIC_ERROR);
+    } catch (error) {
+      fail(null, RECORDING_MIC_ERROR, mapMicErrorReason(error));
       return;
     }
     // A teardown (stop/close/unmount/workspace change) may have happened
@@ -144,7 +169,7 @@ export function useRecordingState(options: UseRecordingStateOptions = {}): UseRe
     try {
       recorder = new MediaRecorder(stream);
     } catch {
-      fail(stream, RECORDING_MIC_ERROR);
+      fail(stream, RECORDING_MIC_ERROR, "busy");
       return;
     }
     const chunks: BlobPart[] = [];
@@ -157,7 +182,7 @@ export function useRecordingState(options: UseRecordingStateOptions = {}): UseRe
     try {
       recorder.start();
     } catch {
-      fail(stream, RECORDING_MIC_ERROR);
+      fail(stream, RECORDING_MIC_ERROR, "busy");
       return;
     }
     setBoth("recording");

@@ -22,7 +22,7 @@ import { requireTestDatabase } from '../../src/db/db-guard.js';
 import type { Pool } from 'pg';
 
 const DB_URL = process.env.DATABASE_URL;
-const SKIP_REASON =
+const _SKIP_REASON =
   'DATABASE_URL is not set — skipping Postgres integration test. Set DATABASE_URL and run `pnpm db:migrate` to enable.';
 
 const TEST_TABLES = ['accounts', 'categories', 'transactions', 'device_tokens'] as const;

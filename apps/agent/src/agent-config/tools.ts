@@ -213,7 +213,7 @@ export const buildExposedTools = (
           if (!webProvider.available) return { available: false, message: WEB_UNAVAILABLE_MESSAGE, results: [] };
           try {
             return await webProvider.search(String(params.query ?? ''));
-          } catch (err) {
+          } catch (_err) {
             return { available: false, message: 'A busca web falhou agora — sigo com os dados do workspace.', results: [] };
           }
         },

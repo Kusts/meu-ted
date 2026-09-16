@@ -96,11 +96,19 @@ describe("AuthGate", () => {
 
   it("shows login screen with expired msg when token returns 401", async () => {
     store["pi-finance:token"] = "expired-token";
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: false,
-      status: 401,
-      json: async () => ({ code: "auth.invalid_token" }),
-    } as Response);
+    vi.mocked(fetch)
+      // 0. Cookie-first session probe: no valid cookie session.
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: null }),
+      } as Response)
+      // 1. Scoped device verification: expired/rotated/revoked.
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ code: "auth.invalid_token" }),
+      } as Response);
 
     render(
       <AuthGate>
@@ -135,6 +143,12 @@ function SessionProbe() {
 describe("AuthGate login + session flows", () => {
   it("logs in with email/password, registers device token, and shows app on submit", async () => {
     vi.mocked(fetch)
+      // 0. Boot session probe (no device token stored → GET /auth/session, no session).
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: null }),
+      } as Response)
       // 1. POST /auth/sign-in/email
       .mockResolvedValueOnce({
         ok: true,
@@ -170,6 +184,12 @@ describe("AuthGate login + session flows", () => {
 
   it("submits via Enter key on password input and persists token without clearing", async () => {
     vi.mocked(fetch)
+      // 0. Boot session probe (no device token stored → GET /auth/session, no session).
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: null }),
+      } as Response)
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -201,6 +221,12 @@ describe("AuthGate login + session flows", () => {
 
   it("persists device token before unlocking and stays unlocked", async () => {
     vi.mocked(fetch)
+      // 0. Boot session probe (no device token stored → GET /auth/session, no session).
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: null }),
+      } as Response)
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -228,7 +254,14 @@ describe("AuthGate login + session flows", () => {
   });
 
   it("shows error when login fails with 401 (invalid credentials)", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce({
+    vi.mocked(fetch)
+      // 0. Boot session probe (no device token stored → GET /auth/session, no session).
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: null }),
+      } as Response)
+      .mockResolvedValueOnce({
       ok: false,
       status: 401,
       json: async () => ({ code: "auth.invalid_credentials", message: "Invalid password" }),
@@ -253,7 +286,14 @@ describe("AuthGate login + session flows", () => {
   });
 
   it("shows default error when login fails (network)", async () => {
-    vi.mocked(fetch).mockRejectedValueOnce(new Error("network down"));
+    vi.mocked(fetch)
+      // 0. Boot session probe (no device token stored → GET /auth/session, no session).
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: null }),
+      } as Response)
+      .mockRejectedValueOnce(new Error("network down"));
 
     render(
       <AuthGate>
@@ -285,5 +325,75 @@ describe("AuthGate login + session flows", () => {
     expect(await screen.findByText(/Sessão expirada pelo teste/i, {}, { timeout: 3000 })).toBeInTheDocument();
     expect(await screen.findByPlaceholderText(/seu\.email@exemplo\.com/, {}, { timeout: 3000 })).toBeInTheDocument();
     expect(store["pi-finance:token"]).toBeUndefined();
+  });
+});
+
+describe("AuthGate session-first boot (T2.5-client, ADR-015 Opção C)", () => {
+  it("unlocks via cookie session when no device token is stored", async () => {
+    // No device token in store; GET /auth/session proves a valid cookie session.
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ user: { id: "u1", email: "walis@example.com", name: "W" } }),
+    } as Response);
+
+    render(
+      <AuthGate>
+        <div data-testid="app">App Content</div>
+      </AuthGate>,
+    );
+
+    expect(await screen.findByTestId("app", {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      expect.stringContaining("/auth/session"),
+      expect.anything(),
+    );
+  });
+
+  it("shows login when neither device token nor session exists (fail-closed)", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ user: null }),
+    } as Response);
+
+    render(
+      <AuthGate>
+        <div data-testid="app">App Content</div>
+      </AuthGate>,
+    );
+
+    await screen.findByPlaceholderText(/seu\.email@exemplo\.com/, {}, { timeout: 3000 });
+    expect(screen.queryByTestId("app")).not.toBeInTheDocument();
+  });
+
+  it("keeps a valid cookie session unlocked when the stored device token expired (401)", async () => {
+    // FIX-FINAL-2 FINDING 1 (RED): cookie-first boot — a valid cookie session
+    // must survive an expired/rotated/revoked device token. Only the device
+    // token is dropped; the cookie session is never cleared.
+    store["pi-finance:token"] = "expired-device-token";
+    vi.mocked(fetch)
+      // 0. Cookie-first session probe: valid cookie session.
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: "u1", email: "walis@example.com", name: "W" } }),
+      } as Response)
+      // 1. Scoped device verification: expired/rotated/revoked.
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ code: "auth.invalid_token" }),
+      } as Response);
+
+    render(
+      <AuthGate>
+        <div data-testid="app">App Content</div>
+      </AuthGate>,
+    );
+
+    expect(await screen.findByTestId("app", {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(store["pi-finance:token"]).toBeUndefined();
+    expect(screen.queryByText(/Sessão antiga expirada/)).not.toBeInTheDocument();
   });
 });

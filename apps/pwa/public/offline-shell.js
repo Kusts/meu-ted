@@ -1,8 +1,22 @@
 // offline-shell.js — SW fallback shell for offline navigation
 // Reads location.pathname + IndexedDB v2 snapshot, renders stale/read-only.
+//
+// T2.6 offline policy (SPEC §10, ADR-015): mirrors the app's lock logic in
+// plain JS (no bundle here). Before rendering ANY financial data the shell
+// requires: (a) a valid offlineSubjectId in localStorage (same key as the
+// app, `pi-finance:offline-subject`) matching the envelope partition — no
+// subject → lock; (b) a fresh lastOnlineAuthenticatedAt within
+// MAX_OFFLINE_AUTH_AGE (default 72h, same default as
+// NEXT_PUBLIC_MAX_OFFLINE_AUTH_AGE_HOURS) plus the clock-skew allowance
+// max(5min, 5% of max age). Expired/legacy envelopes → lock screen, never
+// data. No bearer credential is read: the subject partition is the key.
 (function(){
 "use strict";
 var DB="pi-finance-snapshot",STORE="snapshots",KEY="v2";
+var SUBJECT_KEY="pi-finance:offline-subject";
+var MAX_AGE_HOURS=72;
+var SKEW_FLOOR_MS=5*60*1000;
+var LOCK_MESSAGE="offline session locked — reconecte para revalidar";
 var TITLE={
   "/":"Resumo Financeiro","/registros":"Últimos Registros","/contas":"Contas",
   "/categorias":"Categorias","/a-pagar":"Contas a Pagar","/orcamentos":"Orçamentos",
@@ -25,12 +39,32 @@ function o(){
     r.onsuccess=function(){res(r.result)};r.onerror=function(){rej(r.error)};
   });
 }
-function d(db){
+function getEnv(db){
   return new Promise(function(res){
     var tx=db.transaction(STORE,"readonly"),req=tx.objectStore(STORE).get(KEY);
     req.onsuccess=function(){db.close();res(req.result||null)};
     req.onerror=function(){db.close();res(null)};
   });
+}
+function subj(){
+  try{return window.localStorage?window.localStorage.getItem(SUBJECT_KEY):null}
+  catch(e){return null}
+}
+function uuidOk(v){
+  return typeof v==="string"&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+}
+function lock(){
+  document.getElementById("content").innerHTML='<div class="empty">'+e(LOCK_MESSAGE)+'</div>';
+  document.getElementById("synced-at").textContent="";
+}
+/** Fail-closed age check. Returns true only when the envelope may render. */
+function ageOk(env){
+  var at=Date.parse(env.lastOnlineAuthenticatedAt||"");
+  if(isNaN(at))return false;
+  var maxMs=MAX_AGE_HOURS*3600*1000;
+  var skew=Math.max(SKEW_FLOOR_MS,maxMs*0.05);
+  var age=Math.max(0,Date.now()-at);
+  return age<=maxMs+skew;
 }
 async function main(){
   var route=r(),title=TITLE[route]||"Desconhecido",dom=DOMAIN[route];
@@ -38,8 +72,13 @@ async function main(){
   document.getElementById("page-route").textContent=route;
   var db,env;
   try{db=await o()}catch{document.getElementById("content").innerHTML='<div class="empty">Snapshot não disponível</div>';return}
-  env=await d(db);
+  env=await getEnv(db);
   if(!env||!env.domains){document.getElementById("content").innerHTML='<div class="empty">Nenhum dado offline</div>';return}
+  // T2.6 lock: subject partition + age BEFORE any financial render.
+  var subject=subj();
+  if(!uuidOk(subject)){lock();return}
+  if(env.offlineSubjectId!==subject){lock();return}
+  if(!ageOk(env)){lock();return}
   var synced=env.syncedAt&&env.syncedAt[dom];
   document.getElementById("synced-at").textContent="Sincronizado em: "+(synced?new Date(synced).toLocaleString("pt-BR"):"—");
   var data=env.domains[dom];
