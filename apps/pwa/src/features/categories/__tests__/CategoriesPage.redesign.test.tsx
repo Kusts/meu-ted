@@ -34,6 +34,8 @@ function defaultState(): AppState {
     undoPayablePayment: vi.fn(), updateGoal: vi.fn(), deleteCategory: vi.fn(),
     applyCategoryDefaults: vi.fn(), updateSubscription: vi.fn(), refreshSubscriptions: vi.fn(),
     refreshDomains: vi.fn(),
+    offlineLocked: false,
+    revalidateOfflineSession: vi.fn(),
   };
 }
 function mockState(o: Partial<AppState>): AppState { return { ...defaultState(), ...o }; }

@@ -587,6 +587,8 @@ export type AuditLogFilters = {
   actorType?: "device" | "user";
   entityType?: string;
   entityId?: string;
+  /** Explicit workspace scope header (X-Workspace-Id) for cross-workspace readers. */
+  workspaceId?: string;
 };
 
 export async function fetchAuditLogs(filters: AuditLogFilters = {}): Promise<{ items: AuditLog[]; total: number }> {
@@ -598,7 +600,19 @@ export async function fetchAuditLogs(filters: AuditLogFilters = {}): Promise<{ i
   if (filters.entityType) q.set("entityType", filters.entityType);
   if (filters.entityId) q.set("entityId", filters.entityId);
   const qs = q.toString();
-  return apiFetch(`/audit-logs${qs ? `?${qs}` : ""}`);
+  return apiFetch(`/audit-logs${qs ? `?${qs}` : ""}`, {
+    headers: filters.workspaceId ? { "X-Workspace-Id": filters.workspaceId } : {},
+  });
+}
+
+// ─── Analytics (charts-data feature) ───────────────────────────────────────
+/**
+ * Generic analytics JSON GET (abortable). Keeps `apiFetch` confined
+ * to the approved endpoint layer while analytics query builders stay in the
+ * feature module (lib/api boundary invariant).
+ */
+export async function fetchAnalyticsJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return apiFetch<T>(path, signal ? { signal } : {});
 }
 
 // ─── Dashboard Summary ───────────────────────────────────

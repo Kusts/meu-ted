@@ -75,6 +75,8 @@ function defaultState(): AppState {
     updateSubscription: vi.fn(),
     refreshSubscriptions: vi.fn(),
     refreshDomains: vi.fn(),
+    offlineLocked: false,
+    revalidateOfflineSession: vi.fn(),
   };
 }
 

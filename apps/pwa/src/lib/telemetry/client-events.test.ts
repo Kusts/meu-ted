@@ -80,7 +80,7 @@ describe("client-events flush (FIX-F0 POST /client-events)", () => {
 
     expect(flushed).toHaveLength(1);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(CLIENT_EVENTS_PATH);
     expect(url).not.toMatch(/^https?:\/\//);
     expect(init.method).toBe("POST");
@@ -99,7 +99,7 @@ describe("client-events flush (FIX-F0 POST /client-events)", () => {
 
     await flushQueuedClientEvents();
 
-    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body)).payload).toMatchObject({ capability: "off" });
   });
 

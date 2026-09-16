@@ -299,6 +299,19 @@ export function apiGet<T>(path: string, token: string): Promise<T> {
   return apiFetch<T>(path, { token });
 }
 
+/**
+ * Telemetry transport for POST /client-events (V4 T0.4, SPEC §24): the only
+ * approved endpoint-layer entry point for lib/telemetry — keeps raw apiFetch
+ * confined to the lib/api boundary (write-policy/architecture invariants).
+ */
+export function postClientEvents(body: string): Promise<unknown> {
+  return apiFetch<unknown>("/client-events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+}
+
 /** Convenience: POST with optional token */
 export function apiPost<T>(
   path: string,

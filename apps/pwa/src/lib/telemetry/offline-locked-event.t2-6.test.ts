@@ -71,7 +71,7 @@ describe("offline.locked client event (RED on baseline)", () => {
     await flushQueuedClientEvents();
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toEqual({
       eventType: "offline.locked",
       payload: { offlineSubjectId: SUBJECT, ageBand: "7-30d" },

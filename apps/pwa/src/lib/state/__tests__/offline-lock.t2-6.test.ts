@@ -108,8 +108,7 @@ describe("T2.6 offline lock (RED on baseline)", () => {
     expect(loaded).toBeNull();
     const state = await getOfflineSnapshotLockState();
     expect(state.state).toBe("locked");
-    expect(state.ageBand).toBe("1-7d");
-    expect(state.offlineSubjectId).toBe(SUBJECT_A);
+    expect(state).toMatchObject({ ageBand: "1-7d", offlineSubjectId: SUBJECT_A });
   });
 
   it("age inside the clock-skew allowance still serves (72h + 1h ok, 72h + 4h locked)", async () => {
@@ -146,7 +145,7 @@ describe("T2.6 offline lock (RED on baseline)", () => {
     expect(await readV2Snapshot(TOKEN, "accounts")).toBeNull();
     const state = await getOfflineSnapshotLockState();
     expect(state.state).toBe("locked");
-    expect(state.reason).toBe("no-subject");
+    expect(state).toMatchObject({ reason: "no-subject" });
   });
 
   it("opens by subject with NO bearer credential in localStorage (T2.3 B4 proof)", async () => {

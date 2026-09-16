@@ -66,7 +66,7 @@ describe("RootProviders — API env configured", () => {
       </RootProviders>,
     );
     // API configured → AuthGate path renders (login UI after the session probe, children gated)
-    expect(await screen.findByRole("button", { name: /Entrar/i }, {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Entrar/i }, { timeout: 3000 })).toBeInTheDocument();
     expect(screen.queryByTestId("cfg-app")).not.toBeInTheDocument();
   });
 });

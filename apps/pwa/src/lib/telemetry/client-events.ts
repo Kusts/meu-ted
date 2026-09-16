@@ -10,7 +10,7 @@
  * failures keep the queue and never throw into the request path.
  */
 
-import { apiFetch } from "@/lib/api/client";
+import { postClientEvents } from "@/lib/api/client";
 
 export type MicErrorReason = "denied" | "notfound" | "busy";
 
@@ -188,10 +188,7 @@ function toClientEventBody(event: QueuedClientEvent):
  */
 export async function sendQueuedClientEvents(events: QueuedClientEvent[]): Promise<void> {
   for (const event of events) {
-    await apiFetch<unknown>(CLIENT_EVENTS_PATH, {
-      method: "POST",
-      body: JSON.stringify(toClientEventBody(event)),
-    });
+    await postClientEvents(JSON.stringify(toClientEventBody(event)));
   }
 }
 
