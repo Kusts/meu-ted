@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DEMO_HOUSEHOLD_ID } from '../read-models/demo-data.js';
+import { withTransaction } from '../db/pool.js';
 import type { Pool } from 'pg';
 
 export type DeviceContext = { deviceId: string; householdId: string };
@@ -22,6 +23,11 @@ export type DeviceTokenStore = {
    * `currentToken` undefined = session-authenticated rotation without a
    * predecessor (register-only). An expired/foreign predecessor rejects
    * before any INSERT (no resurrection, no cross-scope windowing).
+   * The predecessor is single-use for rotation: a second `rotate` with an
+   * already-rotated predecessor rejects with 409
+   * (`auth.token_already_rotated`) even inside the window — the caller must
+   * rotate the successor instead. This bounds every rotation to exactly one
+   * successor, including parallel/concurrent callers.
    */
   rotate(
     currentToken: string | undefined,
@@ -76,10 +82,17 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
     expiresAt: number | null;
     /** Last successful lookup (ms epoch) or null when never used. */
     lastUsedAt: number | null;
+    /**
+     * Rotation consumption flag (FIX-ROT): the synchronous claim in `rotate`
+     * makes the predecessor single-use, so concurrent rotates serialize to
+     * exactly one successor. Auth (`resolve`) ignores this flag — a rotated
+     * predecessor stays valid until its windowed expiry.
+     */
+    rotated: boolean;
   };
   const tokens = new Map<string, MemTokenRecord>();
-  tokens.set('dev-token-1', { deviceId: 'dev-device-1', householdId: DEMO_HOUSEHOLD_ID, expiresAt: null, lastUsedAt: null });
-  tokens.set('dev-token-2', { deviceId: 'dev-device-2', householdId: DEMO_HOUSEHOLD_ID, expiresAt: null, lastUsedAt: null });
+  tokens.set('dev-token-1', { deviceId: 'dev-device-1', householdId: DEMO_HOUSEHOLD_ID, expiresAt: null, lastUsedAt: null, rotated: false });
+  tokens.set('dev-token-2', { deviceId: 'dev-device-2', householdId: DEMO_HOUSEHOLD_ID, expiresAt: null, lastUsedAt: null, rotated: false });
 
   const hasPredecessor = (currentToken: string | undefined): currentToken is string =>
     typeof currentToken === 'string' && currentToken.trim() !== '';
@@ -107,7 +120,7 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
     _opts?: RegisterDeviceTokenOptions,
   ): Promise<{ token: string; deviceId: string; householdId: string }> => {
     const tok = generateDeviceToken(); const devId = randomUUID();
-    tokens.set(tok, { deviceId: devId, householdId, expiresAt: null, lastUsedAt: null });
+    tokens.set(tok, { deviceId: devId, householdId, expiresAt: null, lastUsedAt: null, rotated: false });
     return { token: tok, deviceId: devId, householdId };
   };
 
@@ -127,12 +140,29 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
       // Scoped validation first: expired or foreign predecessors reject
       // before any successor exists (fail-closed, no resurrection).
       await resolve(currentToken, householdId);
+      // Synchronous consume-check-then-claim (FIX-ROT): no await between the
+      // flag read and the flag write, so two concurrent rotates of the same
+      // predecessor serialize here — exactly one wins, the other gets 409.
+      const prev = tokens.get(currentToken);
+      if (prev && prev.rotated) throw alreadyRotatedToken();
+      if (prev) prev.rotated = true;
     }
-    const created = await register(
-      deviceName,
-      householdId,
-      opts?.userId ? { userId: opts.userId } : undefined,
-    );
+    let created: { token: string; deviceId: string; householdId: string };
+    try {
+      created = await register(
+        deviceName,
+        householdId,
+        opts?.userId ? { userId: opts.userId } : undefined,
+      );
+    } catch (err) {
+      // No successor was issued: release the claim so the predecessor stays
+      // rotatable instead of wedged.
+      if (hasPredecessor(currentToken)) {
+        const prev = tokens.get(currentToken);
+        if (prev) prev.rotated = false;
+      }
+      throw err;
+    }
     if (hasPredecessor(currentToken)) {
       const prev = tokens.get(currentToken);
       if (prev) {
@@ -147,9 +177,12 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
   return { resolve, register, revoke, rotate };
 };
 
-type DeviceTokenRow = { device_id: string; household_id: string; expires_at: string | Date | null };
+type DeviceTokenRow = { device_id: string; household_id: string; expires_at: string | Date | null; legacy?: boolean | null };
 
 const invalidToken = (): AuthError => new AuthError('invalid or revoked device token', 401, 'auth.invalid_token');
+
+const alreadyRotatedToken = (): AuthError =>
+  new AuthError('device token already rotated, use the successor', 409, 'auth.token_already_rotated');
 
 const throwIfExpired = (row: DeviceTokenRow): void => {
   if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) throw invalidToken();
@@ -236,36 +269,89 @@ export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => 
     householdId: string,
     opts?: RotateDeviceTokenOptions,
   ): Promise<{ token: string; deviceId: string; householdId: string }> => {
-    // Scoped predecessor validation first: expired or foreign tokens reject
-    // before any successor row exists (fail-closed, no resurrection). The
-    // resolved household anchors every write below (C5: explicit parameter).
-    let anchor = householdId;
-    if (hasPredecessor(currentToken)) {
-      const prev = await resolve(currentToken, householdId);
-      anchor = prev.householdId;
-    }
-    // Successor rows follow the V053 register policy: opaque random secret,
-    // hash at rest, no forced expires_at (scoped lifecycle, per-token
-    // revocation — never a table-wide logout).
-    const created = await register(
-      deviceName,
-      anchor,
-      opts?.userId ? { userId: opts.userId } : undefined,
-    );
-    if (hasPredecessor(currentToken)) {
-      const deadline = new Date(Date.now() + getDeviceRotationWindowMs()).toISOString();
-      const oldHash = hashDeviceToken(currentToken);
-      // LEAST never extends a tighter pre-existing expiry (legacy 90d tail).
-      await pool.query(
-        `UPDATE device_tokens SET expires_at = LEAST(COALESCE(expires_at, $3::timestamptz), $3::timestamptz) WHERE token_hash = $1 AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL`,
-        [oldHash, anchor, deadline],
-      );
-      await pool.query(
-        `UPDATE device_tokens SET expires_at = LEAST(COALESCE(expires_at, $3::timestamptz), $3::timestamptz) WHERE token = $1 AND legacy = TRUE AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL`,
-        [currentToken, anchor, deadline],
+    if (!hasPredecessor(currentToken)) {
+      // Session-authenticated rotation without a predecessor: register-only,
+      // a single INSERT is already atomic — no transaction needed.
+      return register(
+        deviceName,
+        householdId,
+        opts?.userId ? { userId: opts.userId } : undefined,
       );
     }
-    return created;
+    const predecessor: string = currentToken;
+    // FIX-ROT: the whole rotation is ONE transaction. SELECT ... FOR UPDATE
+    // takes the predecessor row lock, so two concurrent rotates of the same
+    // token serialize: the loser re-reads the winner's committed windowing
+    // and rejects with 409 instead of minting a second successor.
+    return withTransaction(pool, async (client) => {
+      const scopeParam = scope(householdId);
+      const oldHash = hashDeviceToken(predecessor);
+
+      // 1. Lock the predecessor (hashed path first, legacy fallback).
+      const hashed = await client.query<DeviceTokenRow>(
+        `SELECT device_id, household_id, expires_at, legacy FROM device_tokens WHERE token_hash = $1 AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL FOR UPDATE`,
+        [oldHash, scopeParam],
+      );
+      let row: DeviceTokenRow | undefined =
+        (hashed.rowCount ?? 0) > 0 ? hashed.rows[0]! : undefined;
+      let isLegacy = false;
+      if (!row) {
+        const legacy = await client.query<DeviceTokenRow>(
+          `SELECT device_id, household_id, expires_at, legacy FROM device_tokens WHERE token = $1 AND legacy = TRUE AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL FOR UPDATE`,
+          [predecessor, scopeParam],
+        );
+        if ((legacy.rowCount ?? 0) === 0) throw invalidToken();
+        row = legacy.rows[0]!;
+        isLegacy = true;
+      }
+
+      // 2. Fail-closed expiry: an expired predecessor rejects before any
+      // successor row exists (no resurrection).
+      const windowedAt = row.expires_at ? new Date(row.expires_at).getTime() : null;
+      if (windowedAt !== null && windowedAt <= Date.now()) throw invalidToken();
+
+      // The resolved household anchors every write below (C5).
+      const anchor = row.household_id;
+
+      // 3. Single-use: an already-rotated predecessor rejects even inside the
+      // window — the caller must rotate the successor instead. No new schema:
+      // modern rows are born with expires_at NULL, so any set expiry means
+      // consumed. Legacy rows carry the V053 90-day backfill expiry, so only
+      // a windowed (<= now + window) expiry means consumed; a far-future
+      // expiry is a never-rotated legacy token and rotates once.
+      const deadlineMs = Date.now() + getDeviceRotationWindowMs();
+      const consumed = isLegacy
+        ? windowedAt !== null && windowedAt <= deadlineMs
+        : windowedAt !== null;
+      if (consumed) throw alreadyRotatedToken();
+
+      // 4. INSERT the successor in the same transaction (V053 register
+      // policy: opaque random secret, hash at rest, no forced expires_at).
+      const tok = generateDeviceToken();
+      const tokenHash = hashDeviceToken(tok);
+      const devId = randomUUID();
+      const deadline = new Date(deadlineMs).toISOString();
+      await client.query(
+        `INSERT INTO device_tokens (token, device_id, household_id, token_hash, name, user_id, legacy)
+         VALUES ($1, $2, $3, $4, $5, $6, FALSE)`,
+        [hashedTokenPlaceholder(tokenHash), devId, anchor, tokenHash, deviceName, opts?.userId ?? null],
+      );
+
+      // 5. Confine the predecessor. LEAST never extends a tighter
+      // pre-existing expiry (legacy 90d tail).
+      if (!isLegacy) {
+        await client.query(
+          `UPDATE device_tokens SET expires_at = LEAST(COALESCE(expires_at, $3::timestamptz), $3::timestamptz) WHERE token_hash = $1 AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL`,
+          [oldHash, anchor, deadline],
+        );
+      } else {
+        await client.query(
+          `UPDATE device_tokens SET expires_at = LEAST(COALESCE(expires_at, $3::timestamptz), $3::timestamptz) WHERE token = $1 AND legacy = TRUE AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL`,
+          [predecessor, anchor, deadline],
+        );
+      }
+      return { token: tok, deviceId: devId, householdId: anchor };
+    });
   };
 
   return { resolve, register, revoke, rotate };

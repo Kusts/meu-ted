@@ -1,9 +1,12 @@
+import type { PoolClient } from 'pg';
 import type { AuditLog, AuditLogStore } from '../audit/store.js';
 import type { WriteStore } from '../writes/store.js';
+import type { PostgresReversalTxExtensions } from '../writes/postgres.js';
 import { domainErrors } from '../writes/errors.js';
 import { createInMemoryIdempotencyStore, type IdempotencyStore } from '../writes/idempotency.js';
 import type { MutationReceipt } from '@pi-finance/llm-contracts';
 import { resolveUndoReceipt } from '../reconciliation/effects-registry.js';
+import { buildObservabilityEvent } from '../audit/events.js';
 
 export type UndoResult = {
   undone: {
@@ -17,6 +20,28 @@ export type UndoResult = {
 
 export type UndoService = {
   undo(householdId: string, actorId: string, idempotencyKey: string, lastOperationId?: string): Promise<UndoResult>;
+};
+
+/**
+ * V4 T3.1 / T0.4.5 (SPEC §24.5): telemetry emitted when an undo call is a
+ * replay of an already-recorded idempotent result. Dimension: workspace_id.
+ * Built through the fail-closed buildObservabilityEvent contract — never
+ * carries credentials or financial payloads.
+ */
+export type UndoReplayTelemetryEvent = {
+  eventType: 'audit-undo.replay';
+  workspaceId: string;
+};
+
+export type UndoObservabilitySink = (event: UndoReplayTelemetryEvent) => void;
+
+/** Best-effort structured-log fallback (T2.2 pattern): never throws. */
+const logUndoReplay = (workspaceId: string): void => {
+  try {
+    console.info(JSON.stringify({ event: 'audit-undo.replay', workspaceId }));
+  } catch {
+    // Telemetry never breaks the undo.
+  }
 };
 
 const REVERSIBLE_OPERATIONS = new Set([
@@ -39,6 +64,14 @@ export const createUndoService = (deps: {
   writes: WriteStore;
   /** Persistent store shared with the writes (in-memory ↔ in-memory, Postgres ↔ Postgres). */
   idempotency?: IdempotencyStore;
+  /**
+   * V4 T3.1 / T0.4.5 (SPEC §24.5): sink for `audit-undo.replay` — emitted
+   * when the undo is a replay (the idempotency store already distinguishes
+   * it). Follows the T2.2 precedent (routes/index.ts legacyBearerAuditLog):
+   * injected in tests, defaulting to best-effort structured JSON logging.
+   * Telemetry only — never throws, never alters the financial path.
+   */
+  observabilitySink?: UndoObservabilitySink;
 }): UndoService => {
   const idempotency = deps.idempotency ?? createInMemoryIdempotencyStore();
   const undone = new Set<string>();
@@ -52,20 +85,46 @@ export const createUndoService = (deps: {
     return undefined;
   };
 
-  const applyReversal = async (householdId: string, log: AuditLog): Promise<string> => {
+  const applyReversal = async (householdId: string, log: AuditLog, claimTx?: unknown): Promise<string> => {
     const entityId = resolveEntityId(log);
     if (!entityId) throw domainErrors.undoNothingToUndo();
+    // FIX-UNDO (F3, SPEC §12 F3 opção 1): when the idempotency store runs
+    // this producer inside the claim transaction (Postgres), run the
+    // reversal on the SAME client so claim + effect + completion commit
+    // atomically — a crash anywhere rolls everything back and the replay
+    // re-executes claim + producer from zero and converges (F4). Any other
+    // combination (in-memory idempotency, foreign write store) falls back
+    // to the plain transactional methods with the previous semantics.
+    const extensions = deps.writes as Partial<PostgresReversalTxExtensions>;
+    const inTx =
+      typeof claimTx === 'object' &&
+      claimTx !== null &&
+      typeof (claimTx as { query?: unknown }).query === 'function'
+        ? (claimTx as PoolClient)
+        : undefined;
     switch (log.operation) {
       case 'transactions.expense.create':
       case 'transactions.income.create':
       case 'transactions.transfer.create':
-        await deps.writes.softDeleteTransaction(householdId, entityId);
+        if (inTx && typeof extensions.softDeleteTransactionInTx === 'function') {
+          await extensions.softDeleteTransactionInTx(inTx, householdId, entityId);
+        } else {
+          await deps.writes.softDeleteTransaction(householdId, entityId);
+        }
         return 'soft_delete';
       case 'accounts.create':
-        await deps.writes.deactivateAccount(householdId, entityId);
+        if (inTx && typeof extensions.deactivateAccountInTx === 'function') {
+          await extensions.deactivateAccountInTx(inTx, householdId, entityId);
+        } else {
+          await deps.writes.deactivateAccount(householdId, entityId);
+        }
         return 'deactivate';
       case 'categories.create':
-        await deps.writes.deactivateCategory(householdId, entityId);
+        if (inTx && typeof extensions.deactivateCategoryInTx === 'function') {
+          await extensions.deactivateCategoryInTx(inTx, householdId, entityId);
+        } else {
+          await deps.writes.deactivateCategory(householdId, entityId);
+        }
         return 'deactivate';
       default:
         throw domainErrors.undoNothingToUndo();
@@ -82,7 +141,7 @@ export const createUndoService = (deps: {
       // lastOperationId → payload mismatch → idempotency.conflict.
       const namespacedKey = `${UNDO_IDEMPOTENCY_PREFIX}${idempotencyKey}`;
       const payload = { lastOperationId: lastOperationId ?? null };
-      const { response } = await idempotency.lookupOrRecord(householdId, namespacedKey, payload, async () => {
+      const { response, replayed } = await idempotency.lookupOrRecord(householdId, namespacedKey, payload, async (claimTx?: unknown) => {
         const { items } = await deps.auditLogs.listAuditLogs(householdId, { limit: 50 });
         const candidates = items
           .filter(
@@ -105,7 +164,7 @@ export const createUndoService = (deps: {
           target = pool[0]!;
         }
         const entityId = resolveEntityId(target)!;
-        const reversal = await applyReversal(householdId, target);
+        const reversal = await applyReversal(householdId, target, claimTx);
         undone.add(`${householdId}:${entityId}`);
         // Receipt is built inside the claim (before the idempotency record
         // write) so replays return the identical receipt.
@@ -116,6 +175,16 @@ export const createUndoService = (deps: {
         };
         return result;
       });
+      if (replayed) {
+        try {
+          buildObservabilityEvent('audit-undo.replay', { workspaceId: householdId });
+          const sink = deps.observabilitySink;
+          if (sink) sink({ eventType: 'audit-undo.replay', workspaceId: householdId });
+          else logUndoReplay(householdId);
+        } catch {
+          // Telemetry never breaks the undo.
+        }
+      }
       return response;
     },
   };

@@ -189,6 +189,22 @@ export function isSessionBearerFallbackEnabled(env?: Record<string, string | und
 }
 
 /**
+ * True when `authorization` carries a pi-agent delegated turn token
+ * (`iss: "pi-agent"`). Delegated tokens follow their own verification path
+ * and are NEVER treated as legacy session bearers (kill-switch exempt).
+ */
+function isPiAgentBearer(authorization: unknown): boolean {
+  if (typeof authorization !== 'string' || !authorization.startsWith('Bearer ')) return false;
+  try {
+    const [, p] = authorization.slice('Bearer '.length).trim().split('.');
+    if (!p) return false;
+    const j = JSON.parse(Buffer.from(p, 'base64url').toString('utf8')) as { iss?: string };
+    return j.iss === 'pi-agent';
+  } catch {
+    return false;
+  }
+}
+/**
  * The API-owned V2 executor is the only bridge from a canonical pending tool
  * to financial WriteStore methods. It deliberately accepts only the two TED
  * transaction tool ids and never trusts identity fields from normalizedArgs.
@@ -229,28 +245,28 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     const auth = deps.auth;
     const workspaceAccess = deps.workspaceAccess;
     app.addHook("preHandler", async (request, reply) => {
+      const isAuthRoute =
+        request.url.startsWith('/auth/') ||
+        request.url.startsWith('/api/auth');
+      // FIX-AUTH-BOOT FINDING 1 (HIGH): o kill-switch do fallback bearer
+      // legado (T2.3) vale para TODA chamada a Better-Auth, incluindo /auth/*
+      // e /api/auth/* — sem exceção para auth. Com a flag OFF, o bearer de
+      // sessão legado é removido do request ANTES de qualquer resolução, de
+      // modo que register/rotate/session por bearer legado falham
+      // fail-closed (nenhum device token mintado). Preservados: pi-agent
+      // (delegated), X-Device-Token e cookie (só `authorization` é removido).
+      if (!isSessionBearerFallbackEnabled() && !isPiAgentBearer(request.headers.authorization)) {
+        delete request.headers.authorization;
+      }
       if (
         request.url === '/health' ||
-        request.url.startsWith('/auth/') ||
-        request.url.startsWith('/api/auth') ||
+        isAuthRoute ||
         request.url.startsWith('/bridge/')
       ) {
         return;
       }
 
-      const authHeader = request.headers.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const rawToken = authHeader.slice('Bearer '.length).trim();
-        try {
-          const [, p] = rawToken.split('.');
-          if (p) {
-            const j = JSON.parse(Buffer.from(p, 'base64url').toString('utf8')) as { iss?: string };
-            if (j.iss === 'pi-agent') return;
-          }
-        } catch {
-          // non-jwt or error, proceed
-        }
-      }
+      if (isPiAgentBearer(request.headers.authorization)) return;
 
       const workspaceIdHeader = request.headers['x-workspace-id'];
       const workspaceId = Array.isArray(workspaceIdHeader) ? workspaceIdHeader[0] : workspaceIdHeader;

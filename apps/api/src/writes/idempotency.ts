@@ -23,6 +23,16 @@ export type IdempotencyRequest = {
   key: string;
 };
 
+/**
+ * FIX-UNDO (F3, SPEC §12 F3 opção 1): producers MAY accept the claim
+ * transaction client. Postgres-backed stores pass their open `PoolClient`
+ * so the financial effect joins the claim transaction (single atomic
+ * commit); stores without a transaction (in-memory) pass nothing.
+ * The parameter is optional, so every existing `() => Promise<T>`
+ * producer keeps compiling and behaving exactly as before.
+ */
+export type IdempotencyProducer<T> = (tx?: unknown) => Promise<T>;
+
 export type IdempotencyEntry<T> = {
   payloadHash: string;
   response: T;
@@ -34,12 +44,12 @@ export type IdempotencyStore = {
     householdId: string,
     key: string,
     payload: unknown,
-    producer: () => Promise<T>,
+    producer: IdempotencyProducer<T>,
   ): Promise<{ response: T; replayed: boolean }>;
   lookupOrRecord<T>(
     request: IdempotencyRequest,
     payload: unknown,
-    producer: () => Promise<T>,
+    producer: IdempotencyProducer<T>,
   ): Promise<{ response: T; replayed: boolean }>;
   clear(): void;
 };
@@ -85,7 +95,8 @@ export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
     async lookupOrRecord(scopeOrHouseholdId: any, keyOrPayload: any, payloadOrProducer: any, maybeProducer?: any) {
       let composite: string;
       let payload: unknown;
-      let producer: () => Promise<any>;
+      // In-memory has no transaction: the producer always runs with no tx.
+      let producer: IdempotencyProducer<any>;
 
       if (typeof scopeOrHouseholdId === 'object' && scopeOrHouseholdId !== null) {
         composite = buildIdempotencyKey(scopeOrHouseholdId);

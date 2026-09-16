@@ -86,6 +86,13 @@ export async function fetchSession(): Promise<{ user: { id: string; email: strin
   }
 }
 
+/**
+ * T2.5 (ADR-015 Opção C, session-first): scoped device flow — device
+ * registration authenticates via the SESSION (cookie + compat bearer) and
+ * intentionally carries NO x-device-token. A stale stored device token must
+ * never leak into this call; apiFetch only attaches the device header on the
+ * explicit `token` option, which this flow deliberately omits.
+ */
 export async function registerDeviceToken(sessionToken?: string): Promise<RegisterDeviceResponse> {
   return apiFetch<RegisterDeviceResponse>("/auth/devices/register", {
     method: "POST",
@@ -97,6 +104,13 @@ export async function registerDeviceToken(sessionToken?: string): Promise<Regist
   });
 }
 
+/**
+ * T2.5 (ADR-015 Opção C, session-first): scoped device flow — the ONLY
+ * normal-path caller that carries x-device-token, passed explicitly via the
+ * `token` opt-in (boot gate verification). Rotation
+ * (POST /auth/devices/rotate) follows the same pattern when wired: explicit
+ * token, never the implicit store fallback (removed in T2.5).
+ */
 export async function verifyDeviceToken(token: string): Promise<unknown> {
   return apiGet<unknown>("/auth/devices/me", token);
 }

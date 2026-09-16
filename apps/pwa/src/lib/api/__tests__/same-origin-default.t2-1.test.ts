@@ -169,7 +169,7 @@ describe("T2.1 agent client: same-origin proxy is the production default", () =>
 });
 
 describe("T2.1 coexistence: proxy requests keep transport behavior", () => {
-  it("keeps localStorage auth fallback headers and credentials:include through the proxy", async () => {
+  it("keeps session fallback header and credentials:include through the proxy, without device header on normal calls (T2.5 session-first)", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "");
     stubHostname(PRODUCTION_HOST);
     localStorage.setItem("pi-finance:session-token", "sess-abc");
@@ -184,6 +184,8 @@ describe("T2.1 coexistence: proxy requests keep transport behavior", () => {
     );
     const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
     expect(headers["Authorization"]).toBe("Bearer sess-abc");
-    expect(headers["x-device-token"]).toBe("dev-abc");
+    // T2.5 (ADR-015 Opção C): the stored device token no longer rides normal
+    // calls — scoped device flows pass it explicitly.
+    expect(headers["x-device-token"]).toBeUndefined();
   });
 });

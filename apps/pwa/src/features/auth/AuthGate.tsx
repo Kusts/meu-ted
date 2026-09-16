@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import { getToken, setToken, setSessionToken } from "@/lib/auth/token-store";
 import { ApiError, clearActiveWorkspaceId } from "@/lib/api/client";
-import { signInWithEmail, registerDeviceToken, verifyDeviceToken } from "@/lib/api/auth";
+import { signInWithEmail, registerDeviceToken, verifyDeviceToken, fetchSession } from "@/lib/api/auth";
 import { clearSensitiveSession } from "@/lib/session";
 import { SessionProvider } from "@/lib/auth/session-context";
 import { Lock, Mail, ArrowRight } from "lucide-react";
@@ -26,7 +26,17 @@ export function AuthGate({ children }: Props) {
     const init = async () => {
       const token = getToken();
       if (!token) {
-        if (!cancelled) setState("login");
+        // T2.5 (ADR-015 Opção C, session-first): the boot MUST NOT depend on
+        // the device token. Without one, a valid cookie session is enough to
+        // operate — GET /auth/session is the scoped session check. Fail-closed:
+        // no session means login; transport errors also mean login (unlike the
+        // stored-token path, there is nothing offline-capable to unlock with).
+        try {
+          const session = await fetchSession();
+          if (!cancelled) setState(session?.user ? "unlocked" : "login");
+        } catch {
+          if (!cancelled) setState("login");
+        }
         return;
       }
 

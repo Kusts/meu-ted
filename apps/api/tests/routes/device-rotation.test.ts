@@ -115,8 +115,7 @@ describe('T2.5 RED — POST /auth/devices/rotate (SPEC §9 C4)', () => {
     expect(check.json()).not.toHaveProperty('token');
   });
 
-  it('rotates with a valid Better-Auth session and no device header → 201', async () => {
-    const { memoryAdapter } = await import('better-auth/adapters/memory');
+  it('rotates with a valid Better-Auth session and no device header → 201', async () => {    const { memoryAdapter } = await import('better-auth/adapters/memory');
     const { createBetterAuth } = await import('../../src/auth/better-auth.js');
     const auth = createBetterAuth({
       database: memoryAdapter({ user: [], session: [], account: [], verification: [] }),
@@ -145,5 +144,60 @@ describe('T2.5 RED — POST /auth/devices/rotate (SPEC §9 C4)', () => {
     expect((await me(app, body.token)).statusCode).toBe(200);
 
     await auth.close();
+  });
+});
+
+describe('FIX-ROT RED — predecessor single-use (security review HIGH)', () => {
+  it('rejects re-rotation with the same predecessor inside the window → 409', async () => {
+    const store = createInMemoryDeviceTokenStore();
+    const { app } = buildTestApp({}, store, false);
+    const prev = await store.register('phone', HOUSEHOLD_A);
+
+    const first = await rotate(app, { 'x-device-token': prev.token }, { deviceName: 'phone v2' });
+    expect(first.statusCode).toBe(201);
+    const next = first.json().token as string;
+
+    const second = await rotate(app, { 'x-device-token': prev.token }, { deviceName: 'phone v3' });
+    expect(second.statusCode).toBe(409);
+    expect(second.json().code).toBe('auth.token_already_rotated');
+
+    // The failed re-rotation changes nothing: predecessor still in-window,
+    // successor still valid.
+    expect((await me(app, prev.token)).statusCode).toBe(200);
+    expect((await me(app, next)).statusCode).toBe(200);
+  });
+
+  it('concurrent rotations of the same predecessor yield exactly one successor', async () => {
+    const store = createInMemoryDeviceTokenStore();
+    const { app } = buildTestApp({}, store, false);
+    const prev = await store.register('phone', HOUSEHOLD_A);
+
+    const [a, b] = await Promise.all([
+      rotate(app, { 'x-device-token': prev.token }, { deviceName: 'a' }),
+      rotate(app, { 'x-device-token': prev.token }, { deviceName: 'b' }),
+    ]);
+
+    expect([a.statusCode, b.statusCode].sort()).toEqual([201, 409]);
+    const winner = a.statusCode === 201 ? a : b;
+    const loser = a.statusCode === 201 ? b : a;
+    expect(loser.json().code).toBe('auth.token_already_rotated');
+
+    // Exactly one successor authenticates; the predecessor stays in-window.
+    expect((await me(app, winner.json().token as string)).statusCode).toBe(200);
+    expect((await me(app, prev.token)).statusCode).toBe(200);
+  });
+
+  it('the successor rotates again normally (chain, not a dead end)', async () => {
+    const store = createInMemoryDeviceTokenStore();
+    const { app } = buildTestApp({}, store, false);
+    const prev = await store.register('phone', HOUSEHOLD_A);
+
+    const first = await rotate(app, { 'x-device-token': prev.token });
+    expect(first.statusCode).toBe(201);
+    const next = first.json().token as string;
+
+    const third = await rotate(app, { 'x-device-token': next }, { deviceName: 'phone v3' });
+    expect(third.statusCode).toBe(201);
+    expect(third.json().token).not.toBe(next);
   });
 });

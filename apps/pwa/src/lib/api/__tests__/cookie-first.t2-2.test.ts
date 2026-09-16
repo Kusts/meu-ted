@@ -74,7 +74,7 @@ describe("T2.2 cookie-first: operation without localStorage writes", () => {
 });
 
 describe("T2.2 coexistence (B3.1): legacy bearer still attached when present", () => {
-  it("attaches Authorization + x-device-token with compat on (default)", async () => {
+  it("attaches Authorization with compat on (default) but NOT x-device-token on normal calls (T2.5 session-first)", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
     localStorage.setItem("pi-finance:session-token", "sess-abc");
     localStorage.setItem("pi-finance:token", "dev-abc");
@@ -84,7 +84,9 @@ describe("T2.2 coexistence (B3.1): legacy bearer still attached when present", (
 
     const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
     expect(headers["Authorization"]).toBe("Bearer sess-abc");
-    expect(headers["x-device-token"]).toBe("dev-abc");
+    // T2.5 (ADR-015 Opção C): normal calls never carry the device header,
+    // even with a device token stored — scoped device flows pass it explicitly.
+    expect(headers["x-device-token"]).toBeUndefined();
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ credentials: "include" });
   });
 });

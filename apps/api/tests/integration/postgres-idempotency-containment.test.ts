@@ -1,35 +1,42 @@
 /**
- * Postgres idempotency containment — gated by DATABASE_URL_TEST.
+ * Postgres idempotency containment — gated by DATABASE_URL_TEST + DB_TEST_MARKER.
  *
  * The test database must already contain public._test_marker with the UUID in
  * DB_TEST_MARKER. The guard runs before migrations or cleanup.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { createPool } from '../../src/db/pool.js';
 import { requireTestDatabase } from '../../src/db/db-guard.js';
 import { runMigrations } from '../../src/read-models/sql/migrate.js';
-import { createPostgresIdempotencyStore, createPostgresWriteStore } from '../../src/writes/postgres.js';
+import { createAccountInTx, createPostgresIdempotencyStore, createPostgresWriteStore } from '../../src/writes/postgres.js';
 import { createPostgresAuditLogStore } from '../../src/audit/store.js';
-import { buildIdempotencyKey, createIdempotencyRequest, hashIdempotencyPayload } from '../../src/writes/idempotency.js';
+import { buildIdempotencyKey, createIdempotencyRequest } from '../../src/writes/idempotency.js';
 
 const DB_URL = process.env.DATABASE_URL_TEST;
+const ENABLED = Boolean(DB_URL && process.env.DB_TEST_MARKER);
 const TEST_HOUSEHOLD = '00000000-0000-4000-8000-0000000000f1';
-const describeIfDb = DB_URL ? describe : describe.skip;
+const describeIfDb = ENABLED ? describe : describe.skip;
 /**
- * ARCHIVED DESIGN DEBT (2026-08-19): série 0.4.1 especifica o caminho moderno
- * de `operation_records` (V013–V016: status/lease/effect_ref/entityType) que o
- * runtime atual (src/writes/postgres.ts) NÃO implementa. Não é regressão —
- * WIP preservado per docs/recovery/2026-08-16-working-tree-inventory.md (owner
- * P1). Aguarda decisão de design owner. Fonte do diagnóstico:
- * docs/ops/2026-08-18-postgres-integration-status.md
+ * 0.4.1 — Postgres concurrent idempotency over the canonical
+ * `operation_records` path (V013–V016: status/lease/effect_ref/entityType).
+ *
+ * REACTIVATED by FIX-UNDO (Fase 3, SPEC §12 F3): the 2026-08-19 ARCHIVED
+ * note predates the canonical implementation — the modern path EXISTS
+ * (claim + effect + completion + audit in one transaction) and this suite
+ * proves it. Atomicity contract for producers: run the financial effect on
+ * the claim transaction client passed to the producer
+ * (`IdempotencyProducer(tx?)`, same pattern as runKeyedMutation's
+ * `mutate(client)`). A producer that opens its own transaction keeps its
+ * own boundary — only claim + completion roll back on failure.
  */
-describeIfDb.skip('0.4.1 — Postgres concurrent idempotency (ARCHIVED debt: operation_records moderno sem owner)', () => {
+describeIfDb('0.4.1 — Postgres concurrent idempotency (canonical operation_records)', () => {
   let pool: Pool;
 
   beforeAll(async () => {
     pool = createPool({ connectionString: DB_URL!, max: 8 });
+    await requireTestDatabase(pool, 'postgres-idempotency-containment');
     await runMigrations(pool);
   }, 30_000);
 
@@ -153,12 +160,15 @@ describeIfDb.skip('0.4.1 — Postgres concurrent idempotency (ARCHIVED debt: ope
       'accounts.create',
       key,
     );
-    const writes = createPostgresWriteStore({ pool });
     const name = `Rollback effect ${key}`;
 
     await expect(
-      idempotency.lookupOrRecord(request, { name }, async () => {
-        await writes.createAccount(TEST_HOUSEHOLD, {
+      idempotency.lookupOrRecord(request, { name }, async (tx) => {
+        // Joins the claim transaction: on producer failure the account,
+        // the claim and the audit row roll back together. (A producer that
+        // called writes.createAccount here would commit in its own
+        // transaction — outside the atomic boundary by design.)
+        await createAccountInTx(tx as PoolClient, TEST_HOUSEHOLD, {
           name,
           kind: 'bank',
           initialBalanceCents: 100,
@@ -171,7 +181,10 @@ describeIfDb.skip('0.4.1 — Postgres concurrent idempotency (ARCHIVED debt: ope
     expect(accounts.rows).toHaveLength(0);
     const records = await pool.query('SELECT id FROM operation_records WHERE workspace_id = $1 AND idempotency_key = $2', [TEST_HOUSEHOLD, buildIdempotencyKey(request)]);
     expect(records.rows).toHaveLength(0);
-    const audits = await pool.query('SELECT id FROM audit_logs WHERE workspace_id = $1 AND payload_hash = $2', [TEST_HOUSEHOLD, hashIdempotencyPayload({ name })]);
+    // Workspace-scoped: no audit row may survive the aborted claim. (A
+    // payload_hash lookup would be vacuous here — the canonical audit row
+    // stores the store-internal content hash, not hashIdempotencyPayload.)
+    const audits = await pool.query('SELECT id FROM audit_logs WHERE workspace_id = $1', [TEST_HOUSEHOLD]);
     expect(audits.rows).toHaveLength(0);
     if (process.env.PRINT_G2_GATE_AUDIT === '1') {
       console.log('G2_GATE_PRODUCER_ROLLBACK', JSON.stringify({ accounts: accounts.rows.length, operationRecords: records.rows.length, auditLogs: audits.rows.length }));

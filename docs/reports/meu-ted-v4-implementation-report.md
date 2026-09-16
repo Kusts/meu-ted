@@ -62,8 +62,9 @@ Nenhuma divergência bloqueante da baseline: a branch está 100% verde nos gates
 
 ### Fase 3 — Consistência financeira: Undo provado (F)
 
-- **T3.1 — Suíte compartilhada de undo com injeção de crash (XLT-07):** A FAZER.
-- **T3.2 — Paridade in-memory do idempotency store:** A FAZER.
+- **T3.1 — Suíte compartilhada de undo com injeção de crash (XLT-07):** FEITO — `apps/api/tests/xlt/xlt-07-undo-crash.test.ts` (13 cenários: 6 Postgres P1–P5 + legacy-branch, 4 paridade in-memory, 3 emissores T0.4.5/6). P3/P4 nasceram RED: essa foi a prova do defeito F3, não teste quebrado.
+- **FIX-UNDO (F3 opção 1, SPEC §12 F3; T3.1):** FEITO (working tree, sem commit). **Defeito provado:** o undo Postgres não era atômico — `lookupOrRecord` (tx A, `postgres.ts:939-948`) chamava o producer, que executava `softDeleteTransaction` em tx B independente (`postgres.ts:810`); crash entre o commit de B e o de A deixava o efeito financeiro commitado SEM registro de idempotência, e o retry lançava `not_found` 404 ("Lançamento não encontrado") — replay não convergia (F4 violado). Isso refuta a premissa REV-V4-1/§31.2 F-1 de que o undo Postgres "já era atômico". **Correção (mesma transação PostgreSQL, sem distributed transaction, reusando `withTransaction`):** passthrough do client do claim ao producer (`producer(client)` nos branches canônico e legacy; tipo `IdempotencyProducer<T>` com parâmetro opcional — callers existentes intactos) + reversões client-bound `*InTx` expostas como extensões não-contratuais do Postgres write store (`PostgresReversalTxExtensions`, duck-typed com fallback no `applyReversal` do undo). Sem mudança nos contratos públicos de `createUndoService`/`WriteStore`; in-memory mantém a semântica atual; emissores T0.4.5/6 preservados. **Evidência:** XLT-07 13/13 verde (P3/P4 agora: rollback total 0 efeitos/0 registros + retry convergente byte-idêntico marcado `audit-undo.replay); suíte 0.4.1 reativada e alinhada (2/2, produtores no client do claim).
+- **T3.2 — Paridade in-memory do idempotency store:** A FAZER (divergências P3/P4 in-memory registradas pela suíte como `DIVERGES_TODAY`, sem force-fail — replay convergente, sem promessa de atomicidade de processo).
 
 ### Fase 4 — Descomissionamento (E + I)
 

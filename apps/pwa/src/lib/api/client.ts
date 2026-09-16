@@ -10,11 +10,18 @@
  * Option C). It is never a published production default: the production host
  * always uses the proxy, with or without the env set.
  *
- * Auth transport (ADR-011 compat window): the proxy forwards `cookie` (plus
- * `authorization`/`x-device-token` when present) with `credentials: "include"`,
- * so same-origin requests authenticate via the HttpOnly cookie and MUST NOT
- * require localStorage tokens. Bearer/device headers from localStorage remain
- * as fallback for origins where the Secure cookie is not persisted (localhost).
+ * Auth transport (ADR-011 compat window + ADR-015 Opção C, session-first):
+ * the proxy forwards `cookie` (plus `authorization` when present) with
+ * `credentials: "include"`, so same-origin requests authenticate via the
+ * HttpOnly cookie and MUST NOT require localStorage tokens. The session
+ * Bearer from localStorage remains as fallback for origins where the Secure
+ * cookie is not persisted (localhost).
+ *
+ * T2.5 (ADR-015 Opção C): `x-device-token` is NEVER attached implicitly.
+ * Normal calls (financial data, RPC, chat) authenticate via session
+ * (cookie + compat bearer) and `X-Workspace-Id`; the device header travels
+ * ONLY on explicitly scoped device flows (POST /auth/devices/register,
+ * GET /auth/devices/me, rotation) via the explicit `token` option.
  *
  * TODO(ADR-011, review 2026-12-01): remove the localStorage session/device
  * fallback once the compat window closes — see ADR-011 "Decisão".
@@ -117,7 +124,12 @@ export function getAuthToken(): string | undefined {
 export const DEFAULT_API_TIMEOUT_MS = 15_000;
 
 export interface ApiClientOptions extends RequestInit {
-  /** X-Device-Token header override (takes precedence over env) */
+  /**
+   * X-Device-Token header override — explicit opt-in ONLY for scoped device
+   * flows (registration, verification, rotation, /auth/devices/*).
+   * T2.5 (ADR-015 Opção C): apiFetch NEVER falls back to the device token
+   * store implicitly; normal calls omit the header entirely.
+   */
   token?: string;
   /** X-Idempotency-Key header */
   idempotencyKey?: string;
@@ -186,13 +198,19 @@ export async function apiFetch<T>(
     signal: callerSignal,
     ...rest
   } = options;
-  const resolvedToken = token ?? getAuthToken();
+  // T2.5 (ADR-015 Opção C, session-first): the device token is attached
+  // ONLY when passed explicitly (scoped device flows). Normal calls
+  // authenticate via the cookie (+ compat session bearer) and MUST NOT
+  // carry x-device-token, even when one sits in localStorage.
+  const resolvedToken = token;
   const sessionToken = getSessionToken();
 
   // ADR-011: cookie session (credentials: "include" below) is primary on the
   // same-origin proxy path; localStorage headers are compat fallback only and
   // are omitted entirely when absent — the proxy MUST NOT require them.
   // T2.2: cada anexo de fallback conta na telemetria local (só contadores).
+  // T2.5: o canal "device" agora conta só anexos explícitos de fluxos
+  // escopados — o attach universal foi removido (ADR-015 Opção C).
   if (sessionToken) noteLegacyAuthUsage("session");
   if (resolvedToken) noteLegacyAuthUsage("device");
   const requestHeaders: Record<string, string> = {
