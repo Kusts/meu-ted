@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PRODUCTION_PWA_ORIGIN } from "@/proxy-utils";
 import { GET, POST } from "./route";
 
 describe("Agent Next.js Proxy Route (/api/agent/[...path])", () => {
@@ -105,7 +106,7 @@ describe("Agent Next.js Proxy Route (/api/agent/[...path])", () => {
         headers: { origin: "http://localhost:3000" },
       });
       await GET(reqLocalhost, context);
-      expect(capturedUpstreamRequest!.headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
+      expect(capturedUpstreamRequest!.headers.get("origin")).toBe(PRODUCTION_PWA_ORIGIN);
 
       // 2. 127.0.0.1 origin
       const req127 = new Request("http://127.0.0.1:3000/api/agent/agents/finance-chat-agent/ws-1/rpc/history", {
@@ -113,7 +114,7 @@ describe("Agent Next.js Proxy Route (/api/agent/[...path])", () => {
         headers: { origin: "http://127.0.0.1:3000" },
       });
       await GET(req127, context);
-      expect(capturedUpstreamRequest!.headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
+      expect(capturedUpstreamRequest!.headers.get("origin")).toBe(PRODUCTION_PWA_ORIGIN);
     } finally {
       vi.unstubAllEnvs();
     }

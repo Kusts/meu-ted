@@ -25,7 +25,7 @@ describe('Better-Auth server boot & endpoints contract', () => {
       transaction: false,
       secret: 'test-secret-that-is-at-least-32-characters',
       baseURL: 'http://localhost:3001',
-      trustedOrigins: ['https://pi-finance-pwa.walissonead.workers.dev', 'http://localhost:3000'],
+      trustedOrigins: ['https://pwa.example', 'http://localhost:3000'],
     });
 
     // Seed a known test user directly via admin createUser

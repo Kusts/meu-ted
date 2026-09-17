@@ -74,7 +74,7 @@ describe('Security: /internal/workspace-alias', () => {
     const res = await app.inject({
       method: 'GET',
       url: `/internal/workspace-alias/${ALIAS}`,
-      headers: { 'x-agent-service-token': SERVICE_TOKEN, origin: 'https://pi-finance-pwa.walissonead.workers.dev' },
+      headers: { 'x-agent-service-token': SERVICE_TOKEN, origin: 'https://pwa.example' },
     });
     expect(res.statusCode).toBe(200);
     expect(res.headers['access-control-allow-origin']).toBeUndefined();

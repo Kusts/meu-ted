@@ -30,7 +30,7 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
       transaction: false,
       secret: 'test-secret-that-is-at-least-32-characters',
       baseURL: 'http://localhost:3001',
-      trustedOrigins: ['http://localhost:3000', 'https://pi-finance-pwa.walissonead.workers.dev'],
+      trustedOrigins: ['http://localhost:3000', 'https://pwa.example'],
     });
 
     // 1. Create admin user & session
@@ -82,7 +82,7 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
       adminEmails: [ADMIN_EMAIL],
       llmConfigStore: llmStore,
       agentConfigToken: CONFIG_TOKEN,
-      trustedOrigins: ['http://localhost:3000', 'https://pi-finance-pwa.walissonead.workers.dev'],
+      trustedOrigins: ['http://localhost:3000', 'https://pwa.example'],
     });
     await app.ready();
   });

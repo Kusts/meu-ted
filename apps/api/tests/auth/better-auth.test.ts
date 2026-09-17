@@ -26,7 +26,7 @@ describe('Better Auth integration', () => {
       database: memoryAdapter({ user: [], session: [], account: [], verification: [] }),
       secret: 'test-secret-that-is-at-least-32-characters',
       baseURL: 'https://api.synkroo.com.br',
-      trustedOrigins: ['https://pi-finance-pwa.walissonead.workers.dev'],
+      trustedOrigins: ['https://pwa.example'],
     });
 
     expect(auth.options.advanced?.defaultCookieAttributes).toMatchObject({

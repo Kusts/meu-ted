@@ -83,8 +83,11 @@ export interface AdminLlmReadAudit {
   modelCount: number;
 }
 
+// Non-production placeholder default (DEBT2 origin migration): production
+// composition always injects deps.trustedOrigins explicitly (server/index.ts),
+// so this fallback only serves dev/test without explicit config.
 const DEFAULT_TRUSTED_ORIGINS = [
-  'https://pi-finance-pwa.walissonead.workers.dev',
+  'https://pwa.example',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'http://localhost:3001',

@@ -49,7 +49,7 @@ describe("Gateway post-removal passthrough (T4.3 single runtime, INV-07)", () =>
 
     const req = new Request(`https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/history`, {
       method: "GET",
-      headers: { "x-agent-connection-token": token, origin: "https://pi-finance-pwa.walissonead.workers.dev" },
+      headers: { "x-agent-connection-token": token, origin: "https://pwa.example" },
     });
 
     mockAuthEndpoints();
@@ -64,7 +64,7 @@ describe("Gateway post-removal passthrough (T4.3 single runtime, INV-07)", () =>
 
     const req = new Request(`https://agent.test.local/agents/finance-chat-agent/${WORKSPACE_ID}/rpc/chat`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-agent-connection-token": token, origin: "https://pi-finance-pwa.walissonead.workers.dev" },
+      headers: { "content-type": "application/json", "x-agent-connection-token": token, origin: "https://pwa.example" },
       body: JSON.stringify({ text: "hello" }),
     });
 

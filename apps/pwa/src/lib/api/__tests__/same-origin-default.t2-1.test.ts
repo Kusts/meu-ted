@@ -16,7 +16,9 @@ import { sendAgentMessage } from "../agent-client";
  * (ADR-011 transient compat, ADR-015 session-first Option C).
  */
 
-const PRODUCTION_HOST = "pi-finance-pwa.walissonead.workers.dev";
+// Arbitrary production-shaped hostname: the client has no hostname
+// dependency (same-origin proxy default), so no real host is needed here.
+const PRODUCTION_HOST = "pwa.example";
 const originalLocation = window.location;
 
 function stubHostname(hostname: string): void {

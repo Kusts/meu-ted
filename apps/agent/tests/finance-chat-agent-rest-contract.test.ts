@@ -479,7 +479,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
           "x-agent-connection-token": token,
           "x-agent-actor": "attacker-spoofed-id",
           "x-agent-workspace": "attacker-spoofed-workspace",
-          origin: "https://pi-finance-pwa.walissonead.workers.dev",
+          origin: "https://pwa.example",
         },
       },
     );
@@ -611,7 +611,7 @@ describe("FinanceChatAgent REST Contract & Shared Transcript Security", () => {
         method: "GET",
         headers: {
           "x-agent-connection-token": token,
-          origin: "https://pi-finance-pwa.walissonead.workers.dev",
+          origin: "https://pwa.example",
         },
       },
     );

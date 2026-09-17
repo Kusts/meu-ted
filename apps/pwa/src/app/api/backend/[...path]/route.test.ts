@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PRODUCTION_PWA_ORIGIN } from "@/proxy-utils";
 import { GET, POST } from "./route";
 
 describe("same-origin backend proxy", () => {
@@ -63,7 +64,7 @@ describe("same-origin backend proxy", () => {
 
       const [, init] = upstream.mock.calls[0] ?? [];
       const headers = init?.headers as Headers;
-      expect(headers.get("origin")).toBe("https://pi-finance-pwa.walissonead.workers.dev");
+      expect(headers.get("origin")).toBe(PRODUCTION_PWA_ORIGIN);
     } finally {
       vi.unstubAllEnvs();
     }

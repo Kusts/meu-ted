@@ -7,7 +7,7 @@ type WorkerEnv = Parameters<typeof worker.fetch>[1];
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const SECRET = "secret-for-testing-purposes-at-least-32-chars!";
-const PWA_ORIGIN = "https://pi-finance-pwa.walissonead.workers.dev";
+const PWA_ORIGIN = "https://pwa.example";
 
 // Documented ceilings (must match the exported constants in worker.ts /
 // finance-chat-agent.ts): RPC bodies are small (short chat text plus

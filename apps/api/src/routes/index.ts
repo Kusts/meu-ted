@@ -675,8 +675,11 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     registerAdminAgentLlmConfigRoutes(app, {
       auth: deps.auth,
       store: llmStore,
-      adminEmails: deps.adminEmails ?? ['walissonead@gmail.com'],
-      agentRuntimeOrigin: deps.agentRuntimeOrigin ?? 'https://pi-finance-agent.walissonead.workers.dev',
+      // DEBT2: last-resort non-prod placeholders — production composition
+      // always injects these deps explicitly (server/index.ts), so the
+      // literals below never serve production traffic.
+      adminEmails: deps.adminEmails ?? ['admin@example.com'],
+      agentRuntimeOrigin: deps.agentRuntimeOrigin ?? 'https://agent.example',
       agentRuntimeToken: deps.agentRuntimeAdminToken ?? 'dev-agent-runtime-admin-token-32-chars!',
       ...(deps.trustedOrigins ? { trustedOrigins: deps.trustedOrigins } : {}),
       // Fase 3 item 9: sensitive admin reads are audit-logged best-effort;
@@ -695,7 +698,7 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
         }
       : undefined;
     registerBetterAuthRoutes(app, deps.auth, undefined, undefined, deps.inviteSignupGuard, consumeAccountInvite);
-    const adminEmails = deps.adminEmails ?? ['walissonead@gmail.com'];
+    const adminEmails = deps.adminEmails ?? ['admin@example.com'];
     registerAdminInviteRoutes(app, {
       auth: deps.auth,
       adminEmails,

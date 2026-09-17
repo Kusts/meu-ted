@@ -153,9 +153,16 @@ jobs:
     permissions:
       contents: read
     env:
-      PWA_PROD_URL: https://pi-finance-pwa.walissonead.workers.dev
+      PWA_PROD_URL: ${{ vars.PWA_PROD_URL }}
       API_PROD_URL: https://api.synkroo.com.br
     steps:
+      - name: Require PWA_PROD_URL repo variable (fail closed)
+        run: |
+          if [ -z "${{ vars.PWA_PROD_URL }}" ]; then
+            echo "::error::PWA_PROD_URL repo variable is unset — set it with: gh variable set PWA_PROD_URL --body \"https://<pwa-host>\""
+            exit 1
+          fi
+
       - name: Checkout deployed SHA
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

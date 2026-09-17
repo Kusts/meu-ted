@@ -77,40 +77,27 @@ const RULE_ALLOWLIST = [
   { rule: "url-embedded-credentials", path: "scripts/capture-production-topology.test.mjs", reason: "redaction unit-test fixture with fake strings (supersecret/abc123xyz)" },
   { rule: "url-embedded-credentials", path: "docs/ops/2026-08-18-postgres-integration-status.md", reason: "local CI test container (postgres:postgres@127.0.0.1) — ephemeral, no production credential" },
   { rule: "url-embedded-credentials", path: "docs/superpowers/goal-runs/2026-08-24-v032-v033.md", reason: "local rehearsal container (rehearse:rehearse@localhost) — ephemeral, no production credential" },
-  // Metadata WARN allowlist (DEBT-CODER-SANITIZE 2026-09-17): production endpoint
-  // constants, deploy URLs and test fixtures that must mirror runtime values.
-  // Redaction here would change runtime behavior or break assertions; moving
-  // them to env/config requires repo-level settings (publication follow-up).
+  // Metadata WARN allowlist (DEBT2-CODER-ORIGINS 2026-09-17): only the
+  // irreducible production endpoint constants remain in-repo. Deploy URLs
+  // moved to gh repo variables (vars.PWA_PROD_URL / vars.AGENT_PROD_URL);
+  // API non-prod defaults became example.* placeholders (production is
+  // env-required fail-closed); fixtures use example.* or import the runtime
+  // constant. What stays below MUST mirror a live runtime value with no
+  // out-of-repo var available — see reasons per entry.
   // Detector definitions (regex source, not values).
   { rule: "vps-host-or-ssh-user", path: "scripts/check-public-safety.mjs", reason: "detector definitions" },
   { rule: "personal-email", path: "scripts/check-public-safety.mjs", reason: "detector definitions" },
-  // Production deploy URLs (release automation; env migration needs repo-level settings).
-  { rule: "internal-hostname", path: ".github/workflows/agent-deploy.yml", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
-  { rule: "internal-hostname", path: ".github/workflows/pwa-deploy.yml", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
-  // Runtime production-origin constants (CORS/trusted-origins/proxy wiring).
-  { rule: "internal-hostname", path: "apps/agent/src/worker.ts", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
-  { rule: "internal-hostname", path: "apps/api/src/env.ts", reason: "non-production fallback trustedOrigins (production requires TRUSTED_ORIGINS env, fail-closed); centralizing default needs repo-level settings (follow-up)" },
-  { rule: "internal-hostname", path: "apps/api/src/routes/admin-agent-llm-config.ts", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
-  { rule: "internal-hostname", path: "apps/api/src/routes/index.ts", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
-  { rule: "internal-hostname", path: "apps/pwa/src/app/api/agent/[...path]/route.ts", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
-  { rule: "internal-hostname", path: "apps/pwa/src/proxy-utils.ts", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
+  // Irreducible runtime production-origin constants (no out-of-repo var
+  // configures these today; removing the literal breaks production, so the
+  // fail-safe choice is keep + allowlist).
+  { rule: "internal-hostname", path: "apps/agent/src/worker.ts", reason: "production CORS allowlist; deployed worker has no PWA_ORIGIN var — removing the literal breaks prod CORS (fail-safe keep)" },
+  { rule: "internal-hostname", path: "apps/pwa/src/app/api/agent/[...path]/route.ts", reason: "deployed PWA proxy upstream; no AGENT_ORIGIN worker var configured — removing the literal breaks prod proxy (fail-safe keep)" },
+  { rule: "internal-hostname", path: "apps/pwa/src/proxy-utils.ts", reason: "deployed PWA spoof target + reference constants; no override worker vars configured (fail-safe keep)" },
   { rule: "internal-hostname", path: "docker/pi-stack/docker-compose.yml", reason: "default EVOLUTION_GO_API_URL for local stack (override via env); changing default needs ops decision (follow-up)" },
-  // Non-production ADMIN_EMAILS fallbacks (production requires ADMIN_EMAILS env, fail-closed).
-  { rule: "personal-email", path: "apps/api/src/env.ts", reason: "local-dev fallback default; changing default needs product decision on admin bootstrap (follow-up)" },
-  { rule: "personal-email", path: "apps/api/src/routes/index.ts", reason: "local-dev fallback default; changing default needs product decision on admin bootstrap (follow-up)" },
-  // Test/contract fixtures that must mirror the runtime production constants.
-  { rule: "internal-hostname", path: "apps/agent/tests/finance-chat-agent-rest-contract.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
-  { rule: "internal-hostname", path: "apps/agent/tests/worker-gateway-history-migration.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
-  { rule: "internal-hostname", path: "apps/agent/tests/worker-rpc-payload-limit.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
-  { rule: "internal-hostname", path: "apps/api/tests/auth/better-auth.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
-  { rule: "internal-hostname", path: "apps/api/tests/routes/admin-agent-llm-config.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
-  { rule: "internal-hostname", path: "apps/api/tests/routes/workspace-alias.security.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
-  { rule: "internal-hostname", path: "apps/api/tests/server/better-auth-server-boot.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
-  { rule: "internal-hostname", path: "apps/pwa/e2e/playwright.config.ts", reason: "production smoke-test target URL, exercised only against live deploy (follow-up: env-driven)" },
-  { rule: "internal-hostname", path: "apps/pwa/scripts/contract-cors.mjs", reason: "contract script asserting production CORS origin; must mirror runtime until env migration (follow-up)" },
-  { rule: "internal-hostname", path: "apps/pwa/src/app/api/agent/[...path]/route.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
-  { rule: "internal-hostname", path: "apps/pwa/src/app/api/backend/[...path]/route.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
-  { rule: "internal-hostname", path: "apps/pwa/src/lib/api/__tests__/same-origin-default.t2-1.test.ts", reason: "test pins production host for same-origin default; must mirror runtime until env migration (follow-up)" },
+  // Live contract script: must assert the REAL production CORS origin against
+  // the deployed API (runs in PWA CI); an example.* placeholder would fail
+  // every reachable live check.
+  { rule: "internal-hostname", path: "apps/pwa/scripts/contract-cors.mjs", reason: "live CORS contract must assert the real production origin (PWA CI step)" },
 ];
 
 function listTrackedFiles() {

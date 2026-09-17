@@ -76,8 +76,9 @@ export default defineConfig({
       name: "production-smoke",
       use: {
         baseURL:
-          process.env.E2E_PRODUCTION_URL ||
-          "https://pi-finance-pwa.walissonead.workers.dev",
+          // Fallback only: live smoke always sets E2E_PRODUCTION_URL (the
+          // deploy workflows fail closed when the repo variable is unset).
+          process.env.E2E_PRODUCTION_URL || "https://pwa.example",
       },
       testMatch: "**/production-smoke.spec.ts",
       grepInvert: process.env.E2E_PRODUCTION_SMOKE ? undefined : /.*/,

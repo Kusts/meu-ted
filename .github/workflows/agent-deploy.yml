@@ -150,9 +150,15 @@ jobs:
     permissions:
       contents: read
     env:
-      AGENT_PROD_URL: https://pi-finance-agent.walissonead.workers.dev
+      AGENT_PROD_URL: ${{ vars.AGENT_PROD_URL }}
       API_PROD_URL: https://api.synkroo.com.br
     steps:
+      - name: Require AGENT_PROD_URL repo variable (fail closed)
+        run: |
+          if [ -z "${{ vars.AGENT_PROD_URL }}" ]; then
+            echo "::error::AGENT_PROD_URL repo variable is unset — set it with: gh variable set AGENT_PROD_URL --body \"https://<agent-host>\""
+            exit 1
+          fi
       - name: Checkout deployed SHA
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
