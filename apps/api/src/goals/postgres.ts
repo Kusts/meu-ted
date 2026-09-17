@@ -19,13 +19,23 @@ export const createPostgresGoalStore = (pool: Pool): GoalStore => {
       return { id, householdId, name: input.name, goalType: input.goalType as Goal['goalType'], targetAmountCents: input.targetAmountCents, currentAmountCents: 0, startDate: input.startDate, status: 'active' as const };
     },
     async contributeToGoal(householdId, goalId, input) {
+      // V4.1 SPEC §9.6: atomic increment — never read-modify-write. The
+      // single UPDATE both adds the contribution and flips status, so N
+      // concurrent contributions sum exactly (goal.current == SUM).
       return withTransaction(pool, async (client) => {
-        const rows = await client.query<Row>(`SELECT * FROM goals WHERE id=$1 AND household_id=$2`, [goalId, householdId]);
-        if (rows.rowCount === 0 || rows.rows.length === 0) throw domainErrors.notFound('Meta');
-        const g = rows.rows[0]!;
-        const newCurrent = Number(g['current_amount_cents']) + input.amountCents;
-        const newStatus = newCurrent >= Number(g['target_amount_cents']) ? 'achieved' : 'active';
-        await client.query(`UPDATE goals SET current_amount_cents=$1, status=$2, updated_at=NOW() WHERE id=$3 AND household_id=$4`, [newCurrent, newStatus, goalId, householdId]);
+        const updated = await client.query<Row>(
+          `UPDATE goals
+              SET current_amount_cents = current_amount_cents + $3,
+                  status = CASE WHEN current_amount_cents + $3 >= target_amount_cents THEN 'achieved' ELSE status END,
+                  updated_at = NOW()
+            WHERE id = $1 AND household_id = $2 AND status <> 'cancelled'`,
+          [goalId, householdId, input.amountCents],
+        );
+        if ((updated.rowCount ?? 0) === 0) {
+          const existing = await client.query<Row>(`SELECT status FROM goals WHERE id=$1 AND household_id=$2`, [goalId, householdId]);
+          if (existing.rowCount === 0 || existing.rows.length === 0) throw domainErrors.notFound('Meta');
+          throw domainErrors.invalid('goal', 'meta cancelada não aceita aportes');
+        }
         const cid = randomUUID();
         await client.query(`INSERT INTO goal_contributions (id,goal_id,amount_cents,contribution_date,source,notes) VALUES ($1,$2,$3,$4,$5,$6)`, [cid, goalId, input.amountCents, input.contributionDate ?? new Date().toISOString().slice(0,10), input.source??null, input.notes??null]);
         return { id: cid, goalId, amountCents: input.amountCents, contributionDate: input.contributionDate ?? new Date().toISOString().slice(0,10) };

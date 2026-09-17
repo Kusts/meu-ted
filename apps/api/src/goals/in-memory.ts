@@ -31,6 +31,9 @@ export const createInMemoryGoalStore = (state: InMemoryState): GoalStore => {
     async contributeToGoal(householdId, goalId, input) {
       const g = goals.find(x => x.id === goalId && x.householdId === householdId);
       if (!g) throw domainErrors.notFound('Meta');
+      // Status guard mirroring the Postgres stores (single-threaded mutation
+      // is inherently atomic here, so no lost update is possible).
+      if (g.status === 'cancelled') throw domainErrors.invalid('goal', 'meta cancelada não aceita aportes');
       g.currentAmountCents += input.amountCents;
       if (g.currentAmountCents >= g.targetAmountCents) g.status = 'achieved';
       const c = opt<GoalContribution>(
