@@ -1,77 +1,76 @@
-﻿# Project Agent Notes
+# Project Agent Notes
 
-- PWA ativa: `apps/pwa/` deste repositÃ³rio, hospedada na Cloudflare.
-- `../pi-finance-web` estÃ¡ depreciado: nunca usÃ¡-lo para auditoria, deploy ou como origem de produÃ§Ã£o.
-- Backend de produÃ§Ã£o roda na Hostinger VPS, nÃ£o no setup local Windows pm2/cloudflared.
+- PWA ativa: `apps/pwa/` deste repositório, hospedada na Cloudflare.
+- `../pi-finance-web` está depreciado: nunca usá-lo para auditoria, deploy ou como origem de produção.
+- Backend de produção roda na Hostinger VPS, não no setup local Windows pm2/cloudflared.
 - Before assuming the live origin, inspect `../vps-hostinger/` for VPS access, deploy, restart, and service topology.
-- Local `pm2` / `cloudflared` processes podem existir para experimentos ou fluxos antigos, mas nÃ£o sÃ£o fonte de verdade de produÃ§Ã£o sem confirmaÃ§Ã£o explÃ­cita.
-- Documentos canÃ´nicos de arquitetura residem em `docs/` (`PRODUCT.md`, `ARCHITECTURE-CURRENT.md`, `ARCHITECTURE-TARGET.md`, `ROADMAP.md`, `docs/adr/`).
-- Todas as mutaÃ§Ãµes financeiras passam pela API autoritativa (`apps/api`) com controle estrito de workspace.
+- Local `pm2` / `cloudflared` processes podem existir para experimentos ou fluxos antigos, mas não são fonte de verdade de produção sem confirmação explícita.
+- Documentos canônicos de arquitetura residem em `docs/` (`PRODUCT.md`, `ARCHITECTURE-CURRENT.md`, `ARCHITECTURE-TARGET.md`, `ROADMAP.md`, `docs/adr/`).
+- Todas as mutações financeiras passam pela API autoritativa (`apps/api`) com controle estrito de workspace.
 
-## TransparÃªncia de Passos e SaÃ­da no Terminal (CLI Verbosity)
-- **ComunicaÃ§Ã£o Ativa**: Sempre explique brevemente o que vocÃª vai fazer antes de invocar ferramentas de execuÃ§Ã£o de comandos (`run_command`), leitura ou ediÃ§Ã£o de arquivos (`view_file`, `replace_file_content`).
-- **Resumo de Resultados**: ApÃ³s a execuÃ§Ã£o de uma ferramenta ou comando, comente o resultado obtido, erros encontrados ou o impacto da alteraÃ§Ã£o antes de partir para a prÃ³xima etapa.
-- **Detalhamento**: NÃ£o execute sequÃªncias longas de ferramentas em silÃªncio; mantenha o usuÃ¡rio informado sobre o progresso em tempo real no terminal.
+## Transparência de Passos e Saída no Terminal (CLI Verbosity)
+- **Comunicação Ativa**: Sempre explique brevemente o que você vai fazer antes de invocar ferramentas de execução de comandos (`run_command`), leitura ou edição de arquivos (`view_file`, `replace_file_content`).
+- **Resumo de Resultados**: Após a execução de uma ferramenta ou comando, comente o resultado obtido, erros encontrados ou o impacto da alteração antes de partir para a próxima etapa.
+- **Detalhamento**: Não execute sequências longas de ferramentas em silêncio; mantenha o usuário informado sobre o progresso em tempo real no terminal.
 
 ## Stack & Workspaces
 - **Monorepo**: Gerenciado via `pnpm` (`pnpm-workspace.yaml`), `Node.js >= 20.0.0`, `pnpm >= 9.0.0`.
 - **`apps/api` (Backend Autoritativo)**:
   - Framework: Fastify 5, TypeScript, Kysely, PostgreSQL (`pg`), Zod, Better-Auth (`better-auth`).
   - Runtime: Node.js hospedado na Hostinger VPS (`pi-stack`).
-  - Responsabilidade: Ãšnica fonte da verdade para dados financeiros, autenticaÃ§Ã£o, autorizaÃ§Ã£o por workspace, integridade referencial e auditoria.
-- **`apps/pwa` (Cliente CanÃ´nico Web/Mobile)**:
+  - Responsabilidade: Única fonte da verdade para dados financeiros, autenticação, autorização por workspace, integridade referencial e auditoria.
+- **`apps/pwa` (Cliente Canônico Web/Mobile)**:
   - Framework: Next.js 16, React 19, Tailwind CSS v4, Serwist (Service Worker PWA).
   - Runtime / Hosting: Cloudflare Pages / Workers via OpenNext (`@opennextjs/cloudflare`).
-  - Responsabilidade: Interface canÃ´nica do usuÃ¡rio com autenticaÃ§Ã£o por email/senha (Better-Auth) e comunicaÃ§Ã£o direta via HTTP com a API autoritativa.
+  - Responsabilidade: Interface canônica do usuário com autenticação por email/senha (Better-Auth) e comunicação direta via HTTP com a API autoritativa.
 - **`apps/agent` (Assistente Financeiro AI TED)**:
-  - Framework: Cloudflare Agents SDK, Durable Objects com persistÃªncia SQLite.
+  - Framework: Cloudflare Agents SDK, Durable Objects com persistência SQLite.
   - Runtime: Cloudflare Workers.
   - Responsabilidade: Motor do assistente conversacional TED, operando via tokens delegados e executando ferramentas geradas contra a API.
 - **`apps/whatsapp-bridge` (Removido em P3 `f640e84`):**
-  - Removido em 2026-08-25 `f640e84` (123 files `apps/whatsapp-bridge` + 3065 files `.pi/extensions/financial-tools`), `pnpm-workspace` limpo, `g6-48h-gate` COMPLETED bypass 2026-08-26, `check-legacy-runtime-references` 0 active. Evolution Go permanece como infra compartilhada (nÃ£o pertence ao pi-financeiro).
+  - Removido em 2026-08-25 `f640e84` (123 files `apps/whatsapp-bridge` + 3065 files `.pi/extensions/financial-tools`), `pnpm-workspace` limpo, `g6-48h-gate` COMPLETED bypass 2026-08-26, `check-legacy-runtime-references` 0 active. Evolution Go permanece como infra compartilhada (não pertence ao pi-financeiro).
 
-## Topologia de ProduÃ§Ã£o
+## Topologia de Produção
 1. **Borda (Cloudflare)**:
    - `apps/pwa` roda na infraestrutura Cloudflare (Pages / OpenNext) servindo a interface web/mobile.
-   - `apps/agent` roda como Cloudflare Worker / Durable Object para orquestraÃ§Ã£o conversacional do assistente.
-2. **Backend e PersistÃªncia (Hostinger VPS)**:
+   - `apps/agent` roda como Cloudflare Worker / Durable Object para orquestração conversacional do assistente.
+2. **Backend e Persistência (Hostinger VPS)**:
    - `apps/api` executa em container/processo na VPS Hostinger, expondo endpoints REST autoritativos sob HTTPS (`https://api.synkroo.com.br`).
-   - PostgreSQL 16 roda localmente na VPS, isolado e acessÃ­vel exclusivamente pela API interna.
-3. **Fluxo de AutenticaÃ§Ã£o & Workspace**:
-   - AutenticaÃ§Ã£o via Better-Auth (email e senha com convites administrativos).
-   - ResoluÃ§Ã£o de workspace e permissÃµes feita integralmente server-side na API autoritativa (`ADR-003`, `ADR-004`).
+   - PostgreSQL 16 roda localmente na VPS, isolado e acessível exclusivamente pela API interna.
+3. **Fluxo de Autenticação & Workspace**:
+   - Autenticação via Better-Auth (email e senha com convites administrativos).
+   - Resolução de workspace e permissões feita integralmente server-side na API autoritativa (`ADR-003`, `ADR-004`).
 
-## OrquestraÃ§Ã£o Orca & ComunicaÃ§Ã£o Inter-Agentes
+## Orquestração Orca & Comunicação Inter-Agentes
 - **Supervisor / Planner**: Muse Spark via OpenCode (terminal `term_6d06e683-02d5-4967-b140-0706f32e8c44`).
 - **Coder Operacional**: Antigravity agy (terminal `term_bb42c5b8-2688-474e-9026-3e98cb6434b8`).
 - **Run Ativa**: `run_46965e431ba5`.
-- **Protocolo de ExecuÃ§Ã£o**:
+- **Protocolo de Execução**:
   - Supervisor cria tarefas (`task-create`) e despacha para o terminal do Coder (`worker-start --terminal`).
-  - Coder processa instruÃ§Ãµes, emite heartbeats periÃ³dicos e executa a tarefa com transparÃªncia.
-  - **ComunicaÃ§Ã£o Interativa**: NUNCA utilize prompts interativos locais sÃ­ncronos desconectados (`AskUserQuestion`); utilize sempre `orca orchestration ask` ou escalaÃ§Ã£o de bloqueios.
-  - **FinalizaÃ§Ã£o**: ConclusÃ£o formalizada via envio de `worker_done` com `--outcome succeeded|failed`, lista de `--files-modified` e `--body` conciso de exatamente 3 frases.
+  - Coder processa instruções, emite heartbeats periódicos e executa a tarefa com transparência.
+  - **Comunicação Interativa**: NUNCA utilize prompts interativos locais síncronos desconectados (`AskUserQuestion`); utilize sempre `orca orchestration ask` ou escalação de bloqueios.
+  - **Finalização**: Conclusão formalizada via envio de `worker_done` com `--outcome succeeded|failed`, lista de `--files-modified` e `--body` conciso de exatamente 3 frases.
 
 ## Regras de Engenharia & Qualidade
 1. **TDD Rigoroso (RED -> GREEN)**:
-   - Todo bugfix, refatoraÃ§Ã£o ou funcionalidade deve obrigatoriamente iniciar com um teste automatizado falhando (RED) que capture o comportamento desejado antes de escrever o cÃ³digo de produÃ§Ã£o (GREEN).
+   - Todo bugfix, refatoração ou funcionalidade deve obrigatoriamente iniciar com um teste automatizado falhando (RED) que capture o comportamento desejado antes de escrever o código de produção (GREEN).
 2. **Isolamento Multitenant por Workspace / Household**:
    - Todo comando, rota e query SQL deve validar e aplicar estritamente o `workspace_id` e/ou `household_id`.
-3. **IdempotÃªncia ObrigatÃ³ria**:
-   - Todas as operaÃ§Ãµes de mutaÃ§Ã£o financeira devem exigir e validar `Idempotency-Key` com tratamento de concorrÃªncia e idempotency records.
-4. **GovernanÃ§a de Commits**:
-   - O Coder operacional prepara as alteraÃ§Ãµes e deixa o working tree pronto para revisÃ£o do Planner/Supervisor. Commits diretos devem ocorrer apenas apÃ³s aprovaÃ§Ã£o e validaÃ§Ã£o.
-5. **Gates de VerificaÃ§Ã£o ContÃ­nua**:
-   - Nenhum trabalho Ã© dado como concluÃ­do sem a execuÃ§Ã£o bem-sucedida de `pnpm docs:lint`, `pnpm typecheck`, `pnpm test` e `pnpm governance:check`.
+3. **Idempotência Obrigatória**:
+   - Todas as operações de mutação financeira devem exigir e validar `Idempotency-Key` com tratamento de concorrência e idempotency records.
+4. **Governança de Commits**:
+   - O Coder operacional prepara as alterações e deixa o working tree pronto para revisão do Planner/Supervisor. Commits diretos devem ocorrer apenas após aprovação e validação.
+5. **Gates de Verificação Contínua**:
+   - Nenhum trabalho é dado como concluído sem a execução bem-sucedida de `pnpm docs:lint`, `pnpm typecheck`, `pnpm test` e `pnpm governance:check`.
 
-## Working Tree e Estado Atual (2026-09-17 `v4.1-hardening` â€” V4.1 IMPLEMENTADA, aguardando merge/deploy)
-- **Branch de execuÃ§Ã£o `v4.1-hardening` (base `main@dd10e2b` + 1 commit de readiness):** a V4.1 foi **IMPLEMENTADA POR COMPLETO** em 25 commits (`dd10e2b..HEAD`): Phase 0 (reconciliation CLI read-only legacy/canonical + baseline + inventÃ¡rio de mutaÃ§Ãµes + decisÃ£o D1â€“D11 documentada em `docs/reports/v4.1-decision-gates.md` â€” decisÃµes tomadas autonomamente sob autorizaÃ§Ã£o explÃ­cita do owner, com recomendaÃ§Ã£o tÃ©cnica registrada, marcadas para revisÃ£o retroativa), Phase 1 (device token requer membership/user/workspace ativos via `auth/device-access.ts`; `role:'owner'` fabricado removido; fallback demo-household fechado em produÃ§Ã£o; removeMember/leave revogam tokens + purgam push), Phase 2 (payable com `FOR UPDATE` + expense sempre + dÃ©bito de saldo; unpay exige `paidTransactionId`; placeholders dinÃ¢micos em cards/subscriptions â€” incluindo off-by-one canÃ´nico latente; statement locks + remaining; goals atÃ´micos; PATCH de transaÃ§Ã£o estrito 422; resolver central de categorias; billing-month helper), Phase 3 (claim de idempotÃªncia + efeito + receipt em UMA transaÃ§Ã£o para todas as mutaÃ§Ãµes keyed; hash V2 canÃ´nico com compat V1; PWA command-id na fronteira de intenÃ§Ã£o com retry mesmo-id), Phase 4 (D1: clamps removidos, saldo negativo proibido; delta engine reverse/apply; locks determinÃ­sticos; `template_id` resolvido; suite de paridade legacyÃ—canonical), Phase 5 (auth state machine; env estÃ¡tico; same-origin default; purges de offline snapshot por revogaÃ§Ã£o/switch/logout), Phase 6 (scans: 0 segredos em refs alcanÃ§Ã¡veis; 85 warnings de metadados; visibilidade continua BLOQUEADA), Phase 7 (bridge-context removido; pending-ops V1 sem wiring de produÃ§Ã£o â€” Agent ainda consome V1; price-alerts gateado OFF com UI degradando em 404; recurring card = template-only), Phase 8 (broker fail-closed + topology guard; SSRF guard no agent; advisory lock unificado; pool timeouts; ISO-date/money schemas; SQLSTATE mapping), Phase 9 (test:integration:all VERDE em DB fresco Ã—2; suite de concorrÃªncia 18 arquivos; XLT; skip-gate; VAL.14â€“18; artifact deploy PWA + manifest Agent; same-SHA stale check; release identity gitSha/buildId/builtAt nos 3 apps; action-pins gate; dependabot), Phase 10 (relatÃ³rios: authorization, financial-integrity, idempotency, canonical-parity, ci-validation, schema-parity, canonical-readiness = PRONTO PARA PLANEJAR CUTOVER/NÃƒO PARA EXECUTAR, final-report). RevisÃµes independentes: 3 rodadas (9+3 findings corrigidos + review final com 2 fixes). Gates locais verdes: api 1942/1942, pwa 1867/1867, agent 503, broker 25, llm-contracts 23, concorrÃªncia 115/115 (PG), XLT 21/21, integration:all 142 fresh-green, typecheck/docs:lint/governance/public-safety/skip-gate/action-pins PASS.
-- **NÃƒO feito (gates humanos Â§3.4):** deploy de produÃ§Ã£o; merge para `main`; troca de visibilidade do repo; rotaÃ§Ã£o de credenciais; rewrite de histÃ³rico; Release B do bearer (threshold D11: 0 eventos `auth.request.legacy_bearer_used` por 14 dias pÃ³s-Release A); cutover Canonical (operaÃ§Ã£o separada pÃ³s release-bridge).
-- **ProduÃ§Ã£o (inalterada; reconfirmada 2026-09-16):** API `v3-3305152`, `DB_SCHEMA=legacy`, Postgres 15.18, `_migrations` top = **V052**. O primeiro deploy a partir desta branch carrega V3â†’V4â†’V4.1 combinadas e exige o **release-bridge gate humano** (Â§3.3 do plano V4.1). Nota: V022 foi editada in-place (funÃ§Ã£o SQLâ†’plpgsql); drift < V044 = WARN (`migration.baseline_drift`) â€” re-backfill de checksum pendente como follow-up.
-- **DÃ©bitos conhecidos (seÃ§Ã£o honesta):** billing do GitHub Actions aguarda aÃ§Ã£o do owner (workflows novos sÃ³ exercitÃ¡veis com CI remoto verde); 85 warnings de metadados bloqueiam apenas publicaÃ§Ã£o (sanitizaÃ§Ã£o = task dedicada prÃ©-visualizaÃ§Ã£o); objeto local `11b82e8` (.env.e2e.creds) requer stash drop + GC humanos; regeneraÃ§Ã£o de `apps/agent/src/generated/http-tools.ts` exige portar `extractRequestAuth`; migration do Agent V1â†’V2 pending-ops antes de remover rotas V1; bulk payables multilinha nÃ£o-transacional (idempotÃªncia por receipt); `statement_timeout` override para scripts de migration a decidir no release-bridge; suites integration locais precisam de DB fresco (poluiÃ§Ã£o cross-run no mesmo banco); SHA-pinning determinÃ­stico das actions pÃ³s-desbloqueio do CI; janela de compatibilidade localStorage TODO 2026-12-01 (ADR-011); `sharp@0.34.5` pinado; `.trivyignore` expira 2026-12-31.
-- **ProibiÃ§Ã£o de OperaÃ§Ãµes Destrutivas**: `git reset --hard`, `git clean -fd`, `git checkout -- .` exigem diff prÃ©vio e autorizaÃ§Ã£o.
+## Working Tree e Estado Atual (2026-09-17 `v4.1-hardening` — V4.1 IMPLEMENTADA e API+PWA DEPLOYADAS; Agent bloqueado por gate de dados)
+- **Branch de execução `v4.1-hardening` (base `main@dd10e2b` + 1 commit de readiness):** a V4.1 foi **IMPLEMENTADA POR COMPLETO** em 27 commits (`dd10e2b..HEAD`): Phase 0 (reconciliation CLI read-only legacy/canonical + baseline + inventário de mutações + decisão D1–D11 documentada em `docs/reports/v4.1-decision-gates.md` — decisões tomadas autonomamente sob autorização explícita do owner, com recomendação técnica registrada, marcadas para revisão retroativa), Phase 1 (device token requer membership/user/workspace ativos via `auth/device-access.ts`; `role:'owner'` fabricado removido; fallback demo-household fechado em produção; removeMember/leave revogam tokens + purgam push), Phase 2 (payable com `FOR UPDATE` + expense sempre + débito de saldo; unpay exige `paidTransactionId`; placeholders dinâmicos em cards/subscriptions — incluindo off-by-one canônico latente; statement locks + remaining; goals atômicos; PATCH de transação estrito 422; resolver central de categorias; billing-month helper), Phase 3 (claim de idempotência + efeito + receipt em UMA transação para todas as mutações keyed; hash V2 canônico com compat V1; PWA command-id na fronteira de intenção com retry mesmo-id), Phase 4 (D1: clamps removidos, saldo negativo proibido; delta engine reverse/apply; locks determinísticos; `template_id` resolvido; suite de paridade legacy×canonical), Phase 5 (auth state machine; env estático; same-origin default; purges de offline snapshot por revogação/switch/logout), Phase 6 (scans: 0 segredos em refs alcançáveis; 85 warnings de metadados; visibilidade continua BLOQUEADA), Phase 7 (bridge-context removido; pending-ops V1 sem wiring de produção — Agent ainda consome V1; price-alerts gateado OFF com UI degradando em 404; recurring card = template-only), Phase 8 (broker fail-closed + topology guard; SSRF guard no agent; advisory lock unificado; pool timeouts; ISO-date/money schemas; SQLSTATE mapping), Phase 9 (test:integration:all VERDE em DB fresco ×2; suite de concorrência 18 arquivos; XLT; skip-gate; VAL.14–18; artifact deploy PWA + manifest Agent; same-SHA stale check; release identity gitSha/buildId/builtAt nos 3 apps; action-pins gate; dependabot), Phase 10 (relatórios: authorization, financial-integrity, idempotency, canonical-parity, ci-validation, schema-parity, canonical-readiness = PRONTO PARA PLANEJAR CUTOVER/NÃO PARA EXECUTAR, final-report). Revisões independentes: 3 rodadas (9+3 findings corrigidos + review final com 2 fixes). Gates locais verdes: api 1942/1942, pwa 1867/1867, agent 503, broker 25, llm-contracts 23, concorrência 115/115 (PG), XLT 21/21, integration:all 142 fresh-green, typecheck/docs:lint/governance/public-safety/skip-gate/action-pins PASS.
+- **NÃO feito (gates humanos §3.4):** merge para `main` (branch pusheada, PR aberto para revisão); deploy do **Agent** — BLOQUEADO por preservação de dados (histórico WorkspaceAgent nunca migrado; `docs/reports/v4.1-release-bridge-execution.md` §5); troca de visibilidade do repo; rotação de credenciais; rewrite de histórico; Release B do bearer (threshold D11: 0 eventos `auth.request.legacy_bearer_used` por 14 dias pós-Release A); cutover Canonical (operação separada pós release-bridge).
+- **Produção (DEPLOY V4.1 executado 2026-09-17 sob autorização explícita do owner — release-bridge §3.3):** API container `pi-finance-api` = `pi-finance-api:v41-9ff0155` (gitSha `9ff0155…` exposto em `/health`, healthy), `_migrations` top = **V054** (V053/V054 aplicadas via migrate-job; backup pré-deploy `backups/pi-financeiro-pre-v41-9ff0155-20260917T154358Z.sql.gz`; rollback tag `pi-finance-api:rollback-pre-v41`). PWA Cloudflare = versão `c14c4dd9-9235-4620-a7a1-e1a7e584f556` (gitSha `d2db272…`, same-origin `/api/backend` proxy ativo, `/api/build-info` expõe release identity). **Agent permanece pré-V4 (`78c57fb9…`), compatível com a API V4.1 (UX degradada em 2 tools — débito).** Postgres 15.18. Reconciliação read-only pós-deploy: 63 findings pré-existentes aguardando triagem humana (nenhum repair automático — `docs/reports/v4.1-release-bridge-execution.md` §4/§6).
+- **Débitos conhecidos (seção honesta):** deploy do Agent bloqueado (migração de histórico WorkspaceAgent por workspace + `deleted_classes` v3 — decisão do owner); 63 findings de reconciliação de produção aguardando triagem (nenhum repair automático); WARNs `migration.baseline_drift` (V008–V012, V022, V040) — re-backfill de checksum pós-auditoria; billing do GitHub Actions aguarda ação do owner (workflows novos só exercitáveis com CI remoto verde); 85 warnings de metadados bloqueiam apenas publicação (sanitização = task dedicada pré-visualização); objeto local `11b82e8` (.env.e2e.creds) requer stash drop + GC humanos; regeneração de `apps/agent/src/generated/http-tools.ts` exige portar `extractRequestAuth` (remove 400s de `createTransaction`/unpay nas tools do TED); migration do Agent V1→V2 pending-ops antes de remover rotas V1; bulk payables multilinha não-transacional (idempotência por receipt); `statement_timeout` override para scripts de migration a decidir no release-bridge; suites integration locais precisam de DB fresco (poluição cross-run no mesmo banco); SHA-pinning determinístico das actions pós-desbloqueio do CI; PWA: `commandId` sem banner de retry manual; janela de compatibilidade localStorage TODO 2026-12-01 (ADR-011); `sharp@0.34.5` pinado; `.trivyignore` expira 2026-12-31.
+- **Proibição de Operações Destrutivas**: `git reset --hard`, `git clean -fd`, `git checkout -- .` exigem diff prévio e autorização.
 
-## Idioma & ConvenÃ§Ãµes
-- **ComunicaÃ§Ã£o e DocumentaÃ§Ã£o**: PortuguÃªs do Brasil (pt-BR) para respostas, documentaÃ§Ãµes canÃ´nicas (`docs/*.md`) e relatÃ³rios de progresso.
-- **CÃ³digo e Commits**: CÃ³digo-fonte TypeScript/SQL, nomes de variÃ¡veis, funÃ§Ãµes, tipos, comentÃ¡rios de cÃ³digo e mensagens de commit em InglÃªs tÃ©cnico.
-
+## Idioma & Convenções
+- **Comunicação e Documentação**: Português do Brasil (pt-BR) para respostas, documentações canônicas (`docs/*.md`) e relatórios de progresso.
+- **Código e Commits**: Código-fonte TypeScript/SQL, nomes de variáveis, funções, tipos, comentários de código e mensagens de commit em Inglês técnico.
 
