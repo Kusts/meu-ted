@@ -3,7 +3,6 @@ import { ROUTE_INVENTORY } from './route-inventory.js';
 /** Verifiable source mapping for every inventory entry. */
 export const ROUTE_HANDLER_MAP: Readonly<Record<string, string>> = {
   'auth-provider': 'src/auth/better-auth-http.ts:registerBetterAuthRoutes',
-  'auth-bridge-context': 'src/routes/bridge-context.ts:registerBridgeContextRoutes',
   'auth-invites-create': 'src/auth/invites-http.ts:registerInviteRoutes',
   'auth-invites-accept': 'src/auth/invites-http.ts:registerInviteRoutes',
   'auth-reconnect': 'src/auth/better-auth-http.ts:registerBetterAuthRoutes',

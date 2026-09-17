@@ -50,5 +50,11 @@ USER appuser:appgroup
 EXPOSE 3001
 ENV NODE_ENV=production
 ENV MIGRATIONS_MODE=disabled
+# V4.1 Phase 9 (Task 9.9): release identity baked at image build
+# (docker --build-arg; dev defaults otherwise). Surfaced via GET /health.
+ARG BUILD_SHA=dev
+ARG BUILD_ID=dev
+ARG BUILD_TIME=dev
+ENV BUILD_SHA=$BUILD_SHA BUILD_ID=$BUILD_ID BUILD_TIME=$BUILD_TIME
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD wget --spider --quiet http://127.0.0.1:3001/health || exit 1
 CMD ["node", "dist/server/index.js"]

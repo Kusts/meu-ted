@@ -7,18 +7,15 @@
  */
 
 import { z } from 'zod';
+import { isoDateSchema as isoDate } from '../shared/iso-date.js';
 
 export const analyticsPeriodSchema = z.enum(['last30days', 'lastMonth', 'thisYear', 'custom']);
 
 export const analyticsBaseSchema = z.object({
   period: analyticsPeriodSchema.optional(),
-  from: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'from must be YYYY-MM-DD')
+  from: isoDate
     .optional(),
-  to: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'to must be YYYY-MM-DD')
+  to: isoDate
     .optional(),
   accountId: z.string().uuid().optional(),
 });

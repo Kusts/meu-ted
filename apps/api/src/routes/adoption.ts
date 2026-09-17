@@ -7,6 +7,7 @@ import {
   ADOPTION_EVENT_TYPES,
   type AdoptionStore,
 } from "../observability/adoption.js";
+import { isoDateSchema as dateSchema } from "../shared/iso-date.js";
 
 const eventSchema = z.object({
   eventType: z.enum(ADOPTION_EVENT_TYPES),
@@ -14,7 +15,6 @@ const eventSchema = z.object({
   flowId: z.string().trim().min(1).max(128).optional(),
 });
 
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const funnelQuerySchema = z.object({
   from: dateSchema.optional(),
   to: dateSchema.optional(),

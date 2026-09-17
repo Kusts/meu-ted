@@ -2,16 +2,17 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
 import { DomainError } from '../writes/errors.js';
+import { mapPgError } from '../db/sqlstate.js';
 import { requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
 import type { GoalStore } from '../goals/store.js';
 import type { AuthResolver } from './auth.js';
-
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
+import { isoDateSchema as isoDate } from '../shared/iso-date.js';
+import { positiveMoneyCentsSchema } from '../shared/money.js';
 
 export const createGoalSchema = z.object({
   name: z.string().trim().min(1),
   goalType: z.enum(['savings', 'purchase', 'debt_payoff', 'emergency_fund']),
-  targetAmountCents: z.number().int().positive(),
+  targetAmountCents: positiveMoneyCentsSchema,
   startDate: isoDate,
   targetDate: isoDate.optional(),
   description: z.string().optional(),
@@ -21,7 +22,7 @@ export const createGoalSchema = z.object({
 });
 
 export const contributeSchema = z.object({
-  amountCents: z.number().int().positive(),
+  amountCents: positiveMoneyCentsSchema,
   contributionDate: isoDate.optional(),
   source: z.string().optional(),
   notes: z.string().optional(),
@@ -35,6 +36,8 @@ const resolveAuth = (rt: AuthResolver) => async (req: FastifyRequest) => {
 const handleErr = (err: unknown, reply: FastifyReply) => {
   if (err instanceof DomainError) return reply.code(err.statusCode).send({ code: err.code, message: err.message });
   if ((err as any).statusCode) { const e = err as any; return reply.code(e.statusCode).send({ code: e.code, message: e.message }); }
+  const mapped = mapPgError(err);
+  if (mapped) return reply.code(mapped.statusCode).send({ code: mapped.code, message: mapped.message });
   throw err;
 };
 

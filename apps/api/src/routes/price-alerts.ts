@@ -5,6 +5,27 @@ import type { PriceAlertStore } from "../price-alerts/store.js";
 import { checkPriceAlert } from "../price-alerts/checker.js";
 import type { AuthResolver } from "./auth.js";
 
+const PRICE_ALERTS_FLAG_ON_VALUES = new Set(['1', 'true', 'yes', 'on']);
+
+/**
+ * Phase 7 (V4.1 Task 7.8, SPEC §14.3 option A): price alerts are OFF by
+ * default. The store is in-memory only and the checker answers from a
+ * deterministic mock — a mock that must not pretend to be a production
+ * feature. Routes mount only under explicit opt-in (`PI_FEATURE_PRICE_ALERTS`
+ * set to a truthy flag value, dev/test only). Read at call time so tests
+ * can toggle without a rebuild.
+ */
+export function isPriceAlertsEnabled(env?: Record<string, string | undefined>): boolean {
+  try {
+    const source = env ?? (typeof process !== 'undefined' ? process.env : undefined);
+    const raw = source?.['PI_FEATURE_PRICE_ALERTS'];
+    if (raw === undefined) return false;
+    return PRICE_ALERTS_FLAG_ON_VALUES.has(raw.trim().toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 const createPriceAlertSchema = z.object({
   productName: z.string().trim().min(1, "productName obrigatório").max(200),
   targetPriceCents: z.number().int().positive("targetPriceCents deve ser positivo"),

@@ -52,9 +52,10 @@ const main = async (): Promise<void> => {
         );
         console.log(`Backup marker recorded: ${process.env.BACKUP_ID!.trim()}.`);
 
-        // Apply migrations
+        // Apply migrations (outer advisory lock already held — the inner
+        // runner must not re-acquire on a second session).
         const isLegacy = process.env.DB_SCHEMA === 'legacy';
-        const result = await runMigrations(pool, isLegacy);
+        const result = await runMigrations(pool, isLegacy, { withLock: false });
         console.log(`Migrations applied: ${result.applied.length > 0 ? result.applied.join(', ') : 'none (up to date)'}.`);
     });
     console.log('Advisory lock released.');

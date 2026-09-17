@@ -15,8 +15,6 @@ export type RouteInventoryEntry = {
 /** Canonical authz inventory. Add a test ID whenever a route is added. */
 export const ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
   { id: 'auth-provider', method: 'ALL', path: '/auth/*', auth: 'public', ownership: 'none' },
-  // deprecated: legacy bridge route (P2 wildcard remediation); mints read-only scope only.
-  { id: 'auth-bridge-context', method: 'POST', path: '/auth/bridge-context', auth: 'public', ownership: 'none', deprecated: true },
   { id: 'auth-invites-create', method: 'POST', path: '/auth/invites', auth: 'session', ownership: 'owner' },
   { id: 'auth-invites-accept', method: 'POST', path: '/auth/invites/accept', auth: 'session', ownership: 'none' },
   { id: 'auth-reconnect', method: 'POST', path: '/auth/reconnect', auth: 'public', ownership: 'none' },
@@ -146,7 +144,7 @@ export const ROUTE_INVENTORY: readonly RouteInventoryEntry[] = [
 ] as const;
 
 export const ROUTE_COVERAGE_IDS = [
-  'auth-provider', 'auth-bridge-context', 'auth-invites-create', 'auth-invites-accept', 'auth-reconnect', 'auth-reconnect-token', 'auth-devices-me', 'auth-devices-register', 'auth-devices-revoke',
+  'auth-provider', 'auth-invites-create', 'auth-invites-accept', 'auth-reconnect', 'auth-reconnect-token', 'auth-devices-me', 'auth-devices-register', 'auth-devices-revoke',
   'workspaces-list', 'workspaces-create', 'workspace-lifecycle-rename', 'workspace-lifecycle-archive', 'workspace-lifecycle-restore', 'workspace-members-list', 'workspace-member-remove', 'workspace-leave',
   'ownership-transfer-create', 'ownership-transfer-accept', 'accounts-list', 'accounts-details', 'accounts-create', 'accounts-update', 'accounts-deactivate',
   'audit-logs-list', 'budgets-list', 'budgets-create', 'budgets-update', 'budgets-check', 'budgets-trends', 'cards-accounts',

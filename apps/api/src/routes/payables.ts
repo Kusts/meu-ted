@@ -3,11 +3,13 @@ import { z } from "zod";
 import { DEVICE_TOKEN_HEADER } from "../auth/device-token.js";
 import type { PayableStore } from "../payables/store.js";
 import { DomainError } from "../writes/errors.js";
+import { mapPgError } from "../db/sqlstate.js";
 import { requireIdempotencyKey, type IdempotencyStore } from "../writes/idempotency.js";
 import type { AuthResolver } from "./auth.js";
+import { isoDateSchema as isoDate } from "../shared/iso-date.js";
+import { positiveMoneyCentsSchema } from "../shared/money.js";
 
 const IDEMPOTENCY_HEADER = "idempotency-key";
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
 
 const resolveAuth =
   (resolveToken: AuthResolver) => async (req: FastifyRequest) => {
@@ -24,6 +26,8 @@ const handleError = (err: unknown, reply: FastifyReply) => {
     const e = err as { statusCode: number; code: string; message: string };
     return reply.code(e.statusCode).send({ code: e.code, message: e.message });
   }
+  const mapped = mapPgError(err);
+  if (mapped) return reply.code(mapped.statusCode).send({ code: mapped.code, message: mapped.message });
   throw err;
 };
 const querySchema = z.object({
@@ -39,7 +43,7 @@ const autoCreateQuery = z.object({
 const createSchema = z.object({
   accountId: z.string().uuid(),
   description: z.string().trim().min(1).max(240),
-  amountCents: z.number().int().positive(),
+  amountCents: positiveMoneyCentsSchema,
   dueDate: isoDate,
   type: z.enum(["one_time", "recurring"]).optional(),
   frequency: z.enum(["monthly", "quarterly", "yearly"]).optional(),
@@ -74,7 +78,7 @@ const templateSchema = z.object({
   accountId: z.string().uuid(),
   name: z.string().trim().min(1),
   description: z.string().trim().min(1).max(240),
-  amountCents: z.number().int().positive(),
+  amountCents: positiveMoneyCentsSchema,
   frequency: z.enum(["monthly", "quarterly", "yearly"]),
   dayOfMonth: z.number().int().min(1).max(31),
   reminderDaysBefore: z.number().int().min(0).max(30).optional(),
@@ -85,7 +89,7 @@ const fromTemplateSchema = z.object({
   templateId: z.string().uuid().optional(),
   templateName: z.string().optional(),
   dueDate: isoDate,
-  amountOverrideCents: z.number().int().positive().optional(),
+  amountOverrideCents: positiveMoneyCentsSchema.optional(),
 });
 
 const notificationSchema = z.object({
@@ -284,7 +288,9 @@ export const registerPayableRoutes = (
         ? await opts.idempotency.lookupOrRecord(
             ctx.householdId,
             key,
-            parsed.data,
+            // Finding 1: the hashed payload embeds the route resource id —
+            // same key+body on a different payable id must conflict, not replay.
+            { id: params.data.id, ...parsed.data },
             fn,
           )
         : { response: await fn(), replayed: false };
@@ -328,10 +334,8 @@ export const registerPayableRoutes = (
   // PATCH /payables/:id — update editable fields
   const updateSchema = z.object({
     description: z.string().trim().min(1).max(120).optional(),
-    amountCents: z.number().int().positive().optional(),
-    dueDate: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
+    amountCents: positiveMoneyCentsSchema.optional(),
+    dueDate: isoDate
       .optional(),
     accountId: z.string().uuid().optional(),
     categoryId: z.string().uuid().optional(),

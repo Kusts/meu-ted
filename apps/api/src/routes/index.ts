@@ -3,7 +3,6 @@ import { type ReadModelStore } from "../read-models/store.js";
 import {
   type DeviceTokenStore,
   createInMemoryDeviceTokenStore,
-  AuthError,
   DEVICE_TOKEN_HEADER,
 } from "../auth/device-token.js";
 import { type WriteStore } from "../writes/store.js";
@@ -13,9 +12,6 @@ import {
   requireIdempotencyKey,
 } from "../writes/idempotency.js";
 import type { AuthResolver } from "./auth.js";
-import type { ContextTokenReplayGuard } from "../auth/context-token-replay.js";
-import { CONTEXT_TOKEN_HEADER, validateContextToken } from "../auth/context-token.js";
-import { createInMemoryContextTokenReplayGuard } from "../auth/context-token-replay-memory.js";
 import type { CardStore } from "../cards/store.js";
 import type { PayableStore } from "../payables/store.js";
 import type { BudgetStore } from "../budgets/store.js";
@@ -34,12 +30,7 @@ import {
   createInMemoryShadowDivergenceStore,
   type ShadowDivergenceStore,
 } from "../observability/shadow-divergence.js";
-import {
-  createInMemoryPhoneWorkspaceStore,
-  type PhoneWorkspaceStore,
-} from "../auth/phone-workspace.js";
 import { registerShadowObservabilityRoutes } from "./shadow-observability.js";
-import { registerBridgeContextRoutes } from "./bridge-context.js";
 import { registerAuthRoutes } from "./auth.js";
 import { registerPendingOperationRoutes } from "./pending-operations.js";
 import { registerAccountRoutes } from "./accounts.js";
@@ -80,7 +71,7 @@ import type { WorkspaceAccessStore } from "../auth/workspace-access.js";
 import { getBetterAuthSessionContext } from "../auth/better-auth.js";
 import { buildObservabilityEvent } from "../audit/events.js";
 import { createInMemoryPriceAlertStore, type PriceAlertStore } from "../price-alerts/store.js";
-import { registerPriceAlertRoutes } from "./price-alerts.js";
+import { isPriceAlertsEnabled, registerPriceAlertRoutes } from "./price-alerts.js";
 import { registerAgentAuthRoutes } from "./agent-auth.js";
 import { registerAdminAgentLlmConfigRoutes, type AdminLlmReadAudit } from "./admin-agent-llm-config.js";
 import { registerInternalAgentLlmConfigRoutes } from "./internal-agent-llm-config.js";
@@ -96,7 +87,6 @@ export type RouteDeps = {
   store: ReadModelStore;
   writes: WriteStore;
   tokenStore?: DeviceTokenStore;
-  contextReplayGuard?: ContextTokenReplayGuard;
   idempotency?: IdempotencyStore;
   pendingStore?: PendingOperationStore;
   pendingExecutor?: PendingOperationExecutor;
@@ -112,7 +102,6 @@ export type RouteDeps = {
   pushDelivery?: PushDelivery;
   adoptionStore?: AdoptionStore;
   shadowDivergenceStore?: ShadowDivergenceStore;
-  phoneWorkspaceStore?: PhoneWorkspaceStore;
   delegationSecret?: string;
   vapidPublicKey?: string;
   auditLogs?: AuditLogStore;
@@ -129,6 +118,13 @@ export type RouteDeps = {
   approvalPolicy?: import('../approvals/policy.js').ApprovalPolicy;
   clock?: () => Date;
   priceAlertStore?: PriceAlertStore;
+  /**
+   * Phase 7 (V4.1 Task 7.8): explicit opt-in for the price-alerts surface.
+   * `true` mounts /alerts/price* (dev/test); `false` leaves them unmounted;
+   * `undefined` falls back to the PI_FEATURE_PRICE_ALERTS env flag (default
+   * OFF). Production composition passes nothing → OFF.
+   */
+  enablePriceAlerts?: boolean;
   llmConfigStore?: LlmConfigStore;
   agentConnectionSecret?: string;
   agentConfigToken?: string;
@@ -226,7 +222,6 @@ export const createPendingOperationV2Executor = (writes: WriteStore): PendingExe
 
 export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   const tokenStore = deps.tokenStore ?? createInMemoryDeviceTokenStore();
-  const contextReplayGuard = deps.contextReplayGuard ?? createInMemoryContextTokenReplayGuard();
   const idempotency = deps.idempotency ?? createInMemoryIdempotencyStore();
   const pendingStore = deps.pendingStore ?? createInMemoryPendingOperationStore();
   // FIX-P1-UNDO-BOOTSTRAP: nenhum bootstrap de produção injetava
@@ -463,43 +458,6 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     });
   }
 
-  app.addHook("preHandler", async (request) => {
-    const rawHeader = request.headers[CONTEXT_TOKEN_HEADER];
-    if (rawHeader === undefined) return;
-    const contextToken = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
-    if (contextToken === undefined) return;
-
-    let claims: Awaited<ReturnType<typeof validateContextToken>>;
-    try {
-      claims = await validateContextToken(
-        contextToken,
-        process.env.PI_CONTEXT_TOKEN_SECRET ?? "",
-      );
-    } catch {
-      throw new AuthError("invalid bridge context token", 401, "auth.context_token_invalid");
-    }
-
-    const deviceHeader = request.headers[DEVICE_TOKEN_HEADER];
-    const deviceToken = Array.isArray(deviceHeader) ? deviceHeader[0] : deviceHeader;
-    const deviceContext = await resolveToken(deviceToken);
-    if (deviceContext.householdId !== claims.workspaceId) {
-      throw new AuthError("context workspace does not match device", 403, "auth.context_workspace_mismatch");
-    }
-
-    const accepted = await contextReplayGuard.claim({
-      jti: claims.jti,
-      workspaceId: claims.workspaceId,
-      requestId: claims.requestId,
-      providerMessageId: claims.providerMessageId,
-      expiresAt: new Date(claims.expiresAt * 1_000),
-    });
-    if (!accepted) {
-      throw new AuthError("invalid bridge context binding", 401, "auth.context_token_invalid");
-    }
-    request.contextToken = contextToken;
-    request.contextClaims = claims;
-  });
-
   // G2.2.4 — centralized idempotency-key validation for mutating methods.
   // Validates the header when present (legacy clients without it keep working).
   app.addHook("preHandler", async (req) => {
@@ -518,7 +476,15 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     }
   });
 
-  app.get("/health", async () => ({ status: "ok" }));
+  // V4.1 Phase 9 (Task 9.9) — release identity. Build/deploy injects
+  // BUILD_SHA/BUILD_ID/BUILD_TIME; dev falls back to 'dev'. The production
+  // smoke (Task 9.10) confirms the deployed SHA through these fields.
+  app.get("/health", async () => ({
+    status: "ok",
+    gitSha: process.env.BUILD_SHA || "dev",
+    buildId: process.env.BUILD_ID || "dev",
+    builtAt: process.env.BUILD_TIME || "dev",
+  }));
   registerPendingOperationRoutes(app, {
     store: deps.pendingStore ?? createInMemoryPendingOperationStore(),
     resolveToken,
@@ -534,10 +500,6 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
   registerShadowObservabilityRoutes(app, {
     shadowDivergence: deps.shadowDivergenceStore ?? createInMemoryShadowDivergenceStore(),
     resolveToken,
-  });
-  registerBridgeContextRoutes(app, {
-    phoneWorkspace: deps.phoneWorkspaceStore ?? createInMemoryPhoneWorkspaceStore(),
-    delegationSecret: deps.delegationSecret ?? process.env.PI_DELEGATION_SECRET ?? "default-delegation-secret-for-tests",
   });
   const authOpts: Parameters<typeof registerAuthRoutes>[1] = {
     resolveToken,
@@ -658,11 +620,15 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
       ...(deps.adoptionStore ? { adoption: deps.adoptionStore } : {}),
     });
   }
-  // Price alerts — always registered (in-memory default, household-isolated)
-  registerPriceAlertRoutes(app, {
-    priceAlertStore: deps.priceAlertStore ?? createInMemoryPriceAlertStore(),
-    resolveToken,
-  });
+  // Price alerts — Phase 7 (V4.1 Task 7.8, SPEC §14.3 option A): OFF by
+  // default. Mounted only under explicit opt-in (RouteDeps flag or
+  // PI_FEATURE_PRICE_ALERTS), so the in-memory mock never serves production.
+  if (deps.enablePriceAlerts ?? isPriceAlertsEnabled()) {
+    registerPriceAlertRoutes(app, {
+      priceAlertStore: deps.priceAlertStore ?? createInMemoryPriceAlertStore(),
+      resolveToken,
+    });
+  }
   registerAuditRoutes(app, {
     auditLogs,
     resolveToken,

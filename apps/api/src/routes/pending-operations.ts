@@ -9,6 +9,7 @@ import { validateApprovalToolArgs } from '../approvals/tool-registry.js';
 import { buildPendingOperationPresentation } from '../approvals/presentation.js';
 import type { ReadModelStore } from '../read-models/store.js';
 import { PendingOperationV2Error, type PendingExecutor, type PendingOperationExecutor, type PendingOperationStore, type PendingOperationV2Store } from '../approvals/pending.js';
+import { createInMemoryPendingOperationStore } from '../approvals/pending.js';
 import type { UndoService } from '../approvals/undo.js';
 
 export const pendingIdentitySchema = z.object({
@@ -29,8 +30,13 @@ export const V2_APPROVAL_CAPABILITIES = {
   cancel: 'financial.approval.cancel',
 } as const;
 
-export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { store: PendingOperationStore; resolveToken: AuthResolver; executor?: PendingOperationExecutor; undoService?: UndoService; v2Store?: PendingOperationV2Store; v2Executor?: PendingExecutor; v2Only?: boolean; readModel?: Pick<ReadModelStore, 'listAccounts' | 'listCategories'> }): void => {
-  const { store, resolveToken, executor, undoService, v2Store, v2Executor } = opts;
+export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { store?: PendingOperationStore; resolveToken: AuthResolver; executor?: PendingOperationExecutor; undoService?: UndoService; v2Store?: PendingOperationV2Store; v2Executor?: PendingExecutor; v2Only?: boolean; readModel?: Pick<ReadModelStore, 'listAccounts' | 'listCategories'> }): void => {
+  // Phase 7 (V4.1 Task 7.3): the V1 store is optional. Production
+  // composition (server/index.ts, v2Only) wires no V1 store at all — the
+  // default below only serves dev/test compositions that still mount V1
+  // for the Agent's generated V1 tools.
+  const { resolveToken, executor, undoService, v2Store, v2Executor } = opts;
+  const store = opts.store ?? createInMemoryPendingOperationStore();
   const resolve = async (req: import('fastify').FastifyRequest): Promise<{ householdId: string; actorId: string; deviceId: string }> => {
     if (req.authenticatedContext) return req.authenticatedContext;
     const token = req.headers[DEVICE_TOKEN_HEADER];
@@ -201,10 +207,10 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
 
     try {
       if (query.data.chatId !== undefined) {
-        if (req.contextClaims?.chatId !== query.data.chatId) {
-          return reply.code(403).send({ code: 'auth.context_chat_mismatch', message: 'chatId does not match the authenticated bridge context' });
-        }
-        return reply.send({ operation: await store.findByChatId(query.data.chatId, ctx.householdId) ?? null });
+        // Phase 7 (V4.1 Task 7.7): bridge context decommissioned — no
+        // request can carry a validated bridge binding anymore, so the
+        // chatId-scoped dual path fails closed. Use pendingOperationId.
+        return reply.code(403).send({ code: 'auth.context_chat_mismatch', message: 'chatId does not match the authenticated bridge context' });
       }
       return reply.send({ operation: await store.get(query.data.pendingOperationId!, ctx.householdId) });
     } catch (error) { return handleError(error, reply); }
@@ -233,14 +239,11 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
     const query = pendingIdentitySchema.safeParse(req.query);
     if (!query.success) return reply.code(400).send({ code: 'validation.error', issues: query.error.issues });
     try {
-      let pendingId = query.data.pendingOperationId;
+      const pendingId = query.data.pendingOperationId;
       if (query.data.chatId !== undefined) {
-        if (req.contextClaims?.chatId !== query.data.chatId) {
-          return reply.code(403).send({ code: 'auth.context_chat_mismatch', message: 'chatId does not match the authenticated bridge context' });
-        }
-        const pending = await store.findByChatId(query.data.chatId, ctx.householdId);
-        if (!pending) throw domainErrors.approvalNotFound();
-        pendingId = pending.id;
+        // Phase 7 (V4.1 Task 7.7): bridge context decommissioned — the
+        // chatId-scoped dual path fails closed. Use pendingOperationId.
+        return reply.code(403).send({ code: 'auth.context_chat_mismatch', message: 'chatId does not match the authenticated bridge context' });
       }
       return reply.send(await store.approve(pendingId!, ctx.householdId, ctx.actorId, executor));
     } catch (error) { return handleError(error, reply, true); }
@@ -251,14 +254,11 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
     const query = pendingIdentitySchema.safeParse(req.query);
     if (!query.success) return reply.code(400).send({ code: 'validation.error', issues: query.error.issues });
     try {
-      let pendingId = query.data.pendingOperationId;
+      const pendingId = query.data.pendingOperationId;
       if (query.data.chatId !== undefined) {
-        if (req.contextClaims?.chatId !== query.data.chatId) {
-          return reply.code(403).send({ code: 'auth.context_chat_mismatch', message: 'chatId does not match the authenticated bridge context' });
-        }
-        const pending = await store.findByChatId(query.data.chatId, ctx.householdId);
-        if (!pending) throw domainErrors.approvalNotFound();
-        pendingId = pending.id;
+        // Phase 7 (V4.1 Task 7.7): bridge context decommissioned — the
+        // chatId-scoped dual path fails closed. Use pendingOperationId.
+        return reply.code(403).send({ code: 'auth.context_chat_mismatch', message: 'chatId does not match the authenticated bridge context' });
       }
       return reply.send(await store.reject(pendingId!, ctx.householdId, ctx.actorId));
     } catch (error) { return handleError(error, reply, true); }

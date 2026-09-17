@@ -9,9 +9,11 @@
 
 import { loadConfig } from '../env.js';
 import { createPool } from '../db/pool.js';
-import { runMigrations } from '../read-models/sql/migrate.js';
+import { runMigrations, validateMigrations } from '../read-models/sql/migrate.js';
 
 const main = async (): Promise<void> => {
+  const args = process.argv.slice(2);
+  const validateOnly = args.includes('--validate') || args.includes('--dry-run');
   const cfg = loadConfig();
   if (!cfg.databaseUrl) {
     process.stderr.write('DATABASE_URL is not set; nothing to do.\n');
@@ -19,6 +21,22 @@ const main = async (): Promise<void> => {
   }
   const pool = createPool({ connectionString: cfg.databaseUrl });
   try {
+    if (validateOnly) {
+      // V4.1 Phase 9 (Task 9.5): read-only validation — plans drift/pending,
+      // applies nothing, backfills nothing. Throws on non-baseline drift.
+      const plan = await validateMigrations(pool);
+      process.stdout.write(
+        `Migration validation OK: ${plan.pending.length} pending, ` +
+          `${plan.drift.length} drift, ${plan.baselineDrift.length} baseline-drift (known, warn-only), ` +
+          `${plan.backfill.length} checksum backfill candidate(s, not applied in validate mode).\n`,
+      );
+      if (plan.pending.length > 0) {
+        process.stdout.write(
+          `Pending: ${plan.pending.map((m) => `V${String(m.version).padStart(3, '0')}`).join(', ')}\n`,
+        );
+      }
+      return;
+    }
     const result = await runMigrations(pool);
     if (result.applied.length === 0) {
       process.stdout.write('No pending migrations.\n');

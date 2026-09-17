@@ -9,15 +9,15 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
 import { DomainError } from '../writes/errors.js';
+import { mapPgError } from '../db/sqlstate.js';
 import { requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
 import type { CardStore } from '../cards/store.js';
 import type { AuthResolver } from './auth.js';
 import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
+import { isoDateSchema as isoDate } from '../shared/iso-date.js';
+import { positiveMoneyCentsSchema } from '../shared/money.js';
 
 // ── Input schemas ────────────────────────────────────────────────
-
-
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
 
 // M-04: card purchases/installments preserve the same metadata as plain
 // entries (subcategory + notes), applied to every parcel.
@@ -29,7 +29,7 @@ const cardMetadataExtension = {
 const purchaseSchema = z.object({
   accountId: z.string().uuid(),
   description: z.string().trim().min(1).max(240),
-  amountCents: z.number().int().positive(),
+  amountCents: positiveMoneyCentsSchema,
   date: isoDate,
   categoryId: z.string().uuid().optional(),
   ...cardMetadataExtension,
@@ -40,7 +40,7 @@ const purchaseSchema = z.object({
 const installmentsSchema = z.object({
   accountId: z.string().uuid(),
   description: z.string().trim().min(1).max(240),
-  totalAmountCents: z.number().int().min(100),
+  totalAmountCents: positiveMoneyCentsSchema.min(100, 'totalAmountCents mínimo é 100'),
   purchaseDate: isoDate,
   installmentsTotal: z.number().int().min(1).max(48),
   categoryId: z.string().uuid().optional(),
@@ -50,7 +50,7 @@ const installmentsSchema = z.object({
 const recurringSchema = z.object({
   accountId: z.string().uuid(),
   description: z.string().trim().min(1).max(240),
-  amountCents: z.number().int().positive(),
+  amountCents: positiveMoneyCentsSchema,
   frequency: z.enum(['monthly', 'quarterly', 'yearly']),
   startDate: isoDate,
   endDate: isoDate.optional(),
@@ -63,20 +63,20 @@ const recurringQuerySchema = z.object({
 });
 
 const paySchema = z.object({
-  amountCents: z.number().int().positive(),
+  amountCents: positiveMoneyCentsSchema,
   fromAccountId: z.string().uuid(),
 });
 
 const createCardSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  creditLimitCents: z.number().int().positive(),
+  creditLimitCents: positiveMoneyCentsSchema,
   closingDay: z.number().int().min(1).max(31),
   dueDay: z.number().int().min(1).max(31),
 });
 
 const updateCardSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
-  creditLimitCents: z.number().int().positive().optional(),
+  creditLimitCents: positiveMoneyCentsSchema.optional(),
   closingDay: z.number().int().min(1).max(31).optional(),
   dueDay: z.number().int().min(1).max(31).optional(),
 }).refine((v) => v.name !== undefined || v.creditLimitCents !== undefined || v.closingDay !== undefined || v.dueDay !== undefined, { message: 'nenhum campo para atualizar' });
@@ -110,6 +110,8 @@ const handleError = (err: unknown, reply: FastifyReply) => {
     const e = err as { statusCode: number; code: string; message: string };
     return reply.code(e.statusCode).send({ code: e.code, message: e.message });
   }
+  const mapped = mapPgError(err);
+  if (mapped) return reply.code(mapped.statusCode).send({ code: mapped.code, message: mapped.message });
   throw err;
 };
 
@@ -312,7 +314,9 @@ export const registerCardRoutes = (
       return { status: 200 as const, body: attachMutationReceipt(s, 'statement.update', { type: 'statement', id: params.data.id }) };
     };
     try {
-      const result = key ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, parsed.data, fn) : { response: await fn(), replayed: false };
+      // Finding 1: the hashed payload embeds the route resource id — same
+      // key+body on a different statement id must conflict, not replay.
+      const result = key ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, { id: params.data.id, ...parsed.data }, fn) : { response: await fn(), replayed: false };
       if (result.replayed) reply.header('Idempotent-Replayed', 'true');
       return reply.code(result.response.status).send(result.response.body);
     } catch (e) { return handleError(e, reply); }
@@ -351,8 +355,8 @@ export const registerCardRoutes = (
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
     const purchaseSchema = z.object({
       description: z.string().trim().min(1).max(240).optional(),
-      amountCents: z.number().int().positive().optional(),
-      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD').optional(),
+      amountCents: positiveMoneyCentsSchema.optional(),
+      date: isoDate.optional(),
       categoryId: z.string().uuid().optional(),
     }).refine((v) => v.description !== undefined || v.amountCents !== undefined || v.date !== undefined || v.categoryId !== undefined, { message: 'nenhum campo para atualizar' });
     const parsed = purchaseSchema.safeParse(req.body ?? {});

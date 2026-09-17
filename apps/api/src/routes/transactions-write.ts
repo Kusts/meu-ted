@@ -9,6 +9,7 @@ import { createExpenseInputSchema, createIncomeInputSchema, createTransferInputS
 import type { CreateExpenseInput, CreateIncomeInput } from '../writes/types.js';
 import { runTransactionMutation } from '../writes/keyed-mutations.js';
 import { DomainError } from '../writes/errors.js';
+import { mapPgError } from '../db/sqlstate.js';
 import { requireIdempotencyKey } from '../writes/idempotency.js';
 import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
 import type { AuthResolver } from './auth.js';
@@ -65,6 +66,8 @@ export const registerTransactionWriteRoutes = (
       const e = err as { statusCode: number; code: string; message: string };
       return reply.code(e.statusCode).send({ code: e.code, message: e.message });
     }
+    const mapped = mapPgError(err);
+    if (mapped) return reply.code(mapped.statusCode).send({ code: mapped.code, message: mapped.message });
     throw err;
   };
 

@@ -16,17 +16,98 @@ export type DbConfig = {
   max?: number;
   /** Default: 10s. */
   idleTimeoutMillis?: number;
+  /** Default: 10s. Env: PI_DB_CONNECTION_TIMEOUT_MS. */
+  connectionTimeoutMillis?: number;
+  /**
+   * Default: 30s. Env: PI_DB_STATEMENT_TIMEOUT_MS.
+   * Long-running migration scripts should pass an explicit higher value
+   * (or set the env) instead of relying on the API default.
+   */
+  statementTimeoutMillis?: number;
+  /** Default: 10s. Env: PI_DB_LOCK_TIMEOUT_MS. */
+  lockTimeoutMillis?: number;
+  /** Default: 15s. Env: PI_DB_IDLE_IN_TX_TIMEOUT_MS. */
+  idleInTransactionSessionTimeoutMillis?: number;
 };
+
+/**
+ * Production-safe timeout defaults (V4.1 Phase 8, task 8.7): fail fast on
+ * stuck checkouts/statements/locks instead of queueing behind contention.
+ * Raising pool size alone is never the fix for contention.
+ */
+export const DEFAULT_CONNECTION_TIMEOUT_MILLIS = 10_000;
+export const DEFAULT_STATEMENT_TIMEOUT_MILLIS = 30_000;
+export const DEFAULT_LOCK_TIMEOUT_MILLIS = 10_000;
+export const DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MILLIS = 15_000;
+
+export type PoolTimeouts = {
+  connectionTimeoutMillis: number;
+  statementTimeoutMillis: number;
+  lockTimeoutMillis: number;
+  idleInTransactionSessionTimeoutMillis: number;
+};
+
+const numericEnv = (
+  env: Record<string, string | undefined>,
+  name: string,
+  fallback: number,
+): number => {
+  const raw = env[name]?.trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+};
+
+/** Explicit config wins, then PI_DB_* env, then production-safe defaults. */
+export const resolvePoolTimeouts = (
+  config: DbConfig,
+  env: Record<string, string | undefined> = process.env,
+): PoolTimeouts => ({
+  connectionTimeoutMillis:
+    config.connectionTimeoutMillis ??
+    numericEnv(env, 'PI_DB_CONNECTION_TIMEOUT_MS', DEFAULT_CONNECTION_TIMEOUT_MILLIS),
+  statementTimeoutMillis:
+    config.statementTimeoutMillis ??
+    numericEnv(env, 'PI_DB_STATEMENT_TIMEOUT_MS', DEFAULT_STATEMENT_TIMEOUT_MILLIS),
+  lockTimeoutMillis:
+    config.lockTimeoutMillis ??
+    numericEnv(env, 'PI_DB_LOCK_TIMEOUT_MS', DEFAULT_LOCK_TIMEOUT_MILLIS),
+  idleInTransactionSessionTimeoutMillis:
+    config.idleInTransactionSessionTimeoutMillis ??
+    numericEnv(env, 'PI_DB_IDLE_IN_TX_TIMEOUT_MS', DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MILLIS),
+});
+
+/**
+ * Session-level `SET` statements applied on every new connection (pg does
+ * not forward these knobs as startup parameters, so `pool.on('connect')`
+ * is the enforcement point). Values are integers validated above — safe
+ * to interpolate.
+ */
+export const sessionTimeoutStatements = (timeouts: PoolTimeouts): string[] => [
+  `SET statement_timeout = ${timeouts.statementTimeoutMillis}`,
+  `SET lock_timeout = ${timeouts.lockTimeoutMillis}`,
+  `SET idle_in_transaction_session_timeout = ${timeouts.idleInTransactionSessionTimeoutMillis}`,
+];
 
 export const createPool = (config: DbConfig): DbPool => {
   if (!config.connectionString) {
     throw new Error("createPool: connectionString is required");
   }
-  return new pg.Pool({
+  const timeouts = resolvePoolTimeouts(config);
+  const pool = new pg.Pool({
     connectionString: config.connectionString,
     max: config.max ?? 4,
     idleTimeoutMillis: config.idleTimeoutMillis ?? 10_000,
+    connectionTimeoutMillis: timeouts.connectionTimeoutMillis,
   });
+  pool.on('connect', (client: pg.PoolClient) => {
+    const statements = sessionTimeoutStatements(timeouts);
+    client.query(statements.join('; ')).catch(() => {
+      // A failed SET must not take the connection down; the query will
+      // surface the underlying problem on first use.
+    });
+  });
+  return pool;
 };
 
 /** Run a single query through the pool. */

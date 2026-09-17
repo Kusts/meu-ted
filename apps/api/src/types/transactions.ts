@@ -1,8 +1,5 @@
 import { z } from 'zod';
-
-const isoDate = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+import { isoDateSchema as isoDate } from '../shared/iso-date.js';
 
 const moneyCents = z.coerce.number().int().nonnegative();
 

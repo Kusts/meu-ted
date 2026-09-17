@@ -2,23 +2,24 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
 import { DomainError } from '../writes/errors.js';
+import { mapPgError } from '../db/sqlstate.js';
 import { requireIdempotencyKey, type IdempotencyStore } from '../writes/idempotency.js';
 import type { BudgetStore } from '../budgets/store.js';
 import type { AuthResolver } from './auth.js';
-
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
+import { isoDateSchema as isoDate } from '../shared/iso-date.js';
+import { positiveMoneyCentsSchema } from '../shared/money.js';
 
 export const createBudgetSchema = z.object({
   categoryId: z.string().uuid(),
   name: z.string().trim().min(1),
-  amountCents: z.number().int().positive(),
+  amountCents: positiveMoneyCentsSchema,
   period: z.enum(['monthly', 'quarterly', 'yearly']),
   startDate: isoDate,
   alertThreshold: z.number().int().min(1).max(100).optional(),
 });
 
 export const updateBudgetSchema = z.object({
-  amountCents: z.number().int().positive().optional(),
+  amountCents: positiveMoneyCentsSchema.optional(),
   alertThreshold: z.number().int().min(1).max(100).optional(),
 });
 
@@ -34,6 +35,8 @@ const resolveAuth = (resolveToken: AuthResolver) => async (req: FastifyRequest) 
 const handleError = (err: unknown, reply: FastifyReply) => {
   if (err instanceof DomainError) return reply.code(err.statusCode).send({ code: err.code, message: err.message });
   if ((err as any).statusCode) { const e = err as any; return reply.code(e.statusCode).send({ code: e.code, message: e.message }); }
+  const mapped = mapPgError(err);
+  if (mapped) return reply.code(mapped.statusCode).send({ code: mapped.code, message: mapped.message });
   throw err;
 };
 

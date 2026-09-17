@@ -11,7 +11,6 @@ import { createInMemoryCardStore } from "../cards/in-memory.js";
 import { createLegacyPostgresCardStore } from "../cards/legacy-postgres.js";
 import { createPostgresCardStore } from "../cards/postgres.js";
 import { createPool } from "../db/pool.js";
-import { createPostgresContextTokenReplayGuard } from "../auth/context-token-replay-postgres.js";
 import { createPostgresWorkspaceAccessStore } from "../auth/workspace-access.js";
 import { createPostgresWorkspaceStore } from "../auth/workspaces-postgres.js";
 import { createPostgresOwnershipTransferStore } from "../auth/ownership-transfers-postgres.js";
@@ -61,7 +60,6 @@ import { createPostgresInviteRuntime, } from "./production-routes.js";
 import { createPostgresAccountInviteStore } from "../auth/account-invites-postgres.js";
 import { createAccountInviteService } from "../auth/account-invites.js";
 import { createPostgresPendingOperationV2Store } from "../approvals/pending-v2.js";
-import { createPostgresPendingOperationStore } from "../approvals/pending.js";
 import { createUndoService } from "../approvals/undo.js";
 import { createInMemoryAuditLogStore, createLegacyPostgresAuditLogStore, createPostgresAuditLogStore } from "../audit/store.js";
 import { registerPendingOperationRoutes } from "../routes/pending-operations.js";
@@ -206,7 +204,6 @@ const start = async (): Promise<void> => {
         store,
         writes,
         tokenStore,
-        contextReplayGuard: createPostgresContextTokenReplayGuard(pool),
         idempotency,
         defaultHouseholdId: cfg.defaultHouseholdId,
         cardStore,
@@ -245,7 +242,6 @@ const start = async (): Promise<void> => {
        ...(pushDelivery ? { pushDelivery } : {}),
       });
       registerPendingOperationRoutes(app, {
-        store: createPostgresPendingOperationStore(pool),
         resolveToken: async (token) => tokenStore.resolve(token),
         v2Store: createPostgresPendingOperationV2Store(pool),
         v2Executor: createPendingOperationV2Executor(writes),
@@ -318,7 +314,6 @@ const start = async (): Promise<void> => {
         store,
         writes,
         tokenStore,
-        contextReplayGuard: createPostgresContextTokenReplayGuard(pool),
         idempotency,
         defaultHouseholdId: cfg.defaultHouseholdId,
         cardStore,
@@ -357,7 +352,6 @@ const start = async (): Promise<void> => {
         ...(pushDelivery ? { pushDelivery } : {}),
       });
       registerPendingOperationRoutes(app, {
-        store: createPostgresPendingOperationStore(pool),
         resolveToken: async (token) => tokenStore.resolve(token),
         v2Store: createPostgresPendingOperationV2Store(pool),
         v2Executor: createPendingOperationV2Executor(writes),

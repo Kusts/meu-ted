@@ -3,7 +3,6 @@ import { AuthError, type DeviceContext } from './device-token.js';
 import type { BetterAuthSessionContext } from './better-auth.js';
 import type { WorkspaceAccess } from './workspace-access.js';
 import type { DelegatedTurnClaims } from './delegated-token.js';
-import type { ValidatedContextToken } from './context-token.js';
 
 export type AuthenticatedContext = {
   householdId: string;
@@ -28,9 +27,6 @@ declare module 'fastify' {
     authenticatedContext?: AuthenticatedContext;
     /** Claims from the short-lived Agent-to-API turn token. */
     delegatedTurn?: DelegatedTurnClaims;
-    /** Validated bridge context for chat-scoped pending compatibility. */
-    contextToken?: string;
-    contextClaims?: ValidatedContextToken;
   }
 }
 

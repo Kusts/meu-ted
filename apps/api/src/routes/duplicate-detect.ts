@@ -5,12 +5,13 @@ import type { AuthResolver } from "./auth.js";
 import type { Pool } from "pg";
 import { findDuplicate } from "../transactions/duplicate-detector.js";
 import { createPool } from "../db/pool.js";
+import { isoDateSchema as isoDate } from "../shared/iso-date.js";
 
 export const detectSchema = z.object({
   kind: z.enum(["expense", "income", "transfer"]),
   description: z.string().min(1),
   amountCents: z.number().int().min(1),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  date: isoDate,
   accountId: z.string().uuid().optional(),
   fromAccountId: z.string().uuid().optional(),
   toAccountId: z.string().uuid().optional(),

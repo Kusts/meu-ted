@@ -11,6 +11,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DbPool } from "../../db/pool.js";
+import { withMigrationAdvisoryLock } from "../../db/migration-lock.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = here;
@@ -250,7 +251,51 @@ export const planMigrations = (
   return { drift, baselineDrift, backfill, pending };
 };
 
+/**
+ * V4.1 Phase 9 (Task 9.5) — read-only migration validation.
+ * Plans drift/backfill/pending WITHOUT applying anything and WITHOUT
+ * backfilling checksums: safe for CI gates and pre-deploy checks.
+ * Throws on non-baseline drift (same fail-closed rule as boot).
+ */
+export const validateMigrations = async (
+  pool: DbPool,
+  legacyOnly = false,
+): Promise<MigrationPlan> => {
+  await ensureMigrationsTable(pool);
+  const manifest = expectedMigrationManifest(legacyOnly);
+  const appliedRows = await appliedVersions(pool);
+  const plan = planMigrations(manifest, appliedRows);
+  if (plan.drift.length > 0) {
+    const details = plan.drift
+      .map((d) => `V${String(d.version).padStart(3, '0')} (${d.kind} drift: applied=${JSON.stringify(d.applied)} manifest=${JSON.stringify(d.expected)})`)
+      .join('; ');
+    throw new Error(
+      `migration drift detected: applied migration files differ from the manifest — refusing. ${details}`,
+    );
+  }
+  return plan;
+};
+
+export type RunMigrationsOptions = {
+  /**
+   * Acquire the global advisory lock for the whole run (default true).
+   * Pass `false` only when the caller already holds it (migrate-job wraps
+   * the backup marker + migrations in one locked section — a nested lock
+   * on a second session would fail closed).
+   */
+  withLock?: boolean;
+};
+
 export const runMigrations = async (
+  pool: DbPool,
+  legacyOnly = false,
+  opts: RunMigrationsOptions = {},
+): Promise<{ applied: number[] }> => {
+  if (opts.withLock === false) return runMigrationsInner(pool, legacyOnly);
+  return withMigrationAdvisoryLock(pool, () => runMigrationsInner(pool, legacyOnly));
+};
+
+const runMigrationsInner = async (
   pool: DbPool,
   legacyOnly = false,
 ): Promise<{ applied: number[] }> => {

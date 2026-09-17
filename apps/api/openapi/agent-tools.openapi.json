@@ -297,7 +297,8 @@
                   },
                   "initialBalanceCents": {
                     "type": "integer",
-                    "minimum": 0
+                    "minimum": 0,
+                    "maximum": 1000000000000
                   }
                 },
                 "required": [
@@ -667,7 +668,8 @@
                   },
                   "amountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "date": {
                     "type": "string",
@@ -748,7 +750,8 @@
                   },
                   "amountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "dueDate": {
                     "type": "string",
@@ -1047,7 +1050,8 @@
                   },
                   "amountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "date": {
                     "type": "string",
@@ -1183,7 +1187,8 @@
                   },
                   "amountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "frequency": {
                     "type": "string",
@@ -1268,7 +1273,8 @@
                   },
                   "amountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "date": {
                     "type": "string",
@@ -1491,7 +1497,8 @@
                   },
                   "amountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "accountId": {
                     "type": "string",
@@ -1572,7 +1579,8 @@
                   },
                   "targetAmountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "startDate": {
                     "type": "string",
@@ -1687,7 +1695,8 @@
                 "properties": {
                   "amountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "contributionDate": {
                     "type": "string",
@@ -1805,7 +1814,8 @@
                   },
                   "amountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "period": {
                     "type": "string",
@@ -2119,7 +2129,8 @@
                   },
                   "amountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "frequency": {
                     "type": "string",
@@ -2351,7 +2362,8 @@
                   },
                   "amountOverrideCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   }
                 },
                 "required": [
@@ -2579,7 +2591,8 @@
                   },
                   "creditLimitCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "closingDay": {
                     "type": "integer",
@@ -2655,7 +2668,8 @@
                   },
                   "amountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "date": {
                     "type": "string",
@@ -2748,7 +2762,8 @@
                   },
                   "totalAmountCents": {
                     "type": "integer",
-                    "minimum": 100
+                    "minimum": 100,
+                    "maximum": 1000000000000
                   },
                   "purchaseDate": {
                     "type": "string",
@@ -2837,7 +2852,8 @@
                 "properties": {
                   "amountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "fromAccountId": {
                     "type": "string",
@@ -3003,7 +3019,8 @@
                 "properties": {
                   "amountCents": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "maximum": 1000000000000
                   },
                   "alertThreshold": {
                     "type": "integer",
