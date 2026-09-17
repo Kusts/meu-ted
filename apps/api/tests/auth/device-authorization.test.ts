@@ -327,7 +327,7 @@ describeIfDb('V4.1 Task 1.1 — authorized device resolution against real Postgr
       await runMigrations(pool);
       const tokenStore = createPostgresDeviceTokenStore(pool);
       const workspaceId = '00000000-0000-4000-8000-0000000000a1';
-      const ownerId = 'auth-owner-pg-1';
+      const ownerId = '00000000-0000-4000-8000-00000000b001';
       const created = await tokenStore.register('pg-auth-device', workspaceId, { userId: ownerId });
       const seen: Array<{ authUserId: string; householdId: string }> = [];
       const workspaceAccess: WorkspaceAccessStore = {

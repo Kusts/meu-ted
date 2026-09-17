@@ -94,7 +94,7 @@ describe("reconciliation against the test database", () => {
 
       const householdId = randomUUID();
       await db.query(
-        `INSERT INTO households (id, name, kind) VALUES ($1, $2, 'shared')`,
+        `INSERT INTO households (id, name, kind) VALUES ($1, $2, 'personal')`,
         [householdId, "Recon H"],
       );
       try {
