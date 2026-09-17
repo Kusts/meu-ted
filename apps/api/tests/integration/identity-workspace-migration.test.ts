@@ -10,16 +10,15 @@ import { expectedMigrationManifest, runMigrations } from '../../src/read-models/
 
 const DB_URL = process.env.DATABASE_URL_TEST;
 const LEGACY_DB_URL = process.env.DATABASE_URL_TEST_LEGACY;
+// V4.1 Phase 9 (Task 9.1): env-gated like every other integration file so
+// `test:integration:all` skips cleanly without Postgres and runs with it.
+const ENABLED = Boolean(DB_URL && LEGACY_DB_URL && process.env.DB_TEST_MARKER);
+const describeIfDb = ENABLED ? describe : describe.skip;
 const CURRENT_HOUSEHOLD_ID = '33333333-3333-4333-8333-333333333333';
 const ACCOUNT_ID = '44444444-4444-4444-8444-444444444444';
 const TRANSACTION_ID = '55555555-5555-4555-8555-555555555555';
 let pool: Pool | undefined;
 let legacyPool: Pool | undefined;
-
-const requireDatabase = (url: string | undefined, name: string): string => {
-  if (!url) throw new Error(`${name} is required for identity migration integration tests`);
-  return url;
-};
 
 const seedFinancialBaseline = async (target: Pool, preExistingHousehold: boolean): Promise<void> => {
   await target.query(`
@@ -342,10 +341,10 @@ const assertSchemaAndPreservation = async (target: Pool, preservesExistingHouseh
   await target.query('DELETE FROM users WHERE id IN ($1, $2)', [sharedOwnerId, transferTargetId]);
 };
 
-describe('Postgres identity/workspace migration', () => {
+describeIfDb('Postgres identity/workspace migration', () => {
   beforeAll(async () => {
-    pool = createPool({ connectionString: requireDatabase(DB_URL, 'DATABASE_URL_TEST'), max: 4 });
-    legacyPool = createPool({ connectionString: requireDatabase(LEGACY_DB_URL, 'DATABASE_URL_TEST_LEGACY'), max: 4 });
+    pool = createPool({ connectionString: DB_URL!, max: 4 });
+    legacyPool = createPool({ connectionString: LEGACY_DB_URL!, max: 4 });
     await seedFinancialBaseline(pool, true);
     await seedFinancialBaseline(legacyPool, false);
     await runMigrations(pool);

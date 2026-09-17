@@ -28,17 +28,34 @@ const newHousehold = () => randomUUID();
 
 async function seedHousehold(db: Pool, name: string): Promise<string> {
   const id = newHousehold();
-  await db.query(`INSERT INTO households (id, name, kind) VALUES ($1, $2, 'shared')`, [id, name]);
+  // V022 households_shared_owner_chk: kind='shared' requires owner_user_id.
+  // Same owner-seed pattern as postgres-payable-double-pay.test.ts.
+  const ownerId = randomUUID();
+  await db.query(`INSERT INTO users (id, email, name, status) VALUES ($1, $2, 'Integrity Owner', 'active')`, [
+    ownerId,
+    `pfi-${id}@example.test`,
+  ]);
+  await db.query(`INSERT INTO households (id, name, kind, owner_user_id) VALUES ($1, $2, 'shared', $3)`, [
+    id,
+    name,
+    ownerId,
+  ]);
   return id;
 }
 
 async function cleanupHousehold(db: Pool, id: string): Promise<void> {
+  const owner = await db.query(`SELECT owner_user_id FROM households WHERE id = $1`, [id]).catch(() => null);
   await db.query(`DELETE FROM card_purchases WHERE household_id = $1`, [id]).catch(() => undefined);
   await db.query(`DELETE FROM transactions WHERE household_id = $1`, [id]).catch(() => undefined);
   await db.query(`DELETE FROM statements WHERE household_id = $1`, [id]).catch(() => undefined);
   await db.query(`DELETE FROM categories WHERE household_id = $1`, [id]).catch(() => undefined);
   await db.query(`DELETE FROM accounts WHERE household_id = $1`, [id]).catch(() => undefined);
+  await db.query(`DELETE FROM memberships WHERE household_id = $1`, [id]).catch(() => undefined);
   await db.query(`DELETE FROM households WHERE id = $1`, [id]).catch(() => undefined);
+  const ownerId = (owner as { rows: Array<Record<string, unknown>> } | null)?.rows[0]?.['owner_user_id'] as
+    | string
+    | undefined;
+  if (ownerId) await db.query(`DELETE FROM users WHERE id = $1`, [ownerId]).catch(() => undefined);
 }
 
 describe('Postgres financial integrity (C-04, H-04, M-02)', () => {

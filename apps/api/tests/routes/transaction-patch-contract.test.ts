@@ -49,7 +49,8 @@ describe('V4.1 transaction PATCH contract (SPEC §9.7)', () => {
     const a = await app.inject({
       method: 'POST', url: '/accounts',
       headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
-      payload: { name: 'A', kind: 'bank', initialBalanceCents: 0 },
+      // V4.1 Phase 4 (D1): the source must cover the transfer.
+      payload: { name: 'A', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const b = await app.inject({
       method: 'POST', url: '/accounts',
@@ -78,7 +79,8 @@ describe('V4.1 transaction PATCH contract (SPEC §9.7)', () => {
     const a = await app.inject({
       method: 'POST', url: '/accounts',
       headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
-      payload: { name: 'A', kind: 'bank', initialBalanceCents: 0 },
+      // V4.1 Phase 4 (D1): the source must cover the transfer.
+      payload: { name: 'A', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const b = await app.inject({
       method: 'POST', url: '/accounts',
@@ -124,7 +126,8 @@ describe('V4.1 transaction PATCH contract (SPEC §9.7)', () => {
     const acc = await app.inject({
       method: 'POST', url: '/accounts',
       headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
-      payload: { name: 'Nova conta', kind: 'cash', initialBalanceCents: 0 },
+      // V4.1 Phase 4 (D1): the destination must cover the moved expense.
+      payload: { name: 'Nova conta', kind: 'cash', initialBalanceCents: 10_000 },
     });
     const cat = await app.inject({
       method: 'POST', url: '/categories',

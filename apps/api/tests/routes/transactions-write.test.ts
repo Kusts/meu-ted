@@ -314,7 +314,8 @@ describe('POST /transfers', () => {
       method: 'POST',
       url: '/accounts',
       headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
-      payload: { name: 'A', kind: 'bank', initialBalanceCents: 0 },
+      // V4.1 Phase 4 (D1): the source must cover the transfer.
+      payload: { name: 'A', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const b = await app.inject({
       method: 'POST',
@@ -460,7 +461,8 @@ describe('PATCH /transactions/:id', () => {
       method: 'POST',
       url: '/accounts',
       headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
-      payload: { name: 'A', kind: 'bank', initialBalanceCents: 0 },
+      // V4.1 Phase 4 (D1): the source must cover the transfer.
+      payload: { name: 'A', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const b = await app.inject({
       method: 'POST',

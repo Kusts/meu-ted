@@ -38,21 +38,28 @@ const createLegacyTables = async (pool: Pool): Promise<void> => {
       id UUID PRIMARY KEY, household_id UUID NOT NULL, account_id UUID NOT NULL,
       cycle_year_month TEXT NOT NULL, closing_date DATE NOT NULL, due_date DATE NOT NULL,
       total_cents BIGINT NOT NULL DEFAULT 0, paid_cents BIGINT NOT NULL DEFAULT 0,
-      status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT statements_cycle_uniq UNIQUE (household_id, account_id, cycle_year_month)
     );
     CREATE TABLE card_purchases (
-      id UUID PRIMARY KEY, statement_id UUID NOT NULL, description TEXT NOT NULL,
+      id UUID PRIMARY KEY, household_id UUID NOT NULL, account_id UUID NOT NULL,
+      statement_id UUID NOT NULL, description TEXT NOT NULL,
       amount_cents BIGINT NOT NULL, date DATE NOT NULL, category_id UUID,
+      subcategory_id UUID, notes TEXT,
       installments_total INTEGER, installment_number INTEGER,
+      is_recurring BOOLEAN NOT NULL DEFAULT false, transaction_id UUID,
+      deleted_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE transactions (
       id UUID PRIMARY KEY, household_id UUID NOT NULL, kind TEXT NOT NULL,
       description TEXT NOT NULL, amount_cents BIGINT NOT NULL, date DATE NOT NULL,
-      from_account_id UUID, category_id UUID, statement_id UUID,
-      installments_total INTEGER, installment_number INTEGER,
-      is_recurring BOOLEAN NOT NULL DEFAULT false, is_credit_card_purchase BOOLEAN NOT NULL DEFAULT false,
-      deleted_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      from_account_id UUID, to_account_id UUID, category_id UUID, subcategory_id UUID,
+      notes TEXT, is_credit_card_purchase BOOLEAN NOT NULL DEFAULT false,
+      statement_id UUID, installments_total INTEGER, installment_number INTEGER,
+      is_recurring BOOLEAN NOT NULL DEFAULT false,
+      deleted_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE recurring_purchases (
       id UUID PRIMARY KEY, household_id UUID NOT NULL, account_id UUID NOT NULL,
@@ -127,6 +134,9 @@ describeDb('G2.2.5 — Postgres Unit of Work rollback', () => {
     await pool.query('DELETE FROM recurring_purchases WHERE household_id = $1', [HOUSEHOLD]);
     await pool.query('DELETE FROM payable_templates WHERE household_id = $1', [HOUSEHOLD]);
     await pool.query('DELETE FROM accounts_payable WHERE household_id = $1', [HOUSEHOLD]);
+    // V4.1 Phase 4 Task 4.12: card_purchases.transaction_id references
+    // transactions(id) — delete projections before the ledger rows.
+    await pool.query('DELETE FROM card_purchases WHERE household_id = $1', [HOUSEHOLD]).catch(() => undefined);
     await pool.query('DELETE FROM transactions WHERE household_id = $1', [HOUSEHOLD]);
     await pool.query('DELETE FROM statements WHERE household_id = $1', [HOUSEHOLD]);
     await pool.query('DELETE FROM categories WHERE household_id = $1', [HOUSEHOLD]);
@@ -139,6 +149,7 @@ describeDb('G2.2.5 — Postgres Unit of Work rollback', () => {
     await pool?.query('DELETE FROM recurring_purchases WHERE household_id = $1', [HOUSEHOLD]);
     await pool?.query('DELETE FROM payable_templates WHERE household_id = $1', [HOUSEHOLD]);
     await pool?.query('DELETE FROM accounts_payable WHERE household_id = $1', [HOUSEHOLD]);
+    await pool?.query('DELETE FROM card_purchases WHERE household_id = $1', [HOUSEHOLD]).catch(() => undefined);
     await pool?.query('DELETE FROM transactions WHERE household_id = $1', [HOUSEHOLD]);
     await pool?.query('DELETE FROM statements WHERE household_id = $1', [HOUSEHOLD]);
     await pool?.query('DELETE FROM categories WHERE household_id = $1', [HOUSEHOLD]);
@@ -162,7 +173,7 @@ describeDb('G2.2.5 — Postgres Unit of Work rollback', () => {
     await legacyPool?.end();
   });
 
-  it.skip('commits all compound financial effects together (ARCHIVED DESIGN DEBT G2.2.5: runtime canônico src/payables/postgres.ts insere template_id que não existe no schema migrado real — requer decisão de schema owner; fonte docs/ops/2026-08-18-postgres-integration-status.md)', async () => {
+  it('commits all compound financial effects together (V4.1 Phase 4 Task 4.11: template_id code/schema mismatch resolved by code alignment — accounts_payable carries no template_id column)', async () => {
     const writes = createPostgresWriteStore({ pool });
     const account = await writes.createAccount(HOUSEHOLD, { name: 'UoW commit account', kind: 'bank', initialBalanceCents: 100000 });
     const payables = createPostgresPayableStore(pool);
@@ -277,7 +288,10 @@ describeDb('G2.2.5 — Postgres Unit of Work rollback', () => {
   it('rolls back legacy payable payment after the transaction insert', async () => {
     const accountId = crypto.randomUUID();
     const payableId = crypto.randomUUID();
-    await legacyPool.query('INSERT INTO accounts (id, household_id, name) VALUES ($1, $2, $3)', [accountId, HOUSEHOLD, 'legacy payable account']);
+    // V4.1 Phase 4 Task 4.12: the legacy pay path gates on the computed
+    // balance (Phase 2 F4) — the fixture account must be funded so the
+    // flow reaches the injected fault instead of failing 400 first.
+    await legacyPool.query('INSERT INTO accounts (id, household_id, name, initial_balance_cents) VALUES ($1, $2, $3, 100000)', [accountId, HOUSEHOLD, 'legacy payable account']);
     await legacyPool.query(
       `INSERT INTO accounts_payable (id, household_id, account_id, description, amount_cents, due_date, type, status)
        VALUES ($1, $2, $3, $4, $5, $6, 'one_time', 'pending')`,
@@ -298,7 +312,7 @@ describeDb('G2.2.5 — Postgres Unit of Work rollback', () => {
     expect((await legacyPool.query('SELECT name FROM accounts WHERE id = $1', [card.id])).rows[0]?.name).toBe('legacy UoW edit card');
   }, 30_000);
 
-  it.skip('rolls back legacy card purchase and statement together (ARCHIVED DESIGN DEBT G2.2.5: schema LEGACY montado no teste não corresponde ao schema esperado pelo store legado — teste congela contrato superado; requer decisão de schema owner; fonte docs/ops/2026-08-18-postgres-integration-status.md)', async () => {
+  it('rolls back legacy card purchase and statement together (V4.1 Phase 4 Task 4.12: legacy test DDL aligned to the store contract — card_purchases/transactions carry the household/account/link columns the legacy card store reads)', async () => {
     const cards = createLegacyPostgresCardStore(legacyPool);
     const card = await cards.createCard(HOUSEHOLD, { name: 'legacy UoW card', creditLimitCents: 100000, closingDay: 15, dueDay: 25 });
     const broken = createLegacyPostgresCardStore(failingPool(legacyPool, 'UPDATE statements SET total_cents'));

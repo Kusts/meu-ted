@@ -11,7 +11,21 @@ describe('server smoke', () => {
   it('GET /health returns ok without auth', async () => {
     const res = await app.inject({ method: 'GET', url: '/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'ok' });
+    expect(res.json()).toMatchObject({ status: 'ok' });
+  });
+
+  it('GET /health exposes release identity with dev fallbacks (V4.1 Task 9.9)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/health' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as Record<string, unknown>;
+    for (const field of ['gitSha', 'buildId', 'builtAt']) {
+      expect(typeof body[field]).toBe('string');
+      expect((body[field] as string).length).toBeGreaterThan(0);
+    }
+    // Untouched dev env → explicit dev fallbacks, never empty/undefined.
+    expect(body.gitSha).toBe(process.env.BUILD_SHA ?? 'dev');
+    expect(body.buildId).toBe(process.env.BUILD_ID ?? 'dev');
+    expect(body.builtAt).toBe(process.env.BUILD_TIME ?? 'dev');
   });
 
   it('end-to-end: device → me → accounts → categories → transactions → dashboard → insights', async () => {

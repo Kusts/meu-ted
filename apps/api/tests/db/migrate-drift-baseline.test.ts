@@ -113,9 +113,17 @@ const fakePool = (rows: Array<{ version: number; name: string; checksum: string 
         if (/FROM _migrations/.test(text)) return { rows: rows.map((r) => ({ ...r })), rowCount: rows.length };
         return { rows: [], rowCount: 0 };
       },
-      connect: async () => {
-        throw new Error('no pending migrations expected in baseline tests');
-      },
+      connect: async () => ({
+        // V4.1 Phase 8 (task 8.6): runMigrations holds the global advisory
+        // lock for the whole run — fakes model the lock-owning session.
+        query: async (text: string) => {
+          queries.push(text);
+          if (/pg_try_advisory_lock/.test(text)) return { rows: [{ locked: true }], rowCount: 1 };
+          if (/pg_advisory_unlock/.test(text)) return { rows: [{ unlocked: true }], rowCount: 1 };
+          return { rows: [], rowCount: 0 };
+        },
+        release: () => undefined,
+      }),
     },
   };
 };

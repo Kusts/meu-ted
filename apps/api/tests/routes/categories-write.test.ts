@@ -143,7 +143,8 @@ describe('POST /categories/:id/deactivate', () => {
       method: 'POST',
       url: '/accounts',
       headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
-      payload: { name: 'X', kind: 'bank', initialBalanceCents: 0 },
+      // V4.1 Phase 4 (D1): funded so the setup expense books successfully.
+      payload: { name: 'X', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const cat = await app.inject({
       method: 'POST',

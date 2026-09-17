@@ -279,6 +279,9 @@ export const buildTestApp = (
     profileStore,
     pushStore,
     ...(priceAlertStore ? { priceAlertStore } : { priceAlertStore: createInMemoryPriceAlertStore() }),
+    // Phase 7 (V4.1 Task 7.8): the test composition explicitly opts into
+    // the price-alerts surface (production default is OFF/unmounted).
+    enablePriceAlerts: true,
     vapidPublicKey: "test-vapid-public-key",
     disableDeviceRegistration,
     ...(delegationSecret ? { delegationSecret } : {}),

@@ -4,8 +4,9 @@
  *
  * A minimal fake pool honors the exact SQL shapes of deleteCategory; the
  * test asserts the store compensates expense (+amount) and income
- * (GREATEST(0, balance-amount)) accounts. Pre-fix code issued zero
- * `UPDATE accounts` statements here (verified RED by stashing the fix).
+ * (validated debit, D1 — never a silent clamp) accounts. Pre-fix code
+ * issued zero `UPDATE accounts` statements here (verified RED by stashing
+ * the fix).
  */
 import { describe, expect, it, vi } from 'vitest';
 import { createPostgresWriteStore } from '../../src/writes/postgres.js';
@@ -32,6 +33,9 @@ const txRow = (overrides: Record<string, unknown> = {}) => ({
 
 const makeFakePool = (txRows: Record<string, unknown>[]) => {
   const recorded: Recorded[] = [];
+  // V4.1 Phase 4: the fake funds every account — D1 validation reads the
+  // locked balance before debiting.
+  const balances: Record<string, number> = { 'acc-1': 10_000, 'acc-2': 10_000 };
   const client = {
     query: vi.fn(async (text: string, values: unknown[] = []) => {
       recorded.push({ text, values });
@@ -48,6 +52,14 @@ const makeFakePool = (txRows: Record<string, unknown>[]) => {
       if (text.includes('FROM transactions') && text.includes('category_id = ANY')) {
         return { rows: txRows, rowCount: txRows.length };
       }
+      // V4.1 Phase 4 Task 4.6: balance mutations lock the row first.
+      if (text.includes('FROM accounts') && text.includes('FOR UPDATE')) {
+        const id = values[0] as string;
+        return {
+          rows: [{ id, kind: 'bank', balance_cents: balances[id] ?? 10_000, status: 'active' }],
+          rowCount: 1,
+        };
+      }
       if (text.startsWith('UPDATE accounts SET balance_cents')) return { rows: [], rowCount: 1 };
       if (text.includes('UPDATE transactions SET deleted_at')) return { rows: [], rowCount: txRows.length };
       if (text.includes('UPDATE categories SET status')) return { rows: [], rowCount: 1 };
@@ -60,7 +72,7 @@ const makeFakePool = (txRows: Record<string, unknown>[]) => {
 };
 
 describe('C-04 postgres cascade reverses balances (fake pool)', () => {
-  it('reverses an expense (+amount) and an income (clamped) on cascade', async () => {
+  it('reverses an expense (+amount) and an income (validated debit) on cascade', async () => {
     const { pool, recorded } = makeFakePool([
       txRow({ id: 'tx-e', kind: 'expense', amount_cents: 1000, account_id: 'acc-1' }),
       txRow({ id: 'tx-i', kind: 'income', amount_cents: 500, account_id: 'acc-1' }),
@@ -71,10 +83,10 @@ describe('C-04 postgres cascade reverses balances (fake pool)', () => {
 
     const balanceUpdates = recorded.filter((q) => q.text.startsWith('UPDATE accounts SET balance_cents'));
     expect(balanceUpdates).toHaveLength(2);
-    expect(balanceUpdates[0]!.text).toContain('balance_cents = balance_cents + $2');
-    expect(balanceUpdates[0]!.values).toEqual(['acc-1', 1000, H]);
-    expect(balanceUpdates[1]!.text).toContain('GREATEST(0, balance_cents - $2)');
-    expect(balanceUpdates[1]!.values).toEqual(['acc-1', 500, H]);
+    // V4.1 Phase 4 (D1): absolute SETs from the locked balance — credit
+    // 10000+1000, then validated debit 10000-500 (fake re-reads 10000).
+    expect(balanceUpdates[0]!.values).toEqual(['acc-1', 11_000, H]);
+    expect(balanceUpdates[1]!.values).toEqual(['acc-1', 9_500, H]);
   });
 
   it('reverses both transfer legs on cascade', async () => {
@@ -86,7 +98,7 @@ describe('C-04 postgres cascade reverses balances (fake pool)', () => {
 
     const balanceUpdates = recorded.filter((q) => q.text.startsWith('UPDATE accounts SET balance_cents'));
     expect(balanceUpdates).toHaveLength(2);
-    expect(balanceUpdates[0]!.values).toEqual(['acc-1', 3000, H]);
-    expect(balanceUpdates[1]!.values).toEqual(['acc-2', 3000, H]);
+    expect(balanceUpdates[0]!.values).toEqual(['acc-1', 13_000, H]);
+    expect(balanceUpdates[1]!.values).toEqual(['acc-2', 7_000, H]);
   });
 });

@@ -92,7 +92,9 @@ export const runWriteStoreContract = (harness: WriteContractHarness): void => {
       const acc = await writes.createAccount(H1, {
         name: 'X',
         kind: 'bank',
-        initialBalanceCents: 0,
+        // V4.1 Phase 4 (D1): fixtures fund the account — an unfunded
+        // expense is rejected before any transaction exists.
+        initialBalanceCents: 5_000,
       });
       const cat = await writes.createCategory(H1, { name: 'Food', kind: 'expense' });
       await writes.createExpense(H1, {
@@ -134,7 +136,8 @@ export const runWriteStoreContract = (harness: WriteContractHarness): void => {
       const acc = await writes.createAccount(H1, {
         name: 'A',
         kind: 'bank',
-        initialBalanceCents: 0,
+        // V4.1 Phase 4 (D1): funded fixture (see above).
+        initialBalanceCents: 5_000,
       });
       const cat = await writes.createCategory(H1, { name: 'Food', kind: 'expense' });
       await writes.createExpense(H1, {
@@ -225,7 +228,8 @@ export const runWriteStoreContract = (harness: WriteContractHarness): void => {
       const a = await writes.createAccount(H1, {
         name: 'A',
         kind: 'bank',
-        initialBalanceCents: 0,
+        // V4.1 Phase 4 (D1): the source must cover the transfer.
+        initialBalanceCents: 5_000,
       });
       const b = await writes.createAccount(H1, {
         name: 'B',
@@ -266,7 +270,8 @@ export const runWriteStoreContract = (harness: WriteContractHarness): void => {
       const a = await writes.createAccount(H1, {
         name: 'A',
         kind: 'bank',
-        initialBalanceCents: 0,
+        // V4.1 Phase 4 (D1): the source must cover the transfer.
+        initialBalanceCents: 5_000,
       });
       const b = await writes.createAccount(H1, {
         name: 'B',
@@ -298,7 +303,8 @@ export const runWriteStoreContract = (harness: WriteContractHarness): void => {
       const b = await writes.createAccount(H1, {
         name: 'B',
         kind: 'cash',
-        initialBalanceCents: 0,
+        // V4.1 Phase 4 (D1): the destination must cover the moved amount.
+        initialBalanceCents: 5_000,
       });
       const cat = await writes.createCategory(H1, { name: 'Food', kind: 'expense' });
       const tx = await writes.createExpense(H1, {
@@ -321,7 +327,8 @@ export const runWriteStoreContract = (harness: WriteContractHarness): void => {
       const acc = await writes.createAccount(H1, {
         name: 'A',
         kind: 'bank',
-        initialBalanceCents: 0,
+        // V4.1 Phase 4 (D1): funded fixture (see above).
+        initialBalanceCents: 5_000,
       });
       const cat = await writes.createCategory(H1, { name: 'Food', kind: 'expense' });
       const tx = await writes.createExpense(H1, {
