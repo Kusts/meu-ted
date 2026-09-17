@@ -6,6 +6,8 @@ import type { WriteStore } from '../writes/store.js';
 import type { CardStore } from '../cards/store.js';
 import type { IdempotencyStore } from '../writes/idempotency.js';
 import { createExpenseInputSchema, createIncomeInputSchema, createTransferInputSchema, updateTransactionInputSchema } from '../writes/types.js';
+import type { CreateExpenseInput, CreateIncomeInput } from '../writes/types.js';
+import { runTransactionMutation } from '../writes/keyed-mutations.js';
 import { DomainError } from '../writes/errors.js';
 import { requireIdempotencyKey } from '../writes/idempotency.js';
 import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
@@ -66,11 +68,11 @@ export const registerTransactionWriteRoutes = (
     throw err;
   };
 
-  const runIdempotent = async <T>(req: import('fastify').FastifyRequest, householdId: string, payload: unknown, producer: () => Promise<T>): Promise<T> => {
+  const runIdempotent = async <T>(req: import('fastify').FastifyRequest, householdId: string, payload: unknown, producer: (claimTx?: unknown) => Promise<T>): Promise<T> => {
     const raw = req.headers[IDEMPOTENCY_HEADER] ?? req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
-    if (raw === undefined) return producer();
+    if (raw === undefined) return producer(undefined);
     const key = requireIdempotencyKey(req.headers);
-    if (!opts.idempotency) return producer();
+    if (!opts.idempotency) return producer(undefined);
     return (await opts.idempotency.lookupOrRecord(householdId, key, payload, producer)).response;
   };
   const idemKey = (req: import('fastify').FastifyRequest): string | undefined => {
@@ -79,13 +81,13 @@ export const registerTransactionWriteRoutes = (
     return requireIdempotencyKey(req.headers);
   };
 
-  const postHandler = (path: string, schema: z.ZodTypeAny, producer: (ctx: { householdId: string }, input: any) => Promise<{ status: number; body: unknown }>) => {
+  const postHandler = (path: string, schema: z.ZodTypeAny, producer: (ctx: { householdId: string }, input: any, claimTx?: unknown) => Promise<{ status: number; body: unknown }>) => {
     app.post(path, async (req, reply) => {
       let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
       const parsed = schema.safeParse(req.body ?? {});
       if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
       const key = idemKey(req);
-      const fn = async () => producer(ctx, parsed.data);
+      const fn = async (claimTx?: unknown) => producer(ctx, parsed.data, claimTx);
       try {
         const result = key && opts.idempotency ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, parsed.data, fn) : { response: await fn(), replayed: false };
         if (result.replayed) reply.header('Idempotent-Replayed', 'true');
@@ -98,7 +100,7 @@ export const registerTransactionWriteRoutes = (
     path: string,
     schema: typeof expenseOriginSchema | typeof incomeOriginSchema,
     strict: typeof createExpenseInputSchema | typeof createIncomeInputSchema,
-    producer: (ctx: { householdId: string }, input: { accountId: string } & Record<string, unknown>, origin: Extract<OriginResolution, { ok: true }>) => Promise<{ status: number; body: unknown }>,
+    producer: (ctx: { householdId: string }, input: { accountId: string } & Record<string, unknown>, origin: Extract<OriginResolution, { ok: true }>, claimTx?: unknown) => Promise<{ status: number; body: unknown }>,
   ) => {
     app.post(path, async (req, reply) => {
       let ctx; try { ctx = await resolve(req); } catch (e) { return handleError(e, reply); }
@@ -110,7 +112,7 @@ export const registerTransactionWriteRoutes = (
       const normalized = strict.safeParse({ ...rest, accountId: origin.accountId });
       if (!normalized.success) return reply.code(400).send({ code: 'validation.error', issues: normalized.error.issues });
       const key = idemKey(req);
-      const fn = async () => producer(ctx, normalized.data as { accountId: string } & Record<string, unknown>, origin);
+      const fn = async (claimTx?: unknown) => producer(ctx, normalized.data as { accountId: string } & Record<string, unknown>, origin, claimTx);
       try {
         const result = key && opts.idempotency ? await opts.idempotency.lookupOrRecord(ctx.householdId, key, normalized.data, fn) : { response: await fn(), replayed: false };
         if (result.replayed) reply.header('Idempotent-Replayed', 'true');
@@ -119,10 +121,12 @@ export const registerTransactionWriteRoutes = (
     });
   };
 
-  originPostHandler('/transactions/expense', expenseOriginSchema, createExpenseInputSchema, async (ctx, input, origin) => {
+  originPostHandler('/transactions/expense', expenseOriginSchema, createExpenseInputSchema, async (ctx, input, origin, claimTx) => {
     // H-01: a card origin preserves the invoice path — a 1x purchase goes
     // through the CardStore (statement + card_purchases link), never through
     // the plain balance expense. Single-tx response shape is preserved.
+    // V4.1 Phase 3: the card path has no claim-tx extension (cards/** is
+    // out of scope), so it keeps its own boundary — see the tx table.
     if (origin.fromCard) {
       if (!opts.cardStore) {
         throw new DomainError('unsupported', 'compras no cartão indisponíveis neste ambiente.', 503);
@@ -140,11 +144,11 @@ export const registerTransactionWriteRoutes = (
       if (!first) throw new DomainError('unsupported', 'compra no cartão não retornou lançamento.', 500);
       return { status: 201, body: attachMutationReceipt(first, 'transaction.create', { type: 'transaction', id: first.id }) };
     }
-    const tx = await opts.writes.createExpense(ctx.householdId, input as unknown as Parameters<WriteStore['createExpense']>[1]);
+    const tx = await runTransactionMutation(opts.writes, claimTx, ctx.householdId, 'expense', input as unknown as CreateExpenseInput);
     return { status: 201, body: attachMutationReceipt(tx, 'transaction.create', { type: 'transaction', id: tx.id }) };
   });
 
-  originPostHandler('/transactions/income', incomeOriginSchema, createIncomeInputSchema, async (ctx, input, origin) => {
+  originPostHandler('/transactions/income', incomeOriginSchema, createIncomeInputSchema, async (ctx, input, origin, claimTx) => {
     // H-01: income on a card is rejected at the boundary (422).
     if (origin.fromCard) {
       return {
@@ -152,12 +156,12 @@ export const registerTransactionWriteRoutes = (
         body: { code: 'validation.origin_card_income', message: 'receita não pode usar cartão de crédito.' },
       };
     }
-    const tx = await opts.writes.createIncome(ctx.householdId, input as unknown as Parameters<WriteStore['createIncome']>[1]);
+    const tx = await runTransactionMutation(opts.writes, claimTx, ctx.householdId, 'income', input as unknown as CreateIncomeInput);
     return { status: 201, body: attachMutationReceipt(tx, 'transaction.create', { type: 'transaction', id: tx.id }) };
   });
 
-  postHandler('/transfers', createTransferInputSchema, async (ctx, input) => {
-    const tx = await opts.writes.createTransfer(ctx.householdId, input);
+  postHandler('/transfers', createTransferInputSchema, async (ctx, input, claimTx) => {
+    const tx = await runTransactionMutation(opts.writes, claimTx, ctx.householdId, 'transfer', input);
     return { status: 201, body: attachMutationReceipt(tx, 'transfer.create', { type: 'transaction', id: tx.id }) };
   });
 
@@ -179,7 +183,7 @@ export const registerTransactionWriteRoutes = (
       }
       return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     }
-    try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id, ...parsed.data }, async () => attachMutationReceipt(await opts.writes.updateTransaction(ctx.householdId, params.data.id, parsed.data), 'transaction.update', { type: 'transaction', id: params.data.id }))); }
+    try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id, ...parsed.data }, async (claimTx) => attachMutationReceipt(await runTransactionMutation(opts.writes, claimTx, ctx.householdId, 'update', { id: params.data.id, patch: parsed.data }), 'transaction.update', { type: 'transaction', id: params.data.id }))); }
     catch (e) { return handleError(e, reply); }
   });
 
@@ -192,8 +196,8 @@ export const registerTransactionWriteRoutes = (
       // registry-derived transaction.delete receipt. The receipt is built
       // inside the idempotent producer so replays preserve the mutationId;
       // 204 cannot carry a body. Second delete still 404s (tombstone kept).
-      const deleted = await runIdempotent(req, ctx.householdId, { id: params.data.id }, async () =>
-        attachMutationReceipt(await opts.writes.softDeleteTransaction(ctx.householdId, params.data.id), 'transaction.delete', { type: 'transaction', id: params.data.id }),
+      const deleted = await runIdempotent(req, ctx.householdId, { id: params.data.id }, async (claimTx) =>
+        attachMutationReceipt(await runTransactionMutation(opts.writes, claimTx, ctx.householdId, 'softDelete', { id: params.data.id }), 'transaction.delete', { type: 'transaction', id: params.data.id }),
       );
       return reply.code(200).send(deleted);
     }

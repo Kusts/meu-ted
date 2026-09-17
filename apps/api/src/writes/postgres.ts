@@ -16,7 +16,7 @@ import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';
 import { assertCategoryKind, CARD_EXPENSE_KIND_MESSAGE } from '../categories/resolve.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors, DomainError } from './errors.js';
-import { buildIdempotencyKey, type IdempotencyProducer } from './idempotency.js';
+import { buildIdempotencyKey, hashPayloadV2, matchesPayloadHash, type IdempotencyProducer } from './idempotency.js';
 import { runKeyedMutation } from './pending-idempotency.js';
 import type { WriteStore } from './store.js';
 import { resolveApplicationUserId } from '../auth/resolve-user-id.js';
@@ -25,6 +25,8 @@ import type {
   CreateAccountInput,
   CreateExpenseInput,
   CreateIncomeInput,
+  CreateTransferInput,
+  UpdateTransactionInput,
 } from './types.js';
 
 type Row = Record<string, unknown>;
@@ -412,6 +414,45 @@ const createIncomeInTx = async (
 };
 
 /**
+ * Client-bound transfer mutation (no transaction handling).
+ *
+ * V4.1 Phase 3 Task 3.2: extracted from the inline store body so keyed
+ * route producers can run the effect on the idempotency claim client
+ * (single atomic commit) instead of opening an independent transaction.
+ */
+const createTransferInTx = async (
+  client: import('pg').PoolClient,
+  householdId: string,
+  input: CreateTransferInput,
+): Promise<Transaction> => {
+  const from = await findAccountInHousehold(client, input.fromAccountId, householdId);
+  if (from.status !== 'active') throw domainErrors.notFound('Conta');
+  const to = await findAccountInHousehold(client, input.toAccountId, householdId);
+  if (to.status !== 'active') throw domainErrors.notFound('Conta');
+  // H-01: transfers cannot touch credit cards (pay the invoice instead).
+  if (from.kind === 'credit_card' || to.kind === 'credit_card') {
+    throw new DomainError('validation.invalid', 'transferência não pode usar cartão de crédito.', 422);
+  }
+  const txRes = await client.query<Row>(
+    `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, transfer_to_account_id)
+     VALUES (gen_random_uuid(), $1, 'transfer', $2, $3, $4, $5, $6)
+     RETURNING id, household_id, kind, description, amount_cents, date, account_id, category_id, transfer_to_account_id`,
+    [householdId, input.description, input.amountCents, input.date, input.fromAccountId, input.toAccountId],
+  );
+  await client.query(
+    `UPDATE accounts
+        SET balance_cents = GREATEST(0, balance_cents - $2)
+      WHERE id = $1 AND household_id = $3`,
+    [input.fromAccountId, input.amountCents, householdId],
+  );
+  await client.query(
+    `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
+    [input.toAccountId, input.amountCents, householdId],
+  );
+  return mapTransaction(txRes.rows[0]!);
+};
+
+/**
  * Client-bound account creation (no transaction handling): shared by the
  * plain path (own tx) and idempotency producers that join the claim
  * transaction (FIX-UNDO atomic path, 0.4.1 rollback proof).
@@ -543,6 +584,152 @@ export type PostgresReversalTxExtensions = {
   softDeleteTransactionInTx(client: PoolClient, householdId: string, id: string): Promise<Transaction>;
   deactivateAccountInTx(client: PoolClient, householdId: string, id: string): Promise<Account>;
   deactivateCategoryInTx(client: PoolClient, householdId: string, id: string): Promise<Category>;
+};
+
+/**
+ * V4.1 Phase 3 Task 3.2 — non-contractual client-bound financial mutations
+ * of the Postgres write stores (canonical AND legacy, same member names).
+ * Keyed route producers (see writes/keyed-mutations.ts) duck-type these and
+ * run the effect on the open idempotency claim client, so claim + financial
+ * effect + receipt/completion commit atomically in ONE transaction.
+ * NOT part of `WriteStore` — existing callers are unaffected.
+ */
+export type WriteStoreMutationTxExtensions = {
+  createExpenseInTx(client: PoolClient, householdId: string, input: CreateExpenseInput): Promise<Transaction>;
+  createIncomeInTx(client: PoolClient, householdId: string, input: CreateIncomeInput): Promise<Transaction>;
+  createTransferInTx(client: PoolClient, householdId: string, input: CreateTransferInput): Promise<Transaction>;
+  updateTransactionInTx(client: PoolClient, householdId: string, id: string, patch: UpdateTransactionInput): Promise<Transaction>;
+};
+
+/**
+ * Client-bound transaction patch (no transaction handling).
+ *
+ * V4.1 Phase 3 Task 3.2: extracted verbatim from the inline store body so
+ * keyed route producers can run the effect on the idempotency claim client
+ * (single atomic commit) instead of opening an independent transaction.
+ */
+const updateTransactionInTx = async (
+  client: PoolClient,
+  householdId: string,
+  id: string,
+  patch: UpdateTransactionInput,
+): Promise<Transaction> => {
+  const tx = await findActiveTransaction(client, id, householdId);
+  // V4.1 REVIEWFIX F3: a paid payable's payment effect is immutable
+  // via PATCH — use unpay (which clears the link first).
+  await assertNotLinkedToPaidPayable(client, householdId, id);
+  if (tx.kind === 'transfer') {
+    if (
+      patch.amountCents !== undefined ||
+      patch.accountId !== undefined ||
+      patch.categoryId !== undefined ||
+      patch.subcategoryId !== undefined ||
+      patch.notes !== undefined
+    ) {
+      // V4.1 SPEC §9.7: restricted transfer fields are a contract
+      // violation (422), not a malformed body.
+      throw new DomainError(
+        'unsupported',
+        'Operação não suportada: transferências só podem ter descrição e data alteradas.',
+        422,
+      );
+    }
+    if (patch.description === undefined && patch.date === undefined) return tx;
+    const res = await client.query<Row>(
+      `UPDATE transactions
+          SET description = COALESCE($3, description),
+              date        = COALESCE($4, date)
+        WHERE id = $1 AND household_id = $2
+        RETURNING ${TRANSACTION_COLUMNS}`,
+      [id, householdId, patch.description ?? null, patch.date ?? null],
+    );
+    return mapTransaction(res.rows[0]!);
+  }
+  // expense / income
+  if (patch.description === undefined && patch.date === undefined && patch.amountCents === undefined && patch.accountId === undefined && patch.categoryId === undefined && patch.subcategoryId === undefined && patch.notes === undefined) {
+    return tx;
+  }
+  if (patch.amountCents !== undefined && patch.amountCents <= 0) {
+    throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
+  }
+  if (patch.accountId !== undefined) {
+    const next = await findAccountInHousehold(client, patch.accountId, householdId);
+    if (next.status !== 'active') throw domainErrors.notFound('Conta');
+  }
+  if (patch.categoryId !== undefined) {
+    const next = await findCategoryInHousehold(client, patch.categoryId, householdId);
+    if (next.status !== 'active') throw domainErrors.notFound('Categoria');
+    // V4.1 Task 2.15: PATCH keeps the entry kind — the new category
+    // must match it (this branch only runs for expense/income).
+    assertCategoryKind(next, tx.kind === 'income' ? 'income' : 'expense');
+  }
+  // Effective parent for subcategory coherence (M-03): an explicit
+  // subcategory is validated against the effective parent; when only
+  // the parent changes, a retained subcategory from another macro is
+  // cleared instead of persisting an incoherent tree.
+  const effectiveCategoryId = patch.categoryId ?? tx.categoryId;
+  let effectiveSubcategoryId: string | null | undefined = patch.subcategoryId;
+  if (
+    effectiveSubcategoryId === undefined &&
+    patch.categoryId !== undefined &&
+    tx.subcategoryId !== undefined &&
+    patch.categoryId !== tx.categoryId
+  ) {
+    effectiveSubcategoryId = null;
+  }
+  if (effectiveSubcategoryId !== undefined && effectiveSubcategoryId !== null) {
+    await resolveSubcategoryInTx(client, householdId, effectiveSubcategoryId, tx.kind === 'income' ? 'income' : 'expense', effectiveCategoryId);
+  }
+  // Apply amount: restore old, then apply new.
+  if (patch.amountCents !== undefined) {
+    const sign = tx.kind === 'expense' ? '+' : '-';
+    await client.query(
+      `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1 AND household_id = $3`,
+      [tx.accountId, tx.amountCents, householdId],
+    );
+    const newSign = tx.kind === 'expense' ? '-' : '+';
+    await client.query(
+      `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1 AND household_id = $3`,
+      [tx.accountId, patch.amountCents, householdId],
+    );
+  }
+  if (patch.accountId !== undefined && patch.accountId !== tx.accountId) {
+    // Revert on old, apply on new.
+    const sign = tx.kind === 'expense' ? '+' : '-';
+    await client.query(
+      `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1 AND household_id = $3`,
+      [tx.accountId, tx.amountCents, householdId],
+    );
+    const newSign = tx.kind === 'expense' ? '-' : '+';
+    await client.query(
+      `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1 AND household_id = $3`,
+      [patch.accountId, tx.amountCents, householdId],
+    );
+  }
+  const res = await client.query<Row>(
+    `UPDATE transactions
+        SET description = COALESCE($3, description),
+            date        = COALESCE($4, date),
+            amount_cents = COALESCE($5, amount_cents),
+            account_id  = COALESCE($6, account_id),
+            category_id = COALESCE($7, category_id),
+            subcategory_id = CASE WHEN $10 THEN NULL ELSE COALESCE($8, subcategory_id) END,
+            notes = COALESCE($9, notes)
+      WHERE id = $1 AND household_id = $2
+      RETURNING ${TRANSACTION_COLUMNS}`,
+    [
+      id, householdId,
+      patch.description ?? null,
+      patch.date ?? null,
+      patch.amountCents ?? null,
+      patch.accountId ?? null,
+      patch.categoryId ?? null,
+      patch.subcategoryId ?? null,
+      patch.notes ?? null,
+      effectiveSubcategoryId === null,
+    ],
+  );
+  return mapTransaction(res.rows[0]!);
 };
 
 export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
@@ -765,154 +952,11 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
       if (input.fromAccountId === input.toAccountId) {
         throw domainErrors.invalid('toAccountId', 'deve ser diferente da conta de origem');
       }
-      return withTransaction(pool, async (client) => {
-        const from = await findAccountInHousehold(client, input.fromAccountId, householdId);
-        if (from.status !== 'active') throw domainErrors.notFound('Conta');
-        const to = await findAccountInHousehold(client, input.toAccountId, householdId);
-        if (to.status !== 'active') throw domainErrors.notFound('Conta');
-        // H-01: transfers cannot touch credit cards (pay the invoice instead).
-        if (from.kind === 'credit_card' || to.kind === 'credit_card') {
-          throw new DomainError('validation.invalid', 'transferência não pode usar cartão de crédito.', 422);
-        }
-        const txRes = await client.query<Row>(
-          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, transfer_to_account_id)
-           VALUES (gen_random_uuid(), $1, 'transfer', $2, $3, $4, $5, $6)
-           RETURNING id, household_id, kind, description, amount_cents, date, account_id, category_id, transfer_to_account_id`,
-          [householdId, input.description, input.amountCents, input.date, input.fromAccountId, input.toAccountId],
-        );
-        await client.query(
-          `UPDATE accounts
-              SET balance_cents = GREATEST(0, balance_cents - $2)
-            WHERE id = $1 AND household_id = $3`,
-          [input.fromAccountId, input.amountCents, householdId],
-        );
-        await client.query(
-          `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
-          [input.toAccountId, input.amountCents, householdId],
-        );
-        return mapTransaction(txRes.rows[0]!);
-      });
+      return withTransaction(pool, async (client) => createTransferInTx(client, householdId, input));
     },
 
     async updateTransaction(householdId, id, patch) {
-      return withTransaction(pool, async (client) => {
-        const tx = await findActiveTransaction(client, id, householdId);
-        // V4.1 REVIEWFIX F3: a paid payable's payment effect is immutable
-        // via PATCH — use unpay (which clears the link first).
-        await assertNotLinkedToPaidPayable(client, householdId, id);
-        if (tx.kind === 'transfer') {
-          if (
-            patch.amountCents !== undefined ||
-            patch.accountId !== undefined ||
-            patch.categoryId !== undefined ||
-            patch.subcategoryId !== undefined ||
-            patch.notes !== undefined
-          ) {
-            // V4.1 SPEC §9.7: restricted transfer fields are a contract
-            // violation (422), not a malformed body.
-            throw new DomainError(
-              'unsupported',
-              'Operação não suportada: transferências só podem ter descrição e data alteradas.',
-              422,
-            );
-          }
-          if (patch.description === undefined && patch.date === undefined) return tx;
-          const res = await client.query<Row>(
-            `UPDATE transactions
-                SET description = COALESCE($3, description),
-                    date        = COALESCE($4, date)
-              WHERE id = $1 AND household_id = $2
-              RETURNING ${TRANSACTION_COLUMNS}`,
-            [id, householdId, patch.description ?? null, patch.date ?? null],
-          );
-          return mapTransaction(res.rows[0]!);
-        }
-        // expense / income
-        if (patch.description === undefined && patch.date === undefined && patch.amountCents === undefined && patch.accountId === undefined && patch.categoryId === undefined && patch.subcategoryId === undefined && patch.notes === undefined) {
-          return tx;
-        }
-        if (patch.amountCents !== undefined && patch.amountCents <= 0) {
-          throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
-        }
-        if (patch.accountId !== undefined) {
-          const next = await findAccountInHousehold(client, patch.accountId, householdId);
-          if (next.status !== 'active') throw domainErrors.notFound('Conta');
-        }
-        if (patch.categoryId !== undefined) {
-          const next = await findCategoryInHousehold(client, patch.categoryId, householdId);
-          if (next.status !== 'active') throw domainErrors.notFound('Categoria');
-          // V4.1 Task 2.15: PATCH keeps the entry kind — the new category
-          // must match it (this branch only runs for expense/income).
-          assertCategoryKind(next, tx.kind === 'income' ? 'income' : 'expense');
-        }
-        // Effective parent for subcategory coherence (M-03): an explicit
-        // subcategory is validated against the effective parent; when only
-        // the parent changes, a retained subcategory from another macro is
-        // cleared instead of persisting an incoherent tree.
-        const effectiveCategoryId = patch.categoryId ?? tx.categoryId;
-        let effectiveSubcategoryId: string | null | undefined = patch.subcategoryId;
-        if (
-          effectiveSubcategoryId === undefined &&
-          patch.categoryId !== undefined &&
-          tx.subcategoryId !== undefined &&
-          patch.categoryId !== tx.categoryId
-        ) {
-          effectiveSubcategoryId = null;
-        }
-        if (effectiveSubcategoryId !== undefined && effectiveSubcategoryId !== null) {
-          await resolveSubcategoryInTx(client, householdId, effectiveSubcategoryId, tx.kind === 'income' ? 'income' : 'expense', effectiveCategoryId);
-        }
-        // Apply amount: restore old, then apply new.
-        if (patch.amountCents !== undefined) {
-          const sign = tx.kind === 'expense' ? '+' : '-';
-          await client.query(
-            `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1 AND household_id = $3`,
-            [tx.accountId, tx.amountCents, householdId],
-          );
-          const newSign = tx.kind === 'expense' ? '-' : '+';
-          await client.query(
-            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1 AND household_id = $3`,
-            [tx.accountId, patch.amountCents, householdId],
-          );
-        }
-        if (patch.accountId !== undefined && patch.accountId !== tx.accountId) {
-          // Revert on old, apply on new.
-          const sign = tx.kind === 'expense' ? '+' : '-';
-          await client.query(
-            `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1 AND household_id = $3`,
-            [tx.accountId, tx.amountCents, householdId],
-          );
-          const newSign = tx.kind === 'expense' ? '-' : '+';
-          await client.query(
-            `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1 AND household_id = $3`,
-            [patch.accountId, tx.amountCents, householdId],
-          );
-        }
-        const res = await client.query<Row>(
-          `UPDATE transactions
-              SET description = COALESCE($3, description),
-                  date        = COALESCE($4, date),
-                  amount_cents = COALESCE($5, amount_cents),
-                  account_id  = COALESCE($6, account_id),
-                  category_id = COALESCE($7, category_id),
-                  subcategory_id = CASE WHEN $10 THEN NULL ELSE COALESCE($8, subcategory_id) END,
-                  notes = COALESCE($9, notes)
-            WHERE id = $1 AND household_id = $2
-            RETURNING ${TRANSACTION_COLUMNS}`,
-          [
-            id, householdId,
-            patch.description ?? null,
-            patch.date ?? null,
-            patch.amountCents ?? null,
-            patch.accountId ?? null,
-            patch.categoryId ?? null,
-            patch.subcategoryId ?? null,
-            patch.notes ?? null,
-            effectiveSubcategoryId === null,
-          ],
-        );
-        return mapTransaction(res.rows[0]!);
-      });
+      return withTransaction(pool, async (client) => updateTransactionInTx(client, householdId, id, patch));
     },
 
     async softDeleteTransaction(householdId, id) {
@@ -926,6 +970,14 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
     softDeleteTransactionInTx,
     deactivateAccountInTx,
     deactivateCategoryInTx,
+    // V4.1 Phase 3 Task 3.2: client-bound financial mutations so keyed
+    // route producers run the effect on the idempotency claim client
+    // (claim + effect + completion in ONE transaction). See
+    // WriteStoreMutationTxExtensions; not part of WriteStore.
+    createExpenseInTx,
+    createIncomeInTx,
+    createTransferInTx,
+    updateTransactionInTx,
   });
 };
 
@@ -934,15 +986,10 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
  */
 export const createPostgresIdempotencyStore = (opts: { pool: Pool; legacy?: boolean }): import('./idempotency.js').IdempotencyStore => {
   const { pool, legacy } = opts;
-  const hash = (payload: unknown): string => {
-    if (payload === undefined || payload === null) return '0';
-    const json = typeof payload === 'object'
-      ? JSON.stringify(payload, Object.keys(payload as object).sort())
-      : JSON.stringify(payload);
-    let h = 0;
-    for (let i = 0; i < json.length; i++) h = (h * 31 + json.charCodeAt(i)) | 0;
-    return String(h);
-  };
+  // V4.1 Phase 3 Tasks 3.6/3.7: new claims hash V2 (SHA-256 over canonical
+  // JSON). Rows written by older builds (v1-sha256 / legacy h*31) still
+  // replay — reads compare tolerantly via matchesPayloadHash.
+  const hash = (payload: unknown): string => hashPayloadV2(payload);
   return {
     async lookupOrRecord(scopeOrHouseholdId: any, keyOrPayload: any, payloadOrProducer: any, maybeProducer?: any) {
       let householdId: string;
@@ -1025,7 +1072,7 @@ const resolvedUserId = await resolveApplicationUserId(client, actorId);
           if (settled.rowCount === 0) throw domainErrors.idempotencyConflict();
           const row = settled.rows[0]!;
           if (row.status === 'failed') throw domainErrors.idempotencyConflict();
-          if (row.payload_hash !== payloadHash) throw domainErrors.idempotencyConflict();
+          if (!matchesPayloadHash(row.payload_hash, payload)) throw domainErrors.idempotencyConflict();
           return { response: row.response as never, replayed: true };
         }
 
@@ -1084,7 +1131,7 @@ const resolvedUserId = await resolveApplicationUserId(client, actorId);
         if (settled.rowCount === 0) throw domainErrors.idempotencyConflict();
         const row = settled.rows[0]!;
         if (row.status === 'failed') throw domainErrors.idempotencyConflict();
-        if (row.payload_hash !== payloadHash) throw domainErrors.idempotencyConflict();
+        if (!matchesPayloadHash(row.payload_hash, payload)) throw domainErrors.idempotencyConflict();
         return { response: row.response as never, replayed: true };
       });
     },

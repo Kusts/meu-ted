@@ -15,7 +15,7 @@ import type { Account, Category, Transaction } from '../types/domain.js';
 import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';
 import { resolveCategoryForWrite } from '../categories/resolve.js';
 import { domainErrors, DomainError } from './errors.js';
-import { hashIdempotencyPayload } from './idempotency.js';
+import { hashPayloadV2, matchesPayloadHash } from './idempotency.js';
 import { namespacedPendingV2Key } from './pending-idempotency.js';
 import type { ApplyDefaultsResult, DeleteCategoryResult, WriteStore } from './store.js';
 import type {
@@ -188,15 +188,16 @@ export const createInMemoryWriteStore = (state: InMemoryState): WriteStore => {
     producer: () => Promise<Transaction>,
   ): Promise<Transaction> => {
     const composite = `${householdId}::${namespacedPendingV2Key(idempotencyKey)}`;
-    const payloadHash = hashIdempotencyPayload(payload);
+    // V4.1 Phase 3 Tasks 3.6/3.7: new records hash V2; older rows replay.
+    const payloadHash = hashPayloadV2(payload);
     const hit = idemRecords.get(composite);
     if (hit) {
-      if (hit.payloadHash !== payloadHash) throw domainErrors.idempotencyConflict();
+      if (!matchesPayloadHash(hit.payloadHash, payload)) throw domainErrors.idempotencyConflict();
       return hit.transaction;
     }
     const flight = idemFlights.get(composite);
     if (flight) {
-      if (flight.payloadHash !== payloadHash) throw domainErrors.idempotencyConflict();
+      if (!matchesPayloadHash(flight.payloadHash, payload)) throw domainErrors.idempotencyConflict();
       return flight.promise;
     }
     let resolveFlight!: (tx: Transaction) => void;

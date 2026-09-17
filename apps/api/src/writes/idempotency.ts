@@ -10,6 +10,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { canonicalJson } from './canonical-json.js';
 import { domainErrors } from './errors.js';
 
 export const IDEMPOTENCY_RETRY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -85,6 +86,43 @@ export const hashIdempotencyPayload = (payload: unknown, version = 1): string =>
   return createHash('sha256').update(raw).digest('hex');
 };
 
+/**
+ * V4.1 Phase 3 Task 3.6 — SHA-256 V2: `sha256("v2:" + canonicalJson(input))`.
+ * All NEW idempotency claims (in-memory, Postgres `operation_records`,
+ * pending-V2 `idempotency_keys`) record this hash. The legacy v1-sha256
+ * (`hashIdempotencyPayload`, top-level keys only) and the unversioned 32-bit
+ * `h*31` hash (Postgres claim path) stay readable via `matchesPayloadHash`.
+ */
+export const hashPayloadV2 = (payload: unknown): string => {
+  const raw = `v2:${canonicalJson(payload)}`;
+  return createHash('sha256').update(raw).digest('hex');
+};
+
+/**
+ * V4.1 Phase 3 Task 3.6 — the pre-V2 Postgres claim hash (writes/postgres.ts):
+ * unversioned 32-bit `h*31` over the top-level-sorted JSON, `'0'` for
+ * null/undefined. Kept byte-identical so old rows keep matching.
+ */
+export const legacyHashPayload = (payload: unknown): string => {
+  if (payload === undefined || payload === null) return '0';
+  const json = typeof payload === 'object'
+    ? JSON.stringify(payload, Object.keys(payload as object).sort())
+    : JSON.stringify(payload);
+  let h = 0;
+  for (let i = 0; i < json.length; i++) h = (h * 31 + json.charCodeAt(i)) | 0;
+  return String(h);
+};
+
+/**
+ * V4.1 Phase 3 Task 3.7 — tolerant replay comparison. A stored hash replays
+ * when it matches the V2 recomputation OR either legacy algorithm; anything
+ * else is a payload mismatch (caller raises `idempotency.conflict`).
+ */
+export const matchesPayloadHash = (storedHash: string, payload: unknown): boolean =>
+  storedHash === hashPayloadV2(payload) ||
+  storedHash === hashIdempotencyPayload(payload) ||
+  storedHash === legacyHashPayload(payload);
+
 export const createIdempotencyRequest = (
   identity: { householdId: string; deviceId?: string },
   operation: string,
@@ -129,7 +167,9 @@ export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
       const now = Date.now();
       evictExpired(now);
       const existing = store.get(composite);
-      const payloadHash = hashIdempotencyPayload(payload);
+      // V4.1 Phase 3 Tasks 3.6/3.7: new claims record V2; reads stay
+      // tolerant so rows written by older builds still replay.
+      const payloadHash = hashPayloadV2(payload);
       // Takeover target: a retained non-completed claim reuses its original
       // creation time (retention still applies from the first claim).
       let claimedAt = now;
@@ -142,7 +182,7 @@ export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
           if (age > IDEMPOTENCY_RETRY_WINDOW_MS) {
             throw domainErrors.idempotencyConflict();
           } else {
-            if (existing.payloadHash !== payloadHash) {
+            if (!matchesPayloadHash(existing.payloadHash, payload)) {
               throw domainErrors.idempotencyConflict();
             }
             return { response: existing.response as never, replayed: true };
@@ -152,7 +192,7 @@ export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
           // anymore) or failed claim: same payload takes over below and
           // re-executes the producer; divergent payload conflicts, mirroring
           // the Postgres payload_hash rule.
-          if (existing.payloadHash !== payloadHash) {
+          if (!matchesPayloadHash(existing.payloadHash, payload)) {
             throw domainErrors.idempotencyConflict();
           }
           claimedAt = existing.createdAt;
@@ -161,7 +201,7 @@ export const createInMemoryIdempotencyStore = (): IdempotencyStore => {
 
       const flight = inFlight.get(composite);
       if (flight) {
-        if (flight.payloadHash !== payloadHash) {
+        if (!matchesPayloadHash(flight.payloadHash, payload)) {
           throw domainErrors.idempotencyConflict();
         }
         const response = await flight.promise;

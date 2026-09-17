@@ -283,6 +283,28 @@ const createIncomeLegacyInTx = async (
 };
 
 /**
+ * Client-bound legacy transfer mutation (no transaction handling).
+ *
+ * V4.1 Phase 3 Task 3.2: extracted from the inline store body so keyed
+ * route producers can run the effect on the idempotency claim client
+ * (single atomic commit) instead of opening an independent transaction.
+ */
+const createTransferLegacyInTx = async (
+  client: PoolClient,
+  householdId: string,
+  input: CreateTransferInput,
+): Promise<Transaction> => {
+  await assertNotCreditCardLegacy(client, householdId, input.fromAccountId, 'transferência não pode usar cartão de crédito.');
+  await assertNotCreditCardLegacy(client, householdId, input.toAccountId, 'transferência não pode usar cartão de crédito.');
+  const res = await client.query<Row>(
+    `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id)
+     VALUES (gen_random_uuid(), $1, 'transfer', $2, $3, $4, $5, $6)
+     RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id`,
+    [householdId, input.description, input.amountCents, input.date, input.fromAccountId, input.toAccountId]);
+  return mapTransaction(res.rows[0]!);
+};
+
+/**
  * Client-bound legacy reversals (no transaction handling).
  * FIX-UNDO-LEGACY: lets the undo reversals join the idempotency claim tx
  * instead of opening independent transactions — the same pattern as the
@@ -328,6 +350,86 @@ const softDeleteTransactionLegacyInTx = async (
     `UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
      RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id`,
     [id, householdId]);
+  if (res.rowCount === 0) throw domainErrors.notFound('Lançamento');
+  return mapTransaction(res.rows[0]!);
+};
+
+/**
+ * Client-bound legacy transaction patch (no transaction handling).
+ *
+ * V4.1 Phase 3 Task 3.2: extracted verbatim from the inline store body so
+ * keyed route producers can run the effect on the idempotency claim client
+ * (single atomic commit) instead of opening an independent transaction.
+ */
+const updateTransactionLegacyInTx = async (
+  client: PoolClient,
+  householdId: string,
+  id: string,
+  patch: UpdateTransactionInput,
+): Promise<Transaction> => {
+  // V4.1 SPEC §9.7: legacy applies the same PATCH contract as canonical —
+  // description/date/amountCents/accountId/categoryId/subcategoryId/notes
+  // on expense/income, description/date only on transfer. Unknown keys
+  // never reach the store (route-level .strict() → 422).
+  const existing = await client.query<Row>(
+    `SELECT id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id, subcategory_id, notes
+       FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [id, householdId]);
+  if (existing.rowCount === 0) throw domainErrors.notFound('Lançamento');
+  // V4.1 REVIEWFIX F3: block PATCH of a paid payable's payment effect.
+  await assertNotLinkedToPaidPayableLegacy(client, householdId, id);
+  const current = existing.rows[0]!;
+  const txKind = current['kind'] as 'expense' | 'income' | 'transfer';
+  if (txKind === 'transfer') {
+    if (
+      patch.amountCents !== undefined ||
+      patch.accountId !== undefined ||
+      patch.categoryId !== undefined ||
+      patch.subcategoryId !== undefined ||
+      patch.notes !== undefined
+    ) {
+      throw new DomainError(
+        'unsupported',
+        'Operação não suportada: transferências só podem ter descrição e data alteradas.',
+        422,
+      );
+    }
+    if (patch.description === undefined && patch.date === undefined) return mapTransaction(current);
+    const res = await client.query<Row>(
+      `UPDATE transactions SET description = COALESCE($3, description), date = COALESCE($4, date)
+       WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
+       RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id, subcategory_id, notes`,
+      [id, householdId, patch.description ?? null, patch.date ?? null]);
+    if (res.rowCount === 0) throw domainErrors.notFound('Lançamento');
+    return mapTransaction(res.rows[0]!);
+  }
+  if (patch.description === undefined && patch.date === undefined && patch.amountCents === undefined && patch.accountId === undefined && patch.categoryId === undefined && patch.subcategoryId === undefined && patch.notes === undefined) {
+    return mapTransaction(current);
+  }
+  if (patch.amountCents !== undefined && patch.amountCents <= 0) {
+    throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
+  }
+  if (patch.accountId !== undefined) {
+    const acc = await client.query<Row>(
+      `SELECT id FROM accounts WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL`,
+      [patch.accountId, householdId]);
+    if (acc.rowCount === 0) throw domainErrors.notFound('Conta');
+  }
+  if (patch.categoryId !== undefined) {
+    // V4.1 Task 2.15: the new category must exist, be active in the
+    // household, and match the entry kind (this branch only runs for
+    // expense/income — transfers reject categoryId with 422 above).
+    await resolveCategoryLegacy(client, householdId, patch.categoryId, txKind);
+  }
+  if (patch.subcategoryId !== undefined) {
+    const parentId = patch.categoryId ?? (current['category_id'] as string | undefined);
+    await resolveSubcategoryLegacy(client, householdId, patch.subcategoryId, txKind, parentId);
+  }
+  const accountColumn = txKind === 'expense' ? 'from_account_id' : 'to_account_id';
+  const res = await client.query<Row>(
+    `UPDATE transactions SET description = COALESCE($3, description), date = COALESCE($4, date), amount_cents = COALESCE($5, amount_cents), subcategory_id = COALESCE($6, subcategory_id), notes = COALESCE($7, notes), category_id = COALESCE($8, category_id), ${accountColumn} = COALESCE($9, ${accountColumn})
+     WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
+     RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id, subcategory_id, notes`,
+    [id, householdId, patch.description ?? null, patch.date ?? null, patch.amountCents ?? null, patch.subcategoryId ?? null, patch.notes ?? null, patch.categoryId ?? null, patch.accountId ?? null]);
   if (res.rowCount === 0) throw domainErrors.notFound('Lançamento');
   return mapTransaction(res.rows[0]!);
 };
@@ -529,85 +631,12 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
     async createTransfer(householdId: string, input: CreateTransferInput) {
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
       if (input.fromAccountId === input.toAccountId) throw domainErrors.invalid('toAccountId', 'deve ser diferente');
-      return withTransaction(pool, async (client: PoolClient) => {
-        await assertNotCreditCardLegacy(client, householdId, input.fromAccountId, 'transferência não pode usar cartão de crédito.');
-        await assertNotCreditCardLegacy(client, householdId, input.toAccountId, 'transferência não pode usar cartão de crédito.');
-        const res = await client.query<Row>(
-          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id)
-           VALUES (gen_random_uuid(), $1, 'transfer', $2, $3, $4, $5, $6)
-           RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id`,
-          [householdId, input.description, input.amountCents, input.date, input.fromAccountId, input.toAccountId]);
-        return mapTransaction(res.rows[0]!);
-      });
+      return withTransaction(pool, async (client: PoolClient) =>
+        createTransferLegacyInTx(client, householdId, input));
     },
     async updateTransaction(householdId: string, id: string, patch: UpdateTransactionInput) {
-      // V4.1 SPEC §9.7: legacy applies the same PATCH contract as canonical —
-      // description/date/amountCents/accountId/categoryId/subcategoryId/notes
-      // on expense/income, description/date only on transfer. Unknown keys
-      // never reach the store (route-level .strict() → 422).
-      return withTransaction(pool, async (client: PoolClient) => {
-        const existing = await client.query<Row>(
-          `SELECT id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id, subcategory_id, notes
-             FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [id, householdId]);
-        if (existing.rowCount === 0) throw domainErrors.notFound('Lançamento');
-        // V4.1 REVIEWFIX F3: block PATCH of a paid payable's payment effect.
-        await assertNotLinkedToPaidPayableLegacy(client, householdId, id);
-        const current = existing.rows[0]!;
-        const txKind = current['kind'] as 'expense' | 'income' | 'transfer';
-        if (txKind === 'transfer') {
-          if (
-            patch.amountCents !== undefined ||
-            patch.accountId !== undefined ||
-            patch.categoryId !== undefined ||
-            patch.subcategoryId !== undefined ||
-            patch.notes !== undefined
-          ) {
-            throw new DomainError(
-              'unsupported',
-              'Operação não suportada: transferências só podem ter descrição e data alteradas.',
-              422,
-            );
-          }
-          if (patch.description === undefined && patch.date === undefined) return mapTransaction(current);
-          const res = await client.query<Row>(
-            `UPDATE transactions SET description = COALESCE($3, description), date = COALESCE($4, date)
-             WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
-             RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id, subcategory_id, notes`,
-            [id, householdId, patch.description ?? null, patch.date ?? null]);
-          if (res.rowCount === 0) throw domainErrors.notFound('Lançamento');
-          return mapTransaction(res.rows[0]!);
-        }
-        if (patch.description === undefined && patch.date === undefined && patch.amountCents === undefined && patch.accountId === undefined && patch.categoryId === undefined && patch.subcategoryId === undefined && patch.notes === undefined) {
-          return mapTransaction(current);
-        }
-        if (patch.amountCents !== undefined && patch.amountCents <= 0) {
-          throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
-        }
-        if (patch.accountId !== undefined) {
-          const acc = await client.query<Row>(
-            `SELECT id FROM accounts WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL`,
-            [patch.accountId, householdId]);
-          if (acc.rowCount === 0) throw domainErrors.notFound('Conta');
-        }
-        if (patch.categoryId !== undefined) {
-          // V4.1 Task 2.15: the new category must exist, be active in the
-          // household, and match the entry kind (this branch only runs for
-          // expense/income — transfers reject categoryId with 422 above).
-          await resolveCategoryLegacy(client, householdId, patch.categoryId, txKind);
-        }
-        if (patch.subcategoryId !== undefined) {
-          const parentId = patch.categoryId ?? (current['category_id'] as string | undefined);
-          await resolveSubcategoryLegacy(client, householdId, patch.subcategoryId, txKind, parentId);
-        }
-        const accountColumn = txKind === 'expense' ? 'from_account_id' : 'to_account_id';
-        const res = await client.query<Row>(
-          `UPDATE transactions SET description = COALESCE($3, description), date = COALESCE($4, date), amount_cents = COALESCE($5, amount_cents), subcategory_id = COALESCE($6, subcategory_id), notes = COALESCE($7, notes), category_id = COALESCE($8, category_id), ${accountColumn} = COALESCE($9, ${accountColumn})
-           WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
-           RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id, subcategory_id, notes`,
-          [id, householdId, patch.description ?? null, patch.date ?? null, patch.amountCents ?? null, patch.subcategoryId ?? null, patch.notes ?? null, patch.categoryId ?? null, patch.accountId ?? null]);
-        if (res.rowCount === 0) throw domainErrors.notFound('Lançamento');
-        return mapTransaction(res.rows[0]!);
-      });
+      return withTransaction(pool, async (client: PoolClient) =>
+        updateTransactionLegacyInTx(client, householdId, id, patch));
     },
     async softDeleteTransaction(householdId: string, id: string) {
       return withTransaction(pool, async (client: PoolClient) =>
@@ -626,5 +655,13 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
     softDeleteTransactionInTx: softDeleteTransactionLegacyInTx,
     deactivateAccountInTx: deactivateAccountLegacyInTx,
     deactivateCategoryInTx: deactivateCategoryLegacyInTx,
+    // V4.1 Phase 3 Task 3.2: same member names as the canonical
+    // WriteStoreMutationTxExtensions (see writes/postgres.ts) so keyed
+    // route producers join the claim tx on EITHER schema. Balances stay
+    // computed on legacy (bare tombstone), as before.
+    createExpenseInTx: createExpenseLegacyInTx,
+    createIncomeInTx: createIncomeLegacyInTx,
+    createTransferInTx: createTransferLegacyInTx,
+    updateTransactionInTx: updateTransactionLegacyInTx,
   });
 };

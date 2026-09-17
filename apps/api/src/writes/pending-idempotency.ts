@@ -23,7 +23,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { Transaction } from '../types/domain.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors } from './errors.js';
-import { hashIdempotencyPayload } from './idempotency.js';
+import { hashPayloadV2, matchesPayloadHash } from './idempotency.js';
 
 /** Namespace isolating V2 execution records inside `idempotency_keys`. */
 export const PENDING_V2_IDEMPOTENCY_PREFIX = 'pending-v2:';
@@ -68,13 +68,15 @@ export const runKeyedMutation = async (opts: {
 }): Promise<Transaction> => {
   const { pool, householdId, payload } = opts;
   const key = namespacedPendingV2Key(opts.idempotencyKey);
-  const payloadHash = hashIdempotencyPayload(payload);
+  // V4.1 Phase 3 Tasks 3.6/3.7: new records hash V2; rows written by older
+  // builds (v1-sha256 / legacy h*31) still replay via matchesPayloadHash.
+  const payloadHash = hashPayloadV2(payload);
   try {
     return await withTransaction(pool, async (client) => {
       const existing = await client.query<KeyRow>(SELECT_KEY, [householdId, key]);
       if ((existing.rowCount ?? 0) > 0) {
         const row = existing.rows[0]!;
-        if (row.payload_hash !== payloadHash) throw domainErrors.idempotencyConflict();
+        if (!matchesPayloadHash(row.payload_hash, payload)) throw domainErrors.idempotencyConflict();
         return parseResponse(row.response).transaction;
       }
       const result = await opts.mutate(client);
@@ -92,7 +94,7 @@ export const runKeyedMutation = async (opts: {
     const settled = await pool.query<KeyRow>(SELECT_KEY, [householdId, key]);
     const row = settled.rows[0];
     if (!row) throw domainErrors.idempotencyConflict();
-    if (row.payload_hash !== payloadHash) throw domainErrors.idempotencyConflict();
+    if (!matchesPayloadHash(row.payload_hash, payload)) throw domainErrors.idempotencyConflict();
     return parseResponse(row.response).transaction;
   }
 };
