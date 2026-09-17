@@ -34,6 +34,7 @@ import type { ReceiptCarryingItems, DeletedTransaction } from "@/lib/api/endpoin
 import * as endpoints from "@/lib/api/endpoints";
 import {
   ensureCommandId,
+  attachCommandId,
   newCommandId,
   isRetryableMutationError,
   isIdempotencyConflict,
@@ -335,13 +336,20 @@ export interface Commands {
  * timeout, 5xx), bounded by MAX_COMMAND_ATTEMPTS. Definitive 4xx
  * rejections and 409 conflicts propagate untouched to the existing error
  * handling — a manual retry after a definitive result is a new intent.
+ *
+ * Finding 2: the intent's command id is attached to the surfaced error once
+ * automatic retries are exhausted (see `attachCommandId`), so a manual retry
+ * after an unknown outcome can reuse it via the input's `idempotencyKey`
+ * (or the trailing `CommandIdOptions` on id-only commands) — read it back
+ * with `getFailedCommandId`.
  */
 function guarded<T>(
   methodName: string,
   ctx: CommandsContext,
   fn: () => Promise<T>,
+  commandId?: string,
 ): Promise<T> {
-  if (!ctx.online) return Promise.reject(new OfflineWriteError(methodName));
+  if (!ctx.online) return Promise.reject(attachCommandId(new OfflineWriteError(methodName), commandId));
   // Track dirty state — cleanup on success, retain on failure
   const cleanup = ctx.trackWrite?.();
   const attempt = (retriesLeft: number): Promise<T> =>
@@ -359,7 +367,7 @@ function guarded<T>(
         if (retriesLeft > 0 && !isIdempotencyConflict(e) && isRetryableMutationError(e)) {
           return attempt(retriesLeft - 1);
         }
-        throw e;
+        throw attachCommandId(e, commandId);
       },
     );
   return attempt(MAX_COMMAND_ATTEMPTS - 1);
@@ -405,144 +413,151 @@ function buildCommands(ctx: CommandsContext): Commands {
       const command = ensureCommandId(input);
       return guarded("createExpenseTransaction", ctx, () =>
         a.createExpenseTransaction(command),
+        command.idempotencyKey,
       );
     },
     createIncomeTransaction(input) {
       const command = ensureCommandId(input);
       return guarded("createIncomeTransaction", ctx, () =>
         a.createIncomeTransaction(command),
+        command.idempotencyKey,
       );
     },
     updateTransaction(id, input) {
       const command = ensureCommandId(input);
       return guarded("updateTransaction", ctx, () =>
         a.updateTransaction(id, command),
+        command.idempotencyKey,
       );
     },
     deleteTransaction(id, options) {
       const commandId = options?.idempotencyKey ?? newCommandId();
-      return guarded("deleteTransaction", ctx, () => a.deleteTransaction(id, commandId));
+      return guarded("deleteTransaction", ctx, () => a.deleteTransaction(id, commandId), commandId);
     },
     createTransfer(input) {
       const command = ensureCommandId(input);
-      return guarded("createTransfer", ctx, () => a.createTransfer(command));
+      return guarded("createTransfer", ctx, () => a.createTransfer(command), command.idempotencyKey);
     },
 
     // ── Accounts ─────────────────────────────────────────────────
     addAccount(input) {
       const command = ensureCommandId(input);
-      return guarded("addAccount", ctx, () => a.addAccount(command));
+      return guarded("addAccount", ctx, () => a.addAccount(command), command.idempotencyKey);
     },
     updateAccount(id, input) {
       const command = ensureCommandId(input);
-      return guarded("updateAccount", ctx, () => a.updateAccount(id, command));
+      return guarded("updateAccount", ctx, () => a.updateAccount(id, command), command.idempotencyKey);
     },
     deactivateAccount(id, options) {
       const commandId = options?.idempotencyKey ?? newCommandId();
-      return guarded("deactivateAccount", ctx, () => a.deactivateAccount(id, commandId));
+      return guarded("deactivateAccount", ctx, () => a.deactivateAccount(id, commandId), commandId);
     },
 
     // ── Categories ───────────────────────────────────────────────
     addCategory(input) {
       const command = ensureCommandId(input);
-      return guarded("addCategory", ctx, () => a.addCategory(command));
+      return guarded("addCategory", ctx, () => a.addCategory(command), command.idempotencyKey);
     },
     updateCategory(id, input) {
       const command = ensureCommandId(input);
-      return guarded("updateCategory", ctx, () => a.updateCategory(id, command));
+      return guarded("updateCategory", ctx, () => a.updateCategory(id, command), command.idempotencyKey);
     },
     deactivateCategory(id, options) {
       const commandId = options?.idempotencyKey ?? newCommandId();
-      return guarded("deactivateCategory", ctx, () => a.deactivateCategory(id, commandId));
+      return guarded("deactivateCategory", ctx, () => a.deactivateCategory(id, commandId), commandId);
     },
     deleteCategory(id, input) {
       const command = ensureCommandId(input);
-      return guarded("deleteCategory", ctx, () => a.deleteCategory(id, command));
+      return guarded("deleteCategory", ctx, () => a.deleteCategory(id, command), command.idempotencyKey);
     },
     applyCategoryDefaults(options) {
       const commandId = options?.idempotencyKey ?? newCommandId();
-      return guarded("applyCategoryDefaults", ctx, () => a.applyCategoryDefaults(commandId));
+      return guarded("applyCategoryDefaults", ctx, () => a.applyCategoryDefaults(commandId), commandId);
     },
 
     // ── Cards ────────────────────────────────────────────────────
     createCard(input) {
       const command = ensureCommandId(input);
-      return guarded("createCard", ctx, () => a.createCard(command));
+      return guarded("createCard", ctx, () => a.createCard(command), command.idempotencyKey);
     },
     updateCard(id, input) {
       const command = ensureCommandId(input);
-      return guarded("updateCard", ctx, () => a.updateCard(id, command));
+      return guarded("updateCard", ctx, () => a.updateCard(id, command), command.idempotencyKey);
     },
 
     // ── Payables ─────────────────────────────────────────────────
     createPayable(input) {
       const command = ensureCommandId(input);
-      return guarded("createPayable", ctx, () => a.createPayable(command));
+      return guarded("createPayable", ctx, () => a.createPayable(command), command.idempotencyKey);
     },
     markPayablePaid(id, paidDate, options) {
       const commandId = options?.idempotencyKey ?? newCommandId();
       return guarded("markPayablePaid", ctx, () =>
         a.markPayablePaid(id, paidDate, commandId),
+        commandId,
       );
     },
     undoPayablePayment(id, paidTransactionId, options) {
       const commandId = options?.idempotencyKey ?? newCommandId();
       return guarded("undoPayablePayment", ctx, () =>
         a.undoPayablePayment(id, paidTransactionId, commandId),
+        commandId,
       );
     },
     cancelPayable(id, options) {
       const commandId = options?.idempotencyKey ?? newCommandId();
-      return guarded("cancelPayable", ctx, () => a.cancelPayable(id, undefined, commandId));
+      return guarded("cancelPayable", ctx, () => a.cancelPayable(id, undefined, commandId), commandId);
     },
     updatePayable(id, input) {
       const command = ensureCommandId(input);
-      return guarded("updatePayable", ctx, () => a.updatePayable(id, command));
+      return guarded("updatePayable", ctx, () => a.updatePayable(id, command), command.idempotencyKey);
     },
 
     // ── Budgets ──────────────────────────────────────────────────
     createBudget(input) {
       const command = ensureCommandId(input);
-      return guarded("createBudget", ctx, () => a.createBudget(command));
+      return guarded("createBudget", ctx, () => a.createBudget(command), command.idempotencyKey);
     },
     updateBudget(id, input) {
       const command = ensureCommandId(input);
-      return guarded("updateBudget", ctx, () => a.updateBudget(id, command));
+      return guarded("updateBudget", ctx, () => a.updateBudget(id, command), command.idempotencyKey);
     },
 
     // ── Goals ────────────────────────────────────────────────────
     createGoal(input) {
       const command = ensureCommandId(input);
-      return guarded("createGoal", ctx, () => a.createGoal(command));
+      return guarded("createGoal", ctx, () => a.createGoal(command), command.idempotencyKey);
     },
     contributeToGoal(id, input) {
       const command = ensureCommandId(input);
       return guarded("contributeToGoal", ctx, () =>
         a.contributeToGoal(id, command),
+        command.idempotencyKey,
       );
     },
     cancelGoal(id, options) {
       const commandId = options?.idempotencyKey ?? newCommandId();
-      return guarded("cancelGoal", ctx, () => a.cancelGoal(id, commandId));
+      return guarded("cancelGoal", ctx, () => a.cancelGoal(id, commandId), commandId);
     },
     updateGoal(id, input) {
       const command = ensureCommandId(input);
-      return guarded("updateGoal", ctx, () => a.updateGoal(id, command));
+      return guarded("updateGoal", ctx, () => a.updateGoal(id, command), command.idempotencyKey);
     },
 
     // ── Subscriptions ────────────────────────────────────────────
     addSubscription(input) {
       const command = ensureCommandId(input);
-      return guarded("addSubscription", ctx, () => a.addSubscription(command));
+      return guarded("addSubscription", ctx, () => a.addSubscription(command), command.idempotencyKey);
     },
     cancelSubscription(id, options) {
       const commandId = options?.idempotencyKey ?? newCommandId();
-      return guarded("cancelSubscription", ctx, () => a.cancelSubscription(id, commandId));
+      return guarded("cancelSubscription", ctx, () => a.cancelSubscription(id, commandId), commandId);
     },
     updateSubscription(id, input) {
       const command = ensureCommandId(input);
       return guarded("updateSubscription", ctx, () =>
         a.updateSubscription(id, command),
+        command.idempotencyKey,
       );
     },
 
@@ -551,25 +566,28 @@ function buildCommands(ctx: CommandsContext): Commands {
       const command = ensureCommandId(input);
       return guarded("payStatement", ctx, () =>
         a.payStatement(statementId, command),
+        command.idempotencyKey,
       );
     },
     createInstallments(input) {
       const command = ensureCommandId(input);
       return guarded("createInstallments", ctx, () =>
         a.createInstallments(command),
+        command.idempotencyKey,
       );
     },
     createCardPurchase(input) {
       const command = ensureCommandId(input);
       return guarded("createCardPurchase", ctx, () =>
         a.createCardPurchase(command),
+        command.idempotencyKey,
       );
     },
 
     // ── Profile ──────────────────────────────────────────────────
     patchProfile(input) {
       const command = ensureCommandId(input);
-      return guarded("patchProfile", ctx, () => a.patchProfile(command));
+      return guarded("patchProfile", ctx, () => a.patchProfile(command), command.idempotencyKey);
     },
   };
 }

@@ -8,10 +8,25 @@ import { SessionProvider } from "@/lib/auth/session-context";
 import type { Account, Category, Transaction, Payable } from "@/lib/state/types";
 import type { MutationReceipt } from "@pi-finance/llm-contracts/types";
 
+// V4.1 Phase 5 (SPEC §12.6): the browser defaults to the same-origin proxy,
+// so suites exercising the unconfigured mock-data path pin it explicitly via
+// `apiNotConfigured()` below; everything else keeps the real default.
+const apiConfigState = vi.hoisted(() => ({ forceUnconfigured: false }));
+vi.mock("@/lib/api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/client")>();
+  return {
+    ...actual,
+    isApiConfigured: () =>
+      apiConfigState.forceUnconfigured ? false : actual.isApiConfigured(),
+  };
+});
+
 // ─── Spy setup ──────────────────────────────────────────────────────────────
 
 beforeEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  apiConfigState.forceUnconfigured = false;
   localStorage.clear();
   // v2 snapshot lives in IndexedDB — clear it between tests so a prior test's
   // persisted snapshot can't leak in as a "snapshot" source.
@@ -102,6 +117,7 @@ const mockP1: Payable = {
 };
 
 function apiReady() {
+  apiConfigState.forceUnconfigured = false;
   vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "http://localhost:3001");
   localStorage.setItem("pi-finance:token", "test-token-abc");
   // T2.6 contract: v2 reads verify the subject partition — an
@@ -114,6 +130,7 @@ function apiNotConfigured() {
     "NEXT_PUBLIC_PI_FINANCE_API_BASE_URL",
     undefined as unknown as string,
   );
+  apiConfigState.forceUnconfigured = true;
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

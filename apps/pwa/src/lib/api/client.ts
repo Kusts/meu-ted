@@ -4,11 +4,11 @@
  * via Set-Cookie passthrough, allowlisted headers, Origin check, upstream
  * timeout, `no-store` responses).
  *
- * `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL`, when explicitly set OFF the
- * production host, overrides the proxy — explicit dev/test escape hatch only
- * (ADR-011 "Decisão": compatibilidade transitória; T2.1/ADR-015 session-first
- * Option C). It is never a published production default: the production host
- * always uses the proxy, with or without the env set.
+ * `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL`, when explicitly set, overrides the
+ * proxy — explicit dev/test escape hatch only (ADR-011 "Decisão": compatibilidade
+ * transitória; T2.1/ADR-015 session-first Option C). It is never a published
+ * production default: without it the browser always uses the proxy, and no
+ * production hostname is an architectural dependency (V4.1 Phase 5, SPEC §12.6).
  *
  * Auth transport (ADR-011 compat window + ADR-015 Opção C, session-first):
  * the proxy forwards `cookie` (plus `authorization` when present) with
@@ -36,7 +36,8 @@ import {
   getSessionToken as getStoredSessionToken,
   getToken as getStoredDeviceToken,
 } from "@/lib/auth/token-store";
-import { setOfflineSubjectId } from "@/lib/auth/offline-subject";
+import { clearOfflineSubjectId, setOfflineSubjectId } from "@/lib/auth/offline-subject";
+import { isMembershipRevocation } from "@/lib/auth/auth-state-machine";
 import { noteLegacyAuthUsage } from "@/lib/auth/legacy-usage";
 
 export const responseSchema = z
@@ -50,7 +51,6 @@ export const responseSchema = z
     { message: "Invalid API response envelope" },
   );
 
-export const PRODUCTION_PWA_HOST = "pi-finance-pwa.walissonead.workers.dev";
 /** Canonical same-origin proxy base (ADR-011) — never a cross-origin default. */
 const SAME_ORIGIN_BACKEND_PROXY = "/api/backend";
 
@@ -74,19 +74,26 @@ export function setActiveWorkspaceId(workspaceId: string | undefined): void {
 export function clearActiveWorkspaceId(): void {
   activeWorkspaceId = undefined;
 }
-function baseUrl(): string | undefined {
-  // T2.1 (ADR-015 session-first, Option C): the production host always uses
-  // the same-origin proxy so the HttpOnly session cookie reaches the API.
-  // The explicit env below is a dev/test-only escape hatch and is ignored
-  // in production.
-  if (typeof window !== "undefined" && window.location.hostname === PRODUCTION_PWA_HOST) {
-    return SAME_ORIGIN_BACKEND_PROXY;
-  }
-
+/**
+ * Base-URL resolution order (V4.1 Phase 5, SPEC §12.6):
+ * explicit override > static NEXT_PUBLIC env > same-origin default.
+ *
+ * The browser default is the same-origin proxy `/api/backend` — no
+ * production hostname is an architectural dependency anymore. The env is a
+ * static literal read (SPEC §12.3) and an explicit dev/test escape hatch.
+ * SSR without env stays unconfigured (fail-closed).
+ */
+export function resolveApiBaseUrl(explicitOverride?: string): string | undefined {
+  const explicit = explicitOverride?.replace(/\/$/, "");
+  if (explicit) return explicit;
   const configured = process.env.NEXT_PUBLIC_PI_FINANCE_API_BASE_URL?.replace(/\/$/, "");
   if (configured) return configured;
-
+  if (typeof window !== "undefined") return SAME_ORIGIN_BACKEND_PROXY;
   return undefined;
+}
+
+function baseUrl(): string | undefined {
+  return resolveApiBaseUrl();
 }
 
 export function isApiConfigured(): boolean {
@@ -160,6 +167,31 @@ export class ApiError extends Error {
  * client or handling 401 per call-site.
  */
 export const UNAUTHORIZED_EVENT = "pi-finance:unauthorized";
+
+/**
+ * Fired on `window` whenever apiFetch receives a membership-revocation 403
+ * (workspace_forbidden — the API revoked authorization on removeMember/leave,
+ * Phase 1). Listeners take the unauthenticated transition (expireSession);
+ * the client itself purges the offline snapshot best-effort (D10).
+ */
+export const FORBIDDEN_EVENT = "pi-finance:forbidden";
+
+/**
+ * D10 revocation purge: drop the offline subject partition and delete the
+ * v2 snapshot so a revoked membership keeps no readable offline data.
+ * Best-effort and non-blocking — purge failures never break the request
+ * path (expireSession re-purges synchronously on the login transition).
+ */
+function purgeOfflineSnapshotOnRevocation(): void {
+  try {
+    clearOfflineSubjectId();
+  } catch {
+    /* noop */
+  }
+  void import("@/lib/state/snapshot-db")
+    .then((db) => db.deleteV2Snapshot().catch(() => {}))
+    .catch(() => {});
+}
 
 // ── Telemetry flush on the authenticated cycle ─────────────────────────────
 // Queued mic.error events (V4 T0.4.7, SPEC §24.7) flush on the next
@@ -254,6 +286,24 @@ export async function apiFetch<T>(
         (body.code as string) ?? "auth.error",
         (body.message as string) ?? "Token inválido",
       );
+    }
+
+    if (res.status === 403) {
+      let body: Record<string, unknown> = {};
+      try { body = await res.json(); } catch { /* noop */ }
+      const code = (body.code as string) ?? "error";
+      const message = (body.message as string) ?? "Acesso restrito";
+      // State machine (SPEC §12.1): 403 is an explicit server rejection →
+      // unauthenticated, never offline mode. Revocation-coded 403s additionally
+      // purge the offline snapshot (D10) and notify listeners.
+      if (isMembershipRevocation(403, body.code as string | undefined)) {
+        closeAllSockets("workspace access revoked");
+        purgeOfflineSnapshotOnRevocation();
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent(FORBIDDEN_EVENT));
+        }
+      }
+      throw new ApiError(403, code, message);
     }
 
     if (res.status === 204) {

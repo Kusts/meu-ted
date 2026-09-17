@@ -80,7 +80,7 @@ describe("T2.1 api client: same-origin proxy is the production default", () => {
     expect(isApiConfigured()).toBe(true);
   });
 
-  it("ignores a direct env on the production host (env is a dev/test escape hatch only)", async () => {
+  it("honors an explicitly configured env on any host (explicit override wins, SPEC §12.6)", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "https://api.example.com");
     stubHostname(PRODUCTION_HOST);
     const fetchMock = mockOkFetch();
@@ -88,7 +88,7 @@ describe("T2.1 api client: same-origin proxy is the production default", () => {
     await apiFetch("/workspaces");
 
     const calledUrl = String(fetchMock.mock.calls[0]?.[0] ?? "");
-    expect(calledUrl).toBe("/api/backend/workspaces");
+    expect(calledUrl).toBe("https://api.example.com/workspaces");
   });
 
   it("honors an explicit env off the production host (dev/test escape hatch)", async () => {
@@ -104,10 +104,18 @@ describe("T2.1 api client: same-origin proxy is the production default", () => {
     );
   });
 
-  it("stays fail-closed off the production host without env", () => {
+  it("defaults to the same-origin proxy off the production host without env (V4.1 SPEC §12.6)", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "");
     stubHostname("localhost");
-    expect(isApiConfigured()).toBe(false);
+    const fetchMock = mockOkFetch();
+
+    await apiFetch("/workspaces");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/backend/workspaces",
+      expect.objectContaining({ credentials: "include" }),
+    );
+    expect(isApiConfigured()).toBe(true);
   });
 });
 
@@ -129,7 +137,7 @@ describe("T2.1 agent client: same-origin proxy is the production default", () =>
     expect(capturedUrl).toBe("/api/agent/agents/finance-chat-agent/ws-1/rpc/chat");
   });
 
-  it("ignores a direct agent env on the production host", async () => {
+  it("honors an explicitly configured agent env on any host (explicit override wins, SPEC §12.6)", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL", "https://agent.example.test");
     stubHostname(PRODUCTION_HOST);
     vi.spyOn(agentAuth, "fetchAgentConnectionToken").mockResolvedValue("conn-token-123");
@@ -144,7 +152,9 @@ describe("T2.1 agent client: same-origin proxy is the production default", () =>
 
     await sendAgentMessage("ws-1", "oi");
 
-    expect(capturedUrl).toBe("/api/agent/agents/finance-chat-agent/ws-1/rpc/chat");
+    expect(capturedUrl).toBe(
+      "https://agent.example.test/agents/finance-chat-agent/ws-1/rpc/chat",
+    );
   });
 
   it("honors an explicit agent env off the production host (dev/test escape hatch)", async () => {

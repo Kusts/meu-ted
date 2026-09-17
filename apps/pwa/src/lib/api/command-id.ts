@@ -66,6 +66,38 @@ export function isIdempotencyConflict(err: unknown): boolean {
   return err instanceof ApiError && err.status === 409;
 }
 
+/**
+ * Finding 2 — the intent's command id travels on the surfaced error after
+ * automatic retries are exhausted. A manual retry after an unknown outcome
+ * (committed-but-lost response) reuses it via the input's `idempotencyKey`
+ * (or the trailing `CommandIdOptions` on id-only commands), so the server
+ * replays the original receipt instead of executing a second effect.
+ *
+ * Both `commandId` (canonical, matches the input field) and `lastCommandId`
+ * aliases are set; readers should prefer {@link getFailedCommandId}.
+ */
+export function attachCommandId<T>(err: T, commandId: string | undefined): T {
+  if (commandId === undefined) return err;
+  if (err !== null && (typeof err === "object" || typeof err === "function")) {
+    (err as Record<string, unknown>).commandId = commandId;
+    (err as Record<string, unknown>).lastCommandId = commandId;
+  }
+  return err;
+}
+
+/**
+ * Reads the intent's command id off a failed command error (see
+ * {@link attachCommandId}). Returns undefined when the error carries none.
+ */
+export function getFailedCommandId(err: unknown): string | undefined {
+  if (err !== null && (typeof err === "object" || typeof err === "function")) {
+    const record = err as Record<string, unknown>;
+    const id = record.commandId ?? record.lastCommandId;
+    return typeof id === "string" && id.length > 0 ? id : undefined;
+  }
+  return undefined;
+}
+
 export interface RetryCommandOptions {
   /** Reuse an existing intent id instead of minting one. */
   commandId?: string;
@@ -103,9 +135,9 @@ export async function retryMutationWithSameCommandId<T>(
       return { result, commandId, attempts: n };
     } catch (err) {
       lastError = err;
-      if (isIdempotencyConflict(err)) throw err;
-      if (n >= maxAttempts || !shouldRetry(err, n)) throw err;
+      if (isIdempotencyConflict(err)) throw attachCommandId(err, commandId);
+      if (n >= maxAttempts || !shouldRetry(err, n)) throw attachCommandId(err, commandId);
     }
   }
-  throw lastError;
+  throw attachCommandId(lastError, commandId);
 }

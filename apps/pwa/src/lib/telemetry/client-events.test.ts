@@ -81,7 +81,8 @@ describe("client-events flush (FIX-F0 POST /client-events)", () => {
     expect(flushed).toHaveLength(1);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe(CLIENT_EVENTS_PATH);
+    // V4.1 same-origin default (SPEC §12.6): the app path rides the proxy.
+    expect(url).toBe(`/api/backend${CLIENT_EVENTS_PATH}`);
     expect(url).not.toMatch(/^https?:\/\//);
     expect(init.method).toBe("POST");
     expect(init.credentials).toBe("include");

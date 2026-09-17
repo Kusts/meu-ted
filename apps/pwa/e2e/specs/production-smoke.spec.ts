@@ -62,4 +62,16 @@ test.describe("production-smoke", () => {
     await expect(page.getByRole("button", { name: /Registrar|Entrar/i })).toBeVisible({ timeout: 15000 });
     await expect(page.getByRole("heading", { name: /Cartões/i })).toBeHidden();
   });
+
+  // V4.1 Task 9.10 — the deployed bundle must BE the approved commit.
+  // EXPECTED_SHA comes from the deploy workflow (github.event.workflow_run.head_sha).
+  test("[SMOKE-05] deployed PWA release identity matches the approved SHA", async ({ page }) => {
+    const expected = (process.env.EXPECTED_SHA ?? "").trim();
+    test.skip(!expected, "set EXPECTED_SHA to the approved deploy commit");
+    const res = await page.request.get("/api/build-info");
+    expect(res.ok()).toBe(true);
+    const body = await res.json();
+    expect(typeof body.gitSha).toBe("string");
+    expect(body.gitSha).toBe(expected);
+  });
 });

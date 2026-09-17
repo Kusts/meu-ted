@@ -282,7 +282,6 @@ describe("central 401 handling (UNAUTHORIZED_EVENT)", () => {
 });
 
 describe("canonical same-origin base (ADR-011)", () => {
-  const PRODUCTION_HOST = "pi-finance-pwa.walissonead.workers.dev";
   const originalLocation = window.location;
 
   function stubHostname(hostname: string) {
@@ -304,9 +303,8 @@ describe("canonical same-origin base (ADR-011)", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses the same-origin /api/backend proxy on the production host without explicit env", async () => {
+  it("uses the same-origin /api/backend proxy in the browser without explicit env", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "");
-    stubHostname(PRODUCTION_HOST);
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
@@ -322,7 +320,6 @@ describe("canonical same-origin base (ADR-011)", () => {
 
   it("never defaults to the direct cross-origin API URL in production", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "");
-    stubHostname(PRODUCTION_HOST);
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
@@ -349,15 +346,14 @@ describe("canonical same-origin base (ADR-011)", () => {
     );
   });
 
-  it("stays fail-closed off the production host without explicit env", () => {
+  it("defaults to the same-origin proxy off the production host without explicit env (V4.1 SPEC §12.6)", () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "");
     stubHostname("localhost");
-    expect(isApiConfigured()).toBe(false);
+    expect(isApiConfigured()).toBe(true);
   });
 
   it("sends cookie-only same-origin requests without requiring localStorage tokens", async () => {
     vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "");
-    stubHostname(PRODUCTION_HOST);
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));

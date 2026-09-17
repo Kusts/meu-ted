@@ -3,6 +3,13 @@ import userEvent from "@testing-library/user-event";
 import HomePage from "../HomePage";
 import * as appStateModule from "@/lib/state/app-state-context";
 import type { AppState } from "@/lib/state/app-state-context";
+
+// V4.1 Phase 5 (SPEC §12.6): the browser defaults to the same-origin proxy,
+// so this UI suite pins the unconfigured mock-data provider path explicitly.
+vi.mock("@/lib/api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/client")>();
+  return { ...actual, isApiConfigured: () => false };
+});
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals, mockDashboardSummary } from "@/lib/state/mock-data";
 
 const mockRouter = { push: vi.fn(), refresh: vi.fn() };

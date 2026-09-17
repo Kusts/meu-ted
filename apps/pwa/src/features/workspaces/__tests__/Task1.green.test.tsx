@@ -49,6 +49,13 @@ vi.mock("@/lib/auth/workspace-context", () => ({
   useWorkspaceSafe: () => baseContext,
 }));
 
+// V4.1 Phase 5 (SPEC §12.6): the browser defaults to the same-origin proxy,
+// so this UI suite pins the unconfigured mock-data provider path explicitly.
+vi.mock("@/lib/api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/client")>();
+  return { ...actual, isApiConfigured: () => false };
+});
+
 describe("TASK1 - PWA Mobile enhancements (GREEN)", () => {
   describe("Zoom liberado (A5 / WCAG 1.4.4)", () => {
     it("viewport permite pinch-zoom (sem maximumScale/userScalable false)", async () => {

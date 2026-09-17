@@ -35,20 +35,35 @@ function readEnv(env: EnvLike | undefined, key: string): string | undefined {
   }
 }
 
+/**
+ * V4.1 Phase 5 (SPEC §12.3): NEXT_PUBLIC_* values consumed by the browser
+ * bundle MUST be read through static literal member references so Next
+ * inlines them at build time. Computed-key or destructured reads would
+ * defeat inlining. The injected-`env` parameter stays as a tests-only
+ * override (vi.stubEnv without re-imports); production paths always pass
+ * undefined and hit the literal reads below.
+ */
+
 /** Live read so tests can toggle via `vi.stubEnv` without re-imports. */
 export function isMicrophoneEnabled(env?: EnvLike): boolean {
-  const source: EnvLike | undefined =
-    env ?? (typeof process !== "undefined" ? (process.env as EnvLike) : undefined);
-  const value = readEnv(source, "NEXT_PUBLIC_TED_MICROPHONE");
+  const value =
+    env !== undefined
+      ? readEnv(env, "NEXT_PUBLIC_TED_MICROPHONE")
+      : typeof process !== "undefined"
+        ? process.env.NEXT_PUBLIC_TED_MICROPHONE
+        : undefined;
   return value === "1" || value === "true";
 }
 
 /** Live read so tests can toggle via `vi.stubEnv` without re-imports. */
 export function getChatAttachmentCapabilities(env?: EnvLike): ChatAttachmentCapabilities {
-  const source: EnvLike | undefined =
-    env ?? (typeof process !== "undefined" ? (process.env as EnvLike) : undefined);
-  const enabled = readEnv(source, "NEXT_PUBLIC_TED_ATTACHMENT_INGESTION") === "1";
-  return { image: enabled, pdf: enabled, audio: enabled, microphone: isMicrophoneEnabled(source) };
+  const enabled =
+    (env !== undefined
+      ? readEnv(env, "NEXT_PUBLIC_TED_ATTACHMENT_INGESTION")
+      : typeof process !== "undefined"
+        ? process.env.NEXT_PUBLIC_TED_ATTACHMENT_INGESTION
+        : undefined) === "1";
+  return { image: enabled, pdf: enabled, audio: enabled, microphone: isMicrophoneEnabled(env) };
 }
 
 /**
@@ -64,9 +79,12 @@ export function getChatAttachmentCapabilities(env?: EnvLike): ChatAttachmentCapa
 export const DEFAULT_MAX_OFFLINE_AUTH_AGE_HOURS = 72;
 
 export function getMaxOfflineAuthAgeHours(env?: EnvLike): number {
-  const source: EnvLike | undefined =
-    env ?? (typeof process !== "undefined" ? (process.env as EnvLike) : undefined);
-  const raw = readEnv(source, "NEXT_PUBLIC_MAX_OFFLINE_AUTH_AGE_HOURS");
+  const raw =
+    env !== undefined
+      ? readEnv(env, "NEXT_PUBLIC_MAX_OFFLINE_AUTH_AGE_HOURS")
+      : typeof process !== "undefined"
+        ? process.env.NEXT_PUBLIC_MAX_OFFLINE_AUTH_AGE_HOURS
+        : undefined;
   if (raw === undefined) return DEFAULT_MAX_OFFLINE_AUTH_AGE_HOURS;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_MAX_OFFLINE_AUTH_AGE_HOURS;
@@ -76,6 +94,22 @@ export function getMaxOfflineAuthAgeHours(env?: EnvLike): number {
 /** Max offline auth age in milliseconds (derived from the hours env). */
 export function getMaxOfflineAuthAgeMs(env?: EnvLike): number {
   return getMaxOfflineAuthAgeHours(env) * 3_600_000;
+}
+
+/**
+ * Offline snapshot kill-switch (V4.1 Phase 5, Task 5.9 + D10): optional
+ * disable via `NEXT_PUBLIC_DISABLE_OFFLINE_SNAPSHOT=1|true`. Default is
+ * ENABLED — absence or any other value keeps the snapshot path. Static
+ * literal read (SPEC §12.3); the injected-`env` parameter is tests-only.
+ */
+export function isOfflineSnapshotEnabled(env?: EnvLike): boolean {
+  const value =
+    env !== undefined
+      ? readEnv(env, "NEXT_PUBLIC_DISABLE_OFFLINE_SNAPSHOT")
+      : typeof process !== "undefined"
+        ? process.env.NEXT_PUBLIC_DISABLE_OFFLINE_SNAPSHOT
+        : undefined;
+  return value !== "1" && value !== "true";
 }
 
 /** Build-time snapshot for non-reactive consumers. Prefer the function above in components. */

@@ -8,6 +8,7 @@
 
 import * as endpoints from "@/lib/api/endpoints";
 import { ApiError } from "@/lib/api/client";
+import { isMembershipRevocation } from "@/lib/auth/auth-state-machine";
 import { type DomainKey, type AppStateAction, ESSENTIAL_DOMAIN_KEYS } from "./state-reducer";
 import { saveSnapshotDomain } from "./snapshot-store";
 import type { Account, Profile, QuickInsight, Transaction } from "./types";
@@ -63,11 +64,20 @@ export async function runBootstrap(
     endpoints.fetchQuickInsights(),
   ]);
 
-  // Runtime 401 short-circuit
+  // Runtime 401 short-circuit, plus D10 revocation: a 403
+  // workspace_forbidden means the membership is gone — the session is
+  // unauthenticated, never offline-capable. expireSession purges the
+  // snapshot; no DOMAIN_SNAPSHOT fallback may serve revoked data.
   const unauthorized = results.some(
     (r) => r.status === "rejected" && r.reason instanceof ApiError && r.reason.status === 401,
   );
-  if (unauthorized) {
+  const revoked = results.some(
+    (r) =>
+      r.status === "rejected" &&
+      r.reason instanceof ApiError &&
+      isMembershipRevocation(r.reason.status, r.reason.code),
+  );
+  if (unauthorized || revoked) {
     expireSession();
     dispatch({ type: "BOOTSTRAP_401" });
     return { profile: null, quickInsights: [] };

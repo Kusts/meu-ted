@@ -18,7 +18,7 @@
  * forcing online sync.
  */
 import { getOfflineSubjectId } from "@/lib/auth/offline-subject";
-import { getMaxOfflineAuthAgeMs } from "@/lib/capabilities";
+import { getMaxOfflineAuthAgeMs, isOfflineSnapshotEnabled } from "@/lib/capabilities";
 // Local types — duplicated structurally from snapshot-store, but using the real
 // domain shapes from ./types (a leaf module, so no circular dependency).
 // Keeping the shapes identical to snapshot-store's SnapshotDomains lets
@@ -162,6 +162,8 @@ export async function getOfflineSnapshotLockState(
   nowMs: number = Date.now(),
   maxAgeMs: number = getMaxOfflineAuthAgeMs(),
 ): Promise<OfflineLockState> {
+  // D10 optional disable: no snapshot may be trusted while disabled.
+  if (!isOfflineSnapshotEnabled()) return { state: "empty" };
   try {
     const env = await readV2Envelope();
     return evaluateOfflineLock(env, getOfflineSubjectId(), nowMs, maxAgeMs);
@@ -177,6 +179,8 @@ export async function getOfflineSnapshotLockState(
  * creation happens only through authenticated writes/migration.
  */
 export async function refreshOfflineAuthAge(nowIso?: string): Promise<boolean> {
+  // D10 optional disable: nothing to refresh while disabled.
+  if (!isOfflineSnapshotEnabled()) return false;
   const at = nowIso ?? new Date().toISOString();
   if (Number.isNaN(Date.parse(at))) return false;
   let refreshed = false;
@@ -354,6 +358,8 @@ export async function readV2Snapshot<K extends DomainKey>(
   token: string,
   domain: K,
 ): Promise<{ data: SnapshotDomains[K]; syncedAt: string } | null> {
+  // D10 optional disable: serve nothing while disabled.
+  if (!isOfflineSnapshotEnabled()) return null;
   try {
     const fp = await fingerprint(token);
     const env = await readV2Envelope();
@@ -426,6 +432,8 @@ export async function writeV2Snapshot<K extends DomainKey>(
   data: SnapshotDomains[K],
   opts?: WriteV2SnapshotOptions,
 ): Promise<void> {
+  // D10 optional disable: persist nothing while disabled.
+  if (!isOfflineSnapshotEnabled()) return;
   const fp = await fingerprint(token);
   const authenticatedAt = resolveAuthenticatedAt(opts?.lastOnlineAuthenticatedAt);
   const subject = getOfflineSubjectId();

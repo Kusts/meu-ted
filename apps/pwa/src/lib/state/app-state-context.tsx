@@ -381,6 +381,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     window.addEventListener("pi-finance:unauthorized", handler);
     return () => window.removeEventListener("pi-finance:unauthorized", handler);
   }, []);
+  useEffect(() => {
+    // D10 revocation: any apiFetch 403 workspace_forbidden (membership
+    // revoked server-side) expires the session — unauthenticated transition
+    // (→ login), never offline mode. Mirrors FORBIDDEN_EVENT the same way.
+    const handler = () => expireSessionRef.current();
+    window.addEventListener("pi-finance:forbidden", handler);
+    return () => window.removeEventListener("pi-finance:forbidden", handler);
+  }, []);
   const [loading, setLoading] = useState(apiUsable());
   const [error, setError] = useState<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);

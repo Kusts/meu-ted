@@ -2,6 +2,13 @@ import { render, screen, within, waitForElementToBeRemoved } from "@/lib/test-ut
 import userEvent from "@testing-library/user-event";
 import SubscriptionsPage from "../SubscriptionsPage";
 
+// V4.1 Phase 5 (SPEC §12.6): the browser defaults to the same-origin proxy,
+// so this UI suite pins the unconfigured mock-data provider path explicitly.
+vi.mock("@/lib/api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/client")>();
+  return { ...actual, isApiConfigured: () => false };
+});
+
 describe("SubscriptionsPage", () => {
   it("renders the page header", () => {
     render(<SubscriptionsPage />);
