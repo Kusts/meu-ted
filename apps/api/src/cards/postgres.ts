@@ -93,6 +93,46 @@ function opt<T extends Record<string, unknown>>(obj: T, props: Partial<T>): T {
   return result;
 }
 
+type TxClient = {
+  query: (text: string, values?: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;
+};
+
+/**
+ * Task 2.8 (SPEC §9.4): lock the statement row before recomputing its
+ * total so concurrent purchases serialize instead of lost-updating.
+ */
+const lockStatementForUpdateTx = async (
+  client: TxClient,
+  statementId: string,
+  householdId: string,
+): Promise<Statement> => {
+  const res = await client.query(
+    `SELECT * FROM statements WHERE id = $1 AND household_id = $2 FOR UPDATE`,
+    [statementId, householdId],
+  );
+  if (res.rowCount === 0 || res.rows.length === 0) throw domainErrors.notFound('Fatura');
+  return mapStatement(res.rows[0]!);
+};
+
+/** Recompute SUM(transactions) → persist total + status under the row lock. */
+const recalcStatementLockedTx = async (
+  client: TxClient,
+  statementId: string,
+  householdId: string,
+): Promise<void> => {
+  const stmt = await lockStatementForUpdateTx(client, statementId, householdId);
+  const totalResult = await client.query(
+    `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+    [statementId, householdId],
+  );
+  const total = Number(totalResult.rows[0]!['total']);
+  const newStatus = computeStatus({ ...stmt, totalCents: total }, todayISO());
+  await client.query(
+    `UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`,
+    [total, newStatus, statementId, householdId],
+  );
+};
+
 // ── Row mappers ──────────────────────────────────────────────────
 
 const mapAccount = (r: Row): Account => opt<Account>(
@@ -307,15 +347,8 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
           [householdId, input.accountId, statementId, input.description, input.amountCents, input.date, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, input.installmentsTotal ?? null, input.installmentNumber ?? null, txId],
         );
 
-        // Recalculate statement total
-        const totalResult = await client.query<Row>(
-          `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`,
-          [statementId, householdId],
-        );
-        const total = Number(totalResult.rows[0]!['total']);
-        const stmtForStatus = mapStatement((await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [statementId, householdId])).rows[0]!);
-        const newStatus = computeStatus({ ...stmtForStatus, totalCents: total }, todayISO());
-        await client.query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`, [total, newStatus, statementId, householdId]);
+        // Task 2.8: recompute under the statement row lock (no lost updates).
+        await recalcStatementLockedTx(client, statementId, householdId);
 
         const created: Transaction[] = [
           opt<Transaction>(
@@ -385,18 +418,8 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
             [householdId, input.accountId, statementId, input.description, amount, dateStr, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, input.installmentsTotal, i + 1, txId],
           );
 
-          const totalResult = await client.query<Row>(
-            `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`,
-            [statementId, householdId],
-          );
-          const total = Number(totalResult.rows[0]!['total']);
-          const stmtFetch = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [statementId, householdId]);
-          const stmtForStatus = mapStatement(stmtFetch.rows[0]!);
-          const newStatus = computeStatus({ ...stmtForStatus, totalCents: total }, todayISO());
-          await client.query(
-            `UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`,
-            [total, newStatus, statementId, householdId],
-          );
+          // Task 2.8: recompute under the statement row lock (no lost updates).
+          await recalcStatementLockedTx(client, statementId, householdId);
 
           txs.push(
             opt<Transaction>(
@@ -435,18 +458,22 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
 
     async createRecurringPurchase(householdId, input) {
       return withTransaction(pool, async (client) => {
+        // Task 2.18: same validation as the normal purchase path — card must
+        // exist, be active and be a credit card with closing/due configured;
+        // category must be an active expense-kind category.
         const cardRows = await client.query<Row>(
-          `SELECT id FROM accounts WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          `SELECT id, kind, closing_day, due_day FROM accounts WHERE id = $1 AND household_id = $2 AND status = 'active' AND deleted_at IS NULL`,
           [input.accountId, householdId],
         );
         if (cardRows.rowCount === 0 || cardRows.rows.length === 0) throw domainErrors.notFound('Conta');
+        const card = cardRows.rows[0]!;
+        if (card['kind'] !== 'credit_card') throw domainErrors.invalid('accountId', 'não é cartão de crédito');
+        if (card['closing_day'] == null || card['due_day'] == null) {
+          throw domainErrors.invalid('accountId', 'cartão sem fechamento/vencimento configurado');
+        }
 
         if (input.categoryId) {
-          const catRows = await client.query<Row>(
-            `SELECT id FROM categories WHERE id = $1 AND household_id = $2`,
-            [input.categoryId, householdId],
-          );
-          if (catRows.rowCount === 0 || catRows.rows.length === 0) throw domainErrors.notFound('Categoria');
+          await resolveExpenseCategoryInTx(client, householdId, input.categoryId);
         }
 
         const id = randomUUID();
@@ -464,24 +491,26 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
 
     async payStatement(householdId, statementId, input) {
       return withTransaction(pool, async (client) => {
-        // Validate statement
-        const stmtRows = await client.query<Row>(
-          `SELECT id, household_id, account_id, total_cents, paid_cents, status, closing_date, due_date, cycle_year_month
-             FROM statements WHERE id = $1 AND household_id = $2`,
-          [statementId, householdId],
-        );
-        if (stmtRows.rowCount === 0) throw domainErrors.notFound('Fatura');
-        const s = mapStatement(stmtRows.rows[0]!);
+        // Task 2.9 (SPEC §9.5): BEGIN → lock statement → read paid → compute
+        // remaining → validate → create payment → update paid/status → COMMIT.
+        // Two concurrent payments serialize on the row lock: the second sees
+        // the first's paid amount and is rejected when nothing remains.
+        const s = await lockStatementForUpdateTx(client, statementId, householdId);
 
-        // Validate source account
+        const remaining = s.totalCents - s.paidCents;
+        if (remaining <= 0) throw domainErrors.invalid('amountCents', 'fatura já está paga');
+        if (input.amountCents > remaining) throw domainErrors.invalid('amountCents', 'valor excede o restante da fatura');
+
+        // Lock the payer before the funds check so concurrent payments from
+        // the same account cannot jointly overdraw it.
         const fromRows = await client.query<Row>(
-          `SELECT id, kind, balance_cents FROM accounts WHERE id = $1 AND household_id = $2 AND status = 'active' AND deleted_at IS NULL`,
+          `SELECT id, kind, balance_cents FROM accounts WHERE id = $1 AND household_id = $2 AND status = 'active' AND deleted_at IS NULL FOR UPDATE`,
           [input.fromAccountId, householdId],
         );
         if (fromRows.rowCount === 0) throw domainErrors.notFound('Conta de origem');
         if (fromRows.rows[0]!['kind'] === 'credit_card') throw domainErrors.invalid('fromAccountId', 'não pode pagar fatura com cartão de crédito');
 
-        // Deduct from source (with balance check)
+        // D1: pre-debit validation under lock — never clamp, reject instead.
         const balance = Number(fromRows.rows[0]!['balance_cents']);
         if (balance < input.amountCents) throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
         await client.query(
@@ -489,7 +518,16 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
           [input.amountCents, input.fromAccountId, householdId],
         );
 
-        // Apply to statement
+        // D3-pattern: the payment creates its own expense transaction
+        // (previously missing — the debit had no ledger record).
+        const today = todayISO();
+        await client.query(
+          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id)
+           VALUES ($1, $2, 'expense', $3, $4, $5, $6)`,
+          [randomUUID(), householdId, `Pagamento fatura ${s.cycleYearMonth}`, input.amountCents, today, input.fromAccountId],
+        );
+
+        // Apply to statement (locked — no lost update on paid_cents).
         await client.query(
           `UPDATE statements SET paid_cents = paid_cents + $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
           [input.amountCents, statementId, householdId],
@@ -498,7 +536,7 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
         // Recalculate status
         const updated = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [statementId, householdId]);
         const updatedStmt = mapStatement(updated.rows[0]!);
-        const newStatus = computeStatus(updatedStmt, todayISO());
+        const newStatus = computeStatus(updatedStmt, today);
         if (newStatus !== updatedStmt.status) {
           await client.query(
             `UPDATE statements SET status = $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
@@ -517,7 +555,10 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
     },
 
     async updatePurchase(householdId, purchaseId, input) {
-      return withTransaction(pool, async (client) => {
+      // Task 2.7: the detail is read AFTER commit — getStatementDetail
+      // queries through the pool, which cannot see this transaction's
+      // uncommitted writes.
+      const stmtId = await withTransaction(pool, async (client): Promise<string> => {
         if (input.categoryId) {
           const catRows = await client.query<Row>(
             `SELECT id FROM categories WHERE id = $1 AND household_id = $2`,
@@ -526,15 +567,22 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
           if (catRows.rowCount === 0 || catRows.rows.length === 0) throw domainErrors.notFound('Categoria');
         }
 
+        // Task 2.7 (SPEC §9.2): lock the ledger row first, then the affected
+        // statement — one transaction, consistent order, no silent divergence.
         const txExists = await client.query<Row>(
-          `SELECT id, statement_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          `SELECT id, statement_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
           [purchaseId, householdId],
         );
         if (txExists.rowCount === 0 || txExists.rows.length === 0) throw domainErrors.notFound('Compra');
 
+        // SPEC §9.3: placeholders are derived from the key prefix — $1/$2
+        // are the row keys, so the first patched column binds at $3.
+        // (The previous `let idx = 1` base bound the first column to the
+        // household id: text fields silently took the household UUID and
+        // amount_cents raised a bigint-vs-uuid error.)
         const sets: string[] = [];
         const params: unknown[] = [];
-        let idx = 1;
+        let idx = 2;
         if (input.description !== undefined) { sets.push(`description = $${++idx}`); params.push(input.description); }
         if (input.amountCents !== undefined) { sets.push(`amount_cents = $${++idx}`); params.push(input.amountCents); }
         if (input.date !== undefined) { sets.push(`date = $${++idx}`); params.push(input.date); }
@@ -546,25 +594,33 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
           `UPDATE transactions SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $1 AND household_id = $2`,
           params,
         );
+
+        // D2: ledger = transactions → the card_purchases projection row
+        // linked by transaction_id carries the same fields in the same tx.
+        const projSets: string[] = [];
+        const projParams: unknown[] = [];
+        let pIdx = 2;
+        if (input.description !== undefined) { projSets.push(`description = $${++pIdx}`); projParams.push(input.description); }
+        if (input.amountCents !== undefined) { projSets.push(`amount_cents = $${++pIdx}`); projParams.push(input.amountCents); }
+        if (input.date !== undefined) { projSets.push(`date = $${++pIdx}`); projParams.push(input.date); }
+        if (input.categoryId !== undefined) { projSets.push(`category_id = $${++pIdx}`); projParams.push(input.categoryId); }
+        projParams.unshift(purchaseId, householdId);
+        await client.query(
+          `UPDATE card_purchases SET ${projSets.join(', ')}, updated_at = NOW() WHERE transaction_id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          projParams,
+        );
+
         const stmtId = txExists.rows[0]!['statement_id'] as string ?? null;
 
         if (stmtId) {
-          // Recalc statement total
-          const totalResult = await client.query<Row>(
-            `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`,
-            [stmtId, householdId],
-          );
-          const total = Number(totalResult.rows[0]!['total']);
-          const stmtForStatus = mapStatement((await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [stmtId, householdId])).rows[0]!);
-          const newStatus = computeStatus({ ...stmtForStatus, totalCents: total }, todayISO());
-          await client.query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`, [total, newStatus, stmtId, householdId]);
-
-          // Fetch and return updated detail
-          return (await this.getStatementDetail(householdId, stmtId))!;
+          // Task 2.8: recompute under the statement row lock.
+          await recalcStatementLockedTx(client, stmtId, householdId);
+          return stmtId;
         }
 
         throw domainErrors.notFound('Compra');
       });
+      return (await this.getStatementDetail(householdId, stmtId))!;
     },
 
     async cancelPurchase(householdId, purchaseId) {
@@ -585,22 +641,17 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
         }
         const stmtId = txExists.rows[0]!['statement_id'] as string | null;
         if (!stmtId) throw domainErrors.notFound('Compra');
-        const stmtRow = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [stmtId, householdId]);
-        if ((stmtRow.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
-        const stmt = mapStatement(stmtRow.rows[0]!);
-        if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
+        // Task 2.8: status gate on the locked row (no TOCTOU between the
+        // open-check and the total recompute).
+        const locked = await lockStatementForUpdateTx(client, stmtId, householdId);
+        if (locked.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
 
         await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
         // Se existir card_purchases vinculado, também soft-deletar
         await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE transaction_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]).catch(() => {});
 
-        const totalResult = await client.query<Row>(
-          `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`,
-          [stmtId, householdId],
-        );
-        const total = Number(totalResult.rows[0]!['total']);
-        const newStatus = computeStatus({ ...stmt, totalCents: total }, todayISO());
-        await client.query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`, [total, newStatus, stmtId, householdId]);
+        // Task 2.8: recompute under the statement row lock.
+        await recalcStatementLockedTx(client, stmtId, householdId);
       });
     },
 
@@ -616,9 +667,10 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
 
     async updateCard(householdId, id, input) {
       return withTransaction(pool, async (client) => {
+        // SPEC §9.3: $1/$2 are the row keys — first column binds at $3.
         const sets: string[] = [];
         const params: unknown[] = [];
-        let idx = 1;
+        let idx = 2;
         if (input.name !== undefined) { sets.push(`name = $${++idx}`); params.push(input.name); }
         if (input.creditLimitCents !== undefined) { sets.push(`credit_limit_cents = $${++idx}`); params.push(input.creditLimitCents); }
         if (input.closingDay !== undefined) { sets.push(`closing_day = $${++idx}`); params.push(input.closingDay); }

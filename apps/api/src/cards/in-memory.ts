@@ -176,10 +176,11 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
       if (!s) return null;
 
       // Helper: map a purchase source to StatementPurchase[]
-      const toPurchases = (items: { id: string; description: string; amountCents: number; date: string; categoryName?: string; installmentsTotal?: number; installmentNumber?: number; isRecurring?: boolean }[]): StatementPurchase[] =>
+      const toPurchases = (items: { id: string; description: string; amountCents: number; date: string; categoryId?: string; categoryName?: string; installmentsTotal?: number; installmentNumber?: number; isRecurring?: boolean }[]): StatementPurchase[] =>
         items.map(p => opt<StatementPurchase>(
           { id: p.id, description: p.description, amountCents: p.amountCents, date: p.date, isRecurring: p.isRecurring ?? false },
           {
+            categoryId: p.categoryId,
             categoryName: p.categoryName,
             ...(p.installmentNumber != null ? { installmentNumber: p.installmentNumber } : {}),
             ...(p.installmentsTotal != null ? { installmentsTotal: p.installmentsTotal } : {}),
@@ -203,6 +204,7 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
           return opt<StatementPurchase>(
             { id: t.id, description: t.description, amountCents: t.amountCents, date: t.date, isRecurring: false },
             {
+              categoryId: t.categoryId,
               categoryName: catName as string | undefined,
               ...(instNum != null ? { installmentNumber: instNum as number } : {}),
               ...(instTotal != null ? { installmentsTotal: instTotal as number } : {}),
@@ -235,6 +237,7 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
           return opt<StatementPurchase>(
             { id: t.id, description: t.description, amountCents: t.amountCents, date: t.date, isRecurring: false },
             {
+              categoryId: t.categoryId,
               categoryName: catName as string | undefined,
               ...(instNum != null ? { installmentNumber: instNum as number } : {}),
               ...(instTotal != null ? { installmentsTotal: instTotal as number } : {}),
@@ -348,10 +351,12 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
 
 
     async createRecurringPurchase(householdId, input) {
+      // Task 2.18: same validation as the normal purchase path — card must
+      // exist, be active and be a credit card; category must be an active
+      // expense-kind category.
       findAccount(input.accountId, householdId);
       if (input.categoryId) {
-        const cat = state.categories.find(c => c.id === input.categoryId && c.householdId === householdId);
-        if (!cat) throw domainErrors.notFound('Categoria');
+        resolveCardCategory(householdId, input.categoryId);
       }
       const r = opt<RecurringPurchase>(
         {
@@ -370,6 +375,13 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
       const s = statements.find(x => x.id === statementId && x.householdId === householdId);
       if (!s) throw domainErrors.notFound('Fatura');
 
+      // Task 2.9: remaining is computed BEFORE any mutation so overpay and
+      // double-pay are rejected. (Single-threaded in-memory needs no row
+      // lock; the Postgres stores serialize this under SELECT ... FOR UPDATE.)
+      const remaining = s.totalCents - s.paidCents;
+      if (remaining <= 0) throw domainErrors.invalid('amountCents', 'fatura já está paga');
+      if (input.amountCents > remaining) throw domainErrors.invalid('amountCents', 'valor excede o restante da fatura');
+
       // Validate source account is not a credit card
       const from = state.accounts.find(a => a.id === input.fromAccountId && a.householdId === householdId);
       if (!from) throw domainErrors.notFound('Conta de origem');
@@ -378,6 +390,14 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
       // Deduct from source account
       if (from.balanceCents < input.amountCents) throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
       from.balanceCents -= input.amountCents;
+
+      // D3-pattern: the payment creates its own expense record (parity with
+      // the Postgres stores, which INSERT `Pagamento fatura {cycle}`).
+      state.transactions.push({
+        id: randomUUID(), householdId, kind: 'expense',
+        description: `Pagamento fatura ${s.cycleYearMonth}`,
+        amountCents: input.amountCents, date: todayISO(), accountId: from.id,
+      });
 
       // Apply to statement
       s.paidCents += input.amountCents;
@@ -417,8 +437,7 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
 
     async updatePurchase(householdId, purchaseId, input) {
       if (input.categoryId) {
-        const cat = state.categories.find(c => c.id === input.categoryId && c.householdId === householdId);
-        if (!cat) throw domainErrors.notFound('Categoria');
+        resolveCardCategory(householdId, input.categoryId);
       }
       // In-memory: transactions store purchases linked by statement_id
       const tx = state.transactions.find(t => t.id === purchaseId && t.householdId === householdId && !state.deletedTransactions.has(t.id));
@@ -427,6 +446,16 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
         if (input.amountCents !== undefined) tx.amountCents = input.amountCents;
         if (input.date !== undefined) tx.date = input.date;
         if (input.categoryId !== undefined) tx.categoryId = input.categoryId;
+
+        // Task 2.7 (D2): ledger = transactions → keep the card_purchases
+        // projection row in sync inside the same unit of work.
+        const linked = cardPurchases.filter(cp => cp.householdId === householdId && (cp.transactionId === purchaseId || cp.id === purchaseId));
+        for (const cp of linked) {
+          if (input.description !== undefined) cp.description = input.description;
+          if (input.amountCents !== undefined) cp.amountCents = input.amountCents;
+          if (input.date !== undefined) cp.date = input.date;
+          if (input.categoryId !== undefined) cp.categoryId = input.categoryId;
+        }
 
         const stmt = statements.find(s => s.householdId === householdId && s.id === (tx as any).statementId);
         if (stmt) {
