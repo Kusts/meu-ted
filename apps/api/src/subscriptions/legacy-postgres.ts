@@ -120,22 +120,25 @@ export const createLegacyPostgresSubscriptionStore = (pool: Pool): SubscriptionS
       );
       if (existing.length === 0) throw domainErrors.notFound('Assinatura');
 
+      // Task 2.19 (SPEC §9.11): placeholders derived from params.length —
+      // the fixed $3..$7 below misbound every partial PATCH (same bug class
+      // as cards before Task 2.5/2.6). Keys are $1/$2; each provided field
+      // takes the next index so any single field or combination binds.
       const sets: string[] = [];
-      const params: unknown[] = [];
-      if (input.name !== undefined) { sets.push('name = $3'); params.push(input.name); }
-      if (input.amountCents !== undefined) { sets.push('amount_cents = $4'); params.push(input.amountCents); }
-      if (input.cycle !== undefined) { sets.push('cycle = $5'); params.push(input.cycle); }
-      if (input.day !== undefined) { sets.push('day = $6'); params.push(input.day); }
-      if (input.paymentMethod !== undefined) { sets.push('payment_method = $7'); params.push(input.paymentMethod); }
+      const params: unknown[] = [id, householdId];
+      if (input.name !== undefined) { sets.push(`name = $${params.length + 1}`); params.push(input.name); }
+      if (input.amountCents !== undefined) { sets.push(`amount_cents = $${params.length + 1}`); params.push(input.amountCents); }
+      if (input.cycle !== undefined) { sets.push(`cycle = $${params.length + 1}`); params.push(input.cycle); }
+      if (input.day !== undefined) { sets.push(`day = $${params.length + 1}`); params.push(input.day); }
+      if (input.paymentMethod !== undefined) { sets.push(`payment_method = $${params.length + 1}`); params.push(input.paymentMethod); }
       if (sets.length === 0) throw domainErrors.invalid('body', 'nenhum campo para atualizar');
 
-      const setClause = [...new Set(sets)].join(', ');
       const res = await query<Row>(
         `UPDATE subscriptions
-            SET ${setClause}, updated_at = NOW()
+            SET ${sets.join(', ')}, updated_at = NOW()
           WHERE id = $1 AND household_id = $2
           RETURNING id, household_id, name, amount_cents, cycle, day, payment_method, status, created_at, cancelled_at`,
-        [id, householdId, ...params],
+        params,
       );
       return mapSubscription(res[0]!);
     },

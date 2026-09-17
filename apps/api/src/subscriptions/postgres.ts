@@ -109,7 +109,10 @@ export const createPostgresSubscriptionStore = (pool: Pool): SubscriptionStore =
 
         const sets: string[] = [];
         const params: unknown[] = [];
-        let idx = 1;
+        // Keys id/householdId are unshifted as $1/$2 below, so the first
+        // field placeholder must be $3 (was: idx = 1 → $2, misbinding
+        // every PATCH and supplying one param too many).
+        let idx = 2;
         if (input.name !== undefined) { sets.push(`name = $${++idx}`); params.push(input.name); }
         if (input.amountCents !== undefined) { sets.push(`amount_cents = $${++idx}`); params.push(input.amountCents); }
         if (input.cycle !== undefined) { sets.push(`cycle = $${++idx}`); params.push(input.cycle); }
