@@ -175,7 +175,7 @@ describe('T0.4.1 auth.request.legacy_bearer_used (V4 T2.2)', () => {
       writes,
       tokenStore: {
         async resolve(token) {
-          if (token === 'dev-1') return { deviceId: 'd1', householdId: WS };
+          if (token === 'dev-1') return { deviceId: 'd1', householdId: WS, userId: 'user-1' };
           throw Object.assign(new Error('invalid'), { statusCode: 401, code: 'auth.invalid_token' });
         },
         async register(deviceName, householdId) {

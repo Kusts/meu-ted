@@ -14,6 +14,7 @@ describe('postgres device token workspace scope (T2.4 hardened contract)', () =>
     await expect(store.resolve('some-presented-header', HOUSEHOLD_ID)).resolves.toEqual({
       deviceId: 'device-1',
       householdId: HOUSEHOLD_ID,
+      userId: null,
     });
 
     expect(query).toHaveBeenCalledWith(

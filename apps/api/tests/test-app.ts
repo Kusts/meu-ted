@@ -42,16 +42,18 @@ export type TestApp = {
 };
 
 const createTestTokenStore = (): DeviceTokenStore => {
-  const tokens = new Map<string, { deviceId: string; householdId: string; expiresAt: number | null }>();
+  const tokens = new Map<string, { deviceId: string; householdId: string; expiresAt: number | null; userId: string | null }>();
   tokens.set("dev-token-1", {
     deviceId: "dev-device-1",
     householdId: HOUSEHOLD_A,
     expiresAt: null,
+    userId: null,
   });
   tokens.set("dev-token-2", {
     deviceId: "dev-device-2",
     householdId: HOUSEHOLD_B,
     expiresAt: null,
+    userId: null,
   });
   return {
     async resolve(token) {
@@ -73,18 +75,18 @@ const createTestTokenStore = (): DeviceTokenStore => {
           code: "auth.invalid_token",
         });
       }
-      return ctx;
+      return { deviceId: ctx.deviceId, householdId: ctx.householdId, userId: ctx.userId };
     },
-    async register(deviceName, householdId) {
+    async register(deviceName, householdId, opts?: { userId?: string }) {
       const tok = crypto.randomUUID();
       const devId = crypto.randomUUID();
-      tokens.set(tok, { deviceId: devId, householdId, expiresAt: null });
+      tokens.set(tok, { deviceId: devId, householdId, expiresAt: null, userId: opts?.userId ?? null });
       return { token: tok, deviceId: devId, householdId };
     },
     async revoke(token) {
       tokens.delete(token);
     },
-    async rotate(currentToken, deviceName, householdId) {
+    async rotate(currentToken, deviceName, householdId, opts?: { userId?: string }) {
       if (typeof currentToken === "string" && currentToken.trim() !== "") {
         const prev = tokens.get(currentToken);
         if (!prev || (prev.expiresAt !== null && prev.expiresAt <= Date.now())) {
@@ -103,7 +105,7 @@ const createTestTokenStore = (): DeviceTokenStore => {
       }
       const tok = crypto.randomUUID();
       const devId = crypto.randomUUID();
-      tokens.set(tok, { deviceId: devId, householdId, expiresAt: null });
+      tokens.set(tok, { deviceId: devId, householdId, expiresAt: null, userId: opts?.userId ?? null });
       if (typeof currentToken === "string" && currentToken.trim() !== "") {
         const prev = tokens.get(currentToken);
         if (prev) {

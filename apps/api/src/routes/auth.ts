@@ -37,7 +37,7 @@ type AuthRouteOpts = {
 const resolveSessionDeviceContext = async (
   req: FastifyRequest,
   opts: AuthRouteOpts,
-): Promise<{ ctx?: { householdId: string; userId: string }; forbidden?: boolean }> => {
+): Promise<{ ctx?: { householdId: string; userId: string }; forbidden?: boolean; noWorkspace?: boolean }> => {
   if (!opts.auth) return {};
   const headers = new Headers();
   for (const [key, val] of Object.entries(req.headers)) {
@@ -65,6 +65,9 @@ const resolveSessionDeviceContext = async (
       if (active) sessionHouseholdId = active.id;
     }
     if (!sessionHouseholdId) {
+      if (process.env.NODE_ENV === 'production') {
+        return { noWorkspace: true };
+      }
       const { DEMO_HOUSEHOLD_ID } = await import('../read-models/demo-data.js');
       sessionHouseholdId = opts.defaultHouseholdId ?? DEMO_HOUSEHOLD_ID;
     }
@@ -98,6 +101,9 @@ export const registerAuthRoutes = (
     const session = await resolveSessionDeviceContext(req, opts);
     if (session.forbidden) {
       return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Acesso ao workspace proibido.' });
+    }
+    if (session.noWorkspace) {
+      return reply.code(403).send({ code: 'auth.workspace_required', message: 'Usuário autenticado não possui workspace para registro do dispositivo.' });
     }
     if (session.ctx) {
       isAuthenticated = true;
@@ -184,6 +190,9 @@ export const registerAuthRoutes = (
       const session = await resolveSessionDeviceContext(req, opts);
       if (session.forbidden) {
         return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Acesso ao workspace proibido.' });
+      }
+      if (session.noWorkspace) {
+        return reply.code(403).send({ code: 'auth.workspace_required', message: 'Usuário autenticado não possui workspace para registro do dispositivo.' });
       }
       if (!session.ctx) {
         return reply.code(401).send({ code: 'auth.missing_token', message: 'Authentication required' });

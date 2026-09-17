@@ -3,7 +3,7 @@ import { DEMO_HOUSEHOLD_ID } from '../read-models/demo-data.js';
 import { withTransaction } from '../db/pool.js';
 import type { Pool } from 'pg';
 
-export type DeviceContext = { deviceId: string; householdId: string };
+export type DeviceContext = { deviceId: string; householdId: string; userId?: string | null };
 
 export type RegisterDeviceTokenOptions = { userId?: string };
 
@@ -113,7 +113,7 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
       throw new AuthError('invalid or revoked device token', 401, 'auth.invalid_token');
     }
     record.lastUsedAt = Date.now();
-    return { deviceId: record.deviceId, householdId: record.householdId };
+    return { deviceId: record.deviceId, householdId: record.householdId, userId: record.userId };
   };
 
   const register = async (
@@ -237,20 +237,20 @@ export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => 
 
       // Hashed path (V053 rows): the DB never sees the raw secret.
       const hashed = await pool.query<DeviceTokenRow>(
-        `SELECT device_id, household_id, expires_at FROM device_tokens WHERE token_hash = $1 AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL`,
+        `SELECT device_id, household_id, expires_at, user_id FROM device_tokens WHERE token_hash = $1 AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL`,
         [tokenHash, scopeParam],
       );
       if ((hashed.rowCount ?? 0) > 0) {
         const row = hashed.rows[0]!;
         throwIfExpired(row);
         await pool.query(`UPDATE device_tokens SET last_used_at = NOW() WHERE token_hash = $1 AND (household_id = $2 OR $2 IS NULL)`, [tokenHash, scopeParam]);
-        return { deviceId: row.device_id, householdId: row.household_id };
+        return { deviceId: row.device_id, householdId: row.household_id, userId: row.user_id ?? null };
       }
 
       // Legacy path (coexistence window C6/R4): plaintext rows backfilled by
       // V053 with legacy = TRUE and a 90-day expires_at. Expired rows reject.
       const legacy = await pool.query<DeviceTokenRow>(
-        `SELECT device_id, household_id, expires_at FROM device_tokens WHERE token = $1 AND legacy = TRUE AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL`,
+        `SELECT device_id, household_id, expires_at, user_id FROM device_tokens WHERE token = $1 AND legacy = TRUE AND (household_id = $2 OR $2 IS NULL) AND revoked_at IS NULL`,
         [token, scopeParam],
       );
       if ((legacy.rowCount ?? 0) > 0) {
@@ -260,7 +260,7 @@ export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => 
           `UPDATE device_tokens SET last_used_at = NOW() WHERE token = $1 AND legacy = TRUE AND (household_id = $2 OR $2 IS NULL)`,
           [token, scopeParam],
         );
-        return { deviceId: row.device_id, householdId: row.household_id };
+        return { deviceId: row.device_id, householdId: row.household_id, userId: row.user_id ?? null };
       }
 
       throw invalidToken();

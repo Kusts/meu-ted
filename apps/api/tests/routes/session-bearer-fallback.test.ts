@@ -137,7 +137,7 @@ describe('T2.3 B3.7 session bearer fallback gate (API)', () => {
       writes,
       tokenStore: {
         async resolve(token) {
-          if (token === 'dev-7') return { deviceId: 'd7', householdId: WS };
+          if (token === 'dev-7') return { deviceId: 'd7', householdId: WS, userId: 'user-1' };
           throw Object.assign(new Error('invalid'), { statusCode: 401, code: 'auth.invalid_token' });
         },
         async register(deviceName, householdId) {

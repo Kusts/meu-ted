@@ -337,20 +337,31 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
         const deviceToken = Array.isArray(deviceHeader) ? deviceHeader[0] : deviceHeader;
         if (deviceToken) {
           try {
-            const deviceContext = await resolveToken(deviceToken);
-            if (deviceContext.householdId === workspaceId) {
-              request.authenticatedContext = {
-                householdId: deviceContext.householdId,
-                actorId: deviceContext.deviceId,
-                authUserId: deviceContext.deviceId,
-                actorType: 'device',
-                deviceId: deviceContext.deviceId,
-                role: 'owner',
-              };
-              return;
+            const { resolveAuthorizedDevice } = await import("../auth/device-access.js");
+            const authorized = await resolveAuthorizedDevice(
+              {
+                tokenStore,
+                workspaceAccess,
+                ...(deps.workspaceStore ? { workspaceStore: deps.workspaceStore } : {}),
+              },
+              deviceToken,
+              workspaceId,
+            );
+            request.workspaceAccess = authorized.access;
+            request.authenticatedContext = {
+              householdId: authorized.workspaceId,
+              actorId: authorized.deviceId,
+              authUserId: authorized.userId,
+              actorType: 'device',
+              deviceId: authorized.deviceId,
+              role: authorized.access.role,
+            };
+            return;
+          } catch (e) {
+            const err = e as { statusCode?: number; code?: string; message?: string };
+            if (err.statusCode === 403) {
+              return reply.code(403).send({ code: err.code ?? 'auth.workspace_forbidden', message: err.message ?? 'Acesso ao workspace proibido.' });
             }
-            return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Acesso ao workspace proibido.' });
-          } catch {
             return reply.code(401).send({ code: 'auth.session_required', message: 'Token de autenticação inválido ou expirado.' });
           }
         }
