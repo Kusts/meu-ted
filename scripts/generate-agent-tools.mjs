@@ -148,6 +148,33 @@ function extractIntentionId(params: ToolParams, ctx?: unknown): string | undefin
   return undefined;
 }
 
+/**
+ * Per-invocation request credential carried in the tool \`ctx\` (5th
+ * \`execute\` argument) by first-party callers (evidence reads, model tools).
+ * Presence of either key opts the call OUT of the legacy module-global
+ * fallback in \`requestPiApiJson\`: an explicit \`delegatedToken\` key — even
+ * with an \`undefined\` value (unauthenticated/fail-closed read) — is
+ * authoritative, so concurrent turns from different workspaces can never
+ * observe each other's token. Callers that omit \`ctx\` keep the legacy
+ * global-fallback behavior unchanged.
+ */
+export type ToolRequestAuth = { delegatedToken?: string; apiOrigin?: string };
+
+function extractRequestAuth(ctx?: unknown): { hasAuth: boolean; delegatedToken?: string; apiOrigin?: string } {
+  if (!ctx || typeof ctx !== 'object') return { hasAuth: false };
+  const record = ctx as Record<string, unknown>;
+  if (!('delegatedToken' in record) && !('apiOrigin' in record)) return { hasAuth: false };
+  const delegatedToken = typeof record.delegatedToken === 'string' && record.delegatedToken ? record.delegatedToken : undefined;
+  const apiOrigin = typeof record.apiOrigin === 'string' && record.apiOrigin ? record.apiOrigin : undefined;
+  return {
+    hasAuth: true,
+    // Always present (possibly undefined): suppresses the global fallback
+    // in requestPiApiJson by own-property presence.
+    delegatedToken,
+    ...(apiOrigin !== undefined ? { apiOrigin } : {}),
+  };
+}
+
 function createTool(spec: ToolSpec) {
   const properties = {
 ${specs.map((spec) => `  ${JSON.stringify(spec.name)}: Type.Object({\n${parameterEntries(spec)}\n  }),`).join('\n')}
@@ -175,7 +202,17 @@ ${specs.map((spec) => `  ${JSON.stringify(spec.name)}: Type.Object({\n${paramete
         .map((parameter) => [parameter.name.replace(/[A-Z]/g, (letter) => \`-\${letter.toLowerCase()}\`), params[parameter.name] as string | number]));
       const intentionId = extractIntentionId(params, ctx);
       const idempotencyKey = spec.idempotency ? (intentionId ?? String(params.idempotencyKey ?? toolCallId)) : undefined;
-      const response = await requestPiApiJson<JsonObject>(spec.method, resolvedPath, { query, body, headers, idempotencyKey });
+      const auth = extractRequestAuth(ctx);
+      const response = await requestPiApiJson<JsonObject>(spec.method, resolvedPath, {
+        query,
+        body,
+        headers,
+        idempotencyKey,
+        // Per-invocation credential: present keys are authoritative and
+        // suppress the legacy global fallback (see extractRequestAuth).
+        ...(auth.hasAuth ? { delegatedToken: auth.delegatedToken } : {}),
+        ...(auth.hasAuth && auth.apiOrigin !== undefined ? { apiOrigin: auth.apiOrigin } : {}),
+      });
       const projected = project(spec, response);
       if (spec.shadow) void runShadowRead(spec.name, params as unknown as Parameters<typeof runShadowRead>[1], projected);
       onUpdate?.({ content: [{ type: "text", text: \`\${spec.label}...\` }] });

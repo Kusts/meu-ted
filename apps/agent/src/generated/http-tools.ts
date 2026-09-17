@@ -314,7 +314,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 1000000000000
         }
       }
     ]
@@ -696,7 +697,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -808,7 +810,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -1002,15 +1005,6 @@ const specs = [
         }
       },
       {
-        "name": "createTransaction",
-        "in": "body",
-        "required": false,
-        "context": false,
-        "schema": {
-          "type": "boolean"
-        }
-      },
-      {
         "name": "prepayMonths",
         "in": "body",
         "required": false,
@@ -1130,7 +1124,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -1288,7 +1283,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -1385,7 +1381,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -1608,7 +1605,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -1713,7 +1711,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -1844,7 +1843,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -1973,7 +1973,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -2319,7 +2320,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -2511,7 +2513,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       }
     ]
@@ -2737,7 +2740,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -2820,7 +2824,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -2944,7 +2949,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 100
+          "minimum": 100,
+          "maximum": 1000000000000
         }
       },
       {
@@ -3046,7 +3052,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -3196,7 +3203,8 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000000000000
         }
       },
       {
@@ -3494,7 +3502,7 @@ function createTool(spec: ToolSpec) {
     "idempotencyKey": Type.Optional(Type.String({})),
     "name": Type.String({"minLength":1,"maxLength":120}),
     "kind": Type.Union([Type.Literal("bank"), Type.Literal("cash")]),
-    "initialBalanceCents": Type.Integer({"minimum":0}),
+    "initialBalanceCents": Type.Integer({"minimum":0,"maximum":1000000000000}),
   }),
   "list_categories": Type.Object({
     "householdId": Type.String({"format":"uuid"}),
@@ -3532,7 +3540,7 @@ function createTool(spec: ToolSpec) {
     "householdId": Type.String({"format":"uuid"}),
     "idempotencyKey": Type.Optional(Type.String({})),
     "description": Type.String({"minLength":1,"maxLength":240}),
-    "amountCents": Type.Integer({"minimum":1}),
+    "amountCents": Type.Integer({"minimum":1,"maximum":1000000000000}),
     "date": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "accountId": Type.String({"format":"uuid"}),
     "categoryId": Type.String({"format":"uuid"}),
@@ -3544,7 +3552,7 @@ function createTool(spec: ToolSpec) {
     "idempotencyKey": Type.Optional(Type.String({})),
     "accountId": Type.String({"format":"uuid"}),
     "description": Type.String({"minLength":1,"maxLength":240}),
-    "amountCents": Type.Integer({"minimum":1}),
+    "amountCents": Type.Integer({"minimum":1,"maximum":1000000000000}),
     "dueDate": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "type": Type.Optional(Type.Union([Type.Literal("one_time"), Type.Literal("recurring")])),
     "frequency": Type.Optional(Type.Union([Type.Literal("monthly"), Type.Literal("quarterly"), Type.Literal("yearly")])),
@@ -3564,7 +3572,6 @@ function createTool(spec: ToolSpec) {
     "householdId": Type.Optional(Type.String({})),
     "payableId": Type.String({"format":"uuid"}),
     "paidDate": Type.Optional(Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"})),
-    "createTransaction": Type.Optional(Type.Boolean({})),
     "prepayMonths": Type.Optional(Type.Integer({"minimum":1,"maximum":24})),
   }),
   "cancel_account_payable": Type.Object({
@@ -3579,7 +3586,7 @@ function createTool(spec: ToolSpec) {
     "householdId": Type.Optional(Type.String({})),
     "idempotencyKey": Type.Optional(Type.String({})),
     "description": Type.String({"minLength":1,"maxLength":240}),
-    "amountCents": Type.Integer({"minimum":1}),
+    "amountCents": Type.Integer({"minimum":1,"maximum":1000000000000}),
     "date": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "accountId": Type.String({"format":"uuid"}),
     "categoryId": Type.String({"format":"uuid"}),
@@ -3596,7 +3603,7 @@ function createTool(spec: ToolSpec) {
     "idempotencyKey": Type.Optional(Type.String({})),
     "accountId": Type.String({"format":"uuid"}),
     "description": Type.String({"minLength":1,"maxLength":240}),
-    "amountCents": Type.Integer({"minimum":1}),
+    "amountCents": Type.Integer({"minimum":1,"maximum":1000000000000}),
     "frequency": Type.Union([Type.Literal("monthly"), Type.Literal("quarterly"), Type.Literal("yearly")]),
     "startDate": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "endDate": Type.Optional(Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"})),
@@ -3606,7 +3613,7 @@ function createTool(spec: ToolSpec) {
     "householdId": Type.Optional(Type.String({})),
     "idempotencyKey": Type.Optional(Type.String({})),
     "description": Type.String({"minLength":1,"maxLength":240}),
-    "amountCents": Type.Integer({"minimum":1}),
+    "amountCents": Type.Integer({"minimum":1,"maximum":1000000000000}),
     "date": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "fromAccountId": Type.String({"format":"uuid"}),
     "toAccountId": Type.String({"format":"uuid"}),
@@ -3632,7 +3639,7 @@ function createTool(spec: ToolSpec) {
     "transactionId": Type.String({"format":"uuid"}),
     "description": Type.Optional(Type.String({"minLength":1,"maxLength":240})),
     "date": Type.Optional(Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"})),
-    "amountCents": Type.Optional(Type.Integer({"minimum":1})),
+    "amountCents": Type.Optional(Type.Integer({"minimum":1,"maximum":1000000000000})),
     "accountId": Type.Optional(Type.String({"format":"uuid"})),
     "categoryId": Type.Optional(Type.String({"format":"uuid"})),
     "subcategoryId": Type.Optional(Type.String({"format":"uuid"})),
@@ -3643,7 +3650,7 @@ function createTool(spec: ToolSpec) {
     "idempotencyKey": Type.Optional(Type.String({})),
     "name": Type.String({"minLength":1}),
     "goalType": Type.Union([Type.Literal("savings"), Type.Literal("purchase"), Type.Literal("debt_payoff"), Type.Literal("emergency_fund")]),
-    "targetAmountCents": Type.Integer({"minimum":1}),
+    "targetAmountCents": Type.Integer({"minimum":1,"maximum":1000000000000}),
     "startDate": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "targetDate": Type.Optional(Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"})),
     "description": Type.Optional(Type.String({})),
@@ -3658,7 +3665,7 @@ function createTool(spec: ToolSpec) {
     "householdId": Type.Optional(Type.String({})),
     "idempotencyKey": Type.Optional(Type.String({})),
     "goalId": Type.String({"format":"uuid"}),
-    "amountCents": Type.Integer({"minimum":1}),
+    "amountCents": Type.Integer({"minimum":1,"maximum":1000000000000}),
     "contributionDate": Type.Optional(Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"})),
     "source": Type.Optional(Type.String({})),
     "notes": Type.Optional(Type.String({})),
@@ -3673,7 +3680,7 @@ function createTool(spec: ToolSpec) {
     "idempotencyKey": Type.Optional(Type.String({})),
     "categoryId": Type.String({"format":"uuid"}),
     "name": Type.String({"minLength":1}),
-    "amountCents": Type.Integer({"minimum":1}),
+    "amountCents": Type.Integer({"minimum":1,"maximum":1000000000000}),
     "period": Type.Union([Type.Literal("monthly"), Type.Literal("quarterly"), Type.Literal("yearly")]),
     "startDate": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "alertThreshold": Type.Optional(Type.Integer({"minimum":1,"maximum":100})),
@@ -3711,7 +3718,7 @@ function createTool(spec: ToolSpec) {
     "accountId": Type.String({"format":"uuid"}),
     "name": Type.String({"minLength":1}),
     "description": Type.String({"minLength":1,"maxLength":240}),
-    "amountCents": Type.Integer({"minimum":1}),
+    "amountCents": Type.Integer({"minimum":1,"maximum":1000000000000}),
     "frequency": Type.Union([Type.Literal("monthly"), Type.Literal("quarterly"), Type.Literal("yearly")]),
     "dayOfMonth": Type.Integer({"minimum":1,"maximum":31}),
     "reminderDaysBefore": Type.Optional(Type.Integer({"minimum":0,"maximum":30})),
@@ -3733,7 +3740,7 @@ function createTool(spec: ToolSpec) {
     "templateId": Type.Optional(Type.String({"format":"uuid"})),
     "templateName": Type.Optional(Type.String({})),
     "dueDate": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
-    "amountOverrideCents": Type.Optional(Type.Integer({"minimum":1})),
+    "amountOverrideCents": Type.Optional(Type.Integer({"minimum":1,"maximum":1000000000000})),
   }),
   "get_balance": Type.Object({
     "householdId": Type.String({}),
@@ -3759,7 +3766,7 @@ function createTool(spec: ToolSpec) {
     "householdId": Type.Optional(Type.String({})),
     "idempotencyKey": Type.Optional(Type.String({})),
     "name": Type.String({"minLength":1,"maxLength":120}),
-    "creditLimitCents": Type.Integer({"minimum":1}),
+    "creditLimitCents": Type.Integer({"minimum":1,"maximum":1000000000000}),
     "closingDay": Type.Integer({"minimum":1,"maximum":31}),
     "dueDay": Type.Integer({"minimum":1,"maximum":31}),
   }),
@@ -3768,7 +3775,7 @@ function createTool(spec: ToolSpec) {
     "idempotencyKey": Type.Optional(Type.String({})),
     "accountId": Type.String({"format":"uuid"}),
     "description": Type.String({"minLength":1,"maxLength":240}),
-    "amountCents": Type.Integer({"minimum":1}),
+    "amountCents": Type.Integer({"minimum":1,"maximum":1000000000000}),
     "date": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "categoryId": Type.Optional(Type.String({"format":"uuid"})),
     "subcategoryId": Type.Optional(Type.String({"format":"uuid"})),
@@ -3781,7 +3788,7 @@ function createTool(spec: ToolSpec) {
     "idempotencyKey": Type.Optional(Type.String({})),
     "accountId": Type.String({"format":"uuid"}),
     "description": Type.String({"minLength":1,"maxLength":240}),
-    "totalAmountCents": Type.Integer({"minimum":100}),
+    "totalAmountCents": Type.Integer({"minimum":100,"maximum":1000000000000}),
     "purchaseDate": Type.String({"format":"date","pattern":"^\\d{4}-\\d{2}-\\d{2}$"}),
     "installmentsTotal": Type.Integer({"minimum":1,"maximum":48}),
     "categoryId": Type.Optional(Type.String({"format":"uuid"})),
@@ -3792,7 +3799,7 @@ function createTool(spec: ToolSpec) {
     "householdId": Type.Optional(Type.String({})),
     "idempotencyKey": Type.Optional(Type.String({})),
     "statementId": Type.String({"format":"uuid"}),
-    "amountCents": Type.Integer({"minimum":1}),
+    "amountCents": Type.Integer({"minimum":1,"maximum":1000000000000}),
     "fromAccountId": Type.String({"format":"uuid"}),
   }),
   "list_statements": Type.Object({
@@ -3809,7 +3816,7 @@ function createTool(spec: ToolSpec) {
     "householdId": Type.Optional(Type.String({})),
     "idempotencyKey": Type.Optional(Type.String({})),
     "budgetId": Type.String({"format":"uuid"}),
-    "amountCents": Type.Optional(Type.Integer({"minimum":1})),
+    "amountCents": Type.Optional(Type.Integer({"minimum":1,"maximum":1000000000000})),
     "alertThreshold": Type.Optional(Type.Integer({"minimum":1,"maximum":100})),
   }),
   "undo_last_action": Type.Object({
