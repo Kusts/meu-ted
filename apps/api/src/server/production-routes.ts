@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
-import { createPostgresDeviceTokenStore } from "../auth/device-token.js";
+import { createPostgresDeviceTokenStore, type DeviceTokenStore } from "../auth/device-token.js";
 import type { InviteDelivery, InviteService } from "../auth/invites.js";
 import { createPostgresBudgetStore } from "../budgets/postgres.js";
 import { createLegacyPostgresCardStore } from "../cards/legacy-postgres.js";
@@ -12,6 +12,7 @@ import { createPostgresPayableStore } from "../payables/postgres.js";
 import { createPostgresProfileStore } from "../profile/postgres.js";
 import { createWebPushDelivery } from "../push/delivery.js";
 import { createPostgresPushSubscriptionStore } from "../push/postgres.js";
+import type { PushSubscriptionStore } from "../push/store.js";
 import type { VapidConfig } from "../push/vapid.js";
 import { createLegacyPostgresReadModelStore } from "../read-models/legacy-postgres-store.js";
 import { createPostgresReadModelStore } from "../read-models/postgres-store.js";
@@ -125,7 +126,19 @@ export const registerPostgresProductionRoutes = (
   const vapidPublicKey = vapid?.publicKey;
 
   const workspaceAccess = betterAuth ? createPostgresWorkspaceAccessStore(pool) : undefined;
-  const workspaceStore = betterAuth ? createPostgresWorkspaceStore(pool) : undefined;
+  const revocationTargets: { tokens?: DeviceTokenStore; push?: PushSubscriptionStore } = {};
+  revocationTargets.push = pushStore;
+  const workspaceStore = betterAuth
+    ? createPostgresWorkspaceStore(pool, {
+        onMemberRevoked: async ({ userId, householdId }) => {
+          if (!revocationTargets.tokens || !revocationTargets.push) {
+            throw new Error('membership revocation cleanup stores are not wired');
+          }
+          await revocationTargets.tokens.revokeAllForUserWorkspace(userId, householdId);
+          await revocationTargets.push.removeAllForUserWorkspace(householdId, userId);
+        },
+      })
+    : undefined;
   const ownershipTransferStore = betterAuth ? createPostgresOwnershipTransferStore(pool) : undefined;
   const inviteRuntime = betterAuth
     ? createPostgresInviteRuntime({ pool, workspaceAccess, delivery: inviteDelivery })
@@ -138,6 +151,7 @@ export const registerPostgresProductionRoutes = (
     const store = createLegacyPostgresReadModelStore({ pool });
     const writes = createLegacyPostgresWriteStore({ pool });
     const tokenStore = createPostgresDeviceTokenStore(pool);
+    revocationTargets.tokens = tokenStore;
     const idempotency = createPostgresIdempotencyStore({ pool, legacy: true });
     const cardStore = createLegacyPostgresCardStore(pool);
     const payableStore = createLegacyPostgresPayableStore(pool);
@@ -185,6 +199,7 @@ export const registerPostgresProductionRoutes = (
   const store = createPostgresReadModelStore({ pool });
   const writes = createPostgresWriteStore({ pool });
   const tokenStore = createPostgresDeviceTokenStore(pool);
+  revocationTargets.tokens = tokenStore;
   const idempotency = createPostgresIdempotencyStore({ pool });
   const cardStore = createPostgresCardStore(pool);
   const payableStore = createPostgresPayableStore(pool);

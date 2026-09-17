@@ -18,6 +18,15 @@ export type DeviceTokenStore = {
   ): Promise<{ token: string; deviceId: string; householdId: string }>;
   revoke(token: string, householdId?: string): Promise<void>;
   /**
+   * Membership-revocation cleanup (V4.1 task 1.6, defense-in-depth): revokes
+   * every token bound to a user in a workspace, including rotation
+   * successors (they inherit the predecessor owner lineage). Resolves the
+   * user id stored at registration, which may be the application user id or
+   * the Better Auth id. Returns the revoked count. Primary enforcement stays
+   * dynamic membership validation at request time.
+   */
+  revokeAllForUserWorkspace(userId: string, householdId: string): Promise<number>;
+  /**
    * Rotation (SPEC §9 C4): issues a successor token and confines the
    * predecessor to the rotation window (`expires_at = now + window`).
    * `currentToken` undefined = session-authenticated rotation without a
@@ -132,6 +141,17 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
     tokens.delete(token);
   };
 
+  const revokeAllForUserWorkspace = async (userId: string, householdId: string): Promise<number> => {
+    let revoked = 0;
+    for (const [token, record] of tokens) {
+      if (record.userId === userId && record.householdId === householdId) {
+        tokens.delete(token);
+        revoked += 1;
+      }
+    }
+    return revoked;
+  };
+
   const rotate = async (
     currentToken: string | undefined,
     deviceName: string,
@@ -186,7 +206,7 @@ export const createInMemoryDeviceTokenStore = (): DeviceTokenStore => {
     return created;
   };
 
-  return { resolve, register, revoke, rotate };
+  return { resolve, register, revoke, revokeAllForUserWorkspace, rotate };
 };
 
 type DeviceTokenRow = { device_id: string; household_id: string; expires_at: string | Date | null; legacy?: boolean | null; user_id?: string | null };
@@ -295,6 +315,24 @@ export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => 
       );
   };
 
+  const revokeAllForUserWorkspace = async (userId: string, householdId: string): Promise<number> => {
+      // Dual identity match: registration stores either the application user
+      // id or the Better Auth id; rotation successors inherit it, so lineage
+      // is covered by the same predicate. Text comparison avoids UUID-cast
+      // failures for non-UUID Better Auth ids.
+      const result = await pool.query(
+        `UPDATE device_tokens
+            SET revoked_at = NOW()
+          WHERE household_id = $2
+            AND revoked_at IS NULL
+            AND user_id IS NOT NULL
+            AND (user_id::text = $1
+              OR user_id::text IN (SELECT auth_user_id FROM users WHERE id::text = $1))`,
+        [userId, householdId],
+      );
+      return result.rowCount ?? 0;
+  };
+
   const rotate = async (
     currentToken: string | undefined,
     deviceName: string,
@@ -389,5 +427,5 @@ export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => 
     });
   };
 
-  return { resolve, register, revoke, rotate };
+  return { resolve, register, revoke, revokeAllForUserWorkspace, rotate };
 };

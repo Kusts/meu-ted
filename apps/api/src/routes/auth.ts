@@ -6,7 +6,7 @@ import type { BetterAuth } from '../auth/better-auth.js';
 import { getBetterAuthSessionContext } from '../auth/better-auth.js';
 import type { WorkspaceAccessStore } from '../auth/workspace-access.js';
 
-export type AuthResolver = (token: string | undefined) => Promise<{ deviceId: string; householdId: string }>;
+export type AuthResolver = (token: string | undefined) => Promise<{ deviceId: string; householdId: string; userId?: string | null }>;
 
 // Auth routes do not require idempotency recording directly (requireIdempotencyKey / lookupOrRecord)
 // but reference them to conform with route-level security invariants.

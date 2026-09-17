@@ -76,6 +76,16 @@ const stubTokenStore = (state: FixtureState): DeviceTokenStore => ({
   revoke: async (token: string) => {
     state.tokens.delete(token);
   },
+  revokeAllForUserWorkspace: async (userId: string, householdId: string) => {
+    let revoked = 0;
+    for (const [token, record] of state.tokens) {
+      if (record.userId === userId && record.householdId === householdId) {
+        state.tokens.delete(token);
+        revoked += 1;
+      }
+    }
+    return revoked;
+  },
   rotate: async (currentToken: string | undefined, deviceName: string, householdId: string, opts?: { userId?: string }) => {
     if (typeof currentToken === 'string' && currentToken.trim() !== '') {
       const prev = state.tokens.get(currentToken);

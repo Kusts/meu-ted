@@ -44,18 +44,25 @@ const requireIdempotencyKey = (headers: FastifyRequest["headers"]): string => {
   return value.trim();
 };
 
+type PushAuth = AuthenticatedContext & { ownerId: string };
+
 const resolveAuth = async (
   req: FastifyRequest,
   resolveToken: AuthResolver,
-): Promise<AuthenticatedContext> => {
-  if (req.authenticatedContext) return req.authenticatedContext;
+): Promise<PushAuth> => {
+  if (req.authenticatedContext) {
+    const ctx = req.authenticatedContext;
+    return { ...ctx, ownerId: ctx.authUserId ?? ctx.deviceId };
+  }
   const token = req.headers[DEVICE_TOKEN_HEADER];
-  const ctx = await resolveToken(Array.isArray(token) ? token[0] : token);
+  const resolved = await resolveToken(Array.isArray(token) ? token[0] : token);
+  const ownerId = resolved.userId ?? resolved.deviceId;
   return {
-    householdId: ctx.householdId,
-    actorId: ctx.deviceId,
+    householdId: resolved.householdId,
+    actorId: resolved.deviceId,
     actorType: "device",
-    deviceId: ctx.deviceId,
+    deviceId: resolved.deviceId,
+    ownerId,
   };
 };
 
@@ -112,7 +119,7 @@ export const registerPushRoutes = (
   });
 
   app.post("/push/subscriptions", async (req, reply) => {
-    let ctx: AuthenticatedContext;
+    let ctx: PushAuth;
     try {
       ctx = await resolveAuth(req, opts.resolveToken);
     } catch (error) {
@@ -135,7 +142,7 @@ export const registerPushRoutes = (
           body: publicSubscription(
             await opts.pushStore.upsert({
               workspaceId: ctx.householdId,
-              userId: ctx.deviceId,
+              userId: ctx.ownerId,
               endpoint: parsed.data.endpoint,
               p256dh: parsed.data.keys.p256dh,
               auth: parsed.data.keys.auth,
@@ -154,7 +161,7 @@ export const registerPushRoutes = (
   });
 
   app.post("/push/notifications", async (req, reply) => {
-    let ctx: AuthenticatedContext;
+    let ctx: PushAuth;
     try {
       ctx = await resolveAuth(req, opts.resolveToken);
     } catch (error) {
@@ -205,7 +212,7 @@ export const registerPushRoutes = (
   });
 
   app.delete("/push/subscriptions", async (req, reply) => {
-    let ctx: AuthenticatedContext;
+    let ctx: PushAuth;
     try {
       ctx = await resolveAuth(req, opts.resolveToken);
     } catch (error) {
@@ -226,7 +233,7 @@ export const registerPushRoutes = (
         async () => {
           const removed = await opts.pushStore.remove(
             ctx.householdId,
-            ctx.deviceId,
+            ctx.ownerId,
             parsed.data.endpoint,
           );
           if (!removed)

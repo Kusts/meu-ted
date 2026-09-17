@@ -86,6 +86,16 @@ const createTestTokenStore = (): DeviceTokenStore => {
     async revoke(token) {
       tokens.delete(token);
     },
+    async revokeAllForUserWorkspace(userId, householdId) {
+      let revoked = 0;
+      for (const [token, record] of tokens) {
+        if (record.userId === userId && record.householdId === householdId) {
+          tokens.delete(token);
+          revoked += 1;
+        }
+      }
+      return revoked;
+    },
     async rotate(currentToken, deviceName, householdId, opts?: { userId?: string }) {
       if (typeof currentToken === "string" && currentToken.trim() !== "") {
         const prev = tokens.get(currentToken);

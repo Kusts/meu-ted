@@ -50,10 +50,32 @@ export interface PushSubscriptionStore {
     userId: string,
     endpoint: string,
   ): Promise<boolean>;
+  /**
+   * Membership-revocation purge (V4.1 task 1.8): deletes every subscription
+   * of a user in a workspace. Returns the deleted count.
+   */
+  removeAllForUserWorkspace(
+    workspaceId: string,
+    userId: string,
+  ): Promise<number>;
 }
 
+export type InMemoryPushSubscriptionOptions = {
+  /**
+   * Read-time membership filter (V4.1 task 1.8, mirror of the Postgres
+   * list/listPending membership join): when provided, list/listPending only
+   * return subscriptions whose owner still holds an active membership.
+   * Absent = no filtering (legacy behavior for callers without membership
+   * context).
+   */
+  isActiveMember?: (
+    workspaceId: string,
+    userId: string,
+  ) => boolean | Promise<boolean>;
+};
+
 export const createInMemoryPushSubscriptionStore =
-  (): PushSubscriptionStore => {
+  (options?: InMemoryPushSubscriptionOptions): PushSubscriptionStore => {
     const rows = new Map<string, PushSubscription>();
     const delivered = new Set<string>();
     const claimed = new Set<string>();
@@ -70,6 +92,16 @@ export const createInMemoryPushSubscriptionStore =
       deliveryKey: string,
     ): string => `${workspaceId}:${userId}:${endpoint}:${deliveryKey}`;
     const now = (): string => new Date().toISOString();
+    const isActiveMember = options?.isActiveMember;
+    const visible = async (row: PushSubscription): Promise<boolean> => {
+      if (!isActiveMember) return true;
+      return isActiveMember(row.workspaceId, row.userId);
+    };
+    const visibleAll = async (rows: PushSubscription[]): Promise<PushSubscription[]> => {
+      if (!isActiveMember) return rows;
+      const flags = await Promise.all(rows.map((row) => visible(row)));
+      return rows.filter((_, index) => flags[index]);
+    };
     return {
       async upsert(input) {
         const key = keyOf(input);
@@ -91,12 +123,13 @@ export const createInMemoryPushSubscriptionStore =
         return row;
       },
       async list(workspaceId) {
-        return [...rows.values()].filter(
+        const found = [...rows.values()].filter(
           (row) => row.workspaceId === workspaceId,
         );
+        return visibleAll(found);
       },
       async listPending(workspaceId, deliveryKey) {
-        return [...rows.values()].filter(
+        const found = [...rows.values()].filter(
           (row) =>
             row.workspaceId === workspaceId &&
             !delivered.has(
@@ -116,6 +149,7 @@ export const createInMemoryPushSubscriptionStore =
               ),
             ),
         );
+        return visibleAll(found);
       },
       async markDelivered(workspaceId, userId, endpoint, deliveryKey) {
         const deliveryKeyValue = deliveryKeyOf(
@@ -140,6 +174,16 @@ export const createInMemoryPushSubscriptionStore =
       },
       async remove(workspaceId, userId, endpoint) {
         return rows.delete(keyOf({ workspaceId, userId, endpoint }));
+      },
+      async removeAllForUserWorkspace(workspaceId, userId) {
+        let removed = 0;
+        for (const [key, row] of rows) {
+          if (row.workspaceId === workspaceId && row.userId === userId) {
+            rows.delete(key);
+            removed += 1;
+          }
+        }
+        return removed;
       },
     };
   };

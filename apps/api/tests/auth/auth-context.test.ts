@@ -13,6 +13,9 @@ const createCountingTokenStore = (onResolve: () => void): DeviceTokenStore => ({
     return { token: TOKEN, deviceId: 'context-device', householdId: '00000000-0000-4000-8000-000000000001' };
   },
   async revoke() {},
+  async revokeAllForUserWorkspace() {
+    return 0;
+  },
   async rotate(_currentToken, _deviceName, householdId) {
     return { token: TOKEN, deviceId: 'context-device', householdId };
   },

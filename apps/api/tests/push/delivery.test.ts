@@ -34,6 +34,7 @@ function makeStore(): PushSubscriptionStore & {
     markDelivered: vi.fn().mockResolvedValue(undefined),
     releaseDelivery: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(true),
+    removeAllForUserWorkspace: vi.fn().mockResolvedValue(0),
   };
 }
 

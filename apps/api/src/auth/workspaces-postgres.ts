@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import { withTransaction, queryInTransaction } from '../db/pool.js';
-import type { WorkspaceKind, WorkspaceMember, WorkspaceRole, WorkspaceStatus, WorkspaceStore, WorkspaceSummary } from './workspaces-store.js';
+import type { WorkspaceKind, WorkspaceMember, WorkspaceRevocationHooks, WorkspaceRole, WorkspaceStatus, WorkspaceStore, WorkspaceSummary } from './workspaces-store.js';
 import { WorkspaceError } from './workspaces-store.js';
 
 type Row = Record<string, unknown>;
@@ -13,7 +13,7 @@ const mapWorkspace = (row: Row): WorkspaceSummary => ({
   status: (row['status'] as WorkspaceStatus | undefined) ?? 'active',
 });
 
-export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
+export const createPostgresWorkspaceStore = (pool: Pool, hooks?: WorkspaceRevocationHooks): WorkspaceStore => {
   const assertMembership = async (authUserId: string, householdId: string): Promise<{ userId: string; role: WorkspaceRole }> => {
     const result = await queryInTransaction<Row>(
       pool,
@@ -44,7 +44,7 @@ export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
            FROM memberships m
            JOIN households h ON h.id = m.household_id
            JOIN users u ON u.id = m.user_id
-          WHERE u.auth_user_id = $1
+          WHERE (u.auth_user_id = $1 OR u.id::text = $1)
             AND u.status = 'active'
             AND m.status = 'active'
           ORDER BY (h.kind = 'personal') DESC, h.created_at ASC`,
@@ -152,7 +152,7 @@ export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
       if (role !== 'owner') {
         throw new WorkspaceError('workspace.forbidden', 403, 'Somente o owner pode remover membros.');
       }
-      await withTransaction(pool, async (client) => {
+      const revokedUserId = await withTransaction(pool, async (client) => {
         const householdResult = await client.query<Row>(
           `SELECT kind, owner_user_id FROM households WHERE id = $1`,
           [householdId],
@@ -184,16 +184,20 @@ export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
             throw new WorkspaceError('workspace.last_owner', 400, 'Não é possível remover o último owner do workspace.');
           }
         }
-        await client.query(
+        const updateResult = await client.query(
           `UPDATE memberships SET status = 'removed' WHERE household_id = $1 AND user_id = $2`,
           [householdId, targetUsersId],
         );
+        return (updateResult.rowCount ?? 0) > 0 ? targetUsersId : undefined;
       });
+      if (typeof revokedUserId === 'string' && revokedUserId.length > 0) {
+        await hooks?.onMemberRevoked?.({ userId: revokedUserId, householdId });
+      }
     },
 
     async leave({ authUserId, householdId }) {
       const { userId, role } = await assertMembership(authUserId, householdId);
-      await withTransaction(pool, async (client) => {
+      const revoked = await withTransaction(pool, async (client) => {
         const householdResult = await client.query<Row>(
           `SELECT kind, owner_user_id FROM households WHERE id = $1`,
           [householdId],
@@ -213,11 +217,15 @@ export const createPostgresWorkspaceStore = (pool: Pool): WorkspaceStore => {
             throw new WorkspaceError('workspace.last_owner', 400, 'O último owner não pode sair do workspace.');
           }
         }
-        await client.query(
+        const updateResult = await client.query(
           `UPDATE memberships SET status = 'removed' WHERE household_id = $1 AND user_id = $2`,
           [householdId, userId],
         );
+        return updateResult.rowCount ?? 0;
       });
+      if (revoked > 0) {
+        await hooks?.onMemberRevoked?.({ userId, householdId });
+      }
     },
   };
 };

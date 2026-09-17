@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import {
   createInMemoryDeviceTokenStore,
   createPostgresDeviceTokenStore,
+  type DeviceTokenStore,
 } from "../auth/device-token.js";
 import { createInMemoryBudgetStore } from "../budgets/in-memory.js";
 import { createPostgresBudgetStore } from "../budgets/postgres.js";
@@ -27,6 +28,7 @@ import { createInMemoryProfileStore } from "../profile/in-memory.js";
 import { createPostgresProfileStore } from "../profile/postgres.js";
 import { createWebPushDelivery } from "../push/delivery.js";
 import { createPostgresPushSubscriptionStore } from "../push/postgres.js";
+import type { PushSubscriptionStore } from "../push/store.js";
 import { createPostgresReminderScheduler } from "../push/reminder-runtime.js";
 import { createInMemoryPushSubscriptionStore } from "../push/store.js";
 import { loadVapidConfig } from "../push/vapid.js";
@@ -91,7 +93,18 @@ const start = async (): Promise<void> => {
       disableSignUp: false,
     });
     const workspaceAccess = createPostgresWorkspaceAccessStore(pool);
-    const workspaceStore = createPostgresWorkspaceStore(pool);
+    // Membership-revocation cleanup targets (V4.1 task 1.6): assigned in each
+    // schema branch below before any request can revoke a membership.
+    const revocationTargets: { tokens?: DeviceTokenStore; push?: PushSubscriptionStore } = {};
+    const workspaceStore = createPostgresWorkspaceStore(pool, {
+      onMemberRevoked: async ({ userId, householdId }) => {
+        if (!revocationTargets.tokens || !revocationTargets.push) {
+          throw new Error('membership revocation cleanup stores are not wired');
+        }
+        await revocationTargets.tokens.revokeAllForUserWorkspace(userId, householdId);
+        await revocationTargets.push.removeAllForUserWorkspace(householdId, userId);
+      },
+    });
     const ownershipTransferStore = createPostgresOwnershipTransferStore(pool);
     const inviteDelivery = (() => {
       if (cfg.smtpHost && cfg.smtpFrom && cfg.inviteAcceptUrl) {
@@ -147,6 +160,8 @@ const start = async (): Promise<void> => {
       const pushDelivery = vapid
         ? createWebPushDelivery({ store: pushStore, config: vapid })
         : undefined;
+      revocationTargets.tokens = tokenStore;
+      revocationTargets.push = pushStore;
       const reminderScheduler =
         vapid && pushDelivery
           ? createPostgresReminderScheduler({
@@ -257,6 +272,8 @@ const start = async (): Promise<void> => {
       const pushDelivery = vapid
         ? createWebPushDelivery({ store: pushStore, config: vapid })
         : undefined;
+      revocationTargets.tokens = tokenStore;
+      revocationTargets.push = pushStore;
       const reminderScheduler =
         vapid && pushDelivery
           ? createPostgresReminderScheduler({

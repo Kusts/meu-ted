@@ -31,6 +31,17 @@ export type WorkspaceStore = {
   leave(input: { authUserId: string; householdId: string }): Promise<void>;
 };
 
+export type WorkspaceRevocationHooks = {
+  /**
+   * Membership-revocation cleanup (V4.1 task 1.6): invoked after a membership
+   * is actually revoked by removeMember/leave, with the revoked application
+   * user id and workspace id. The hook runs after the membership transaction
+   * commits; a hook failure rejects the call (the membership stays revoked)
+   * so cleanup gaps stay visible instead of silent.
+   */
+  onMemberRevoked?: (input: { userId: string; householdId: string }) => Promise<void>;
+};
+
 export class WorkspaceError extends Error {
   constructor(
     readonly code: 'workspace.not_found' | 'workspace.forbidden' | 'workspace.personal' | 'workspace.last_owner' | 'workspace.invalid',
@@ -42,7 +53,7 @@ export class WorkspaceError extends Error {
   }
 }
 
-export const createInMemoryWorkspaceStore = (): WorkspaceStore => {
+export const createInMemoryWorkspaceStore = (hooks?: WorkspaceRevocationHooks): WorkspaceStore => {
   type StoredWorkspace = WorkspaceSummary & { ownerAuthUserId: string };
   const workspaces: StoredWorkspace[] = [];
   const members: Array<{ householdId: string; member: WorkspaceMember }> = [];
@@ -106,7 +117,9 @@ export const createInMemoryWorkspaceStore = (): WorkspaceStore => {
         throw new WorkspaceError('workspace.personal', 400, 'Workspace pessoal não permite remoção de membros.');
       }
       const idx = members.findIndex((m) => m.householdId === input.householdId && m.member.userId === input.memberUserId);
-      if (idx !== -1) members.splice(idx, 1);
+      if (idx === -1) return;
+      members.splice(idx, 1);
+      await hooks?.onMemberRevoked?.({ userId: input.memberUserId, householdId: input.householdId });
     },
     async leave(input) {
       const workspace = ownedWorkspace(input.authUserId, input.householdId);
@@ -115,6 +128,7 @@ export const createInMemoryWorkspaceStore = (): WorkspaceStore => {
       }
       const idx = members.findIndex((m) => m.householdId === input.householdId && m.member.userId === input.authUserId);
       if (idx !== -1) members.splice(idx, 1);
+      await hooks?.onMemberRevoked?.({ userId: input.authUserId, householdId: input.householdId });
     },
   };
 };

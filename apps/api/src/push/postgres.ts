@@ -23,6 +23,45 @@ const mapRow = (row: Row): PushSubscription => ({
   ...(row.last_used_at ? { lastUsedAt: asIso(row.last_used_at) } : {}),
 });
 
+/**
+ * Read-time membership filter (V4.1 task 1.8): a subscription is visible only
+ * while its owner holds an active membership in an active workspace with an
+ * active user. Two ownership forms are honored:
+ * - user-keyed rows (current route behavior): the subscription user id is the
+ *   application user id or the Better Auth id;
+ * - legacy device-keyed rows (pre-V4.1 route behavior stored the device id):
+ *   the device must belong to a user with an active membership and the token
+ *   must not be revoked, so removal-time revocation also zeroes legacy rows
+ *   when the active purge misses them.
+ */
+const membershipFilter = `
+  AND (
+    EXISTS (
+      SELECT 1 FROM users u
+      JOIN memberships m ON m.user_id = u.id
+      JOIN households h ON h.id = m.household_id
+      WHERE m.household_id = s.workspace_id
+        AND m.status = 'active'
+        AND u.status = 'active'
+        AND h.status = 'active'
+        AND (u.id::text = s.user_id OR u.auth_user_id = s.user_id)
+    )
+    OR EXISTS (
+      SELECT 1 FROM device_tokens dt
+      JOIN users u ON (dt.user_id = u.id OR dt.user_id::text = u.auth_user_id)
+      JOIN memberships m ON m.user_id = u.id
+      JOIN households h ON h.id = m.household_id
+      WHERE dt.household_id = s.workspace_id
+        AND dt.device_id = s.user_id
+        AND dt.revoked_at IS NULL
+        AND m.household_id = s.workspace_id
+        AND m.status = 'active'
+        AND u.status = 'active'
+        AND h.status = 'active'
+    )
+  )
+`;
+
 export const createPostgresPushSubscriptionStore = (
   pool: Pool,
 ): PushSubscriptionStore => ({
@@ -52,7 +91,7 @@ export const createPostgresPushSubscriptionStore = (
   async list(workspaceId) {
     const result = await pool.query<Row>(
       `SELECT id, workspace_id, user_id, endpoint, p256dh, auth, user_agent, created_at, updated_at, last_used_at
-       FROM push_subscriptions WHERE workspace_id = $1 ORDER BY created_at ASC`,
+       FROM push_subscriptions s WHERE workspace_id = $1${membershipFilter} ORDER BY created_at ASC`,
       [workspaceId],
     );
     return result.rows.map(mapRow);
@@ -65,7 +104,7 @@ export const createPostgresPushSubscriptionStore = (
          AND NOT EXISTS (
            SELECT 1 FROM push_delivery_attempts a
            WHERE a.workspace_id = s.workspace_id AND a.user_id = s.user_id AND a.endpoint = s.endpoint AND a.delivery_key = $2 AND a.status IN ('claimed', 'delivered')
-         )
+         )${membershipFilter}
        ORDER BY s.created_at ASC`,
       [workspaceId, deliveryKey],
     );
@@ -101,5 +140,26 @@ export const createPostgresPushSubscriptionStore = (
       [workspaceId, userId, endpoint],
     );
     return (result.rowCount ?? 0) > 0;
+  },
+  async removeAllForUserWorkspace(workspaceId, userId) {
+    // Dual identity match (application user id or Better Auth id) plus legacy
+    // device-keyed rows owned through the user's device tokens.
+    const result = await pool.query(
+      `DELETE FROM push_subscriptions s
+        WHERE s.workspace_id = $1
+          AND (
+            s.user_id = $2
+            OR s.user_id IN (SELECT id::text FROM users WHERE auth_user_id = $2)
+            OR s.user_id IN (SELECT auth_user_id FROM users WHERE id::text = $2)
+            OR s.user_id IN (
+              SELECT dt.device_id FROM device_tokens dt
+              JOIN users u ON (dt.user_id = u.id OR dt.user_id::text = u.auth_user_id)
+              WHERE dt.household_id = $1
+                AND (u.id::text = $2 OR u.auth_user_id = $2)
+            )
+          )`,
+      [workspaceId, userId],
+    );
+    return result.rowCount ?? 0;
   },
 });
