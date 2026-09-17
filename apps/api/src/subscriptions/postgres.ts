@@ -5,11 +5,11 @@
  * domain type.
  */
 
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { Subscription } from '../types/domain.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors } from '../writes/errors.js';
-import type { SubscriptionStore, } from './store.js';
+import type { CreateSubscriptionInput, SubscriptionStore, } from './store.js';
 
 type Row = Record<string, unknown>;
 
@@ -30,13 +30,33 @@ const mapSubscription = (r: Row): Subscription => {
   return base;
 };
 
-export const createPostgresSubscriptionStore = (pool: Pool): SubscriptionStore => {
-  const query = async <R extends Row = Row>(text: string, values: unknown[] = []): Promise<R[]> => {
+/**
+ * V4.1 Phase 3 (UOW2) — client-bound subscription-creation core (no
+ * transaction handling). The plain method runs it in its own transaction;
+ * the keyed route producer (see subscriptions/keyed-mutations.ts) runs it
+ * on the open idempotency claim client, so claim + effect + completion
+ * commit atomically in ONE transaction.
+ */
+export const createSubscriptionInTx = async (
+  client: PoolClient,
+  householdId: string,
+  input: CreateSubscriptionInput,
+): Promise<Subscription> => {
+  const res = await client.query<Row>(
+    `INSERT INTO subscriptions (id, household_id, name, amount_cents, cycle, day, payment_method, status, created_at)
+     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, 'active', NOW())
+     RETURNING id, household_id, name, amount_cents, cycle, day, payment_method, status, created_at, cancelled_at`,
+    [householdId, input.name, input.amountCents, input.cycle, input.day, input.paymentMethod],
+  );
+  return mapSubscription(res.rows[0]!);
+};
+
+export const createPostgresSubscriptionStore = (pool: Pool): SubscriptionStore => {  const query = async <R extends Row = Row>(text: string, values: unknown[] = []): Promise<R[]> => {
     const res = await pool.query<R>(text, values);
     return res.rows;
   };
 
-  return {
+  const store: SubscriptionStore = {
     async listSubscriptions(householdId, status) {
       const values: unknown[] = [householdId];
       const statusClause = status ? ` AND status = $2` : '';
@@ -54,15 +74,7 @@ export const createPostgresSubscriptionStore = (pool: Pool): SubscriptionStore =
     },
 
     async createSubscription(householdId, input) {
-      return withTransaction(pool, async (client) => {
-        const res = await client.query<Row>(
-          `INSERT INTO subscriptions (id, household_id, name, amount_cents, cycle, day, payment_method, status, created_at)
-           VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, 'active', NOW())
-           RETURNING id, household_id, name, amount_cents, cycle, day, payment_method, status, created_at, cancelled_at`,
-          [householdId, input.name, input.amountCents, input.cycle, input.day, input.paymentMethod],
-        );
-        return mapSubscription(res.rows[0]!);
-      });
+      return withTransaction(pool, (client) => createSubscriptionInTx(client, householdId, input));
     },
 
     async cancelSubscription(householdId, id) {
@@ -131,4 +143,11 @@ export const createPostgresSubscriptionStore = (pool: Pool): SubscriptionStore =
       });
     },
   };
+  // V4.1 Phase 3 (UOW2): expose the client-bound core as a non-contractual
+  // extension (see SubscriptionStoreTxExtensions in
+  // subscriptions/keyed-mutations.ts). The declared factory return type
+  // stays SubscriptionStore.
+  return Object.assign(store, {
+    createSubscriptionInTx,
+  });
 };

@@ -1,15 +1,53 @@
 import { randomUUID } from 'node:crypto';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { Budget, BudgetStatus, BudgetTrend } from '../types/domain.js';
 import type { BudgetStore } from './store.js';
 import { assertCategoryKind } from '../categories/resolve.js';
 import { domainErrors } from '../writes/errors.js';
+import { withTransaction } from '../db/pool.js';
 
 type Row = Record<string, unknown>;
 
 type QueryFn = <R extends Row = Row>(text: string, values?: unknown[]) => Promise<R[]>;
 
 type CreateBudgetInput = Parameters<BudgetStore['createBudget']>[1];
+type UpdateBudgetInput = Parameters<BudgetStore['updateBudget']>[2];
+
+/**
+ * V4.1 Phase 3 (UOW2) — client-bound budget cores (no transaction handling).
+ * The plain store methods run them in their own transaction; keyed route
+ * producers (see budgets/keyed-mutations.ts) run them on the open
+ * idempotency claim client, so claim + effect + completion commit
+ * atomically in ONE transaction.
+ */
+const createBudgetInTx = async (
+  client: PoolClient,
+  householdId: string,
+  input: CreateBudgetInput,
+): Promise<Budget> => {
+  const gate = async <R extends Row = Row>(text: string, values: unknown[] = []): Promise<R[]> =>
+    (await client.query<R>(text, values)).rows;
+  // V4.1 Task 2.15: budgets had no category validation at all.
+  await assertBudgetCategory(gate, householdId, input.categoryId);
+  const insert = async <R extends Row = Row>(text: string, values: unknown[] = []): Promise<R[]> =>
+    (await client.query<R>(text, values)).rows;
+  return insertBudgetRow(insert, householdId, input);
+};
+
+const updateBudgetInTx = async (
+  client: PoolClient,
+  householdId: string,
+  budgetId: string,
+  patch: UpdateBudgetInput,
+): Promise<Budget> => {
+  const existing = await client.query<Row>(`SELECT * FROM budgets WHERE id=$1 AND household_id=$2`, [budgetId, householdId]);
+  if ((existing.rowCount ?? 0) === 0) throw domainErrors.notFound('Orçamento');
+  if (patch.amountCents !== undefined) await client.query(`UPDATE budgets SET amount_cents=$1, updated_at=NOW() WHERE id=$2 AND household_id=$3`, [patch.amountCents, budgetId, householdId]);
+  if (patch.alertThreshold !== undefined) await client.query(`UPDATE budgets SET alert_threshold=$1, updated_at=NOW() WHERE id=$2 AND household_id=$3`, [patch.alertThreshold, budgetId, householdId]);
+  const rows = await client.query<Row>(`SELECT * FROM budgets WHERE id=$1 AND household_id=$2`, [budgetId, householdId]);
+  const r = rows.rows[0]!;
+  return { id: r['id'] as string, householdId, categoryId: r['category_id'] as string, name: r['name'] as string, amountCents: Number(r['amount_cents']), period: r['period'] as Budget['period'], startDate: (r['start_date'] as Date).toISOString().slice(0, 10), alertThreshold: Number(r['alert_threshold']), rollover: r['rollover'] as boolean };
+};
 
 /**
  * Canonical-schema category gate for budget creation (V4.1 Task 2.15,
@@ -79,7 +117,7 @@ export const createPostgresBudgetStore = (pool: Pool): BudgetStore => {
     return Number(rows[0]!['spent']);
   };
 
-  return {
+  const store: BudgetStore = {
     async listBudgets(householdId) {
       const rows = await query<Row>(`SELECT * FROM budgets WHERE household_id=$1 ORDER BY amount_cents DESC`, [householdId]);
       const result: BudgetStatus[] = [];
@@ -93,19 +131,11 @@ export const createPostgresBudgetStore = (pool: Pool): BudgetStore => {
     },
 
     async createBudget(householdId, input) {
-      // V4.1 Task 2.15: budgets had no category validation at all.
-      await assertBudgetCategory(query, householdId, input.categoryId);
-      return insertBudgetRow(query, householdId, input);
+      return withTransaction(pool, (client) => createBudgetInTx(client, householdId, input));
     },
 
     async updateBudget(householdId, budgetId, patch) {
-      const existing = await query<Row>(`SELECT * FROM budgets WHERE id=$1 AND household_id=$2`, [budgetId, householdId]);
-      if (existing.length === 0) throw domainErrors.notFound('Orçamento');
-      if (patch.amountCents !== undefined) await query(`UPDATE budgets SET amount_cents=$1, updated_at=NOW() WHERE id=$2 AND household_id=$3`, [patch.amountCents, budgetId, householdId]);
-      if (patch.alertThreshold !== undefined) await query(`UPDATE budgets SET alert_threshold=$1, updated_at=NOW() WHERE id=$2 AND household_id=$3`, [patch.alertThreshold, budgetId, householdId]);
-      const rows = await query<Row>(`SELECT * FROM budgets WHERE id=$1 AND household_id=$2`, [budgetId, householdId]);
-      const r = rows[0]!;
-      return { id: r['id'] as string, householdId, categoryId: r['category_id'] as string, name: r['name'] as string, amountCents: Number(r['amount_cents']), period: r['period'] as Budget['period'], startDate: (r['start_date'] as Date).toISOString().slice(0,10), alertThreshold: Number(r['alert_threshold']), rollover: r['rollover'] as boolean };
+      return withTransaction(pool, (client) => updateBudgetInTx(client, householdId, budgetId, patch));
     },
 
     async getBudgetTrends(householdId, budgetId, monthsBack = 3) {
@@ -125,4 +155,11 @@ export const createPostgresBudgetStore = (pool: Pool): BudgetStore => {
       return trends;
     },
   };
+  // V4.1 Phase 3 (UOW2): expose the client-bound cores as non-contractual
+  // extensions (see BudgetStoreTxExtensions in budgets/keyed-mutations.ts).
+  // The declared factory return type stays BudgetStore.
+  return Object.assign(store, {
+    createBudgetInTx,
+    updateBudgetInTx,
+  });
 };

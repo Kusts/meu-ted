@@ -119,6 +119,7 @@ const handleError = (err: unknown, reply: FastifyReply) => {
 import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
+import { runCardMutation } from '../cards/keyed-mutations.js';
 
 export const registerCardRoutes = (
   app: FastifyInstance,
@@ -186,8 +187,10 @@ export const registerCardRoutes = (
       });
       if (pending) return reply.code(pending.status).send(pending.body);
     }
-    const fn = async () => {
-      const txs = await opts.cardStore.createCardPurchase(ctx.householdId, {
+    const fn = async (claimTx?: unknown) => {
+      // V4.1 Phase 3 (UOW2): purchase + statement link + total recompute
+      // join the idempotency claim tx.
+      const txs = await runCardMutation(opts.cardStore, claimTx, ctx.householdId, 'purchase', {
         accountId: parsed.data.accountId,
         description: parsed.data.description,
         amountCents: parsed.data.amountCents,
@@ -221,8 +224,8 @@ export const registerCardRoutes = (
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
     const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
-    const fn = async () => {
-      const txs = await opts.cardStore.createCardInstallments(ctx.householdId, {
+    const fn = async (claimTx?: unknown) => {
+      const txs = await runCardMutation(opts.cardStore, claimTx, ctx.householdId, 'installments', {
         accountId: parsed.data.accountId,
         description: parsed.data.description,
         totalAmountCents: parsed.data.totalAmountCents,
@@ -269,8 +272,8 @@ export const registerCardRoutes = (
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
     const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
-    const fn = async () => {
-      const r = await opts.cardStore.createRecurringPurchase(ctx.householdId, {
+    const fn = async (claimTx?: unknown) => {
+      const r = await runCardMutation(opts.cardStore, claimTx, ctx.householdId, 'recurring', {
         accountId: parsed.data.accountId,
         description: parsed.data.description,
         amountCents: parsed.data.amountCents,
@@ -299,8 +302,13 @@ export const registerCardRoutes = (
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
     const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
-    const fn = async () => {
-      const s = await opts.cardStore.payStatement(ctx.householdId, params.data.id, parsed.data);
+    const fn = async (claimTx?: unknown) => {
+      // V4.1 Phase 3 (UOW2): lock → remaining → payment → paid/status join
+      // the idempotency claim tx.
+      const s = await runCardMutation(opts.cardStore, claimTx, ctx.householdId, 'payStatement', {
+        statementId: params.data.id,
+        input: parsed.data,
+      });
       return { status: 200 as const, body: attachMutationReceipt(s, 'statement.update', { type: 'statement', id: params.data.id }) };
     };
     try {
@@ -368,8 +376,9 @@ export const registerCardRoutes = (
     // carry a body. Cancelling removes a financial effect, so a receipt is
     // required. Receipt built inside the idempotent producer so keyed
     // replays preserve the mutationId (cancel itself stays idempotent).
-    const fn = async () => {
-      await opts.cardStore.cancelPurchase(ctx.householdId, params.data.id);
+    const fn = async (claimTx?: unknown) => {
+      // V4.1 Phase 3 (UOW2): the cancel effect joins the claim tx.
+      await runCardMutation(opts.cardStore, claimTx, ctx.householdId, 'cancelPurchase', { purchaseId: params.data.id });
       return {
         status: 200 as const,
         body: attachMutationReceipt(

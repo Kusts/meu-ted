@@ -42,6 +42,7 @@ import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
 import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
+import { runGoalMutation } from '../goals/keyed-mutations.js';
 
 export const registerGoalRoutes = (
   app: FastifyInstance,
@@ -78,8 +79,9 @@ export const registerGoalRoutes = (
       });
       if (pending) return reply.code(pending.status).send(pending.body);
     }
-    const fn = async () => {
-      const g = await opts.goalStore.createGoal(ctx.householdId, {
+    const fn = async (claimTx?: unknown) => {
+      // V4.1 Phase 3 (UOW2): the goal insert joins the claim tx.
+      const g = await runGoalMutation(opts.goalStore, claimTx, ctx.householdId, 'create', {
         name: p.data.name, goalType: p.data.goalType, targetAmountCents: p.data.targetAmountCents, startDate: p.data.startDate,
         ...(p.data.targetDate ? { targetDate: p.data.targetDate } : {}),
         ...(p.data.description ? { description: p.data.description } : {}),
@@ -104,12 +106,16 @@ export const registerGoalRoutes = (
     const p = contributeSchema.safeParse(req.body ?? {}); if (!p.success) return reply.code(400).send({ code: 'validation.error', issues: p.error.issues });
     const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
     const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
-    const fn = async () => {
-      const c = await opts.goalStore.contributeToGoal(ctx.householdId, params.data.id, {
-        amountCents: p.data.amountCents,
-        ...(p.data.contributionDate ? { contributionDate: p.data.contributionDate } : {}),
-        ...(p.data.source ? { source: p.data.source } : {}),
-        ...(p.data.notes ? { notes: p.data.notes } : {}),
+    const fn = async (claimTx?: unknown) => {
+      // V4.1 Phase 3 (UOW2): the atomic increment joins the claim tx.
+      const c = await runGoalMutation(opts.goalStore, claimTx, ctx.householdId, 'contribute', {
+        id: params.data.id,
+        input: {
+          amountCents: p.data.amountCents,
+          ...(p.data.contributionDate ? { contributionDate: p.data.contributionDate } : {}),
+          ...(p.data.source ? { source: p.data.source } : {}),
+          ...(p.data.notes ? { notes: p.data.notes } : {}),
+        },
       });
       return { status: 201 as const, body: attachMutationReceipt(c, 'goal.update', { type: 'goal', id: params.data.id }) };
     };
@@ -140,8 +146,11 @@ export const registerGoalRoutes = (
     const p = s.safeParse(req.body ?? {}); if (!p.success) return reply.code(400).send({ code: 'validation.error', issues: p.error.issues });
     const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
     const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
-    const fn = async () => {
-      const g = await opts.goalStore.updateGoal(ctx.householdId, params.data.id, p.data as Parameters<typeof opts.goalStore.updateGoal>[2]);
+    const fn = async (claimTx?: unknown) => {
+      const g = await runGoalMutation(opts.goalStore, claimTx, ctx.householdId, 'update', {
+        id: params.data.id,
+        patch: p.data as Parameters<typeof opts.goalStore.updateGoal>[2],
+      });
       return { status: 200 as const, body: attachMutationReceipt(g, 'goal.update', { type: 'goal', id: params.data.id }) };
     };
     try {

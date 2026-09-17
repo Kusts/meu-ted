@@ -118,6 +118,7 @@ import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
 import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
+import { runPayableMutation } from '../payables/keyed-mutations.js';
 
 export const registerPayableRoutes = (
   app: FastifyInstance,
@@ -172,9 +173,10 @@ export const registerPayableRoutes = (
         .send({ code: "validation.error", issues: parsed.error.issues });
     const rawKey = req.headers[IDEMPOTENCY_HEADER] ?? req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
     const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
-    const fn = async () => {
+    const fn = async (claimTx?: unknown) => {
       if (parsed.data.templateName) {
-        const p = await opts.payableStore.createPayableWithTemplate(ctx.householdId, {
+        // V4.1 Phase 3 (UOW2): the effect joins the idempotency claim tx.
+        const p = await runPayableMutation(opts.payableStore, claimTx, ctx.householdId, 'createWithTemplate', {
           payable: {
             accountId: parsed.data.accountId,
             description: parsed.data.description,
@@ -223,7 +225,7 @@ export const registerPayableRoutes = (
           ? { categoryId: parsed.data.categoryId }
           : {}),
       };
-      const p = await opts.payableStore.createPayable(ctx.householdId, payableInput);
+      const p = await runPayableMutation(opts.payableStore, claimTx, ctx.householdId, 'create', payableInput);
       return { status: 201 as const, body: attachMutationReceipt(p, 'payable.create', { type: 'payable', id: p.id }) };
     };
 
@@ -263,17 +265,18 @@ export const registerPayableRoutes = (
         .send({ code: "validation.error", issues: parsed.error.issues });
     const rawKeyPay = req.headers[IDEMPOTENCY_HEADER] ?? req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
     const key = rawKeyPay !== undefined ? requireIdempotencyKey(req.headers) : undefined;
-    const fn = async () => {
-      const p = await opts.payableStore.markPayablePaid(
-        ctx.householdId,
-        params.data.id,
-        {
+    const fn = async (claimTx?: unknown) => {
+      // V4.1 Phase 3 (UOW2): the pay effect joins the idempotency claim tx —
+      // lock, guards, payment transaction and payable update commit together.
+      const p = await runPayableMutation(opts.payableStore, claimTx, ctx.householdId, 'pay', {
+        id: params.data.id,
+        input: {
           ...(parsed.data.paidDate ? { paidDate: parsed.data.paidDate } : {}),
           ...(parsed.data.prepayMonths !== undefined
             ? { prepayMonths: parsed.data.prepayMonths }
             : {}),
         },
-      );
+      });
       return { status: 200 as const, body: attachMutationReceipt(p, 'payable.pay', { type: 'payable', id: params.data.id }) };
     };
     try {
@@ -365,13 +368,26 @@ export const registerPayableRoutes = (
       });
       if (pending) return reply.code(pending.status).send(pending.body);
     }
+    // V4.1 Phase 3 (UOW2): keyed PATCH joins the idempotency claim tx like
+    // every other keyed mutation (replay returns the original receipt).
+    const fn = async (claimTx?: unknown) => {
+      const p = await runPayableMutation(opts.payableStore, claimTx, ctx.householdId, 'update', {
+        id: params.data.id,
+        patch: parsed.data,
+      });
+      return { status: 200 as const, body: attachMutationReceipt(p, 'payable.update', { type: 'payable', id: params.data.id }) };
+    };
     try {
-      const p = await opts.payableStore.updatePayable(
-        ctx.householdId,
-        params.data.id,
-        parsed.data,
-      );
-      return reply.code(200).send(attachMutationReceipt(p, 'payable.update', { type: 'payable', id: params.data.id }));
+      const result = key
+        ? await opts.idempotency.lookupOrRecord(
+            ctx.householdId,
+            key,
+            { id: params.data.id, ...parsed.data },
+            fn,
+          )
+        : { response: await fn(), replayed: false };
+      if (result.replayed) reply.header("Idempotent-Replayed", "true");
+      return reply.code(result.response.status).send(result.response.body);
     } catch (e) {
       return handleError(e, reply);
     }
@@ -513,8 +529,9 @@ export const registerPayableRoutes = (
         .send({ code: "validation.error", issues: parsed.error.issues });
     const rawKey = req.headers[IDEMPOTENCY_HEADER] ?? req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
     const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
-    const fn = async () => {
-      const t = await opts.payableStore.createTemplate(ctx.householdId, {
+    const fn = async (claimTx?: unknown) => {
+      // V4.1 Phase 3 (UOW2): the template insert joins the claim tx.
+      const t = await runPayableMutation(opts.payableStore, claimTx, ctx.householdId, 'createTemplate', {
         accountId: parsed.data.accountId,
         name: parsed.data.name,
         description: parsed.data.description,
@@ -566,9 +583,9 @@ export const registerPayableRoutes = (
     } catch (e) {
       return handleError(e, reply);
     }
-    const fn = async () => {
-      const p = await opts.payableStore.createPayableFromTemplate(
-        ctx.householdId,
+    const fn = async (claimTx?: unknown) => {
+      // V4.1 Phase 3 (UOW2): template lookup + payable insert join the claim tx.
+      const p = await runPayableMutation(opts.payableStore, claimTx, ctx.householdId, 'fromTemplate',
         {
           dueDate: parsed.data.dueDate,
           ...(parsed.data.templateId

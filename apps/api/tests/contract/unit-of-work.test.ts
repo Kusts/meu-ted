@@ -35,10 +35,14 @@ describe('G2.2.5 — Unit of Work contracts', () => {
     expect((state as { _templates?: unknown[] })._templates).toHaveLength(1);
   });
 
-  it('routes payable creation through the composite command', () => {
+  it('routes payable creation through the composite keyed command', () => {
     const source = readFileSync(resolve(import.meta.dirname, '../../src/routes/payables.ts'), 'utf8');
-    expect(source).toContain('createPayableWithTemplate');
+    // V4.1 Phase 3 (UOW2): keyed producers run the store effect on the
+    // idempotency claim client via the dispatcher — never directly.
+    expect(source).toContain('runPayableMutation');
+    expect(source).toContain(`'createWithTemplate'`);
     expect(source).not.toContain('await opts.payableStore.createPayable(ctx.householdId, {');
+    expect(source).not.toContain('await opts.payableStore.createPayableWithTemplate(');
   });
 
   it.each([

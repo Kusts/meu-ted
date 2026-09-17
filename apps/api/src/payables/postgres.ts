@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type {
   NotificationConfig,
   Payable,
@@ -16,6 +16,303 @@ type Row = Record<string, unknown>;
 type QueryFn = <R extends Row = Row>(text: string, values?: unknown[]) => Promise<R[]>;
 
 type CreatePayableInput = Parameters<PayableStore["createPayable"]>[1];
+type PayPayableInput = Parameters<PayableStore["markPayablePaid"]>[2];
+type UpdatePayableInput = Parameters<PayableStore["updatePayable"]>[2];
+type CreateTemplateInput = Parameters<PayableStore["createTemplate"]>[1];
+type FromTemplateInput = Parameters<PayableStore["createPayableFromTemplate"]>[1];
+type WithTemplateInput = Parameters<PayableStore["createPayableWithTemplate"]>[1];
+
+/**
+ * V4.1 Phase 3 (UOW2) — client-bound payable cores (no transaction
+ * handling). The plain store methods run them in their own transaction;
+ * keyed route producers (see payables/keyed-mutations.ts) run them on the
+ * open idempotency claim client, so claim + effect + completion commit
+ * atomically in ONE transaction. Phase 2 guarantees (row locks, status
+ * guards) hold inside the merged tx — they run on the same client.
+ */
+const clientQueryFn = (client: PoolClient): QueryFn =>
+  async <R extends Row = Row>(text: string, values: unknown[] = []): Promise<R[]> =>
+    (await client.query<R>(text, values)).rows;
+
+const createPayableInTx = async (
+  client: PoolClient,
+  householdId: string,
+  input: CreatePayableInput,
+): Promise<Payable> => {
+  // V4.1 Task 2.15: same category gate as the plain path.
+  if (input.categoryId !== undefined) {
+    await assertPayableCategoryInTx(clientQueryFn(client), householdId, input.categoryId);
+  }
+  return insertPayableRow(clientQueryFn(client), householdId, input);
+};
+
+const markPayablePaidInTx = async (
+  client: PoolClient,
+  householdId: string,
+  payableId: string,
+  input: PayPayableInput,
+): Promise<Payable> => {
+  // V4.1 Task 2.2: serialize concurrent payments on the payable row.
+  // The status check below the lock is the single decision point, so
+  // two concurrent payers converge on exactly one financial effect.
+  const existing = await client.query<Row>(
+    `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
+    [payableId, householdId],
+  );
+  if (existing.rowCount === 0 || existing.rows.length === 0) throw domainErrors.notFound("Conta a pagar");
+  const p = mapPayable(existing.rows[0]!);
+  if (p.status === "paid" || p.status === "cancelled") {
+    throw new DomainError(
+      "validation.invalid",
+      `Conta a pagar já está ${p.status === "paid" ? "paga" : "cancelada"}`,
+      409,
+    );
+  }
+  // V4.1 Task 2.3 (D1/D3): the payment always creates the expense
+  // transaction AND debits the paying account in the same tx. No
+  // silent clamp: insufficient balance rejects like payStatement.
+  const accRows = await client.query<Row>(
+    `SELECT id, kind, balance_cents, status FROM accounts WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
+    [p.accountId, householdId],
+  );
+  if (accRows.rowCount === 0 || accRows.rows.length === 0) throw domainErrors.notFound("Conta");
+  const acc = accRows.rows[0]!;
+  if (acc["status"] !== "active") throw domainErrors.notFound("Conta");
+  if (acc["kind"] === "credit_card") {
+    throw new DomainError("validation.invalid", "compra no cartão deve usar /cards/purchases.", 422);
+  }
+  if (Number(acc["balance_cents"]) < p.amountCents) {
+    throw domainErrors.invalid("amountCents", "saldo insuficiente na conta de origem");
+  }
+  const paidDate = input.paidDate ?? todayISO();
+  const paidTxId = randomUUID();
+  await client.query(
+    `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id)
+     VALUES ($1,$2,'expense',$3,$4,$5,$6,$7)`,
+    [
+      paidTxId,
+      householdId,
+      p.description,
+      p.amountCents,
+      paidDate,
+      p.accountId,
+      p.categoryId ?? null,
+    ],
+  );
+  await client.query(
+    `UPDATE accounts SET balance_cents = balance_cents - $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
+    [p.amountCents, p.accountId, householdId],
+  );
+  await client.query(
+    `UPDATE accounts_payable SET status = 'paid', paid_date = $1, paid_amount_cents = amount_cents, paid_transaction_id = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`,
+    [paidDate, paidTxId, payableId, householdId],
+  );
+
+  if (p.type === "recurring" && p.frequency && !input.prepayMonths) {
+    const nextDue = getNextDue(p.dueDate, p.frequency);
+    if (nextDue && (!p.endDate || nextDue <= p.endDate)) {
+      const nextId = randomUUID();
+      await client.query(
+        `INSERT INTO accounts_payable (id, household_id, account_id, description, amount_cents, due_date, type, frequency, end_date, reminder_days_before, notes, category_id, status)
+         VALUES ($1,$2,$3,$4,$5,$6,'recurring',$7,$8,$9,$10,$11,'pending')`,
+        [
+          nextId,
+          householdId,
+          p.accountId,
+          p.description,
+          p.amountCents,
+          nextDue,
+          p.frequency,
+          p.endDate ?? null,
+          p.reminderDaysBefore ?? 0,
+          p.notes ?? null,
+          p.categoryId ?? null,
+        ],
+      );
+    }
+  }
+
+  const rows = await client.query<Row>(
+    `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2`,
+    [payableId, householdId],
+  );
+  return mapPayable(rows.rows[0]!);
+};
+
+const updatePayableInTx = async (
+  client: PoolClient,
+  householdId: string,
+  payableId: string,
+  input: UpdatePayableInput,
+): Promise<Payable> => {
+  const existing = await client.query<Row>(
+    `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+    [payableId, householdId],
+  );
+  if (existing.rowCount === 0 || existing.rows.length === 0) throw domainErrors.notFound("Conta a pagar");
+  if (existing.rows[0]!.status === "cancelled")
+    throw new DomainError(
+      "validation.invalid",
+      "Conta cancelada não pode ser editada",
+      409,
+    );
+  // V4.1 Task 2.15: same category gate as createPayable.
+  if (input.categoryId !== undefined) {
+    await assertPayableCategoryInTx(clientQueryFn(client), householdId, input.categoryId);
+  }
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  let idx = 1;
+  if (input.description !== undefined) {
+    sets.push(`description = $${idx++}`);
+    params.push(input.description);
+  }
+  if (input.amountCents !== undefined) {
+    sets.push(`amount_cents = $${idx++}`);
+    params.push(input.amountCents);
+  }
+  if (input.dueDate !== undefined) {
+    sets.push(`due_date = $${idx++}`);
+    params.push(input.dueDate);
+  }
+  if (input.accountId !== undefined) {
+    sets.push(`account_id = $${idx++}`);
+    params.push(input.accountId);
+  }
+  if (input.categoryId !== undefined) {
+    sets.push(`category_id = $${idx++}`);
+    params.push(input.categoryId);
+  }
+  if (sets.length === 0) return mapPayable(existing.rows[0]!);
+  sets.push(`updated_at = NOW()`);
+  params.push(payableId);
+  params.push(householdId);
+  await client.query(
+    `UPDATE accounts_payable SET ${sets.join(", ")} WHERE id = $${idx} AND household_id = $${idx + 1}`,
+    params,
+  );
+  const rows = await client.query<Row>(
+    `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2`,
+    [payableId, householdId],
+  );
+  return mapPayable(rows.rows[0]!);
+};
+
+const createTemplateInTx = async (
+  client: PoolClient,
+  householdId: string,
+  input: CreateTemplateInput,
+): Promise<PayableTemplate> => {
+  const id = randomUUID();
+  await client.query(
+    `INSERT INTO payable_templates (id, household_id, account_id, name, description, amount_cents, frequency, day_of_month, reminder_days_before, notes, active)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)`,
+    [
+      id,
+      householdId,
+      input.accountId,
+      input.name,
+      input.description,
+      input.amountCents,
+      input.frequency,
+      input.dayOfMonth,
+      input.reminderDaysBefore ?? 0,
+      input.notes ?? null,
+    ],
+  );
+  const rows = await client.query<Row>(
+    `SELECT * FROM payable_templates WHERE id = $1 AND household_id = $2`,
+    [id, householdId],
+  );
+  return mapTemplate(rows.rows[0]!);
+};
+
+const createPayableFromTemplateInTx = async (
+  client: PoolClient,
+  householdId: string,
+  input: FromTemplateInput,
+): Promise<Payable> => {
+  let t: PayableTemplate | undefined;
+  if (input.templateId) {
+    const rows = await client.query<Row>(
+      `SELECT * FROM payable_templates WHERE id = $1 AND household_id = $2`,
+      [input.templateId, householdId],
+    );
+    if (rows.rowCount !== null && (rows.rowCount ?? 0) > 0) t = mapTemplate(rows.rows[0]!);
+  } else if (input.templateName) {
+    const rows = await client.query<Row>(
+      `SELECT * FROM payable_templates WHERE name = $1 AND household_id = $2`,
+      [input.templateName, householdId],
+    );
+    if (rows.rowCount !== null && (rows.rowCount ?? 0) > 0) t = mapTemplate(rows.rows[0]!);
+  }
+  if (!t) throw domainErrors.notFound("Template");
+
+  // Client-bound core directly (never `this.createPayable`, which would
+  // open an independent transaction outside the claim tx).
+  return createPayableInTx(client, householdId, {
+    accountId: t.accountId,
+    description: t.description,
+    amountCents: input.amountOverrideCents ?? t.amountCents,
+    dueDate: input.dueDate,
+    type: "recurring",
+    frequency: t.frequency,
+    ...(t.reminderDaysBefore != null
+      ? { reminderDaysBefore: t.reminderDaysBefore }
+      : {}),
+    ...(t.notes ? { notes: t.notes } : {}),
+  });
+};
+
+const createPayableWithTemplateInTx = async (
+  client: PoolClient,
+  householdId: string,
+  input: WithTemplateInput,
+): Promise<Payable> => {
+  const templateId = randomUUID();
+  await client.query(
+    `INSERT INTO payable_templates (id, household_id, account_id, name, description, amount_cents, frequency, day_of_month, reminder_days_before, notes, active)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)`,
+    [
+      templateId,
+      householdId,
+      input.template.accountId,
+      input.template.name,
+      input.template.description,
+      input.template.amountCents,
+      input.template.frequency,
+      input.template.dayOfMonth,
+      input.template.reminderDaysBefore ?? 0,
+      input.template.notes ?? null,
+    ],
+  );
+
+  const payableId = randomUUID();
+  const initialStatus = todayISO() <= input.payable.dueDate ? "pending" : "overdue";
+  await client.query(
+    `INSERT INTO accounts_payable (id, household_id, account_id, category_id, description, amount_cents, due_date, type, frequency, status, notes, template_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    [
+      payableId,
+      householdId,
+      input.payable.accountId,
+      input.payable.categoryId ?? null,
+      input.payable.description,
+      input.payable.amountCents,
+      input.payable.dueDate,
+      input.payable.type ?? "recurring",
+      input.payable.frequency ?? null,
+      initialStatus,
+      input.payable.notes ?? null,
+      templateId,
+    ],
+  );
+  const rows = await client.query<Row>(
+    `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2`,
+    [payableId, householdId],
+  );
+  return mapPayable(rows.rows[0]!);
+};
 
 /**
  * Canonical-schema category gate for payable writes (V4.1 Task 2.15,
@@ -143,7 +440,7 @@ const mapPayable = (r: Row): Payable =>
     } as Partial<Payable>,
   );
 
-const mapTemplate = (r: Row): PayableTemplate =>
+export const mapTemplate = (r: Row): PayableTemplate =>
   opt<PayableTemplate>(
     {
       id: r["id"] as string,
@@ -235,7 +532,7 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
     return res.rows;
   };
 
-  return {
+  const store: PayableStore = {
     async listPayables(householdId, filters) {
       const params: unknown[] = [householdId];
       const conditions: string[] = ['household_id = $1', 'deleted_at IS NULL'];
@@ -266,102 +563,11 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
     },
 
     async createPayable(householdId, input) {
-      // V4.1 Task 2.15: payables had no category validation — an explicit
-      // categoryId must now resolve to an active expense-kind category.
-      if (input.categoryId !== undefined) {
-        await assertPayableCategoryInTx(query, householdId, input.categoryId);
-      }
-      return insertPayableRow(query, householdId, input);
+      return withTransaction(pool, (client) => createPayableInTx(client, householdId, input));
     },
 
     async markPayablePaid(householdId, payableId, input) {
-      return withTransaction(pool, async (client) => {
-        // V4.1 Task 2.2: serialize concurrent payments on the payable row.
-        // The status check below the lock is the single decision point, so
-        // two concurrent payers converge on exactly one financial effect.
-        const existing = await client.query<Row>(
-          `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
-          [payableId, householdId],
-        );
-        if (existing.rowCount === 0 || existing.rows.length === 0) throw domainErrors.notFound("Conta a pagar");
-        const p = mapPayable(existing.rows[0]!);
-        if (p.status === "paid" || p.status === "cancelled") {
-          throw new DomainError(
-            "validation.invalid",
-            `Conta a pagar já está ${p.status === "paid" ? "paga" : "cancelada"}`,
-            409,
-          );
-        }
-        // V4.1 Task 2.3 (D1/D3): the payment always creates the expense
-        // transaction AND debits the paying account in the same tx. No
-        // silent clamp: insufficient balance rejects like payStatement.
-        const accRows = await client.query<Row>(
-          `SELECT id, kind, balance_cents, status FROM accounts WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
-          [p.accountId, householdId],
-        );
-        if (accRows.rowCount === 0 || accRows.rows.length === 0) throw domainErrors.notFound("Conta");
-        const acc = accRows.rows[0]!;
-        if (acc["status"] !== "active") throw domainErrors.notFound("Conta");
-        if (acc["kind"] === "credit_card") {
-          throw new DomainError("validation.invalid", "compra no cartão deve usar /cards/purchases.", 422);
-        }
-        if (Number(acc["balance_cents"]) < p.amountCents) {
-          throw domainErrors.invalid("amountCents", "saldo insuficiente na conta de origem");
-        }
-        const paidDate = input.paidDate ?? todayISO();
-        const paidTxId = randomUUID();
-        await client.query(
-          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id)
-           VALUES ($1,$2,'expense',$3,$4,$5,$6,$7)`,
-          [
-            paidTxId,
-            householdId,
-            p.description,
-            p.amountCents,
-            paidDate,
-            p.accountId,
-            p.categoryId ?? null,
-          ],
-        );
-        await client.query(
-          `UPDATE accounts SET balance_cents = balance_cents - $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
-          [p.amountCents, p.accountId, householdId],
-        );
-        await client.query(
-          `UPDATE accounts_payable SET status = 'paid', paid_date = $1, paid_amount_cents = amount_cents, paid_transaction_id = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`,
-          [paidDate, paidTxId, payableId, householdId],
-        );
-
-        if (p.type === "recurring" && p.frequency && !input.prepayMonths) {
-          const nextDue = getNextDue(p.dueDate, p.frequency);
-          if (nextDue && (!p.endDate || nextDue <= p.endDate)) {
-            const nextId = randomUUID();
-            await client.query(
-              `INSERT INTO accounts_payable (id, household_id, account_id, description, amount_cents, due_date, type, frequency, end_date, reminder_days_before, notes, category_id, status)
-               VALUES ($1,$2,$3,$4,$5,$6,'recurring',$7,$8,$9,$10,$11,'pending')`,
-              [
-                nextId,
-                householdId,
-                p.accountId,
-                p.description,
-                p.amountCents,
-                nextDue,
-                p.frequency,
-                p.endDate ?? null,
-                p.reminderDaysBefore ?? 0,
-                p.notes ?? null,
-                p.categoryId ?? null,
-              ],
-            );
-          }
-        }
-
-        const rows = await client.query<Row>(
-          `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2`,
-          [payableId, householdId],
-        );
-        return mapPayable(rows.rows[0]!);
-      });
+      return withTransaction(pool, (client) => markPayablePaidInTx(client, householdId, payableId, input));
     },
 
 
@@ -383,57 +589,7 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
     },
 
     async updatePayable(householdId, payableId, input) {
-      const existing = await query<Row>(
-        `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
-        [payableId, householdId],
-      );
-      if (existing.length === 0) throw domainErrors.notFound("Conta a pagar");
-      if (existing[0]!.status === "cancelled")
-        throw new DomainError(
-          "validation.invalid",
-          "Conta cancelada não pode ser editada",
-          409,
-        );
-      // V4.1 Task 2.15: same category gate as createPayable.
-      if (input.categoryId !== undefined) {
-        await assertPayableCategoryInTx(query, householdId, input.categoryId);
-      }
-      const sets: string[] = [];
-      const params: unknown[] = [];
-      let idx = 1;
-      if (input.description !== undefined) {
-        sets.push(`description = $${idx++}`);
-        params.push(input.description);
-      }
-      if (input.amountCents !== undefined) {
-        sets.push(`amount_cents = $${idx++}`);
-        params.push(input.amountCents);
-      }
-      if (input.dueDate !== undefined) {
-        sets.push(`due_date = $${idx++}`);
-        params.push(input.dueDate);
-      }
-      if (input.accountId !== undefined) {
-        sets.push(`account_id = $${idx++}`);
-        params.push(input.accountId);
-      }
-      if (input.categoryId !== undefined) {
-        sets.push(`category_id = $${idx++}`);
-        params.push(input.categoryId);
-      }
-      if (sets.length === 0) return mapPayable(existing[0]!);
-      sets.push(`updated_at = NOW()`);
-      params.push(payableId);
-      params.push(householdId);
-      await query(
-        `UPDATE accounts_payable SET ${sets.join(", ")} WHERE id = $${idx} AND household_id = $${idx + 1}`,
-        params,
-      );
-      const rows = await query<Row>(
-        `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2`,
-        [payableId, householdId],
-      );
-      return mapPayable(rows[0]!);
+      return withTransaction(pool, (client) => updatePayableInTx(client, householdId, payableId, input));
     },
 
     async undoPayablePayment(householdId, payableId, opts) {
@@ -513,107 +669,14 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
     },
 
     async createTemplate(householdId, input) {
-      const id = randomUUID();
-      await query(
-        `INSERT INTO payable_templates (id, household_id, account_id, name, description, amount_cents, frequency, day_of_month, reminder_days_before, notes, active)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)`,
-        [
-          id,
-          householdId,
-          input.accountId,
-          input.name,
-          input.description,
-          input.amountCents,
-          input.frequency,
-          input.dayOfMonth,
-          input.reminderDaysBefore ?? 0,
-          input.notes ?? null,
-        ],
-      );
-      const rows = await query<Row>(
-        `SELECT * FROM payable_templates WHERE id = $1 AND household_id = $2`,
-        [id, householdId],
-      );
-      return mapTemplate(rows[0]!);
+      return withTransaction(pool, (client) => createTemplateInTx(client, householdId, input));
     },
 
     async createPayableFromTemplate(householdId, input) {
-      let t: PayableTemplate | undefined;
-      if (input.templateId) {
-        const rows = await query<Row>(
-          `SELECT * FROM payable_templates WHERE id = $1 AND household_id = $2`,
-          [input.templateId, householdId],
-        );
-        if (rows.length > 0) t = mapTemplate(rows[0]!);
-      } else if (input.templateName) {
-        const rows = await query<Row>(
-          `SELECT * FROM payable_templates WHERE name = $1 AND household_id = $2`,
-          [input.templateName, householdId],
-        );
-        if (rows.length > 0) t = mapTemplate(rows[0]!);
-      }
-      if (!t) throw domainErrors.notFound("Template");
-
-      const p = await this.createPayable(householdId, {
-        accountId: t.accountId,
-        description: t.description,
-        amountCents: input.amountOverrideCents ?? t.amountCents,
-        dueDate: input.dueDate,
-        type: "recurring",
-        frequency: t.frequency,
-        ...(t.reminderDaysBefore != null
-          ? { reminderDaysBefore: t.reminderDaysBefore }
-          : {}),
-        ...(t.notes ? { notes: t.notes } : {}),
-      });
-      return p;
+      return withTransaction(pool, (client) => createPayableFromTemplateInTx(client, householdId, input));
     },
     async createPayableWithTemplate(householdId, input) {
-      return withTransaction(pool, async (client) => {
-        const templateId = randomUUID();
-        await client.query(
-          `INSERT INTO payable_templates (id, household_id, account_id, name, description, amount_cents, frequency, day_of_month, reminder_days_before, notes, active)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)`,
-          [
-            templateId,
-            householdId,
-            input.template.accountId,
-            input.template.name,
-            input.template.description,
-            input.template.amountCents,
-            input.template.frequency,
-            input.template.dayOfMonth,
-            input.template.reminderDaysBefore ?? 0,
-            input.template.notes ?? null,
-          ],
-        );
-
-        const payableId = randomUUID();
-        const initialStatus = todayISO() <= input.payable.dueDate ? "pending" : "overdue";
-        await client.query(
-          `INSERT INTO accounts_payable (id, household_id, account_id, category_id, description, amount_cents, due_date, type, frequency, status, notes, template_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-          [
-            payableId,
-            householdId,
-            input.payable.accountId,
-            input.payable.categoryId ?? null,
-            input.payable.description,
-            input.payable.amountCents,
-            input.payable.dueDate,
-            input.payable.type ?? "recurring",
-            input.payable.frequency ?? null,
-            initialStatus,
-            input.payable.notes ?? null,
-            templateId,
-          ],
-        );
-        const rows = await client.query<Row>(
-          `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2`,
-          [payableId, householdId],
-        );
-        return mapPayable(rows.rows[0]!);
-      });
+      return withTransaction(pool, (client) => createPayableWithTemplateInTx(client, householdId, input));
     },
 
     async autoCreateFromTemplates(householdId, daysAhead = 30) {
@@ -758,4 +821,16 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
       return mapNotification(row);
     },
   };
+  // V4.1 Phase 3 (UOW2): expose the client-bound cores as non-contractual
+  // extensions (see PayableStoreTxExtensions in payables/keyed-mutations.ts
+  // for the member contract). The declared factory return type stays
+  // PayableStore, so existing callers are unaffected.
+  return Object.assign(store, {
+    createPayableInTx,
+    createPayableWithTemplateInTx,
+    markPayablePaidInTx,
+    updatePayableInTx,
+    createTemplateInTx,
+    createPayableFromTemplateInTx,
+  });
 };

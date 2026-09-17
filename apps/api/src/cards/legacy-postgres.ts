@@ -196,7 +196,268 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
     return { closingDay: Number(card['closing_day']), dueDay: Number(card['due_day']) };
   };
 
-  return {
+  type CreateCardPurchaseInput = Parameters<CardStore['createCardPurchase']>[1];
+  type CreateCardInstallmentsInput = Parameters<CardStore['createCardInstallments']>[1];
+  type CreateRecurringPurchaseInput = Parameters<CardStore['createRecurringPurchase']>[1];
+  type PayStatementInput = Parameters<CardStore['payStatement']>[2];
+
+  /**
+   * V4.1 Phase 3 (UOW2) — legacy client-bound card cores (no transaction
+   * handling; same member names as the canonical extensions). Legacy SQL
+   * (from_account_id, is_credit_card_purchase, computed balances) preserved.
+   */
+  const createCardPurchaseInTx = async (
+    client: PoolClient,
+    householdId: string,
+    input: CreateCardPurchaseInput,
+  ): Promise<Transaction[]> => {
+    // M-05: same active/expense-kind category rule as plain entries.
+    if (input.categoryId) {
+      await resolveExpenseCategoryLegacy(client, householdId, input.categoryId);
+    }
+    if (input.subcategoryId) {
+      await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'expense', input.categoryId);
+    }
+
+    const card = await requireCard(householdId, input.accountId, client);
+
+
+    const closing = getClosingDate(input.date, card.closingDay);
+    const cycle = closing.slice(0, 7);
+    const due = getDueDate(closing, card.dueDay);
+
+    const statementId = await findOrCreateStatement(householdId, input.accountId, cycle, closing, due, client);
+
+    const purchaseId = randomUUID();
+    const txId = randomUUID();
+    await client.query(
+      `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, subcategory_id, notes, is_credit_card_purchase, statement_id, installments_total, installment_number)
+       VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, $8, $9, true, $10, $11, $12)`,
+      [txId, householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, statementId, input.installmentsTotal ?? null, input.installmentNumber ?? null],
+    );
+
+    await client.query(
+      `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, subcategory_id, notes, installments_total, installment_number, is_recurring, transaction_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, $13, NOW(), NOW())`,
+      [purchaseId, householdId, input.accountId, statementId, input.description, input.amountCents, input.date, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, input.installmentsTotal ?? null, input.installmentNumber ?? null, txId],
+    );
+
+    await recalcStatement(statementId, householdId, client);
+
+    return [
+      opt<Transaction>(
+        { id: txId, householdId, kind: 'expense', description: input.description, amountCents: input.amountCents, date: input.date, accountId: input.accountId },
+        { categoryId: input.categoryId, subcategoryId: input.subcategoryId, notes: input.notes } as Partial<Transaction>,
+      ),
+    ];
+  };
+
+  const createCardInstallmentsInTx = async (
+    client: PoolClient,
+    householdId: string,
+    input: CreateCardInstallmentsInput,
+  ): Promise<Transaction[]> => {
+    const card = await requireCard(householdId, input.accountId, client);
+
+    // M-05: same active/expense-kind category rule as plain entries.
+    if (input.categoryId) {
+      await resolveExpenseCategoryLegacy(client, householdId, input.categoryId);
+    }
+    if (input.subcategoryId) {
+      await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'expense', input.categoryId);
+    }
+
+    // L-01: single distribution rule (remainder absorbed by the last parcel).
+    const amounts = splitInstallmentAmounts(input.totalAmountCents, input.installmentsTotal);
+    const txs: Transaction[] = [];
+    // V4.1 Task 2.16: clamped billing-month arithmetic (no setUTCMonth
+    // overflow: 2026-01-31 + 1 → 2026-02-28, not 2026-03-03).
+    const dates = installmentDates(input.purchaseDate, input.installmentsTotal);
+    const touchedStatements = new Set<string>();
+
+    for (let i = 0; i < input.installmentsTotal; i++) {
+      const dateStr = dates[i]!;
+      const amount = amounts[i]!;
+
+      const closing = getClosingDate(dateStr, card.closingDay);
+      const cycle = closing.slice(0, 7);
+      const due = getDueDate(closing, card.dueDay);
+
+      const statementId = await findOrCreateStatement(householdId, input.accountId, cycle, closing, due, client);
+      touchedStatements.add(statementId);
+
+      const purchaseId = randomUUID();
+      const txId = randomUUID();
+      await client.query(
+        `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, subcategory_id, notes, is_credit_card_purchase, statement_id, installments_total, installment_number)
+         VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, $8, $9, true, $10, $11, $12)`,
+        [txId, householdId, input.description, amount, dateStr, input.accountId, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, statementId, input.installmentsTotal, i + 1],
+      );
+
+      await client.query(
+        `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, subcategory_id, notes, installments_total, installment_number, is_recurring, transaction_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, $13, NOW(), NOW())`,
+        [purchaseId, householdId, input.accountId, statementId, input.description, amount, dateStr, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, input.installmentsTotal, i + 1, txId],
+      );
+
+      txs.push(
+        opt<Transaction>(
+          { id: txId, householdId, kind: 'expense', description: input.description, amountCents: amount, date: dateStr, accountId: input.accountId },
+          { categoryId: input.categoryId, subcategoryId: input.subcategoryId, notes: input.notes } as Partial<Transaction>,
+        ),
+      );
+    }
+
+    for (const stmtId of touchedStatements) {
+      await recalcStatement(stmtId, householdId, client);
+    }
+
+    return txs;
+  };
+
+  const createRecurringPurchaseInTx = async (
+    client: PoolClient,
+    householdId: string,
+    input: CreateRecurringPurchaseInput,
+  ): Promise<RecurringPurchase> => {
+    // Task 2.18: same validation as the normal purchase path — active
+    // credit card with closing/due configured; active expense-kind
+    // category (shared requireCard + category resolvers).
+    await requireCard(householdId, input.accountId, client);
+
+    if (input.categoryId) {
+      await resolveExpenseCategoryLegacy(client, householdId, input.categoryId);
+    }
+
+    const id = randomUUID();
+    await client.query(
+      `INSERT INTO recurring_purchases (id, household_id, account_id, description, amount_cents, frequency, start_date, next_due_date, end_date, category_id, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, 'active', NOW(), NOW())`,
+      [id, householdId, input.accountId, input.description, input.amountCents, input.frequency, input.startDate, input.endDate ?? null, input.categoryId ?? null],
+    );
+    return opt<RecurringPurchase>(
+      { id, householdId, accountId: input.accountId, description: input.description, amountCents: input.amountCents, frequency: input.frequency, startDate: input.startDate, status: 'active' as const },
+      { endDate: input.endDate, categoryId: input.categoryId } as Partial<RecurringPurchase>,
+    );
+  };
+
+  const payStatementInTx = async (
+    client: PoolClient,
+    householdId: string,
+    statementId: string,
+    input: PayStatementInput,
+  ): Promise<Statement> => {
+    // Task 2.9 (SPEC §9.5): the whole payment runs inside ONE transaction —
+    // BEGIN → lock statement → read paid → compute remaining → validate →
+    // create payment → update paid/status → COMMIT.
+    const stmtRows = await client.query<Row>(
+      `SELECT id, household_id, account_id, cycle_year_month, closing_date, due_date, total_cents, paid_cents, status
+         FROM statements WHERE id = $1 AND household_id = $2 FOR UPDATE`,
+      [statementId, householdId],
+    );
+    if (stmtRows.rows.length === 0) throw domainErrors.notFound('Fatura');
+    const stmt = mapStatement(stmtRows.rows[0]!);
+
+    const remaining = stmt.totalCents - stmt.paidCents;
+    if (remaining <= 0) throw domainErrors.invalid('amountCents', 'fatura já está paga');
+    if (input.amountCents > remaining) throw domainErrors.invalid('amountCents', 'valor excede o saldo da fatura');
+
+    // Lock the payer so concurrent payments from the same account
+    // serialize. NOTE: legacy balances are computed from the ledger
+    // (initial_balance_cents + transactions) — there is no stored
+    // balance_cents to gate on; the payment expense below IS the debit.
+    const fromRows = await client.query<Row>(
+      `SELECT id, is_credit_card FROM accounts WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL FOR UPDATE`,
+      [input.fromAccountId, householdId],
+    );
+    if (fromRows.rows.length === 0) throw domainErrors.notFound('Conta de origem');
+    if (fromRows.rows[0]!['is_credit_card'] === true) throw domainErrors.invalid('fromAccountId', 'não pode pagar fatura com cartão de crédito');
+
+    const newPaid = stmt.paidCents + input.amountCents;
+    await client.query(
+      `UPDATE statements SET paid_cents = $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
+      [newPaid, statementId, householdId],
+    );
+
+    const today = todayISO();
+    await client.query(
+      `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, is_credit_card_purchase)
+       VALUES ($1, $2, 'expense', $3, $4, $5, $6, false)`,
+      [randomUUID(), householdId, `Pagamento fatura ${stmt.cycleYearMonth}`, input.amountCents, today, input.fromAccountId],
+    );
+
+    const newStatus = computeStatus({ ...stmt, paidCents: newPaid }, today);
+    if (newStatus !== stmt.status) {
+      await client.query(
+        `UPDATE statements SET status = $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
+        [newStatus, statementId, householdId],
+      );
+    }
+
+    return { ...stmt, paidCents: newPaid, status: newStatus };
+  };
+
+  const cancelPurchaseInTx = async (
+    client: PoolClient,
+    householdId: string,
+    purchaseId: string,
+  ): Promise<void> => {
+    // Idempotência: se já soft-deletado, retornar
+    const alreadyCp = await client.query<Row>(`SELECT id FROM card_purchases WHERE id = $1 AND household_id = $2 AND deleted_at IS NOT NULL`, [purchaseId, householdId]);
+    if ((alreadyCp.rowCount ?? 0) > 0) return;
+    const alreadyTx = await client.query<Row>(`SELECT id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NOT NULL`, [purchaseId, householdId]);
+    if ((alreadyTx.rowCount ?? 0) > 0) return;
+
+    // Tentar card_purchases com transaction_id explícito
+    const cpRow = await client.query<Row>(`SELECT id, statement_id, amount_cents, date, transaction_id FROM card_purchases WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]);
+    if ((cpRow.rowCount ?? 0) > 0) {
+      const cp = cpRow.rows[0]!;
+      const stmtId = cp['statement_id'] as string;
+      // V4.1 REVIEWFIX F6 [major]: lock the statement BEFORE the status
+      // gate (was: unlocked read → TOCTOU) and recompute through the
+      // locked recalcStatement helper (was: unlocked SUM + UPDATE).
+      const stmtRes = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2 FOR UPDATE`, [stmtId, householdId]);
+      if ((stmtRes.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
+      const stmt = mapStatement(stmtRes.rows[0]!);
+      if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
+      const txId = cp['transaction_id'] as string | null;
+      if (txId) {
+        await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
+        await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [txId, householdId]);
+      } else {
+        // Legado sem vínculo: buscar transação candidata única
+        const candidates = await client.query<Row>(
+          `SELECT id FROM transactions WHERE household_id = $1 AND statement_id = $2 AND amount_cents = $3 AND date = $4 AND deleted_at IS NULL`,
+          [householdId, stmtId, cp['amount_cents'], (cp['date'] instanceof Date ? (cp['date'] as Date).toISOString().slice(0, 10) : String(cp['date']).slice(0, 10))],
+        );
+        if (candidates.rows.length !== 1) throw domainErrors.conflict('Compra legada sem vínculo único: intervenção manual necessária.');
+        await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
+        await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [candidates.rows[0]!['id'], householdId]);
+      }
+      await recalcStatement(stmtId, householdId, client);
+      return;
+    }
+
+    // Tentar transactions diretamente (compra criada apenas como transação)
+    const txRow = await client.query<Row>(`SELECT id, statement_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]);
+    if ((txRow.rowCount ?? 0) > 0) {
+      const stmtId = txRow.rows[0]!['statement_id'] as string | null;
+      if (!stmtId) throw domainErrors.notFound('Compra');
+      // V4.1 REVIEWFIX F6: same locked read + locked recalc as above.
+      const stmtRes = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2 FOR UPDATE`, [stmtId, householdId]);
+      if ((stmtRes.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
+      const stmt = mapStatement(stmtRes.rows[0]!);
+      if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
+      await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
+      await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE transaction_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]).catch(() => {});
+      await recalcStatement(stmtId, householdId, client);
+      return;
+    }
+
+    throw domainErrors.notFound('Compra');
+  };
+
+  const store: CardStore = {
     async listCreditCardAccounts(householdId) {
       const rows = await query<Row>(
         `SELECT a.id, a.household_id, a.name, a.active,
@@ -334,108 +595,11 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
     },
 
     async createCardPurchase(householdId, input) {
-      return withTransaction(pool, async (client) => {
-        // M-05: same active/expense-kind category rule as plain entries.
-        if (input.categoryId) {
-          await resolveExpenseCategoryLegacy(client, householdId, input.categoryId);
-        }
-        if (input.subcategoryId) {
-          await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'expense', input.categoryId);
-        }
-
-        const card = await requireCard(householdId, input.accountId, client);
-
-
-        const closing = getClosingDate(input.date, card.closingDay);
-        const cycle = closing.slice(0, 7);
-        const due = getDueDate(closing, card.dueDay);
-
-        const statementId = await findOrCreateStatement(householdId, input.accountId, cycle, closing, due, client);
-
-        const purchaseId = randomUUID();
-        const txId = randomUUID();
-        await client.query(
-          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, subcategory_id, notes, is_credit_card_purchase, statement_id, installments_total, installment_number)
-           VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, $8, $9, true, $10, $11, $12)`,
-          [txId, householdId, input.description, input.amountCents, input.date, input.accountId, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, statementId, input.installmentsTotal ?? null, input.installmentNumber ?? null],
-        );
-
-        await client.query(
-          `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, subcategory_id, notes, installments_total, installment_number, is_recurring, transaction_id, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, $13, NOW(), NOW())`,
-          [purchaseId, householdId, input.accountId, statementId, input.description, input.amountCents, input.date, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, input.installmentsTotal ?? null, input.installmentNumber ?? null, txId],
-        );
-
-        await recalcStatement(statementId, householdId, client);
-
-        return [
-          opt<Transaction>(
-            { id: txId, householdId, kind: 'expense', description: input.description, amountCents: input.amountCents, date: input.date, accountId: input.accountId },
-            { categoryId: input.categoryId, subcategoryId: input.subcategoryId, notes: input.notes } as Partial<Transaction>,
-          ),
-        ];
-      });
+      return withTransaction(pool, (client) => createCardPurchaseInTx(client, householdId, input));
     },
 
     async createCardInstallments(householdId, input) {
-      return withTransaction(pool, async (client) => {
-        const card = await requireCard(householdId, input.accountId, client);
-
-        // M-05: same active/expense-kind category rule as plain entries.
-        if (input.categoryId) {
-          await resolveExpenseCategoryLegacy(client, householdId, input.categoryId);
-        }
-        if (input.subcategoryId) {
-          await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'expense', input.categoryId);
-        }
-
-        // L-01: single distribution rule (remainder absorbed by the last parcel).
-        const amounts = splitInstallmentAmounts(input.totalAmountCents, input.installmentsTotal);
-        const txs: Transaction[] = [];
-        // V4.1 Task 2.16: clamped billing-month arithmetic (no setUTCMonth
-        // overflow: 2026-01-31 + 1 → 2026-02-28, not 2026-03-03).
-        const dates = installmentDates(input.purchaseDate, input.installmentsTotal);
-        const touchedStatements = new Set<string>();
-
-        for (let i = 0; i < input.installmentsTotal; i++) {
-          const dateStr = dates[i]!;
-          const amount = amounts[i]!;
-
-          const closing = getClosingDate(dateStr, card.closingDay);
-          const cycle = closing.slice(0, 7);
-          const due = getDueDate(closing, card.dueDay);
-
-          const statementId = await findOrCreateStatement(householdId, input.accountId, cycle, closing, due, client);
-          touchedStatements.add(statementId);
-
-          const purchaseId = randomUUID();
-          const txId = randomUUID();
-          await client.query(
-            `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id, subcategory_id, notes, is_credit_card_purchase, statement_id, installments_total, installment_number)
-             VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7, $8, $9, true, $10, $11, $12)`,
-            [txId, householdId, input.description, amount, dateStr, input.accountId, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, statementId, input.installmentsTotal, i + 1],
-          );
-
-          await client.query(
-            `INSERT INTO card_purchases (id, household_id, account_id, statement_id, description, amount_cents, date, category_id, subcategory_id, notes, installments_total, installment_number, is_recurring, transaction_id, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, $13, NOW(), NOW())`,
-            [purchaseId, householdId, input.accountId, statementId, input.description, amount, dateStr, input.categoryId ?? null, input.subcategoryId ?? null, input.notes ?? null, input.installmentsTotal, i + 1, txId],
-          );
-
-          txs.push(
-            opt<Transaction>(
-              { id: txId, householdId, kind: 'expense', description: input.description, amountCents: amount, date: dateStr, accountId: input.accountId },
-              { categoryId: input.categoryId, subcategoryId: input.subcategoryId, notes: input.notes } as Partial<Transaction>,
-            ),
-          );
-        }
-
-        for (const stmtId of touchedStatements) {
-          await recalcStatement(stmtId, householdId, client);
-        }
-
-        return txs;
-      });
+      return withTransaction(pool, (client) => createCardInstallmentsInTx(client, householdId, input));
     },
 
     async listRecurringPurchases(householdId, opts) {
@@ -455,82 +619,11 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
     },
 
     async createRecurringPurchase(householdId, input) {
-      return withTransaction(pool, async (client) => {
-        // Task 2.18: same validation as the normal purchase path — active
-        // credit card with closing/due configured; active expense-kind
-        // category (shared requireCard + category resolvers).
-        await requireCard(householdId, input.accountId, client);
-
-        if (input.categoryId) {
-          await resolveExpenseCategoryLegacy(client, householdId, input.categoryId);
-        }
-
-        const id = randomUUID();
-        await client.query(
-          `INSERT INTO recurring_purchases (id, household_id, account_id, description, amount_cents, frequency, start_date, next_due_date, end_date, category_id, status, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, 'active', NOW(), NOW())`,
-          [id, householdId, input.accountId, input.description, input.amountCents, input.frequency, input.startDate, input.endDate ?? null, input.categoryId ?? null],
-        );
-        return opt<RecurringPurchase>(
-          { id, householdId, accountId: input.accountId, description: input.description, amountCents: input.amountCents, frequency: input.frequency, startDate: input.startDate, status: 'active' as const },
-          { endDate: input.endDate, categoryId: input.categoryId } as Partial<RecurringPurchase>,
-        );
-      });
+      return withTransaction(pool, (client) => createRecurringPurchaseInTx(client, householdId, input));
     },
 
     async payStatement(householdId, statementId, input) {
-      // Task 2.9 (SPEC §9.5): the whole payment runs inside ONE transaction —
-      // BEGIN → lock statement → read paid → compute remaining → validate →
-      // create payment → update paid/status → COMMIT. The pre-fix code read
-      // remaining OUTSIDE the transaction, so two concurrent payments both
-      // saw the same stale remainder and double-paid.
-      return withTransaction(pool, async (client) => {
-        const stmtRows = await client.query<Row>(
-          `SELECT id, household_id, account_id, cycle_year_month, closing_date, due_date, total_cents, paid_cents, status
-             FROM statements WHERE id = $1 AND household_id = $2 FOR UPDATE`,
-          [statementId, householdId],
-        );
-        if (stmtRows.rows.length === 0) throw domainErrors.notFound('Fatura');
-        const stmt = mapStatement(stmtRows.rows[0]!);
-
-        const remaining = stmt.totalCents - stmt.paidCents;
-        if (remaining <= 0) throw domainErrors.invalid('amountCents', 'fatura já está paga');
-        if (input.amountCents > remaining) throw domainErrors.invalid('amountCents', 'valor excede o saldo da fatura');
-
-        // Lock the payer so concurrent payments from the same account
-        // serialize. NOTE: legacy balances are computed from the ledger
-        // (initial_balance_cents + transactions) — there is no stored
-        // balance_cents to gate on; the payment expense below IS the debit.
-        const fromRows = await client.query<Row>(
-          `SELECT id, is_credit_card FROM accounts WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL FOR UPDATE`,
-          [input.fromAccountId, householdId],
-        );
-        if (fromRows.rows.length === 0) throw domainErrors.notFound('Conta de origem');
-        if (fromRows.rows[0]!['is_credit_card'] === true) throw domainErrors.invalid('fromAccountId', 'não pode pagar fatura com cartão de crédito');
-
-        const newPaid = stmt.paidCents + input.amountCents;
-        await client.query(
-          `UPDATE statements SET paid_cents = $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
-          [newPaid, statementId, householdId],
-        );
-
-        const today = todayISO();
-        await client.query(
-          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, is_credit_card_purchase)
-           VALUES ($1, $2, 'expense', $3, $4, $5, $6, false)`,
-          [randomUUID(), householdId, `Pagamento fatura ${stmt.cycleYearMonth}`, input.amountCents, today, input.fromAccountId],
-        );
-
-        const newStatus = computeStatus({ ...stmt, paidCents: newPaid }, today);
-        if (newStatus !== stmt.status) {
-          await client.query(
-            `UPDATE statements SET status = $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
-            [newStatus, statementId, householdId],
-          );
-        }
-
-        return { ...stmt, paidCents: newPaid, status: newStatus };
-      });
+      return withTransaction(pool, (client) => payStatementInTx(client, householdId, statementId, input));
     },
 
     async createCard(householdId, input) {
@@ -721,61 +814,18 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
     },
 
     async cancelPurchase(householdId, purchaseId) {
-      return withTransaction(pool, async (client) => {
-        // Idempotência: se já soft-deletado, retornar
-        const alreadyCp = await client.query<Row>(`SELECT id FROM card_purchases WHERE id = $1 AND household_id = $2 AND deleted_at IS NOT NULL`, [purchaseId, householdId]);
-        if ((alreadyCp.rowCount ?? 0) > 0) return;
-        const alreadyTx = await client.query<Row>(`SELECT id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NOT NULL`, [purchaseId, householdId]);
-        if ((alreadyTx.rowCount ?? 0) > 0) return;
-
-        // Tentar card_purchases com transaction_id explícito
-        const cpRow = await client.query<Row>(`SELECT id, statement_id, amount_cents, date, transaction_id FROM card_purchases WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]);
-        if ((cpRow.rowCount ?? 0) > 0) {
-          const cp = cpRow.rows[0]!;
-          const stmtId = cp['statement_id'] as string;
-          // V4.1 REVIEWFIX F6 [major]: lock the statement BEFORE the status
-          // gate (was: unlocked read → TOCTOU) and recompute through the
-          // locked recalcStatement helper (was: unlocked SUM + UPDATE).
-          const stmtRes = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2 FOR UPDATE`, [stmtId, householdId]);
-          if ((stmtRes.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
-          const stmt = mapStatement(stmtRes.rows[0]!);
-          if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
-          const txId = cp['transaction_id'] as string | null;
-          if (txId) {
-            await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
-            await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [txId, householdId]);
-          } else {
-            // Legado sem vínculo: buscar transação candidata única
-            const candidates = await client.query<Row>(
-              `SELECT id FROM transactions WHERE household_id = $1 AND statement_id = $2 AND amount_cents = $3 AND date = $4 AND deleted_at IS NULL`,
-              [householdId, stmtId, cp['amount_cents'], (cp['date'] instanceof Date ? (cp['date'] as Date).toISOString().slice(0,10) : String(cp['date']).slice(0,10))],
-            );
-            if (candidates.rows.length !== 1) throw domainErrors.conflict('Compra legada sem vínculo único: intervenção manual necessária.');
-            await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
-            await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [candidates.rows[0]!['id'], householdId]);
-          }
-          await recalcStatement(stmtId, householdId, client);
-          return;
-        }
-
-        // Tentar transactions diretamente (compra criada apenas como transação)
-        const txRow = await client.query<Row>(`SELECT id, statement_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]);
-        if ((txRow.rowCount ?? 0) > 0) {
-          const stmtId = txRow.rows[0]!['statement_id'] as string | null;
-          if (!stmtId) throw domainErrors.notFound('Compra');
-          // V4.1 REVIEWFIX F6: same locked read + locked recalc as above.
-          const stmtRes = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2 FOR UPDATE`, [stmtId, householdId]);
-          if ((stmtRes.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
-          const stmt = mapStatement(stmtRes.rows[0]!);
-          if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
-          await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
-          await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE transaction_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]).catch(() => {});
-          await recalcStatement(stmtId, householdId, client);
-          return;
-        }
-
-        throw domainErrors.notFound('Compra');
-      });
+      return withTransaction(pool, (client) => cancelPurchaseInTx(client, householdId, purchaseId));
     },
   };
+  // V4.1 Phase 3 (UOW2): expose the legacy client-bound cores as
+  // non-contractual extensions (see CardStoreTxExtensions in
+  // cards/keyed-mutations.ts). The declared factory return type stays
+  // CardStore.
+  return Object.assign(store, {
+    createCardPurchaseInTx,
+    createCardInstallmentsInTx,
+    createRecurringPurchaseInTx,
+    payStatementInTx,
+    cancelPurchaseInTx,
+  });
 };

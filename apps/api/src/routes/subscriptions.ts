@@ -52,6 +52,7 @@ import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
 import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
+import { runSubscriptionMutation } from '../subscriptions/keyed-mutations.js';
 
 export const registerSubscriptionRoutes = (
   app: FastifyInstance,
@@ -97,8 +98,10 @@ export const registerSubscriptionRoutes = (
       });
       if (pending) return reply.code(pending.status).send(pending.body);
     }
-    const fn = async () => {
-      const sub = await opts.subscriptionStore.createSubscription(ctx.householdId, parsed.data);
+    const fn = async (claimTx?: unknown) => {
+      // V4.1 Phase 3 (UOW2): the subscription insert joins the claim tx
+      // (canonical store; legacy has no InTx extension → plain fallback).
+      const sub = await runSubscriptionMutation(opts.subscriptionStore, claimTx, ctx.householdId, 'create', parsed.data);
       return { status: 201 as const, body: attachMutationReceipt(sub, 'subscription.create', { type: 'subscription', id: sub.id }) };
     };
     try {

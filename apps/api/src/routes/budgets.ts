@@ -41,6 +41,7 @@ import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
 import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
+import { runBudgetMutation } from '../budgets/keyed-mutations.js';
 
 export const registerBudgetRoutes = (
   app: FastifyInstance,
@@ -80,8 +81,9 @@ export const registerBudgetRoutes = (
       });
       if (pending) return reply.code(pending.status).send(pending.body);
     }
-    const fn = async () => {
-      const b = await opts.budgetStore.createBudget(ctx.householdId, {
+    const fn = async (claimTx?: unknown) => {
+      // V4.1 Phase 3 (UOW2): gate + insert join the claim tx.
+      const b = await runBudgetMutation(opts.budgetStore, claimTx, ctx.householdId, 'create', {
         categoryId: parsed.data.categoryId,
         name: parsed.data.name,
         amountCents: parsed.data.amountCents,
@@ -109,10 +111,13 @@ export const registerBudgetRoutes = (
     if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
     const rawKey = req.headers['idempotency-key'] ?? req.headers['Idempotency-Key'];
     const key = rawKey !== undefined ? requireIdempotencyKey(req.headers) : undefined;
-    const fn = async () => {
-      const b = await opts.budgetStore.updateBudget(ctx.householdId, params.data.id, {
-        ...(parsed.data.amountCents !== undefined ? { amountCents: parsed.data.amountCents } : {}),
-        ...(parsed.data.alertThreshold !== undefined ? { alertThreshold: parsed.data.alertThreshold } : {}),
+    const fn = async (claimTx?: unknown) => {
+      const b = await runBudgetMutation(opts.budgetStore, claimTx, ctx.householdId, 'update', {
+        id: params.data.id,
+        patch: {
+          ...(parsed.data.amountCents !== undefined ? { amountCents: parsed.data.amountCents } : {}),
+          ...(parsed.data.alertThreshold !== undefined ? { alertThreshold: parsed.data.alertThreshold } : {}),
+        },
       });
       return { status: 200 as const, body: attachMutationReceipt(b, 'budget.update', { type: 'budget', id: params.data.id }) };
     };
