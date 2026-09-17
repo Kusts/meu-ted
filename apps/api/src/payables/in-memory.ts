@@ -6,6 +6,7 @@ import type {
   Transaction,
 } from "../types/domain.js";
 import { DomainError, domainErrors } from "../writes/errors.js";
+import { resolveCategoryForWrite } from "../categories/resolve.js";
 import type { InMemoryState } from "../writes/in-memory.js";
 import type { PayableStore } from "./store.js";
 
@@ -81,6 +82,15 @@ export const createInMemoryPayableStore = (
     },
 
     async createPayable(householdId, input) {
+      // V4.1 Task 2.15: an explicit categoryId must resolve to an active
+      // expense-kind category of the household (was: no validation).
+      if (input.categoryId !== undefined) {
+        resolveCategoryForWrite(state.categories, {
+          householdId,
+          categoryId: input.categoryId,
+          expectedKind: 'expense',
+        });
+      }
       const p = opt<Payable>(
         {
           id: randomUUID(),
@@ -253,7 +263,15 @@ export const createInMemoryPayableStore = (
       if (input.amountCents !== undefined) p.amountCents = input.amountCents;
       if (input.dueDate !== undefined) p.dueDate = input.dueDate;
       if (input.accountId !== undefined) p.accountId = input.accountId;
-      if (input.categoryId !== undefined) p.categoryId = input.categoryId;
+      // V4.1 Task 2.15: same category gate as createPayable.
+      if (input.categoryId !== undefined) {
+        resolveCategoryForWrite(state.categories, {
+          householdId,
+          categoryId: input.categoryId,
+          expectedKind: 'expense',
+        });
+        p.categoryId = input.categoryId;
+      }
       return p;
     },
 

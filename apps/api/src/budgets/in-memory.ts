@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Budget, BudgetTrend } from '../types/domain.js';
 import type { BudgetStore } from './store.js';
 import type { InMemoryState } from '../writes/in-memory.js';
+import { resolveCategoryForWrite } from '../categories/resolve.js';
 import { domainErrors } from '../writes/errors.js';
 
 function opt<T extends Record<string, unknown>>(obj: T, props: Partial<T>): T {
@@ -57,6 +58,14 @@ export const createInMemoryBudgetStore = (state: InMemoryState, clock: () => Dat
     },
 
     async createBudget(householdId, input) {
+      // V4.1 Task 2.15: budgets had no category validation — the category
+      // must now be an active expense-kind category of the household
+      // (budgets track expense spending).
+      resolveCategoryForWrite(state.categories, {
+        householdId,
+        categoryId: input.categoryId,
+        expectedKind: 'expense',
+      });
       const b = opt<Budget>(
         { id: randomUUID(), householdId, categoryId: input.categoryId, name: input.name, amountCents: input.amountCents, period: input.period, startDate: input.startDate, alertThreshold: input.alertThreshold ?? 80, rollover: false },
         {} as Partial<Budget>,

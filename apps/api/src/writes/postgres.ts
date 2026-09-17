@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { Account, Category, Transaction } from '../types/domain.js';
 import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';
+import { assertCategoryKind, CARD_EXPENSE_KIND_MESSAGE } from '../categories/resolve.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors, DomainError } from './errors.js';
 import { buildIdempotencyKey, type IdempotencyProducer } from './idempotency.js';
@@ -178,10 +179,8 @@ export const resolveExpenseCategoryInTx = async (
 ): Promise<Category> => {
   const cat = await findCategoryInHousehold(client, categoryId, householdId);
   if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
-  if (cat.kind !== 'expense') {
-    throw domainErrors.invalid('categoryId', 'compra no cartão exige categoria de despesa');
-  }
-  return cat;
+  // V4.1 Task 2.14: kind decision delegated to the central resolver.
+  return assertCategoryKind(cat, 'expense', 'categoryId', CARD_EXPENSE_KIND_MESSAGE);
 };
 
 const findActiveTransaction = async (
@@ -310,6 +309,9 @@ const createExpenseInTx = async (
   }
   const cat = await findCategoryInHousehold(client, input.categoryId, householdId);
   if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
+  // V4.1 Task 2.15: plain expenses require an expense-kind category —
+  // same strictness as the card path (was: any active category accepted).
+  assertCategoryKind(cat, 'expense');
   if (input.subcategoryId !== undefined) {
     await resolveSubcategoryInTx(client, householdId, input.subcategoryId, 'expense', input.categoryId);
   }
@@ -355,6 +357,8 @@ const createIncomeInTx = async (
   }
   const cat = await findCategoryInHousehold(client, input.categoryId, householdId);
   if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
+  // V4.1 Task 2.15: plain income requires an income-kind category.
+  assertCategoryKind(cat, 'income');
   if (input.subcategoryId !== undefined) {
     await resolveSubcategoryInTx(client, householdId, input.subcategoryId, 'income', input.categoryId);
   }
@@ -805,6 +809,9 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
         if (patch.categoryId !== undefined) {
           const next = await findCategoryInHousehold(client, patch.categoryId, householdId);
           if (next.status !== 'active') throw domainErrors.notFound('Categoria');
+          // V4.1 Task 2.15: PATCH keeps the entry kind — the new category
+          // must match it (this branch only runs for expense/income).
+          assertCategoryKind(next, tx.kind === 'income' ? 'income' : 'expense');
         }
         // Effective parent for subcategory coherence (M-03): an explicit
         // subcategory is validated against the effective parent; when only

@@ -16,10 +16,11 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { Payable, PayableStore } from './store.js';
-import { createPostgresPayableStore } from './postgres.js';
+import { createPostgresPayableStore, insertPayableRow } from './postgres.js';
 import { domainErrors, DomainError } from '../writes/errors.js';
+import { assertCategoryKind } from '../categories/resolve.js';
 import { withTransaction } from '../db/pool.js';
 
 type Row = Record<string, unknown>;
@@ -70,10 +71,53 @@ export const createLegacyPostgresPayableStore = (pool: Pool): PayableStore => {
     return r.rows;
   };
 
+  /**
+   * Legacy-schema category gate mirroring the canonical
+   * `assertPayableCategoryInTx` (V4.1 Task 2.15): same 404/400 shapes, but
+   * the lookup uses the legacy `active` boolean (no `status` column).
+   */
+  const assertPayableCategoryLegacy = async (
+    client: PoolClient,
+    householdId: string,
+    categoryId: string,
+  ): Promise<void> => {
+    const res = await client.query<Row>(
+      `SELECT id, kind FROM categories WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL`,
+      [categoryId, householdId],
+    );
+    if ((res.rowCount ?? 0) === 0 || res.rows.length === 0) throw domainErrors.notFound('Categoria');
+    assertCategoryKind(
+      { id: categoryId, householdId, kind: String(res.rows[0]!['kind']), status: 'active' },
+      'expense',
+    );
+  };
+
   return {
     ...base,
+    async createPayable(householdId, input) {
+      // V4.1 Task 2.15: legacy gate BEFORE the shared insert core — the
+      // canonical gate inside base.createPayable would query the `status`
+      // column, which does not exist on the legacy schema.
+      return withTransaction(pool, async (client) => {
+        if (input.categoryId !== undefined) {
+          await assertPayableCategoryLegacy(client, householdId, input.categoryId);
+        }
+        return insertPayableRow(
+          async <R extends Row = Row>(text: string, values: unknown[] = []): Promise<R[]> => {
+            const res = await client.query<R>(text, values);
+            return res.rows;
+          },
+          householdId,
+          input,
+        );
+      });
+    },
     async createPayableWithTemplate(householdId, input) {
       return withTransaction(pool, async (client) => {
+        // V4.1 Task 2.15: same category gate as createPayable.
+        if (input.payable.categoryId !== undefined) {
+          await assertPayableCategoryLegacy(client, householdId, input.payable.categoryId);
+        }
         const templateId = randomUUID();
         await client.query(
           `INSERT INTO payable_templates (id, household_id, account_id, name, description, amount_cents, frequency, day_of_month, reminder_days_before, notes, active)
@@ -125,6 +169,11 @@ export const createLegacyPostgresPayableStore = (pool: Pool): PayableStore => {
         const existing = await client.query<Row>(`SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [payableId, householdId]);
         if (existing.rowCount === 0 || existing.rows.length === 0) throw domainErrors.notFound('Conta a pagar');
         if (existing.rows[0]!.status === 'cancelled') throw new DomainError('validation.invalid', 'Conta cancelada não pode ser editada', 409);
+
+        // V4.1 Task 2.15: same category gate as createPayable.
+        if (input.categoryId !== undefined) {
+          await assertPayableCategoryLegacy(client, householdId, input.categoryId);
+        }
 
         // Build update sets for accounts_payable
         const sets: string[] = [];

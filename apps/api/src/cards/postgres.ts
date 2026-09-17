@@ -13,6 +13,7 @@ import type { CardStore } from './store.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors } from '../writes/errors.js';
 import { resolveExpenseCategoryInTx, resolveSubcategoryInTx } from '../writes/postgres.js';
+import { installmentDates } from '../shared/billing-month.js';
 import { splitInstallmentAmounts } from './installments.js';
 
 type Row = Record<string, unknown>;
@@ -390,12 +391,12 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
         // L-01: single distribution rule (remainder absorbed by the last parcel).
         const amounts = splitInstallmentAmounts(input.totalAmountCents, input.installmentsTotal);
         const txs: Transaction[] = [];
-        const date = new Date(input.purchaseDate + 'T00:00:00.000Z');
+        // V4.1 Task 2.16: clamped billing-month arithmetic (no setUTCMonth
+        // overflow: 2026-01-31 + 1 → 2026-02-28, not 2026-03-03).
+        const dates = installmentDates(input.purchaseDate, input.installmentsTotal);
 
         for (let i = 0; i < input.installmentsTotal; i++) {
-          const instDate = new Date(date);
-          instDate.setUTCMonth(instDate.getUTCMonth() + i);
-          const dateStr = instDate.toISOString().slice(0, 10);
+          const dateStr = dates[i]!;
           const amount = amounts[i]!;
 
           const closing = getClosingDate(dateStr, closingDay);

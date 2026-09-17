@@ -11,6 +11,7 @@ import type { Account, Transaction, Statement, StatementPurchase, RecurringPurch
 
 interface CardPurchase {
   id: string;
+  householdId: string;
   statementId: string;
   description: string;
   amountCents: number;
@@ -28,6 +29,8 @@ import type { CardStore } from './store.js';
 import type { InMemoryState } from '../writes/in-memory.js';
 import { resolveSubcategory } from '../writes/in-memory.js';
 import { domainErrors } from '../writes/errors.js';
+import { CARD_EXPENSE_KIND_MESSAGE, resolveCategoryForWrite } from '../categories/resolve.js';
+import { installmentDates } from '../shared/billing-month.js';
 import { splitInstallmentAmounts } from './installments.js';
 
 function stableId(prefix: string, accountId: string, cycle: string): string {
@@ -143,9 +146,14 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
 
   /** M-05: same active/expense-kind category rule as plain entries. */
   const resolveCardCategory = (householdId: string, categoryId: string): void => {
-    const cat = state.categories.find(c => c.id === categoryId && c.householdId === householdId);
-    if (!cat || cat.status !== 'active') throw domainErrors.notFound('Categoria');
-    if (cat.kind !== 'expense') throw domainErrors.invalid('categoryId', 'compra no cartão exige categoria de despesa');
+    // V4.1 Task 2.14: delegated to the central resolver — same 404/400
+    // shapes and the preserved card kind message.
+    resolveCategoryForWrite(state.categories, {
+      householdId,
+      categoryId,
+      expectedKind: 'expense',
+      wrongKindMessage: CARD_EXPENSE_KIND_MESSAGE,
+    });
   };
 
   /** M-04: audit link row mirroring the card_purchases table. */
@@ -300,13 +308,13 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
       }
       // L-01: single distribution rule (remainder absorbed by the last parcel).
       const amounts = splitInstallmentAmounts(input.totalAmountCents, input.installmentsTotal);
+      // V4.1 Task 2.16: clamped billing-month arithmetic (no setUTCMonth
+      // overflow: 2026-01-31 + 1 → 2026-02-28, not 2026-03-03).
+      const dates = installmentDates(input.purchaseDate, input.installmentsTotal);
       const txs: Transaction[] = [];
-      const date = new Date(input.purchaseDate + 'T00:00:00.000Z');
 
       for (let i = 0; i < input.installmentsTotal; i++) {
-        const instDate = new Date(date);
-        instDate.setUTCMonth(instDate.getUTCMonth() + i);
-        const dateStr = instDate.toISOString().slice(0, 10);
+        const dateStr = dates[i]!;
         const amount = amounts[i]!;
 
         const stmt = findOrCreateStatement(input.accountId, householdId, dateStr, card);

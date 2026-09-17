@@ -6,10 +6,76 @@ import type {
   PayableTemplate,
 } from "../types/domain.js";
 import { DomainError, domainErrors } from "../writes/errors.js";
+import { assertCategoryKind } from "../categories/resolve.js";
 import { withTransaction, } from "../db/pool.js";
 import type { PayableStore } from "./store.js";
 
 type Row = Record<string, unknown>;
+
+type QueryFn = <R extends Row = Row>(text: string, values?: unknown[]) => Promise<R[]>;
+
+type CreatePayableInput = Parameters<PayableStore["createPayable"]>[1];
+
+/**
+ * Canonical-schema category gate for payable writes (V4.1 Task 2.15,
+ * SPEC §9.8): an explicitly provided categoryId must be an active
+ * expense-kind category of the household — 404 when unknown/inactive,
+ * 400 on kind mismatch. The lookup stays schema-local (status column);
+ * the legacy twin in legacy-postgres.ts mirrors it with `active`.
+ */
+export const assertPayableCategoryInTx = async (
+  query: QueryFn,
+  householdId: string,
+  categoryId: string,
+): Promise<void> => {
+  const rows = await query<Row>(
+    `SELECT id, kind, status FROM categories WHERE id = $1 AND household_id = $2`,
+    [categoryId, householdId],
+  );
+  if (rows.length === 0) throw domainErrors.notFound("Categoria");
+  const cat = rows[0]!;
+  if (cat["status"] !== "active") throw domainErrors.notFound("Categoria");
+  assertCategoryKind(
+    { id: categoryId, householdId, kind: String(cat["kind"]), status: "active" },
+    "expense",
+  );
+};
+
+/**
+ * Shared payable-row insert core (schema-compatible INSERT): the canonical
+ * store runs it after the canonical category gate; the legacy override in
+ * legacy-postgres.ts runs it after the legacy (`active`) gate.
+ */
+export const insertPayableRow = async (
+  query: QueryFn,
+  householdId: string,
+  input: CreatePayableInput,
+): Promise<Payable> => {
+  const id = randomUUID();
+  await query(
+    `INSERT INTO accounts_payable (id, household_id, account_id, description, amount_cents, due_date, type, frequency, end_date, reminder_days_before, notes, category_id, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending')`,
+    [
+      id,
+      householdId,
+      input.accountId,
+      input.description,
+      input.amountCents,
+      input.dueDate,
+      input.type ?? "one_time",
+      input.frequency ?? null,
+      input.endDate ?? null,
+      input.reminderDaysBefore ?? 0,
+      input.notes ?? null,
+      input.categoryId ?? null,
+    ],
+  );
+  const rows = await query<Row>(
+    `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2`,
+    [id, householdId],
+  );
+  return mapPayable(rows[0]!);
+};
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -202,30 +268,12 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
     },
 
     async createPayable(householdId, input) {
-      const id = randomUUID();
-      await query(
-        `INSERT INTO accounts_payable (id, household_id, account_id, description, amount_cents, due_date, type, frequency, end_date, reminder_days_before, notes, category_id, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending')`,
-        [
-          id,
-          householdId,
-          input.accountId,
-          input.description,
-          input.amountCents,
-          input.dueDate,
-          input.type ?? "one_time",
-          input.frequency ?? null,
-          input.endDate ?? null,
-          input.reminderDaysBefore ?? 0,
-          input.notes ?? null,
-          input.categoryId ?? null,
-        ],
-      );
-      const rows = await query<Row>(
-        `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2`,
-        [id, householdId],
-      );
-      return mapPayable(rows[0]!);
+      // V4.1 Task 2.15: payables had no category validation — an explicit
+      // categoryId must now resolve to an active expense-kind category.
+      if (input.categoryId !== undefined) {
+        await assertPayableCategoryInTx(query, householdId, input.categoryId);
+      }
+      return insertPayableRow(query, householdId, input);
     },
 
     async markPayablePaid(householdId, payableId, input) {
@@ -348,6 +396,10 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
           "Conta cancelada não pode ser editada",
           409,
         );
+      // V4.1 Task 2.15: same category gate as createPayable.
+      if (input.categoryId !== undefined) {
+        await assertPayableCategoryInTx(query, householdId, input.categoryId);
+      }
       const sets: string[] = [];
       const params: unknown[] = [];
       let idx = 1;

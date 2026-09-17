@@ -2,9 +2,55 @@ import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import type { Budget, BudgetStatus, BudgetTrend } from '../types/domain.js';
 import type { BudgetStore } from './store.js';
+import { assertCategoryKind } from '../categories/resolve.js';
 import { domainErrors } from '../writes/errors.js';
 
 type Row = Record<string, unknown>;
+
+type QueryFn = <R extends Row = Row>(text: string, values?: unknown[]) => Promise<R[]>;
+
+type CreateBudgetInput = Parameters<BudgetStore['createBudget']>[1];
+
+/**
+ * Canonical-schema category gate for budget creation (V4.1 Task 2.15,
+ * SPEC §9.8): the budget category must be an active expense-kind category
+ * of the household — 404 when unknown/inactive, 400 on kind mismatch.
+ * The lookup stays schema-local (status column); the legacy twin in
+ * legacy-postgres.ts mirrors it with `active`.
+ */
+export const assertBudgetCategory = async (
+  query: QueryFn,
+  householdId: string,
+  categoryId: string,
+): Promise<void> => {
+  const rows = await query<Row>(
+    `SELECT id, kind, status FROM categories WHERE id = $1 AND household_id = $2`,
+    [categoryId, householdId],
+  );
+  if (rows.length === 0) throw domainErrors.notFound('Categoria');
+  const cat = rows[0]!;
+  if (cat['status'] !== 'active') throw domainErrors.notFound('Categoria');
+  assertCategoryKind(
+    { id: categoryId, householdId, kind: String(cat['kind']), status: 'active' },
+    'expense',
+  );
+};
+
+/**
+ * Shared budget-row insert core: the canonical store runs it after the
+ * canonical category gate; the legacy store runs it after the legacy
+ * (`active`) gate.
+ */
+export const insertBudgetRow = async (
+  query: QueryFn,
+  householdId: string,
+  input: CreateBudgetInput,
+): Promise<Budget> => {
+  const id = randomUUID();
+  await query(`INSERT INTO budgets (id,household_id,category_id,name,amount_cents,period,start_date,alert_threshold) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [id, householdId, input.categoryId, input.name, input.amountCents, input.period, input.startDate, input.alertThreshold ?? 80]);
+  return { id, householdId, categoryId: input.categoryId, name: input.name, amountCents: input.amountCents, period: input.period, startDate: input.startDate, alertThreshold: input.alertThreshold ?? 80, rollover: false };
+};
 
 function getPeriodBounds(date: string, period: string): { start: string; end: string } {
   const d = new Date(date + 'T00:00:00');
@@ -47,12 +93,9 @@ export const createPostgresBudgetStore = (pool: Pool): BudgetStore => {
     },
 
     async createBudget(householdId, input) {
-      const id = randomUUID();
-      await query(`INSERT INTO budgets (id,household_id,category_id,name,amount_cents,period,start_date,alert_threshold) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [id, householdId, input.categoryId, input.name, input.amountCents, input.period, input.startDate, input.alertThreshold ?? 80]);
-      const rows = await query<Row>(`SELECT * FROM budgets WHERE id=$1 AND household_id=$2`, [id, householdId]);
-      const _r = rows[0]!;
-      return { id, householdId, categoryId: input.categoryId, name: input.name, amountCents: input.amountCents, period: input.period, startDate: input.startDate, alertThreshold: input.alertThreshold ?? 80, rollover: false };
+      // V4.1 Task 2.15: budgets had no category validation at all.
+      await assertBudgetCategory(query, householdId, input.categoryId);
+      return insertBudgetRow(query, householdId, input);
     },
 
     async updateBudget(householdId, budgetId, patch) {

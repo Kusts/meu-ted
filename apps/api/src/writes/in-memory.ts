@@ -13,6 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Account, Category, Transaction } from '../types/domain.js';
 import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';
+import { resolveCategoryForWrite } from '../categories/resolve.js';
 import { domainErrors, DomainError } from './errors.js';
 import { hashIdempotencyPayload } from './idempotency.js';
 import { namespacedPendingV2Key } from './pending-idempotency.js';
@@ -208,7 +209,11 @@ export const createInMemoryWriteStore = (state: InMemoryState): WriteStore => {
     if (acc.kind === 'credit_card') {
       throw new DomainError('validation.invalid', 'compra no cartão deve usar /cards/purchases.', 422);
     }
-    const cat = findCategory(input.categoryId, householdId);
+    const cat = resolveCategoryForWrite(state.categories, {
+      householdId,
+      categoryId: input.categoryId,
+      expectedKind: 'expense',
+    });
     assertNotDeleted(cat);
     if (input.subcategoryId !== undefined) {
       resolveSubcategory(state, householdId, input.subcategoryId, 'expense', input.categoryId);
@@ -238,7 +243,11 @@ export const createInMemoryWriteStore = (state: InMemoryState): WriteStore => {
     if (acc.kind === 'credit_card') {
       throw new DomainError('validation.invalid', 'receita não pode usar cartão de crédito.', 422);
     }
-    const cat = findCategory(input.categoryId, householdId);
+    const cat = resolveCategoryForWrite(state.categories, {
+      householdId,
+      categoryId: input.categoryId,
+      expectedKind: 'income',
+    });
     assertNotDeleted(cat);
     if (input.subcategoryId !== undefined) {
       resolveSubcategory(state, householdId, input.subcategoryId, 'income', input.categoryId);
@@ -519,8 +528,14 @@ async createAccount(householdId, input) {
         tx.accountId = patch.accountId;
       }
       if (patch.categoryId !== undefined) {
-        const cat = findCategory(patch.categoryId, householdId);
-        assertNotDeleted(cat);
+        // V4.1 Task 2.15: the new category must be active in the household
+        // and match the entry kind (this branch only runs for
+        // expense/income — transfers reject categoryId with 422 above).
+        resolveCategoryForWrite(state.categories, {
+          householdId,
+          categoryId: patch.categoryId,
+          expectedKind: tx.kind === 'income' ? 'income' : 'expense',
+        });
       }
       if (patch.subcategoryId !== undefined) {
         const parentId = patch.categoryId ?? tx.categoryId;

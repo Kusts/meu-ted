@@ -5,6 +5,7 @@ import {
   type DeviceTokenStore,
 } from "../auth/device-token.js";
 import { createInMemoryBudgetStore } from "../budgets/in-memory.js";
+import { createLegacyPostgresBudgetStore } from "../budgets/legacy-postgres.js";
 import { createPostgresBudgetStore } from "../budgets/postgres.js";
 import { createInMemoryCardStore } from "../cards/in-memory.js";
 import { createLegacyPostgresCardStore } from "../cards/legacy-postgres.js";
@@ -152,7 +153,9 @@ const start = async (): Promise<void> => {
       const undoService = createUndoService({ auditLogs, writes, idempotency });
       const cardStore = createLegacyPostgresCardStore(pool);
       const payableStore = createLegacyPostgresPayableStore(pool);
-      const budgetStore = createPostgresBudgetStore(pool);
+      // V4.1 Task 2.15: budgets get their own legacy twin so the new
+      // category gate queries `active` (legacy) instead of `status`.
+      const budgetStore = createLegacyPostgresBudgetStore(pool);
       const goalStore = createLegacyPostgresGoalStore(pool);
       const subscriptionStore = createLegacyPostgresSubscriptionStore(pool);
       const profileStore = createPostgresProfileStore({ pool });

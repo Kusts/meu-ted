@@ -12,6 +12,7 @@
 import type { Pool, PoolClient } from 'pg';
 import type { Account, Category, Transaction } from '../types/domain.js';
 import { DEFAULT_CATEGORY_CATALOG } from '../categories/catalog.js';
+import { assertCategoryKind, CARD_EXPENSE_KIND_MESSAGE } from '../categories/resolve.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors, DomainError } from './errors.js';
 import { runKeyedMutation } from './pending-idempotency.js';
@@ -91,11 +92,27 @@ export const resolveSubcategoryLegacy = async (
 /**
  * Category check shared with the legacy CardStore (M-05): existing, active,
  * expense-kind category — the same rule as plain entries.
+ *
+ * V4.1 Task 2.14: the kind decision is delegated to the central resolver;
+ * the legacy lookup stays schema-local (active boolean, no status column).
  */
 export const resolveExpenseCategoryLegacy = async (
   client: PoolClient,
   householdId: string,
   categoryId: string,
+): Promise<Category> => resolveCategoryLegacy(client, householdId, categoryId, 'expense', CARD_EXPENSE_KIND_MESSAGE);
+
+/**
+ * Legacy-schema category validation for a write expecting `expectedKind`.
+ * Same 404/400 shapes as the central resolver; the row lookup stays in the
+ * legacy shape (household + active + deleted_at filter).
+ */
+export const resolveCategoryLegacy = async (
+  client: PoolClient,
+  householdId: string,
+  categoryId: string,
+  expectedKind: 'expense' | 'income',
+  wrongKindMessage?: string,
 ): Promise<Category> => {
   const res = await client.query<Row>(
     `SELECT ${LEGACY_CATEGORY_COLUMNS} FROM categories WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL`,
@@ -103,10 +120,7 @@ export const resolveExpenseCategoryLegacy = async (
   );
   if (res.rowCount === 0) throw domainErrors.notFound('Categoria');
   const cat = mapCategory(res.rows[0]!);
-  if (cat.kind !== 'expense') {
-    throw domainErrors.invalid('categoryId', 'compra no cartão exige categoria de despesa');
-  }
-  return cat;
+  return assertCategoryKind(cat, expectedKind, 'categoryId', wrongKindMessage);
 };
 
 /** H-01: legacy accounts flag cards via is_credit_card (no kind column). */
@@ -210,6 +224,9 @@ const createExpenseLegacyInTx = async (
   input: CreateExpenseInput,
 ): Promise<Transaction> => {
   await assertNotCreditCardLegacy(client, householdId, input.accountId, 'compra no cartão deve usar /cards/purchases.');
+  // V4.1 Task 2.15: legacy plain expenses require an existing, active,
+  // expense-kind category (was: no category validation at all).
+  await resolveExpenseCategoryLegacy(client, householdId, input.categoryId);
   if (input.subcategoryId !== undefined) {
     await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'expense', input.categoryId);
   }
@@ -228,6 +245,9 @@ const createIncomeLegacyInTx = async (
   input: CreateIncomeInput,
 ): Promise<Transaction> => {
   await assertNotCreditCardLegacy(client, householdId, input.accountId, 'receita não pode usar cartão de crédito.');
+  // V4.1 Task 2.15: legacy plain income requires an existing, active,
+  // income-kind category (was: no category validation at all).
+  await resolveCategoryLegacy(client, householdId, input.categoryId, 'income');
   if (input.subcategoryId !== undefined) {
     await resolveSubcategoryLegacy(client, householdId, input.subcategoryId, 'income', input.categoryId);
   }
@@ -542,10 +562,10 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
           if (acc.rowCount === 0) throw domainErrors.notFound('Conta');
         }
         if (patch.categoryId !== undefined) {
-          const cat = await client.query<Row>(
-            `SELECT id FROM categories WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL`,
-            [patch.categoryId, householdId]);
-          if (cat.rowCount === 0) throw domainErrors.notFound('Categoria');
+          // V4.1 Task 2.15: the new category must exist, be active in the
+          // household, and match the entry kind (this branch only runs for
+          // expense/income — transfers reject categoryId with 422 above).
+          await resolveCategoryLegacy(client, householdId, patch.categoryId, txKind);
         }
         if (patch.subcategoryId !== undefined) {
           const parentId = patch.categoryId ?? (current['category_id'] as string | undefined);

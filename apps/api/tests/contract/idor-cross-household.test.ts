@@ -213,6 +213,9 @@ describe('2.2 — IDOR: cross-household access rejected', () => {
 
   // ── Budget from another household ───────────────────────────────
   it('PATCH /budgets/:id with budget from another household → 404', async () => {
+    // V4.1 Task 2.15: budget creation validates the category, so the seed
+    // must contain it — the IDOR assertion below is unchanged.
+    app = buildTestApp({ accounts: [], categories: [CATEGORY_FOOD_A], transactions: [] }).app;
     // Create budget in household A
     const createRes = await app.inject({
       method: 'POST', url: '/budgets',
