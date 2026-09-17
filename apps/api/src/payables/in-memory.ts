@@ -7,6 +7,7 @@ import type {
 } from "../types/domain.js";
 import { DomainError, domainErrors } from "../writes/errors.js";
 import { resolveCategoryForWrite } from "../categories/resolve.js";
+import { addMonthsSafe } from "../shared/billing-month.js";
 import type { InMemoryState } from "../writes/in-memory.js";
 import type { PayableStore } from "./store.js";
 
@@ -440,19 +441,16 @@ export const createInMemoryPayableStore = (
 };
 
 function getNextDue(currentDue: string, frequency: string): string | null {
-  const d = new Date(`${currentDue}T00:00:00`);
+  // V4.1 REVIEWFIX F10: clamped month arithmetic (Jan 31 → Feb 28), never
+  // the raw setUTCMonth overflow (Jan 31 → Mar 3). Parity with legacy.
   switch (frequency) {
     case "monthly":
-      d.setUTCMonth(d.getUTCMonth() + 1);
-      break;
+      return addMonthsSafe(currentDue, 1);
     case "quarterly":
-      d.setUTCMonth(d.getUTCMonth() + 3);
-      break;
+      return addMonthsSafe(currentDue, 3);
     case "yearly":
-      d.setUTCFullYear(d.getUTCFullYear() + 1);
-      break;
+      return addMonthsSafe(currentDue, 12);
     default:
       return null;
   }
-  return d.toISOString().slice(0, 10);
 }

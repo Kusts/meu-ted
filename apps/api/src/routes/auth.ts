@@ -182,6 +182,32 @@ export const registerAuthRoutes = (
         const ctx = await opts.resolveToken(headerToken);
         contextHouseholdId = ctx.householdId;
         predecessor = headerToken;
+        // V4.1 REVIEWFIX F1 [major]: a removed device token must not
+        // rotate. Token expiry/revocation alone is insufficient — the
+        // membership-revocation hook may not have fired yet. When
+        // workspaceAccess is wired, a token carrying user lineage requires
+        // authorized resolution (active membership); a removed member gets
+        // 403 and no successor is minted. Tokens without user lineage keep
+        // the legacy behavior (no membership to check against).
+        if (opts.workspaceAccess && ctx.userId) {
+          const { resolveAuthorizedDevice } = await import('../auth/device-access.js');
+          try {
+            await resolveAuthorizedDevice(
+              {
+                tokenStore: { resolve: opts.resolveToken },
+                workspaceAccess: opts.workspaceAccess,
+                ...(opts.workspaceStore ? { workspaceStore: opts.workspaceStore } : {}),
+              },
+              headerToken,
+              ctx.householdId,
+            );
+          } catch (e) {
+            const authErr = e as { statusCode?: number; code?: string; message?: string };
+            return reply
+              .code(authErr.statusCode ?? 403)
+              .send({ code: authErr.code ?? 'auth.workspace_forbidden', message: authErr.message ?? 'Acesso ao workspace proibido.' });
+          }
+        }
       } catch (e) {
         const err = e as { statusCode?: number; code?: string; message?: string };
         return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.invalid_token', message: err.message ?? 'unauthorized' });

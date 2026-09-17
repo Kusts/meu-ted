@@ -1397,6 +1397,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (guardReadOnlyRef.current()) return;
     const prev = payablesRef.current.find((p) => p.id === id);
     if (!prev) return;
+    // V4.1 REVIEWFIX F2: the server requires the linked paidTransactionId
+    // (D4). Fail closed client-side when the list item does not carry it
+    // instead of sending a request the server must reject.
+    if (!prev.paidTransactionId) {
+      handleWriteErrorRef.current(new Error("Pagamento sem transação vinculada."));
+      return;
+    }
+    const paidTransactionId = prev.paidTransactionId;
 
     // Optimistic update: change status back to pending/overdue
     const newStatus: Payable['status'] =
@@ -1410,7 +1418,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      const undone = await commandsRef.current!.undoPayablePayment(id);
+      const undone = await commandsRef.current!.undoPayablePayment(id, paidTransactionId);
       reconcileAfterWrite(undone, "payable.payment.undo");
     } catch (e) {
       setPayables((curr) =>

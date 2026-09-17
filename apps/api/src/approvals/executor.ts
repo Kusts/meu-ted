@@ -4,6 +4,7 @@ import type { GoalStore } from "../goals/store.js";
 import type { PayableStore } from "../payables/store.js";
 import type { SubscriptionStore } from "../subscriptions/store.js";
 import { domainErrors } from "../writes/errors.js";
+import { updateTransactionInputSchema } from "../writes/types.js";
 import type { WriteStore } from "../writes/store.js";
 import type { PendingOperation, PendingOperationExecutor } from "./pending.js";
 
@@ -77,12 +78,23 @@ export const createPendingOperationExecutor =
 					householdId,
 					payload as Parameters<WriteStore["createTransfer"]>[1],
 				);
-			case "transactions.update":
-				return deps.writes.updateTransaction(
-					householdId,
-					idOf(payload),
-					withoutId(payload) as Parameters<WriteStore["updateTransaction"]>[2],
-				);
+		case "transactions.update": {
+			// V4.1 REVIEWFIX F8 [major]: the persisted payload bypassed the
+			// strict PATCH contract (unknown fields reached the store). The
+			// route-level updateTransactionInputSchema (.strict()) is
+			// re-validated here; invalid payloads fail the operation with a
+			// sanitized validation error and the store stays untouched.
+			const input = withoutId(payload);
+			const checked = updateTransactionInputSchema.safeParse(input);
+			if (!checked.success) {
+				throw domainErrors.invalid("payload", "operação pendente inválida");
+			}
+			return deps.writes.updateTransaction(
+				householdId,
+				idOf(payload),
+				checked.data,
+			);
+		}
 			case "transactions.delete":
 				return deps.writes.softDeleteTransaction(householdId, idOf(payload));
 
@@ -201,11 +213,27 @@ export const createPendingOperationExecutor =
 					idOf(payload),
 					withoutId(payload) as Parameters<PayableStore["markPayablePaid"]>[2],
 				);
-			case "payables.unpay":
-				return requireStore(
-					deps.payableStore,
-					"conta a pagar",
-				).undoPayablePayment(householdId, idOf(payload));
+		case "payables.unpay": {
+			// V4.1 REVIEWFIX F2 (D4): the persisted payload carries the
+			// linked paidTransactionId — forward it as
+			// expectedPaidTransactionId so the D4 contract survives the
+			// approval round-trip instead of reversing an unverified effect.
+			const unpayInput = withoutId(payload);
+			const expectedPaidTransactionId =
+				typeof unpayInput.paidTransactionId === "string"
+					? unpayInput.paidTransactionId
+					: undefined;
+			return requireStore(
+				deps.payableStore,
+				"conta a pagar",
+			).undoPayablePayment(
+				householdId,
+				idOf(payload),
+				...(expectedPaidTransactionId !== undefined
+					? [{ expectedPaidTransactionId } as const]
+					: []),
+			);
+		}
 			case "payables.update":
 				return requireStore(deps.payableStore, "conta a pagar").updatePayable(
 					householdId,

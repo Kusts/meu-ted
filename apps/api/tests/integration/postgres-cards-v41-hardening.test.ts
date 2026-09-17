@@ -37,6 +37,11 @@ const suffix = `${process.pid}_${Date.now()}`;
 const CANON_SCHEMA = `v41c_${suffix}`;
 const LEG_SCHEMA = `v41l_${suffix}`;
 
+// V4.1 REVIEWFIX F7: PATCH requires an open statement — future purchase
+// dates keep fixture statements genuinely 'open' regardless of wall-clock
+// (computeStatus is wall-clock relative).
+const FUTURE_DATE = new Date(Date.now() + 45 * 86_400_000).toISOString().slice(0, 10);
+
 const scopedPool = (schema: string, max: number): Pool => {
   const url = new URL(DB_URL!);
   url.searchParams.set('options', `-c search_path=${schema},public`);
@@ -326,7 +331,7 @@ describeIfDb('Postgres cards V4.1 hardening (tasks 2.5–2.9, 2.18)', () => {
       const cardId = await seedLegacyCard(legPool!, hh);
       const catId = await seedLegacyCategory(legPool!, hh, 'expense');
       const [tx] = await cards.createCardPurchase(hh, {
-        accountId: cardId, description: 'Mercado', amountCents: 15000, date: '2026-06-10', categoryId: catId,
+        accountId: cardId, description: 'Mercado', amountCents: 15000, date: FUTURE_DATE, categoryId: catId,
       });
       const detail = await cards.updatePurchase(hh, tx!.id, { amountCents: 20000 });
       expect(detail.totalCents).toBe(20000);
@@ -340,7 +345,7 @@ describeIfDb('Postgres cards V4.1 hardening (tasks 2.5–2.9, 2.18)', () => {
       const cardId = await seedLegacyCard(legPool!, hh);
       const catId = await seedLegacyCategory(legPool!, hh, 'expense');
       await cards.createCardPurchase(hh, {
-        accountId: cardId, description: 'Mercado', amountCents: 15000, date: '2026-06-10', categoryId: catId,
+        accountId: cardId, description: 'Mercado', amountCents: 15000, date: FUTURE_DATE, categoryId: catId,
       });
       const cp = await legPool!.query(`SELECT id FROM card_purchases WHERE household_id = $1`, [hh]);
       const cpId = cp.rows[0]!['id'] as string;
@@ -358,7 +363,7 @@ describeIfDb('Postgres cards V4.1 hardening (tasks 2.5–2.9, 2.18)', () => {
       const cardId = await seedCanonCard(canonPool!, hh);
       const catId = await seedCanonCategory(canonPool!, hh, 'expense');
       const [tx] = await cards.createCardPurchase(hh, {
-        accountId: cardId, description: 'Mercado', amountCents: 15000, date: '2026-06-10', categoryId: catId,
+        accountId: cardId, description: 'Mercado', amountCents: 15000, date: FUTURE_DATE, categoryId: catId,
       });
       await cards.updatePurchase(hh, tx!.id, { amountCents: 20000 });
       const proj = await canonPool!.query(
@@ -599,6 +604,163 @@ describeIfDb('Postgres cards V4.1 hardening (tasks 2.5–2.9, 2.18)', () => {
         await legPool!.query(`DELETE FROM recurring_purchases WHERE household_id = $1`, [hh]);
         await legPool!.query(`DELETE FROM categories WHERE household_id = $1`, [hh]);
         await legPool!.query(`DELETE FROM accounts WHERE household_id = $1`, [hh]);
+      }
+    });
+  });
+
+  // ── V4.1 REVIEWFIX F5: shared STATEMENT → TRANSACTION lock order ─────
+  describe('REVIEWFIX F5 — concurrent PATCH + cancel serialize without deadlock', () => {
+    const isBenign = (r: PromiseSettledResult<unknown>): boolean => {
+      if (r.status === 'fulfilled') return true;
+      const err = r.reason as { statusCode?: number; code?: string; message?: string };
+      // Serialized loser: purchase already patched/cancelled (404/409).
+      // Anything else — deadlock (40P01), 500, connection loss — fails.
+      if (err && typeof err.statusCode === 'number' && (err.statusCode === 404 || err.statusCode === 409)) return true;
+      const msg = String((err as Error)?.message ?? '');
+      if (/deadlock/i.test(msg)) return false;
+      return false;
+    };
+
+    it('canonical: racing updatePurchase + cancelPurchase never deadlocks', async () => {
+      const cards = createPostgresCardStore(canonPool!);
+      const hh = await seedCanonHousehold(canonPool!, 'F5 C');
+      try {
+        const cardId = await seedCanonCard(canonPool!, hh);
+        const catId = await seedCanonCategory(canonPool!, hh, 'expense');
+        for (let round = 0; round < 5; round += 1) {
+          const [tx] = await cards.createCardPurchase(hh, {
+            accountId: cardId, description: `Race ${round}`, amountCents: 1000,
+            date: FUTURE_DATE, categoryId: catId,
+          });
+          const results = await Promise.allSettled([
+            cards.updatePurchase(hh, tx!.id, { description: `Patched ${round}` }),
+            cards.cancelPurchase(hh, tx!.id),
+          ]);
+          for (const r of results) {
+            expect(isBenign(r)).toBe(true);
+          }
+        }
+      } finally {
+        await canonPool!.query(`DELETE FROM card_purchases WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await canonPool!.query(`DELETE FROM transactions WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await canonPool!.query(`DELETE FROM statements WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await canonPool!.query(`DELETE FROM categories WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await canonPool!.query(`DELETE FROM accounts WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await canonPool!.query(`DELETE FROM households WHERE id = $1`, [hh]).catch(() => undefined);
+      }
+    }, 60_000);
+
+    it('legacy: racing updatePurchase + cancelPurchase never deadlocks', async () => {
+      const cards = createLegacyPostgresCardStore(legPool!);
+      const hh = randomUUID();
+      try {
+        const cardId = await seedLegacyCard(legPool!, hh);
+        const catId = await seedLegacyCategory(legPool!, hh, 'expense');
+        for (let round = 0; round < 5; round += 1) {
+          const [tx] = await cards.createCardPurchase(hh, {
+            accountId: cardId, description: `Race ${round}`, amountCents: 1000,
+            date: FUTURE_DATE, categoryId: catId,
+          });
+          const results = await Promise.allSettled([
+            cards.updatePurchase(hh, tx!.id, { description: `Patched ${round}` }),
+            cards.cancelPurchase(hh, tx!.id),
+          ]);
+          for (const r of results) {
+            expect(isBenign(r)).toBe(true);
+          }
+        }
+      } finally {
+        await legPool!.query(`DELETE FROM card_purchases WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await legPool!.query(`DELETE FROM transactions WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await legPool!.query(`DELETE FROM statements WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await legPool!.query(`DELETE FROM categories WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await legPool!.query(`DELETE FROM accounts WHERE household_id = $1`, [hh]).catch(() => undefined);
+      }
+    }, 60_000);
+  });
+
+  // ── V4.1 REVIEWFIX F6: legacy cancel under the statement lock ────────
+  describe('REVIEWFIX F6 — legacy cancelPurchase recomputes under lock', () => {
+    it('legacy: cancel removes exactly the purchase total (locked recalc)', async () => {
+      const cards = createLegacyPostgresCardStore(legPool!);
+      const hh = randomUUID();
+      try {
+        const cardId = await seedLegacyCard(legPool!, hh);
+        const catId = await seedLegacyCategory(legPool!, hh, 'expense');
+        const [txA] = await cards.createCardPurchase(hh, {
+          accountId: cardId, description: 'Keep', amountCents: 7000, date: FUTURE_DATE, categoryId: catId,
+        });
+        const [txB] = await cards.createCardPurchase(hh, {
+          accountId: cardId, description: 'Drop', amountCents: 3000, date: FUTURE_DATE, categoryId: catId,
+        });
+        void txA;
+        await cards.cancelPurchase(hh, txB!.id);
+        const stmt = (await cards.listStatements(hh, cardId))[0]!;
+        expect(stmt.totalCents).toBe(7000);
+        expect(stmt.status).toBe('open');
+      } finally {
+        await legPool!.query(`DELETE FROM card_purchases WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await legPool!.query(`DELETE FROM transactions WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await legPool!.query(`DELETE FROM statements WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await legPool!.query(`DELETE FROM categories WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await legPool!.query(`DELETE FROM accounts WHERE household_id = $1`, [hh]).catch(() => undefined);
+      }
+    });
+  });
+
+  // ── V4.1 REVIEWFIX F7: PATCH requires an open statement (PG) ─────────
+  describe('REVIEWFIX F7 — purchase PATCH requires an open statement', () => {
+    it('canonical: PATCH after full payment → 409; open → 200', async () => {
+      const cards = createPostgresCardStore(canonPool!);
+      const hh = await seedCanonHousehold(canonPool!, 'F7 C');
+      try {
+        const cardId = await seedCanonCard(canonPool!, hh);
+        const payerId = await seedCanonBank(canonPool!, hh, 100000);
+        const catId = await seedCanonCategory(canonPool!, hh, 'expense');
+        const [tx] = await cards.createCardPurchase(hh, {
+          accountId: cardId, description: 'Mercado', amountCents: 15000, date: FUTURE_DATE, categoryId: catId,
+        });
+        // Control: open statement accepts the PATCH.
+        const open = await cards.updatePurchase(hh, tx!.id, { description: 'Feira' });
+        expect(open.purchases[0]!.description).toBe('Feira');
+        const stmt = (await cards.listStatements(hh, cardId))[0]!;
+        await cards.payStatement(hh, stmt.id, { amountCents: 15000, fromAccountId: payerId });
+        await expect(
+          cards.updatePurchase(hh, tx!.id, { description: 'Tarde demais' }),
+        ).rejects.toMatchObject({ statusCode: 409 });
+      } finally {
+        await canonPool!.query(`DELETE FROM card_purchases WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await canonPool!.query(`DELETE FROM transactions WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await canonPool!.query(`DELETE FROM statements WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await canonPool!.query(`DELETE FROM categories WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await canonPool!.query(`DELETE FROM accounts WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await canonPool!.query(`DELETE FROM households WHERE id = $1`, [hh]).catch(() => undefined);
+      }
+    });
+
+    it('legacy: PATCH after full payment → 409; open → 200', async () => {
+      const cards = createLegacyPostgresCardStore(legPool!);
+      const hh = randomUUID();
+      try {
+        const cardId = await seedLegacyCard(legPool!, hh);
+        const payerId = await seedLegacyBank(legPool!, hh);
+        const catId = await seedLegacyCategory(legPool!, hh, 'expense');
+        const [tx] = await cards.createCardPurchase(hh, {
+          accountId: cardId, description: 'Mercado', amountCents: 15000, date: FUTURE_DATE, categoryId: catId,
+        });
+        const open = await cards.updatePurchase(hh, tx!.id, { description: 'Feira' });
+        expect(open.purchases[0]!.description).toBe('Feira');
+        const stmt = (await cards.listStatements(hh, cardId))[0]!;
+        await cards.payStatement(hh, stmt.id, { amountCents: 15000, fromAccountId: payerId });
+        await expect(
+          cards.updatePurchase(hh, tx!.id, { description: 'Tarde demais' }),
+        ).rejects.toMatchObject({ statusCode: 409 });
+      } finally {
+        await legPool!.query(`DELETE FROM card_purchases WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await legPool!.query(`DELETE FROM transactions WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await legPool!.query(`DELETE FROM statements WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await legPool!.query(`DELETE FROM categories WHERE household_id = $1`, [hh]).catch(() => undefined);
+        await legPool!.query(`DELETE FROM accounts WHERE household_id = $1`, [hh]).catch(() => undefined);
       }
     });
   });

@@ -601,28 +601,68 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
           return { clause: sets.join(', '), values };
         };
 
-        // Lock the projection row first (SPEC §9.2 lock order: purchase →
-        // transaction → statement), then the ledger row, then the statement.
-        const cpExists = await client.query<Row>(
-          `SELECT id, statement_id, amount_cents, date, transaction_id FROM card_purchases WHERE id = $1 AND household_id = $2 FOR UPDATE`,
+        // V4.1 REVIEWFIX F5 [major]: global lock order STATEMENT →
+        // TRANSACTION → projection (was: projection → transaction →
+        // statement, deadlocking against cancelPurchase). Rows are peeked
+        // WITHOUT locks to discover the statement; the statement row is
+        // locked first, then the purchase rows.
+        const cpPeek = await client.query<Row>(
+          `SELECT id, statement_id, amount_cents, date, transaction_id FROM card_purchases WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
           [purchaseId, householdId],
         );
 
         let stmtId: string | null = null;
+        let viaProjection = false;
 
-        if (cpExists.rows.length > 0) {
+        if (cpPeek.rows.length > 0) {
+          viaProjection = true;
+          stmtId = cpPeek.rows[0]!['statement_id'] as string ?? null;
+        } else {
+          const txPeek = await client.query<Row>(
+            `SELECT id, statement_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+            [purchaseId, householdId],
+          );
+          if (txPeek.rowCount === 0 || txPeek.rows.length === 0) throw domainErrors.notFound('Compra');
+          stmtId = txPeek.rows[0]!['statement_id'] as string ?? null;
+        }
+        if (!stmtId) throw domainErrors.notFound('Compra');
+        // Pin the peeked statement: rows re-read under lock must agree.
+        const peekStmtId: string = stmtId;
+
+        // V4.1 REVIEWFIX F7 [major]: like cancelPurchase, PATCH only edits
+        // purchases of an open statement (checked under the statement lock).
+        const stmtLocked = await client.query<Row>(
+          `SELECT * FROM statements WHERE id = $1 AND household_id = $2 FOR UPDATE`,
+          [stmtId, householdId],
+        );
+        if ((stmtLocked.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
+        if (mapStatement(stmtLocked.rows[0]!).status !== 'open') {
+          throw domainErrors.conflict('Fatura não está aberta para edição.');
+        }
+
+        if (viaProjection) {
+          // Lock the projection row, then the ledger row (STMT already held).
+          const cpExists = await client.query<Row>(
+            `SELECT id, statement_id, amount_cents, date, transaction_id FROM card_purchases WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
+            [purchaseId, householdId],
+          );
+          if (cpExists.rows.length === 0) throw domainErrors.notFound('Compra');
           const cp = cpExists.rows[0]!;
           const patch = buildPatch();
           await client.query(
             `UPDATE card_purchases SET ${patch.clause}, updated_at = NOW() WHERE id = $1 AND household_id = $2`,
             [purchaseId, householdId, ...patch.values],
           );
-          stmtId = cp['statement_id'] as string ?? null;
 
           // Task 2.7 (D2): the same fields land on the linked ledger row in
           // the same transaction — never a silent projection divergence.
           const txId = cp['transaction_id'] as string | null;
           if (txId) {
+            const txLock = await client.query<Row>(
+              `SELECT id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
+              [txId, householdId],
+            );
+            if ((txLock.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
             const txPatch = buildPatch();
             await client.query(
               `UPDATE transactions SET ${txPatch.clause}, updated_at = NOW() WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
@@ -668,15 +708,14 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
             [purchaseId, householdId, ...projPatch.values],
           );
           stmtId = txExists.rows[0]!['statement_id'] as string ?? null;
+          if (!stmtId || stmtId !== peekStmtId) throw domainErrors.notFound('Compra');
         }
 
-        if (stmtId) {
-          // Task 2.8: recompute under the statement row lock.
-          await recalcStatement(stmtId, householdId, client);
-          return stmtId;
-        }
-
-        throw domainErrors.notFound('Compra');
+        // Task 2.8: recompute under the statement row lock (already held —
+        // recalcStatement re-locks the same row in the same tx, a no-op).
+        // peekStmtId pins the statement: both branches re-validated it.
+        await recalcStatement(peekStmtId, householdId, client);
+        return peekStmtId;
       });
       return (await this.getStatementDetail(householdId, stmtId))!;
     },
@@ -694,7 +733,10 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
         if ((cpRow.rowCount ?? 0) > 0) {
           const cp = cpRow.rows[0]!;
           const stmtId = cp['statement_id'] as string;
-          const stmtRes = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [stmtId, householdId]);
+          // V4.1 REVIEWFIX F6 [major]: lock the statement BEFORE the status
+          // gate (was: unlocked read → TOCTOU) and recompute through the
+          // locked recalcStatement helper (was: unlocked SUM + UPDATE).
+          const stmtRes = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2 FOR UPDATE`, [stmtId, householdId]);
           if ((stmtRes.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
           const stmt = mapStatement(stmtRes.rows[0]!);
           if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
@@ -712,10 +754,7 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
             await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
             await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [candidates.rows[0]!['id'], householdId]);
           }
-          const totalResult = await client.query<Row>(`SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [stmtId, householdId]);
-          const total = Number(totalResult.rows[0]!['total']);
-          const newStatus = computeStatus({ ...stmt, totalCents: total }, todayISO());
-          await client.query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`, [total, newStatus, stmtId, householdId]);
+          await recalcStatement(stmtId, householdId, client);
           return;
         }
 
@@ -724,16 +763,14 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
         if ((txRow.rowCount ?? 0) > 0) {
           const stmtId = txRow.rows[0]!['statement_id'] as string | null;
           if (!stmtId) throw domainErrors.notFound('Compra');
-          const stmtRes = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2`, [stmtId, householdId]);
+          // V4.1 REVIEWFIX F6: same locked read + locked recalc as above.
+          const stmtRes = await client.query<Row>(`SELECT * FROM statements WHERE id = $1 AND household_id = $2 FOR UPDATE`, [stmtId, householdId]);
           if ((stmtRes.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
           const stmt = mapStatement(stmtRes.rows[0]!);
           if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
           await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
           await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE transaction_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]).catch(() => {});
-          const totalResult = await client.query<Row>(`SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE statement_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [stmtId, householdId]);
-          const total = Number(totalResult.rows[0]!['total']);
-          const newStatus = computeStatus({ ...stmt, totalCents: total }, todayISO());
-          await client.query(`UPDATE statements SET total_cents = $1, status = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`, [total, newStatus, stmtId, householdId]);
+          await recalcStatement(stmtId, householdId, client);
           return;
         }
 

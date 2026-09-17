@@ -264,7 +264,7 @@ export interface Commands {
   // ── Payables (create / markPaid / undo / cancel / update) ──────
   createPayable(input: PayableInput): Promise<Payable>;
   markPayablePaid(id: string, paidDate: string): Promise<Payable>;
-  undoPayablePayment(id: string): Promise<Payable>;
+  undoPayablePayment(id: string, paidTransactionId: string): Promise<Payable>;
   cancelPayable(id: string): Promise<Payable>;
   updatePayable(id: string, input: PayableUpdateInput): Promise<Payable>;
 
@@ -421,9 +421,9 @@ function buildCommands(ctx: CommandsContext): Commands {
         a.markPayablePaid(id, paidDate),
       );
     },
-    undoPayablePayment(id) {
+    undoPayablePayment(id, paidTransactionId) {
       return guarded("undoPayablePayment", ctx, () =>
-        a.undoPayablePayment(id),
+        a.undoPayablePayment(id, paidTransactionId),
       );
     },
     cancelPayable(id) {

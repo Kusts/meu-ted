@@ -95,6 +95,8 @@ const mockP1: Payable = {
   status: "pending",
   accountId: "acc1",
   type: "one_time",
+  // V4.1 REVIEWFIX F2: the undo path requires the linked transaction id.
+  paidTransactionId: "tx-1",
   createdAt: "2026-01-01",
   updatedAt: "2026-01-01",
 };

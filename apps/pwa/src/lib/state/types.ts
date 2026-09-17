@@ -83,6 +83,9 @@ export interface Payable {
   status: "pending" | "paid" | "overdue" | "cancelled";
   categoryId?: string;
   paidDate?: string;
+  // V4.1 REVIEWFIX F2: the linked payment transaction id, required by
+  // POST /payables/:id/unpay (D4 contract).
+  paidTransactionId?: string;
   accountId?: string;
   type?: string;
   createdAt?: string;

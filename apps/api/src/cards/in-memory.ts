@@ -450,6 +450,12 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
       // In-memory: transactions store purchases linked by statement_id
       const tx = state.transactions.find(t => t.id === purchaseId && t.householdId === householdId && !state.deletedTransactions.has(t.id));
       if (tx) {
+        // V4.1 REVIEWFIX F7 [major]: mirror cancelPurchase — PATCH only
+        // edits purchases of an open statement.
+        const txStatementId = (tx as unknown as { statementId?: string }).statementId;
+        const txStmt = statements.find(s => s.householdId === householdId && s.id === txStatementId);
+        if (!txStmt) throw domainErrors.notFound('Compra');
+        if (txStmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para edição.');
         if (input.description !== undefined) tx.description = input.description;
         if (input.amountCents !== undefined) tx.amountCents = input.amountCents;
         if (input.date !== undefined) tx.date = input.date;

@@ -6,13 +6,17 @@ import { createPostgresGoalStore } from '../../src/goals/postgres.js';
 import { createLegacyPostgresGoalStore } from '../../src/goals/legacy-postgres.js';
 import { createPostgresWriteStore } from '../../src/writes/postgres.js';
 import { createLegacyPostgresWriteStore } from '../../src/writes/legacy-postgres.js';
+import { requireTestDatabase } from '../../src/db/db-guard.js';
 
 // V4.1 tasks 2.10/2.11/2.13 — PG-gated proofs (SPEC §9.6 + §9.7).
 // Dedicated DB; rows isolated by marker household; legacy tables live in an
 // isolated schema created per run (same pattern as
 // tests/integration/postgres-unit-of-work.test.ts).
+// V4.1 REVIEWFIX F9 [minor]: gate on BOTH env vars + requireTestDatabase,
+// like postgres-payable-double-pay.test.ts — DATABASE_URL_TEST alone must
+// never enable destructive PG tests.
 const DB_URL = process.env.DATABASE_URL_TEST;
-const ENABLED = Boolean(DB_URL);
+const ENABLED = Boolean(DB_URL && process.env.DB_TEST_MARKER);
 const describeIfDb = ENABLED ? describe : describe.skip;
 const HOUSEHOLD = process.env.DB_TEST_MARKER || '00000000-0000-4000-8000-00000000d00d';
 const LEGACY_SCHEMA = `g41_patch_${process.pid}_${Date.now()}`;
@@ -64,6 +68,8 @@ describeIfDb('V4.1 PG proofs — goals atomicity + transaction PATCH contract', 
 
   beforeAll(async () => {
     pool = createPool({ connectionString: DB_URL!, max: 8 });
+    // V4.1 REVIEWFIX F9: fail-closed marker check before any DDL/DML.
+    await requireTestDatabase(pool, 'postgres-goals-transactions-v41');
     await runMigrations(pool);
     await pool.query('DELETE FROM goal_contributions WHERE goal_id IN (SELECT id FROM goals WHERE household_id = $1)', [HOUSEHOLD]);
     await pool.query('DELETE FROM goals WHERE household_id = $1', [HOUSEHOLD]);

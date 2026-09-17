@@ -459,7 +459,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
       method: 'POST',
       url: `/payables/${id}/unpay`,
       headers: json,
-      payload: {},
+      payload: { paidTransactionId: pay.json().paidTransactionId },
     });
     expect(unpay.statusCode).toBe(200);
     expectValidNormalReceipt(unpay.json(), 'payable.payment.undo');

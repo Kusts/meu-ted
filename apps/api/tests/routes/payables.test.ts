@@ -445,13 +445,14 @@ describe('GET /payables — filters', () => {
       });
       const id = created.json().id;
       // Pay it
-      await app.inject({ method: 'POST', url: `/payables/${id}/pay`, headers: auth(TOKEN_A) });
+      const payRes = await app.inject({ method: 'POST', url: `/payables/${id}/pay`, headers: auth(TOKEN_A) });
       const _paidRes = await app.inject({ method: 'GET', url: `/payables/${id}`, headers: auth(TOKEN_A) }).catch(() => null);
 
-      // Unpay
+      // Unpay (V4.1 REVIEWFIX F2: paidTransactionId is required)
       const unpayRes = await app.inject({
         method: 'POST', url: `/payables/${id}/unpay`,
         headers: auth(TOKEN_A),
+        payload: { paidTransactionId: payRes.json().paidTransactionId },
       });
       expect(unpayRes.statusCode).toBe(200);
       expect(unpayRes.json().status).toBe('pending');
@@ -467,11 +468,12 @@ describe('GET /payables — filters', () => {
         payload: { accountId: ACCOUNT_A1.id, description: 'Hoje', amountCents: 100_00, dueDate: today },
       });
       const id = created.json().id;
-      await app.inject({ method: 'POST', url: `/payables/${id}/pay`, headers: auth(TOKEN_A) });
+      const payRes = await app.inject({ method: 'POST', url: `/payables/${id}/pay`, headers: auth(TOKEN_A) });
 
       const unpayRes = await app.inject({
         method: 'POST', url: `/payables/${id}/unpay`,
         headers: auth(TOKEN_A),
+        payload: { paidTransactionId: payRes.json().paidTransactionId },
       });
       expect(unpayRes.statusCode).toBe(200);
       expect(unpayRes.json().status).toBe('pending');
@@ -482,6 +484,7 @@ describe('GET /payables — filters', () => {
       const res = await app.inject({
         method: 'POST', url: '/payables/00000000-0000-4000-8000-000000000099/unpay',
         headers: auth(TOKEN_A),
+        payload: { paidTransactionId: '00000000-0000-4000-8000-000000000099' },
       });
       expect(res.statusCode).toBe(404);
     });
@@ -497,6 +500,7 @@ describe('GET /payables — filters', () => {
       const res = await app.inject({
         method: 'POST', url: `/payables/${id}/unpay`,
         headers: auth(TOKEN_A),
+        payload: { paidTransactionId: '00000000-0000-4000-8000-000000000099' },
       });
       expect(res.statusCode).toBe(409);
     });

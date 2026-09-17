@@ -142,12 +142,15 @@ describe('2.18 recurring purchase validation mirrors the normal purchase path', 
 });
 
 describe('2.7 purchase PATCH keeps purchase + transaction in sync', () => {
+  // V4.1 REVIEWFIX F7: PATCH requires an open statement — use a future
+  // purchase date so computeStatus yields 'open' regardless of wall-clock.
+  const futureDate = new Date(Date.now() + 45 * 86_400_000).toISOString().slice(0, 10);
   const createPurchase = async (app: ReturnType<typeof buildTestApp>['app']) => {
     const create = await app.inject({
       method: 'POST', url: '/cards/purchases', headers: auth(),
       payload: {
         accountId: CARD_A1.id, description: 'Mercado', amountCents: 150_00,
-        date: '2026-06-10', categoryId: CATEGORY_FOOD_A.id,
+        date: futureDate, categoryId: CATEGORY_FOOD_A.id,
       },
     });
     expect(create.statusCode).toBe(201);
@@ -186,7 +189,7 @@ describe('2.7 purchase PATCH keeps purchase + transaction in sync', () => {
     const detail = await app.inject({ method: 'GET', url: `/cards/statements/${stmtId}`, headers: auth() });
     expect(detail.json().purchases[0].description).toBe('Feira');
     expect(detail.json().purchases[0].amountCents).toBe(150_00);
-    expect(detail.json().purchases[0].date).toBe('2026-06-10');
+    expect(detail.json().purchases[0].date).toBe(futureDate);
     expect(detail.json().totalCents).toBe(150_00);
   });
 

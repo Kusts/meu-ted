@@ -61,10 +61,10 @@ const paySchema = z
 
 const unpaySchema = z
   .object({
-    // V4.1 Task 2.x (D4): callers that know the linked paidTransactionId
-    // present it; a mismatch is rejected instead of reversing the wrong
-    // financial effect.
-    paidTransactionId: z.string().uuid().optional(),
+    // V4.1 REVIEWFIX F2 (D4): the linked paidTransactionId is REQUIRED —
+    // a caller that does not present it is rejected (4xx) instead of
+    // reversing an unverified financial effect. A mismatch is 409.
+    paidTransactionId: z.string().uuid(),
   })
   .strict();
 
@@ -314,9 +314,7 @@ export const registerPayableRoutes = (
       const p = await opts.payableStore.undoPayablePayment(
         ctx.householdId,
         params.data.id,
-        ...(parsedUnpay.data.paidTransactionId !== undefined
-          ? [{ expectedPaidTransactionId: parsedUnpay.data.paidTransactionId } as const]
-          : []),
+        { expectedPaidTransactionId: parsedUnpay.data.paidTransactionId },
       );
       return reply.code(200).send(attachMutationReceipt(p, 'payable.payment.undo', { type: 'payable', id: params.data.id }));
     } catch (e) {

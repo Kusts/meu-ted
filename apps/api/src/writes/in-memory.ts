@@ -33,6 +33,25 @@ export type InMemoryState = {
 };
 
 /**
+ * V4.1 REVIEWFIX F3 [major]: in-memory twin of the paid-payable link
+ * guard. The payable store keeps its rows on the same shared state
+ * (`_payables`, see payables/in-memory.ts); a live paid link blocks direct
+ * transaction PATCH/DELETE with 409. The undo path clears the link before
+ * tombstoning, so it is unaffected.
+ */
+const assertNotLinkedToPaidPayableInState = (state: InMemoryState, householdId: string, transactionId: string): void => {
+  const payables = (state as unknown as { _payables?: Array<{ householdId: string; paidTransactionId?: string }> })._payables;
+  const linked = payables?.some(
+    (p) => p.householdId === householdId && p.paidTransactionId === transactionId,
+  );
+  if (linked) {
+    throw domainErrors.conflict(
+      'Lançamento vinculado a conta paga não pode ser alterado; desfaça o pagamento primeiro.',
+    );
+  }
+};
+
+/**
  * Idempotent application of the pt-BR default catalog to a household.
  * Existing same-kind macros (case-insensitive name match) are reused;
  * subs are matched under their resolved macro. Shared by
@@ -474,6 +493,8 @@ async createAccount(householdId, input) {
 
     async updateTransaction(householdId, id, patch) {
       const tx = findTransaction(id, householdId);
+      // V4.1 REVIEWFIX F3: block PATCH of a paid payable's payment effect.
+      assertNotLinkedToPaidPayableInState(state, householdId, id);
       if (tx.kind === 'transfer') {
         // Limited: description + date only.
         if (patch.description !== undefined) tx.description = patch.description;
@@ -559,6 +580,8 @@ async createAccount(householdId, input) {
 
     async softDeleteTransaction(householdId, id) {
       const tx = findTransaction(id, householdId);
+      // V4.1 REVIEWFIX F3: block DELETE of a paid payable's payment effect.
+      assertNotLinkedToPaidPayableInState(state, householdId, id);
       if (state.deletedTransactions.has(tx.id)) {
         throw domainErrors.notFound('Lançamento');
       }

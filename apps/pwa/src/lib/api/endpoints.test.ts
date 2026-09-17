@@ -207,7 +207,7 @@ describe("endpoints — writes", () => {
     expect(methodOf()).toBe("PATCH");
   });
   it("undoPayablePayment POST /payables/:id/unpay", async () => {
-    await endpoints.undoPayablePayment("p1");
+    await endpoints.undoPayablePayment("p1", "tx-1");
     expect(pathOf()).toBe("/payables/p1/unpay");
     expect(methodOf()).toBe("POST");
   });

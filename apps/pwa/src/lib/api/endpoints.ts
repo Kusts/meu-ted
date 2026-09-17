@@ -418,8 +418,8 @@ export async function updatePayable(
   return apiFetch<Payable>(`/payables/${id}`, mutationOptions("PATCH", input));
 }
 
-export async function undoPayablePayment(id: string): Promise<Payable> {
-  return apiFetch<Payable>(`/payables/${id}/unpay`, mutationOptions("POST"));
+export async function undoPayablePayment(id: string, paidTransactionId: string): Promise<Payable> {
+  return apiFetch<Payable>(`/payables/${id}/unpay`, mutationOptions("POST", { paidTransactionId }));
 }
 
 export async function markPayablePaid(

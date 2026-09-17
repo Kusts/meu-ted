@@ -180,7 +180,8 @@ describe('card/statement write receipts', () => {
 
   it('PATCH /cards/purchases/:id returns a transaction.update receipt', async () => {
     const { app } = buildTestApp(freshSeed());
-    const created = await createPurchase(app);
+    // V4.1 REVIEWFIX F7: PATCH requires an open statement.
+    const created = await createPurchase(app, { date: openPurchaseDate() });
     const purchaseId = created.items[0].id as string;
     const res = await app.inject({
       method: 'PATCH',

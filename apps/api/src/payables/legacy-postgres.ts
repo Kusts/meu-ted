@@ -21,6 +21,7 @@ import type { Payable, PayableStore } from './store.js';
 import { createPostgresPayableStore, insertPayableRow } from './postgres.js';
 import { domainErrors, DomainError } from '../writes/errors.js';
 import { assertCategoryKind } from '../categories/resolve.js';
+import { addMonthsSafe } from '../shared/billing-month.js';
 import { withTransaction } from '../db/pool.js';
 
 type Row = Record<string, unknown>;
@@ -30,17 +31,13 @@ function todayISO(): string {
 }
 
 function getNextDue(dueDate: string, frequency: 'monthly' | 'quarterly' | 'yearly'): string | undefined {
-  const d = new Date(dueDate + 'T00:00:00.000Z');
-  let m = d.getUTCMonth();
-  let y = d.getUTCFullYear();
-  const day = d.getUTCDate();
-  if (frequency === 'monthly') m += 1;
-  else if (frequency === 'quarterly') m += 3;
-  else if (frequency === 'yearly') y += 1;
-  if (m > 11) { y += Math.floor(m / 12); m = m % 12; }
-  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-  const clampedDay = Math.min(day, lastDay);
-  return `${y}-${String(m + 1).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`;
+  // V4.1 REVIEWFIX F10: single clamped implementation shared by all three
+  // stores (parity by construction — Jan 31 → Feb 28, never Mar 3).
+  switch (frequency) {
+    case 'monthly': return addMonthsSafe(dueDate, 1);
+    case 'quarterly': return addMonthsSafe(dueDate, 3);
+    case 'yearly': return addMonthsSafe(dueDate, 12);
+  }
 }
 
 const mapPayable = (r: Row): Payable => {
@@ -249,6 +246,32 @@ export const createLegacyPostgresPayableStore = (pool: Pool): PayableStore => {
             `Conta a pagar já está ${p.status === 'paid' ? 'paga' : 'cancelada'}`,
             409,
           );
+        }
+        // V4.1 REVIEWFIX F4 [major]: legacy validated neither account nor
+        // type nor balance. Mirror the canonical gates: the paying account
+        // is locked and must exist, be active and not be a credit card
+        // (same messages/codes), and the computed legacy balance
+        // (initial_balance + ledger, same formula as the legacy read model)
+        // must cover the amount — 400 validation.invalid like canonical.
+        const accRows = await client.query<Row>(
+          `SELECT id, is_credit_card, active, initial_balance_cents FROM accounts WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
+          [p.accountId, householdId],
+        );
+        if (accRows.rowCount === 0 || accRows.rows.length === 0) throw domainErrors.notFound('Conta');
+        const acc = accRows.rows[0]!;
+        if (acc['active'] !== true) throw domainErrors.notFound('Conta');
+        if (acc['is_credit_card'] === true) {
+          throw new DomainError('validation.invalid', 'compra no cartão deve usar /cards/purchases.', 422);
+        }
+        const balanceRows = await client.query<Row>(
+          `SELECT COALESCE((SELECT initial_balance_cents FROM accounts WHERE id = $1 AND household_id = $2), 0)
+             + COALESCE((SELECT SUM(amount_cents) FROM transactions WHERE household_id = $2 AND to_account_id = $1 AND kind IN ('income', 'transfer') AND deleted_at IS NULL), 0)
+             - COALESCE((SELECT SUM(amount_cents) FROM transactions WHERE household_id = $2 AND from_account_id = $1 AND kind IN ('expense', 'transfer') AND deleted_at IS NULL), 0)
+             AS balance`,
+          [p.accountId, householdId],
+        );
+        if (Number(balanceRows.rows[0]!['balance']) < p.amountCents) {
+          throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
         }
         const paidDate = input.paidDate ?? todayISO();
 

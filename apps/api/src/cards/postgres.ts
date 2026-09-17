@@ -568,8 +568,25 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
           if (catRows.rowCount === 0 || catRows.rows.length === 0) throw domainErrors.notFound('Categoria');
         }
 
-        // Task 2.7 (SPEC §9.2): lock the ledger row first, then the affected
-        // statement — one transaction, consistent order, no silent divergence.
+        // V4.1 REVIEWFIX F5 [major]: global lock order STATEMENT →
+        // TRANSACTION → projection. The ledger row is peeked WITHOUT a lock
+        // to discover the statement; the statement row is locked first, then
+        // the transaction row. (cancelPurchase already locks in this order —
+        // the previous TX-first order here deadlocked against it.)
+        const peek = await client.query<Row>(
+          `SELECT id, statement_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          [purchaseId, householdId],
+        );
+        if (peek.rowCount === 0 || peek.rows.length === 0) throw domainErrors.notFound('Compra');
+        const peekStmtId = peek.rows[0]!['statement_id'] as string | null;
+        if (!peekStmtId) throw domainErrors.notFound('Compra');
+
+        // V4.1 REVIEWFIX F7 [major]: like cancelPurchase, the PATCH path
+        // only edits purchases of an open statement (checked under the
+        // statement lock — no TOCTOU).
+        const locked = await lockStatementForUpdateTx(client, peekStmtId, householdId);
+        if (locked.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para edição.');
+
         const txExists = await client.query<Row>(
           `SELECT id, statement_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
           [purchaseId, householdId],
@@ -611,15 +628,13 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
           projParams,
         );
 
-        const stmtId = txExists.rows[0]!['statement_id'] as string ?? null;
+        const stmtId = txExists.rows[0]!['statement_id'] as string | null;
 
-        if (stmtId) {
-          // Task 2.8: recompute under the statement row lock.
-          await recalcStatementLockedTx(client, stmtId, householdId);
-          return stmtId;
-        }
-
-        throw domainErrors.notFound('Compra');
+        if (!stmtId || stmtId !== peekStmtId) throw domainErrors.notFound('Compra');
+        // Task 2.8: recompute under the statement row lock (already held —
+        // re-locking the same row in the same tx is a no-op).
+        await recalcStatementLockedTx(client, stmtId, householdId);
+        return stmtId;
       });
       return (await this.getStatementDetail(householdId, stmtId))!;
     },
@@ -646,6 +661,16 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
         // open-check and the total recompute).
         const locked = await lockStatementForUpdateTx(client, stmtId, householdId);
         if (locked.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
+
+        // V4.1 REVIEWFIX F5: explicit transaction-row lock AFTER the
+        // statement lock — same STATEMENT → TRANSACTION → projection order
+        // as updatePurchase, so the two paths serialize instead of
+        // deadlocking. Re-checks liveness under the lock.
+        const lockedTx = await client.query<Row>(
+          `SELECT id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
+          [purchaseId, householdId],
+        );
+        if ((lockedTx.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
 
         await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
         // Se existir card_purchases vinculado, também soft-deletar

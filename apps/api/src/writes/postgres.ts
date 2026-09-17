@@ -82,6 +82,33 @@ const mapTransaction = (r: Row): Transaction => {
 const TRANSACTION_COLUMNS =
   'id, household_id, kind, description, amount_cents, date, account_id, category_id, subcategory_id, transfer_to_account_id, notes';
 
+/**
+ * V4.1 REVIEWFIX F3 [major]: a transaction linked as the payment effect of
+ * a paid payable (accounts_payable.paid_transaction_id) must not be
+ * edited or deleted directly — pay 100 from A → PATCH to 1 on B → unpay
+ * would credit 1 to B while A stays debited 100. Both updateTransaction
+ * and softDeleteTransactionInTx reject with 409; the undo path
+ * (undoPayablePayment) clears paid_transaction_id BEFORE tombstoning, so
+ * it is unaffected. Uses the same `conflict` shape as statement guards.
+ */
+const assertNotLinkedToPaidPayable = async (
+  client: PoolClient,
+  householdId: string,
+  transactionId: string,
+): Promise<void> => {
+  const linked = await client.query(
+    `SELECT 1 FROM accounts_payable
+      WHERE household_id = $1 AND paid_transaction_id = $2 AND deleted_at IS NULL
+      LIMIT 1`,
+    [householdId, transactionId],
+  );
+  if ((linked.rowCount ?? 0) > 0) {
+    throw domainErrors.conflict(
+      'Lançamento vinculado a conta paga não pode ser alterado; desfaça o pagamento primeiro.',
+    );
+  }
+};
+
 const findAccountInHousehold = async (
   client: import('pg').PoolClient,
   id: string,
@@ -489,9 +516,11 @@ const softDeleteTransactionInTx = async (
   id: string,
 ): Promise<Transaction> => {
   const tx = await findActiveTransaction(client, id, householdId);
+  // V4.1 REVIEWFIX F3: never tombstone a paid payable's payment effect
+  // directly — the undo path owns that reversal.
+  await assertNotLinkedToPaidPayable(client, householdId, id);
   // Restore balance effect (shared with category cascade, C-04).
-  await reverseBalanceForDelete(client, householdId, tx);
-  const res = await client.query<Row>(
+  await reverseBalanceForDelete(client, householdId, tx);  const res = await client.query<Row>(
     `UPDATE transactions
         SET deleted_at = NOW()
       WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
@@ -768,6 +797,9 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
     async updateTransaction(householdId, id, patch) {
       return withTransaction(pool, async (client) => {
         const tx = await findActiveTransaction(client, id, householdId);
+        // V4.1 REVIEWFIX F3: a paid payable's payment effect is immutable
+        // via PATCH — use unpay (which clears the link first).
+        await assertNotLinkedToPaidPayable(client, householdId, id);
         if (tx.kind === 'transfer') {
           if (
             patch.amountCents !== undefined ||

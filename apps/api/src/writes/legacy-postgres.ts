@@ -123,8 +123,31 @@ export const resolveCategoryLegacy = async (
   return assertCategoryKind(cat, expectedKind, 'categoryId', wrongKindMessage);
 };
 
-/** H-01: legacy accounts flag cards via is_credit_card (no kind column). */
-const assertNotCreditCardLegacy = async (
+/**
+ * V4.1 REVIEWFIX F3 [major]: legacy twin of the canonical paid-payable
+ * link guard — paid_transaction_id exists on the legacy accounts_payable
+ * shape too, so direct PATCH/DELETE of the payment effect rejects with
+ * 409. The legacy undo clears the column before tombstoning (unaffected).
+ */
+const assertNotLinkedToPaidPayableLegacy = async (
+  client: PoolClient,
+  householdId: string,
+  transactionId: string,
+): Promise<void> => {
+  const linked = await client.query(
+    `SELECT 1 FROM accounts_payable
+      WHERE household_id = $1 AND paid_transaction_id = $2 AND deleted_at IS NULL
+      LIMIT 1`,
+    [householdId, transactionId],
+  );
+  if ((linked.rowCount ?? 0) > 0) {
+    throw domainErrors.conflict(
+      'Lançamento vinculado a conta paga não pode ser alterado; desfaça o pagamento primeiro.',
+    );
+  }
+};
+
+/** H-01: legacy accounts flag cards via is_credit_card (no kind column). */const assertNotCreditCardLegacy = async (
   client: PoolClient,
   householdId: string,
   accountId: string,
@@ -298,6 +321,9 @@ const softDeleteTransactionLegacyInTx = async (
   householdId: string,
   id: string,
 ): Promise<Transaction> => {
+  // V4.1 REVIEWFIX F3: same paid-payable link guard as canonical — the
+  // legacy schema carries paid_transaction_id too.
+  await assertNotLinkedToPaidPayableLegacy(client, householdId, id);
   const res = await client.query<Row>(
     `UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
      RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id`,
@@ -524,6 +550,8 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
           `SELECT id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id, subcategory_id, notes
              FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [id, householdId]);
         if (existing.rowCount === 0) throw domainErrors.notFound('Lançamento');
+        // V4.1 REVIEWFIX F3: block PATCH of a paid payable's payment effect.
+        await assertNotLinkedToPaidPayableLegacy(client, householdId, id);
         const current = existing.rows[0]!;
         const txKind = current['kind'] as 'expense' | 'income' | 'transfer';
         if (txKind === 'transfer') {
