@@ -375,7 +375,7 @@ function AccountDetailSheet({
 }
 
 export default function AccountsPage() {
-  const { accounts, transactions, loading, error, writeError, clearWriteError, addAccount, updateAccount, deactivateAccount } = useAppState();
+  const { accounts, transactions, loading, error, writeError, clearWriteError, retryWriteError, addAccount, updateAccount, deactivateAccount } = useAppState();
   const [createOpen, setCreateOpen] = useState(false);
   const [detailAccount, setDetailAccount] = useState<(typeof accounts)[0] | null>(null);
   const [editAccount, setEditAccount] = useState<{ id: string; name: string } | null>(null);
@@ -448,7 +448,7 @@ export default function AccountsPage() {
           </div>
         )}
 
-        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} onRetry={retryWriteError ?? undefined} />
 
         <StaleBanner domains={["accounts", "transactions"]} />
 

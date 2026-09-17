@@ -306,7 +306,7 @@ function DetailSheet({
 }
 
 export default function PayablesPage() {
-  const { payables, categories, accounts, markPayablePaid, cancelPayable, updatePayable, undoPayablePayment, createPayable, loading, error, writeError, clearWriteError, refreshDomains } = useAppState();
+  const { payables, categories, accounts, markPayablePaid, cancelPayable, updatePayable, undoPayablePayment, createPayable, loading, error, writeError, clearWriteError, retryWriteError, refreshDomains } = useAppState();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState<Payable | null>(null);
@@ -399,7 +399,7 @@ export default function PayablesPage() {
         } />
 
         {error && (<div className="mx-5 mb-3 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger">⚠ {error}</div>)}
-        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} onRetry={retryWriteError ?? undefined} />
         <StaleBanner domains={["payables", "categories"]} />
 
         <div className="px-5 sm:px-8 lg:px-12">

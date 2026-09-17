@@ -49,7 +49,8 @@ import {
 } from "./snapshot-db";
 import { stampLastOnlineAuthenticatedAt } from "@/lib/session";
 import { recordClientEvent } from "@/lib/telemetry/client-events";
-import { createCommands, type Commands } from "./commands";
+import { createCommands, type Commands, type CommandIdOptions } from "./commands";
+import { getFailedCommandId } from "@/lib/api/command-id";
 import {
   createMutationReconciler,
   extractMutationReceipt,
@@ -106,8 +107,28 @@ export interface AppState {
   error: string | null;
   writeError: string | null;
   clearWriteError: () => void;
+  /**
+   * Intent id behind the surfaced write error (V4.1 Task 3.9 / Finding 2):
+   * the command id the commands layer stamped onto the failed intent. Set
+   * iff the error carries one — the banner retry affordance keys off this.
+   * Null when no failed intent is pending (or its error carries no id).
+   */
+  writeErrorCommandId?: string | null;
+  /**
+   * Manual retry bound to `writeErrorCommandId`: re-invokes the failed
+   * mutation with the SAME command id, so the server replays the original
+   * receipt instead of executing a second effect (committed-but-lost
+   * response). Null when the last error carries no command id or captured
+   * no retry inputs. Resolves when the retry settles (success clears the
+   * banner; failure re-stores the fresh error); never rejects.
+   */
+  retryWriteError?: (() => Promise<unknown>) | null;
   // Write actions
-  addTransaction: (tx: Transaction) => Promise<void>;
+  // Object-input writes accept an optional `idempotencyKey` so a manual
+  // retry after an unknown outcome reuses the failed intent's SAME command
+  // id (forwarded verbatim to the commands layer); omit it for a new intent.
+  // Id-only writes take an optional trailing `CommandIdOptions` instead.
+  addTransaction: (tx: Transaction & { idempotencyKey?: string }) => Promise<void>;
   updateTransaction: (
     id: string,
     input: {
@@ -116,25 +137,31 @@ export interface AppState {
       amountCents?: number;
       accountId?: string;
       categoryId?: string;
+      idempotencyKey?: string;
     },
   ) => Promise<void>;
-  deleteTransaction: (id: string) => Promise<void>;
-  markPayablePaid: (id: string) => Promise<void>;
-  cancelPayable: (id: string) => Promise<void>;
+  deleteTransaction: (id: string, options?: CommandIdOptions) => Promise<void>;
+  markPayablePaid: (
+    id: string,
+    options?: CommandIdOptions & { paidDate?: string },
+  ) => Promise<void>;
+  cancelPayable: (id: string, options?: CommandIdOptions) => Promise<void>;
   updatePayable: (id: string, input: {
     description?: string;
     amountCents?: number;
     dueDate?: string;
     accountId?: string;
     categoryId?: string;
+    idempotencyKey?: string;
   }) => Promise<void>;
-  undoPayablePayment: (id: string) => Promise<void>;
+  undoPayablePayment: (id: string, options?: CommandIdOptions) => Promise<void>;
   createPayable: (input: {
     accountId: string;
     description: string;
     amountCents: number;
     dueDate: string;
     categoryId?: string;
+    idempotencyKey?: string;
   }) => Promise<void>;
   createBudget: (input: {
     categoryId: string;
@@ -142,53 +169,59 @@ export interface AppState {
     amountCents: number;
     period: "monthly" | "quarterly" | "yearly";
     startDate: string;
+    idempotencyKey?: string;
   }) => Promise<void>;
   updateBudget: (
     id: string,
-    input: { amountCents?: number; alertThreshold?: number },
+    input: { amountCents?: number; alertThreshold?: number; idempotencyKey?: string },
   ) => Promise<void>;
   createGoal: (input: {
     name: string;
     goalType: "savings" | "purchase" | "debt_payoff" | "emergency_fund";
     targetAmountCents: number;
     startDate: string;
+    idempotencyKey?: string;
   }) => Promise<void>;
   contributeToGoal: (
     id: string,
-    input: { amountCents: number },
+    input: { amountCents: number; idempotencyKey?: string },
   ) => Promise<void>;
-  cancelGoal: (id: string) => Promise<void>;
+  cancelGoal: (id: string, options?: CommandIdOptions) => Promise<void>;
   updateGoal: (id: string, input: {
     name?: string;
     targetAmountCents?: number;
     targetDate?: string;
+    idempotencyKey?: string;
   }) => Promise<void>;
   addAccount: (input: {
     name: string;
     kind: "bank" | "cash" | "credit_card";
     initialBalanceCents: number;
+    idempotencyKey?: string;
   }) => Promise<void>;
-  updateAccount: (id: string, input: { name: string }) => Promise<void>;
-  deactivateAccount: (id: string) => Promise<void>;
+  updateAccount: (id: string, input: { name: string; idempotencyKey?: string }) => Promise<void>;
+  deactivateAccount: (id: string, options?: CommandIdOptions) => Promise<void>;
   addCategory: (input: {
     name: string;
     kind: "expense" | "income";
     parentId?: string;
     icon?: string | null;
     color?: string | null;
+    idempotencyKey?: string;
   }) => Promise<void>;
-  updateCategory: (id: string, input: { name?: string; icon?: string | null; color?: string | null }) => Promise<void>;
-  deactivateCategory: (id: string) => Promise<void>;
+  updateCategory: (id: string, input: { name?: string; icon?: string | null; color?: string | null; idempotencyKey?: string }) => Promise<void>;
+  deactivateCategory: (id: string, options?: CommandIdOptions) => Promise<void>;
   deleteCategory: (
     id: string,
-    input: { mode: "move"; destinationCategoryId: string } | { mode: "cascade"; confirm: true },
+    input: ({ mode: "move"; destinationCategoryId: string } | { mode: "cascade"; confirm: true }) & { idempotencyKey?: string },
   ) => Promise<{ movedTransactions: number; softDeletedTransactions: number }>;
-  applyCategoryDefaults: () => Promise<{ created: number; skipped: number }>;
+  applyCategoryDefaults: (options?: CommandIdOptions) => Promise<{ created: number; skipped: number }>;
   addCard: (input: {
     name: string;
     creditLimitCents: number;
     closingDay: number;
     dueDay: number;
+    idempotencyKey?: string;
   }) => Promise<void>;
   updateCard: (
     id: string,
@@ -197,6 +230,7 @@ export interface AppState {
       creditLimitCents?: number;
       closingDay?: number;
       dueDay?: number;
+      idempotencyKey?: string;
     },
   ) => Promise<void>;
   addSubscription: (input: {
@@ -205,14 +239,16 @@ export interface AppState {
     cycle: "monthly" | "yearly" | "weekly";
     day: number;
     paymentMethod: string;
+    idempotencyKey?: string;
   }) => Promise<void>;
-  cancelSubscription: (id: string) => Promise<void>;
+  cancelSubscription: (id: string, options?: CommandIdOptions) => Promise<void>;
   updateSubscription: (id: string, input: {
     name?: string;
     amountCents?: number;
     cycle?: "monthly" | "yearly" | "weekly";
     day?: number;
     paymentMethod?: string;
+    idempotencyKey?: string;
   }) => Promise<void>;
   /** Lazy-load subscriptions on demand — not fetched during bootstrap */
   refreshSubscriptions: () => Promise<void>;
@@ -222,10 +258,11 @@ export interface AppState {
     date: string;
     fromAccountId: string;
     toAccountId: string;
+    idempotencyKey?: string;
   }) => Promise<void>;
   payStatement: (
     statementId: string,
-    input: { amountCents: number; fromAccountId: string },
+    input: { amountCents: number; fromAccountId: string; idempotencyKey?: string },
   ) => Promise<void>;
   createInstallments: (input: {
     accountId: string;
@@ -236,6 +273,7 @@ export interface AppState {
     categoryId?: string;
     subcategoryId?: string;
     notes?: string;
+    idempotencyKey?: string;
   }) => Promise<void>;
   createCardPurchase: (input: {
     accountId: string;
@@ -245,6 +283,7 @@ export interface AppState {
     categoryId?: string;
     subcategoryId?: string;
     notes?: string;
+    idempotencyKey?: string;
   }) => Promise<void>;
   /**
    * Re-fetches the given domains from the API and updates provider state
@@ -266,6 +305,41 @@ export interface AppState {
   retryReconciliation?: () => Promise<void>;
   dismissReconciliationStale?: () => void;
 }
+
+/**
+ * Provider write mutators that run through the commands layer and therefore
+ * carry an intent command id. The manual-retry registry (`writeApiRef`)
+ * holds the latest bound instances so a banner retry re-invokes the failed
+ * mutation with the SAME id instead of minting a new intent.
+ */
+export type RetryableWrites = Pick<
+  AppState,
+  | "addTransaction" | "updateTransaction" | "deleteTransaction"
+  | "markPayablePaid" | "cancelPayable" | "updatePayable" | "undoPayablePayment"
+  | "createPayable" | "createBudget" | "updateBudget" | "createGoal"
+  | "contributeToGoal" | "cancelGoal" | "updateGoal" | "addAccount"
+  | "updateAccount" | "deactivateAccount" | "addCategory" | "updateCategory"
+  | "deactivateCategory" | "deleteCategory" | "applyCategoryDefaults"
+  | "addCard" | "updateCard" | "addSubscription" | "cancelSubscription"
+  | "updateSubscription" | "createTransfer" | "payStatement"
+  | "createInstallments" | "createCardPurchase"
+>;
+
+/**
+ * A failed intent pending manual retry: the surfaced command id plus a thunk
+ * that re-invokes the same mutation with that SAME id threaded through.
+ */
+export interface FailedWriteIntent {
+  commandId: string;
+  retry: () => Promise<unknown>;
+}
+
+/**
+ * Builds the retry thunk once the failed intent's command id is known. The
+ * factory runs at failure time (the id is read off the surfaced error via
+ * `getFailedCommandId`); the thunk itself runs later, on banner click.
+ */
+export type WriteRetryFactory = (commandId: string) => () => Promise<unknown>;
 
 const AppStateContext = createContext<AppState | null>(null);
 
@@ -392,18 +466,34 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(apiUsable());
   const [error, setError] = useState<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
-  const clearWriteError = useCallback(() => setWriteError(null), []);
+  const [failedWrite, setFailedWrite] = useState<FailedWriteIntent | null>(null);
+  const failedWriteRef = useRef<FailedWriteIntent | null>(null);
+  const clearWriteError = useCallback(() => {
+    setWriteError(null);
+    setFailedWrite(null);
+  }, []);
 
   const handleWriteError = useCallback(
-    (e: unknown) => {
+    (e: unknown, makeRetry?: WriteRetryFactory) => {
       if (e instanceof ApiError && e.status === 401) {
         // Session expiration is handled centrally via onUnauthorized (apiFetch);
         // expire defensively here too, because 401 ApiErrors can also arrive
         // from layers that never touched apiFetch.
         expireSessionRef.current();
+        setFailedWrite(null);
         return;
       }
       if (e instanceof Error) setWriteError(e.message);
+      // Finding 2: the intent's command id travels on the surfaced error.
+      // A retry affordance exists iff the error carries an id AND the
+      // failing call site captured a retry thunk for it; anything else
+      // clears a stale pending retry so the banner never replays it.
+      const commandId = getFailedCommandId(e);
+      if (commandId !== undefined && makeRetry !== undefined) {
+        setFailedWrite({ commandId, retry: makeRetry(commandId) });
+      } else {
+        setFailedWrite(null);
+      }
     },
     [],
   );
@@ -412,6 +502,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const guardReadOnly = useCallback((): boolean => {
     if (readOnlyRef.current) {
       setWriteError("Backend indisponível — modo somente leitura.");
+      setFailedWrite(null);
       return true;
     }
     return false;
@@ -454,6 +545,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     readOnlyRef.current = readOnly;
     handleWriteErrorRef.current = handleWriteError;
     guardReadOnlyRef.current = guardReadOnly;
+    failedWriteRef.current = failedWrite;
     payablesRef.current = payables;
     accountsRef.current = accounts;
     subsRef.current = subscriptions;
@@ -600,6 +692,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // at call time.
   const { trackWrite } = useUnsavedChangesSafe();
   const commandsRef = useRef<Commands | null>(null);
+  /**
+   * Latest bound write mutators (see `RetryableWrites`). Read by stored
+   * manual-retry thunks at click time so the retry always re-invokes the
+   * current implementation with the failed intent's SAME command id.
+   * Assigned in an effect below, after every mutator is defined.
+   */
+  const writeApiRef = useRef<RetryableWrites | null>(null);
   useEffect(() => {
     commandsRef.current = createCommands({
       online: apiUsable(),
@@ -694,9 +793,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   // ── Write actions ─────────────────────────────────────────────────
 
-  const addTransaction = useCallback(async (tx: Transaction) => {
+  const addTransaction = useCallback(async (tx: Transaction & { idempotencyKey?: string }) => {
     if (guardReadOnlyRef.current()) return;
-    setTransactions((prev) => [tx, ...prev]);
+    // The intent id is transport-only: it never enters React state.
+    const { idempotencyKey: intentId, ...txState } = tx;
+    const idOption = intentId !== undefined ? { idempotencyKey: intentId } : {};
+    setTransactions((prev) => [txState, ...prev]);
 
     if (!apiUsable()) return;
 
@@ -709,6 +811,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           categoryId: tx.categoryId,
           accountId: tx.accountId,
           ...(tx.notes !== undefined ? { notes: tx.notes } : {}),
+          ...idOption,
         });
         setTransactions((prev) =>
           prev.map((t) => (t.id === tx.id ? { ...t, id: created.id } : t)),
@@ -726,6 +829,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           categoryId: tx.categoryId,
           accountId: tx.accountId,
           ...(tx.notes !== undefined ? { notes: tx.notes } : {}),
+          ...idOption,
         });
         setTransactions((prev) =>
           prev.map((t) => (t.id === tx.id ? { ...t, id: created.id } : t)),
@@ -734,7 +838,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }
     } catch (e) {
       setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
-      handleWriteErrorRef.current(e);
+      handleWriteErrorRef.current(e, (commandId) =>
+        // Manual retry reuses the SAME intent id (Finding 2): the server
+        // replays the original receipt instead of a second effect.
+        () => writeApiRef.current!.addTransaction({ ...tx, idempotencyKey: commandId }),
+      );
       throw e;
     }
   }, [reconcileAfterWrite]);
@@ -749,6 +857,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         accountId?: string;
         categoryId?: string;
         notes?: string;
+        idempotencyKey?: string;
       },
     ) => {
       if (guardReadOnlyRef.current()) return;
@@ -790,13 +899,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setTransactions((curr) =>
           curr.map((t) => (t.id === id ? prev : t)),
         );
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.updateTransaction(id, { ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
   );
 
-  const deleteTransaction = useCallback(async (id: string) => {
+  const deleteTransaction = useCallback(async (id: string, options?: CommandIdOptions) => {
     if (guardReadOnlyRef.current()) return;
     const prev = txsRef.current.find((t) => t.id === id);
     setTransactions((prev) => prev.filter((t) => t.id !== id));
@@ -804,7 +915,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      const deleted = await commandsRef.current!.deleteTransaction(id);
+      const deleted = await commandsRef.current!.deleteTransaction(id, options);
       // FIX-P1-PWA-RECEIPT-CONSUMERS: DELETE /transactions/:id answers 200
       // with the soft-deleted entity + a transaction.delete receipt — the
       // receipt (mutationId dedup) wins via reconcileAfterWrite, the
@@ -812,14 +923,19 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       reconcileAfterWrite(deleted, "transaction.delete");
     } catch (e) {
       if (prev) setTransactions((curr) => [prev, ...curr]);
-      handleWriteErrorRef.current(e);
+      handleWriteErrorRef.current(e, (commandId) =>
+        () => writeApiRef.current!.deleteTransaction(id, { idempotencyKey: commandId }),
+      );
     }
   }, [reconcileAfterWrite]);
 
-  const markPayablePaid = useCallback(async (id: string) => {
+  const markPayablePaid = useCallback(async (
+    id: string,
+    options?: CommandIdOptions & { paidDate?: string },
+  ) => {
     if (guardReadOnlyRef.current()) return;
     const prev = payablesRef.current.find((p) => p.id === id);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = options?.paidDate ?? new Date().toISOString().slice(0, 10);
 
     setPayables((curr) =>
       curr.map((p) =>
@@ -830,20 +946,26 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      const paid = await commandsRef.current!.markPayablePaid(id, today);
+      const paid = await commandsRef.current!.markPayablePaid(
+        id,
+        today,
+        options !== undefined ? { idempotencyKey: options.idempotencyKey } : undefined,
+      );
       reconcileAfterWrite(paid, "payable.pay");
     } catch (e) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? prev : p)),
       );
-      handleWriteErrorRef.current(e);
+      handleWriteErrorRef.current(e, (commandId) =>
+        () => writeApiRef.current!.markPayablePaid(id, { idempotencyKey: commandId, paidDate: today }),
+      );
     }
   }, [reconcileAfterWrite]);
 
   // ── Account update / deactivate ────────────────────────────
 
   const updateAccount = useCallback(
-    async (id: string, input: { name: string }) => {
+    async (id: string, input: { name: string; idempotencyKey?: string }) => {
       if (guardReadOnlyRef.current()) return;
       const prev = accountsRef.current.find((a) => a.id === id);
       if (!prev) return;
@@ -862,13 +984,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setAccounts((curr) =>
           curr.map((a) => (a.id === id ? prev : a)),
         );
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.updateAccount(id, { ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
   );
 
-  const deactivateAccount = useCallback(async (id: string) => {
+  const deactivateAccount = useCallback(async (id: string, options?: CommandIdOptions) => {
     if (guardReadOnlyRef.current()) return;
     const prev = accountsRef.current.find((a) => a.id === id);
     if (!prev) return;
@@ -879,19 +1003,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await commandsRef.current!.deactivateAccount(id);
+      await commandsRef.current!.deactivateAccount(id, options);
       // Void-typed endpoint discards the server receipt: registry fallback.
       reconcileAfterWrite(undefined, "account.delete");
     } catch (e) {
       setAccounts((curr) => [prev, ...curr]);
-      handleWriteErrorRef.current(e);
+      handleWriteErrorRef.current(e, (commandId) =>
+        () => writeApiRef.current!.deactivateAccount(id, { idempotencyKey: commandId }),
+      );
     }
   }, [reconcileAfterWrite]);
 
   // ── Category update / deactivate ───────────────────────────
 
   const updateCategory = useCallback(
-    async (id: string, input: { name?: string; icon?: string | null; color?: string | null }) => {
+    async (id: string, input: { name?: string; icon?: string | null; color?: string | null; idempotencyKey?: string }) => {
       if (guardReadOnlyRef.current()) return;
       const prev = categoriesRef.current.find((c) => c.id === id);
       if (!prev) return;
@@ -914,13 +1040,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setCategories((curr) =>
           curr.map((c) => (c.id === id ? prev : c)),
         );
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.updateCategory(id, { ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
   );
 
-  const deactivateCategory = useCallback(async (id: string) => {
+  const deactivateCategory = useCallback(async (id: string, options?: CommandIdOptions) => {
     if (guardReadOnlyRef.current()) return;
     const prev = categoriesRef.current.find((c) => c.id === id);
     if (!prev) return;
@@ -930,19 +1058,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      await commandsRef.current!.deactivateCategory(id);
+      await commandsRef.current!.deactivateCategory(id, options);
       // Void-typed endpoint discards the server receipt: registry fallback.
       reconcileAfterWrite(undefined, "category.delete");
     } catch (e) {
       setCategories((curr) => [prev, ...curr]);
-      handleWriteErrorRef.current(e);
+      handleWriteErrorRef.current(e, (commandId) =>
+        () => writeApiRef.current!.deactivateCategory(id, { idempotencyKey: commandId }),
+      );
     }
   }, [reconcileAfterWrite]);
 
   const deleteCategory = useCallback(
     async (
       id: string,
-      input: { mode: "move"; destinationCategoryId: string } | { mode: "cascade"; confirm: true },
+      input: ({ mode: "move"; destinationCategoryId: string } | { mode: "cascade"; confirm: true }) & { idempotencyKey?: string },
     ) => {
       if (guardReadOnlyRef.current()) return { movedTransactions: 0, softDeletedTransactions: 0 };
       const prev = [...categoriesRef.current];
@@ -973,24 +1103,28 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         };
       } catch (e) {
         setCategories(prev);
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.deleteCategory(id, { ...input, idempotencyKey: commandId }),
+        );
         throw e;
       }
     },
     [reconcileAfterWrite],
   );
 
-  const applyCategoryDefaults = useCallback(async () => {
+  const applyCategoryDefaults = useCallback(async (options?: CommandIdOptions) => {
     if (guardReadOnlyRef.current()) return { created: 0, skipped: 0 };
     if (!apiUsable()) return { created: 0, skipped: 0 };
     try {
-      const result = await commandsRef.current!.applyCategoryDefaults();
+      const result = await commandsRef.current!.applyCategoryDefaults(options);
       setCategories(await endpoints.fetchCategories());
       // No receipt for this batch op: refresh the category registry targets.
       reconcileAfterWrite(undefined, "category.create");
       return { created: result.created, skipped: result.skipped };
     } catch (e) {
-      handleWriteErrorRef.current(e);
+      handleWriteErrorRef.current(e, (commandId) =>
+        () => writeApiRef.current!.applyCategoryDefaults({ idempotencyKey: commandId }),
+      );
       throw e;
     }
   }, [reconcileAfterWrite]);
@@ -1000,6 +1134,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       name: string;
       kind: "bank" | "cash" | "credit_card";
       initialBalanceCents: number;
+      idempotencyKey?: string;
     }) => {
       if (guardReadOnlyRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
@@ -1026,7 +1161,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         reconcileAfterWrite(created, "account.create");
       } catch (e) {
         setAccounts((prev) => prev.filter((a) => a.id !== optimisticId));
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.addAccount({ ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
@@ -1037,6 +1174,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       name: string;
       kind: "expense" | "income";
       parentId?: string;
+      idempotencyKey?: string;
     }) => {
       if (guardReadOnlyRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
@@ -1061,7 +1199,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         reconcileAfterWrite(created, "category.create");
       } catch (e) {
         setCategories((prev) => prev.filter((c) => c.id !== optimisticId));
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.addCategory({ ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
@@ -1073,6 +1213,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       creditLimitCents: number;
       closingDay: number;
       dueDay: number;
+      idempotencyKey?: string;
     }) => {
       if (guardReadOnlyRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
@@ -1104,7 +1245,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         reconcileAfterWrite(created, "account.create");
       } catch (e) {
         setAccounts((prev) => prev.filter((a) => a.id !== optimisticId));
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.addCard({ ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
@@ -1118,6 +1261,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         creditLimitCents?: number;
         closingDay?: number;
         dueDay?: number;
+        idempotencyKey?: string;
       },
     ) => {
       if (guardReadOnlyRef.current()) return;
@@ -1156,7 +1300,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setAccounts((curr) =>
           curr.map((a) => (a.id === id ? prev : a)),
         );
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.updateCard(id, { ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
@@ -1169,6 +1315,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       cycle: "monthly" | "yearly" | "weekly";
       day: number;
       paymentMethod: string;
+      idempotencyKey?: string;
     }) => {
       if (guardReadOnlyRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
@@ -1194,13 +1341,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         reconcileAfterWrite(created, "subscription.create");
       } catch (e) {
         setSubscriptions((prev) => prev.filter((s) => s.id !== optimisticId));
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.addSubscription({ ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
   );
 
-  const cancelSubscription = useCallback(async (id: string) => {
+  const cancelSubscription = useCallback(async (id: string, options?: CommandIdOptions) => {
     if (guardReadOnlyRef.current()) return;
     const prev = subsRef.current.find((s) => s.id === id);
     setSubscriptions((curr) =>
@@ -1212,13 +1361,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      const cancelledSub = await commandsRef.current!.cancelSubscription(id);
+      const cancelledSub = await commandsRef.current!.cancelSubscription(id, options);
       reconcileAfterWrite(cancelledSub, "subscription.delete");
     } catch (e) {
       setSubscriptions((curr) =>
         curr.map((s) => (s.id === id ? prev : s)),
       );
-      handleWriteErrorRef.current(e);
+      handleWriteErrorRef.current(e, (commandId) =>
+        () => writeApiRef.current!.cancelSubscription(id, { idempotencyKey: commandId }),
+      );
     }
   }, [reconcileAfterWrite]);
 
@@ -1230,14 +1381,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       cycle?: "monthly" | "yearly" | "weekly";
       day?: number;
       paymentMethod?: string;
+      idempotencyKey?: string;
     },
   ) => {
     if (guardReadOnlyRef.current()) return;
     const prev = subsRef.current.find((s) => s.id === id);
     if (!prev) return;
-    // Optimistic update
+    // Optimistic update — the intent id is transport-only, never state.
+    const optimisticInput = { ...input };
+    delete optimisticInput.idempotencyKey;
     setSubscriptions((curr) =>
-      curr.map((s) => s.id === id ? { ...s, ...input } : s),
+      curr.map((s) => s.id === id ? { ...s, ...optimisticInput } : s),
     );
 
     if (!apiUsable()) return;
@@ -1250,7 +1404,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setSubscriptions((curr) =>
         curr.map((s) => (s.id === id ? prev : s)),
       );
-      handleWriteErrorRef.current(e);
+      handleWriteErrorRef.current(e, (commandId) =>
+        () => writeApiRef.current!.updateSubscription(id, { ...input, idempotencyKey: commandId }),
+      );
     }
   }, [reconcileAfterWrite]);
 
@@ -1282,6 +1438,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       date: string;
       fromAccountId: string;
       toAccountId: string;
+      idempotencyKey?: string;
     }) => {
       if (guardReadOnlyRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
@@ -1335,7 +1492,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             curr.map((a) => (a.id === input.toAccountId ? prevTo : a)),
           );
         }
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.createTransfer({ ...input, idempotencyKey: commandId }),
+        );
         throw e;
       }
     },
@@ -1344,7 +1503,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   // ── Payable create / cancel ─────────────────────────────────
 
-  const cancelPayable = useCallback(async (id: string) => {
+  const cancelPayable = useCallback(async (id: string, options?: CommandIdOptions) => {
     if (guardReadOnlyRef.current()) return;
     const prev = payablesRef.current.find((p) => p.id === id);
 
@@ -1357,13 +1516,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable() || !prev) return;
 
     try {
-      const cancelled = await commandsRef.current!.cancelPayable(id);
+      const cancelled = await commandsRef.current!.cancelPayable(id, options);
       reconcileAfterWrite(cancelled, "payable.delete");
     } catch (e) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? { ...prev } : p)),
       );
-      handleWriteErrorRef.current(e);
+      handleWriteErrorRef.current(e, (commandId) =>
+        () => writeApiRef.current!.cancelPayable(id, { idempotencyKey: commandId }),
+      );
     }
   }, [reconcileAfterWrite]);
 
@@ -1374,15 +1535,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       dueDate?: string;
       accountId?: string;
       categoryId?: string;
+      idempotencyKey?: string;
     }) => {
       if (guardReadOnlyRef.current()) return;
       const prev = payablesRef.current.find((p) => p.id === id);
       if (!prev) return;
 
-      // Optimistic update
+      // Optimistic update — the intent id is transport-only, never state.
+      const optimisticInput = { ...input };
+      delete optimisticInput.idempotencyKey;
       setPayables((curr) =>
         curr.map((p) =>
-          p.id === id ? { ...p, ...input } : p,
+          p.id === id ? { ...p, ...optimisticInput } : p,
         ),
       );
 
@@ -1395,13 +1559,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setPayables((curr) =>
           curr.map((p) => (p.id === id ? { ...prev } : p)),
         );
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.updatePayable(id, { ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
   );
 
-  const undoPayablePayment = useCallback(async (id: string) => {
+  const undoPayablePayment = useCallback(async (id: string, options?: CommandIdOptions) => {
     if (guardReadOnlyRef.current()) return;
     const prev = payablesRef.current.find((p) => p.id === id);
     if (!prev) return;
@@ -1426,13 +1592,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      const undone = await commandsRef.current!.undoPayablePayment(id, paidTransactionId);
+      const undone = await commandsRef.current!.undoPayablePayment(id, paidTransactionId, options);
       reconcileAfterWrite(undone, "payable.payment.undo");
     } catch (e) {
       setPayables((curr) =>
         curr.map((p) => (p.id === id ? { ...prev } : p)),
       );
-      handleWriteErrorRef.current(e);
+      handleWriteErrorRef.current(e, (commandId) =>
+        () => writeApiRef.current!.undoPayablePayment(id, { idempotencyKey: commandId }),
+      );
     }
   }, [reconcileAfterWrite]);
 
@@ -1443,6 +1611,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       amountCents: number;
       dueDate: string;
       categoryId?: string;
+      idempotencyKey?: string;
     }) => {
       if (guardReadOnlyRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
@@ -1466,7 +1635,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         reconcileAfterWrite(created, "payable.create");
       } catch (e) {
         setPayables((curr) => curr.filter((p) => p.id !== optimisticId));
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.createPayable({ ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
@@ -1481,6 +1652,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       amountCents: number;
       period: "monthly" | "quarterly" | "yearly";
       startDate: string;
+      idempotencyKey?: string;
     }) => {
       if (guardReadOnlyRef.current()) return;
       const optimistic: Budget = {
@@ -1503,7 +1675,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         reconcileAfterWrite(created, "budget.create");
       } catch (e) {
         setBudgets((curr) => curr.filter((b) => b.id !== optimistic.id));
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.createBudget({ ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
@@ -1512,7 +1686,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const updateBudget = useCallback(
     async (
       id: string,
-      input: { amountCents?: number; alertThreshold?: number },
+      input: { amountCents?: number; alertThreshold?: number; idempotencyKey?: string },
     ) => {
       if (guardReadOnlyRef.current()) return;
       const prev = budgetsRef.current.find((b) => b.id === id);
@@ -1540,7 +1714,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setBudgets((curr) =>
           curr.map((b) => (b.id === id ? prev : b)),
         );
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.updateBudget(id, { ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
@@ -1554,6 +1730,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       goalType: "savings" | "purchase" | "debt_payoff" | "emergency_fund";
       targetAmountCents: number;
       startDate: string;
+      idempotencyKey?: string;
     }) => {
       if (guardReadOnlyRef.current()) return;
       const optimistic: Goal = {
@@ -1575,14 +1752,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         reconcileAfterWrite(created, "goal.create");
       } catch (e) {
         setGoals((curr) => curr.filter((g) => g.id !== optimistic.id));
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.createGoal({ ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
   );
 
   const contributeToGoal = useCallback(
-    async (id: string, input: { amountCents: number }) => {
+    async (id: string, input: { amountCents: number; idempotencyKey?: string }) => {
       if (guardReadOnlyRef.current()) return;
       const prev = goalsRef.current.find((g) => g.id === id);
       if (!prev) return;
@@ -1608,13 +1787,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setGoals((curr) =>
           curr.map((g) => (g.id === id ? { ...prev } : g)),
         );
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.contributeToGoal(id, { ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
   );
 
-  const cancelGoal = useCallback(async (id: string) => {
+  const cancelGoal = useCallback(async (id: string, options?: CommandIdOptions) => {
     if (guardReadOnlyRef.current()) return;
     const prev = goalsRef.current.find((g) => g.id === id);
     if (!prev) return;
@@ -1624,11 +1805,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!apiUsable()) return;
 
     try {
-      const cancelledGoal = await commandsRef.current!.cancelGoal(id);
+      const cancelledGoal = await commandsRef.current!.cancelGoal(id, options);
       reconcileAfterWrite(cancelledGoal, "goal.delete");
     } catch (e) {
       setGoals((curr) => [prev, ...curr]);
-      handleWriteErrorRef.current(e);
+      handleWriteErrorRef.current(e, (commandId) =>
+        () => writeApiRef.current!.cancelGoal(id, { idempotencyKey: commandId }),
+      );
     }
   }, [reconcileAfterWrite]);
 
@@ -1638,14 +1821,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       name?: string;
       targetAmountCents?: number;
       targetDate?: string;
+      idempotencyKey?: string;
     },
   ) => {
     if (guardReadOnlyRef.current()) return;
     const prev = goalsRef.current.find((g) => g.id === id);
     if (!prev) return;
 
+    // Optimistic update — the intent id is transport-only, never state.
+    const optimisticInput = { ...input };
+    delete optimisticInput.idempotencyKey;
     setGoals((curr) =>
-      curr.map((g) => g.id === id ? { ...g, ...input } : g),
+      curr.map((g) => g.id === id ? { ...g, ...optimisticInput } : g),
     );
 
     if (!apiUsable()) return;
@@ -1655,14 +1842,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       reconcileAfterWrite(updatedGoal, "goal.update");
     } catch (e) {
       setGoals((curr) => curr.map((g) => (g.id === id ? prev : g)));
-      handleWriteErrorRef.current(e);
+      handleWriteErrorRef.current(e, (commandId) =>
+        () => writeApiRef.current!.updateGoal(id, { ...input, idempotencyKey: commandId }),
+      );
     }
   }, [reconcileAfterWrite]);
 
   const payStatement = useCallback(
     async (
       statementId: string,
-      input: { amountCents: number; fromAccountId: string },
+      input: { amountCents: number; fromAccountId: string; idempotencyKey?: string },
     ) => {
       if (guardReadOnlyRef.current()) return;
       const prevStmt = stmtsRef.current.find((s) => s.id === statementId);
@@ -1723,7 +1912,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             ),
           );
         }
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.payStatement(statementId, { ...input, idempotencyKey: commandId }),
+        );
       }
     },
     [reconcileAfterWrite],
@@ -1739,10 +1930,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       categoryId?: string;
       subcategoryId?: string;
       notes?: string;
+      idempotencyKey?: string;
     }) => {
       if (guardReadOnlyRef.current()) return;
       if (!apiUsable()) {
         setWriteError("API não configurada para parcelamentos");
+        setFailedWrite(null);
         return;
       }
 
@@ -1757,7 +1950,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         // statement domain; the fallback refreshes statement + accounts.
         reconcileAfterWrite(createdStmts, "statement.create");
       } catch (e) {
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.createInstallments({ ...input, idempotencyKey: commandId }),
+        );
         throw e;
       }
     },
@@ -1773,10 +1968,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       categoryId?: string;
       subcategoryId?: string;
       notes?: string;
+      idempotencyKey?: string;
     }) => {
       if (guardReadOnlyRef.current()) return;
       if (!apiUsable()) {
         setWriteError("API não configurada para compras no cartão");
+        setFailedWrite(null);
         return;
       }
 
@@ -1792,12 +1989,70 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         // stale behavior is preserved via the fallback + explicit fetch.
         reconcileAfterWrite(createdPurchases, "statement.create");
       } catch (e) {
-        handleWriteErrorRef.current(e);
+        handleWriteErrorRef.current(e, (commandId) =>
+          () => writeApiRef.current!.createCardPurchase({ ...input, idempotencyKey: commandId }),
+        );
         throw e;
       }
     },
     [reconcileAfterWrite],
   );
+
+  // Keeps the manual-retry registry pointed at the latest bound mutators.
+  // No dep array: assignment runs after every render (never read during
+  // render), so a stored retry thunk always re-invokes current code.
+  useEffect(() => {
+    writeApiRef.current = {
+      addTransaction,
+      updateTransaction,
+      deleteTransaction,
+      markPayablePaid,
+      cancelPayable,
+      updatePayable,
+      undoPayablePayment,
+      createPayable,
+      createBudget,
+      updateBudget,
+      createGoal,
+      contributeToGoal,
+      cancelGoal,
+      updateGoal,
+      addAccount,
+      updateAccount,
+      deactivateAccount,
+      addCategory,
+      updateCategory,
+      deactivateCategory,
+      deleteCategory,
+      applyCategoryDefaults,
+      addCard,
+      updateCard,
+      addSubscription,
+      cancelSubscription,
+      updateSubscription,
+      createTransfer,
+      payStatement,
+      createInstallments,
+      createCardPurchase,
+    };
+  });
+
+  /**
+   * Manual retry for the banner (Finding 2): re-invokes the failed mutation
+   * with the SAME command id. Cleared optimistically before the attempt so a
+   * swallowed failure re-stores its fresh error via the mutator's own catch
+   * while a success leaves the banner cleared. Never rejects — failures are
+   * already surfaced through `writeError` state by the mutator.
+   */
+  const retryWriteError = useCallback(async (): Promise<unknown> => {
+    const pending = failedWriteRef.current;
+    if (!pending) return;
+    setWriteError(null);
+    setFailedWrite(null);
+    return pending.retry().catch(() => {
+      /* failure already surfaced via writeError state by the mutator */
+    });
+  }, []);
 
   // ── Profile adapter ────────────────────────────────────────
   // Injected persistence/API projection adapter. The adapter handles both
@@ -2104,6 +2359,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       error,
       writeError,
       clearWriteError,
+      writeErrorCommandId: failedWrite?.commandId ?? null,
+      retryWriteError: failedWrite ? retryWriteError : null,
       addTransaction,
       updateTransaction,
       deleteTransaction,
@@ -2166,6 +2423,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       error,
       writeError,
       clearWriteError,
+      failedWrite,
+      retryWriteError,
       addTransaction,
       updateTransaction,
       deleteTransaction,

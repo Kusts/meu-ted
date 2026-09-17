@@ -39,7 +39,7 @@ function cardBarColor(pct: number): string {
 }
 
 export default function WalletPage() {
-  const { accounts, goals, debts, cardStatements, loading, error, writeError, clearWriteError } = useAppState();
+  const { accounts, goals, debts, cardStatements, loading, error, writeError, clearWriteError, retryWriteError } = useAppState();
 
   if (loading) {
     return (
@@ -91,7 +91,7 @@ export default function WalletPage() {
           </div>
         )}
 
-        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} onRetry={retryWriteError ?? undefined} />
 
         <StaleBanner domains={["accounts", "goals", "cardStatements"]} />
 

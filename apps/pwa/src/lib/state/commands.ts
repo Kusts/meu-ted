@@ -163,11 +163,12 @@ export interface CategoryUpdateInput {
   name?: string;
   icon?: string | null;
   color?: string | null;
+  idempotencyKey?: string;
 }
 
 export type CategoryDeleteInput =
-  | { mode: "move"; destinationCategoryId: string }
-  | { mode: "cascade"; confirm: true };
+  | { mode: "move"; destinationCategoryId: string; idempotencyKey?: string }
+  | { mode: "cascade"; confirm: true; idempotencyKey?: string };
 
 export interface CategoryDeleteResult {
   ok: boolean;

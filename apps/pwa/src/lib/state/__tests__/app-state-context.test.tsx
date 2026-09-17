@@ -2069,7 +2069,8 @@ describe("AppStateProvider — every write action (coverage-core)", () => {
     expect(cmds.createExpenseTransaction).toHaveBeenCalled();
     expect(cmds.createIncomeTransaction).toHaveBeenCalled();
     expect(cmds.updateTransaction).toHaveBeenCalledWith("t1", expect.anything());
-    expect(cmds.deleteTransaction).toHaveBeenCalledWith("t1");
+    // deleteTransaction threads the (empty) id-reuse options bag through.
+    expect(cmds.deleteTransaction).toHaveBeenCalledWith("t1", undefined);
     expect(cmds.markPayablePaid).toHaveBeenCalled();
     expect(cmds.cancelPayable).toHaveBeenCalled();
     expect(cmds.updatePayable).toHaveBeenCalled();

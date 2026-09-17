@@ -433,6 +433,7 @@ export default function SubscriptionsPage() {
     updateSubscription,
     writeError,
     clearWriteError,
+    retryWriteError,
     refreshSubscriptions,
   } = useAppState();
 
@@ -474,7 +475,7 @@ export default function SubscriptionsPage() {
           }
         />
 
-        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} onRetry={retryWriteError ?? undefined} />
 
         <StaleBanner domains={["subscriptions"]} />
 

@@ -279,7 +279,7 @@ function BudgetDetailSheet({
 }
 
 export default function BudgetsPage() {
-  const { budgets, categories, transactions, loading, error, writeError, clearWriteError, createBudget, updateBudget } = useAppState();
+  const { budgets, categories, transactions, loading, error, writeError, clearWriteError, retryWriteError, createBudget, updateBudget } = useAppState();
   const [tab, setTab] = useState<"expense" | "income">("expense");
   const [createOpen, setCreateOpen] = useState(false);
   const [detailBudget, setDetailBudget] = useState<{ id: string; name: string; amountCents: number; categoryId: string } | null>(null);
@@ -427,7 +427,7 @@ export default function BudgetsPage() {
           </div>
         )}
 
-        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} onRetry={retryWriteError ?? undefined} />
 
         <StaleBanner domains={["budgets", "categories"]} />
 

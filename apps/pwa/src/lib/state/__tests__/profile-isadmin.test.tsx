@@ -35,7 +35,7 @@ function mockBootstrapReads(profile: Profile | null) {
 const adminProfile = (overrides: Partial<Profile> = {}): Profile => ({
   householdId: "h1",
   name: "Admin",
-  email: "walissonead@gmail.com",
+  email: "admin@example.com",
   phone: "",
   avatarColor: "#0E8C5A",
   greetingStyle: "auto",

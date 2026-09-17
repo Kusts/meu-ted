@@ -305,7 +305,7 @@ function GoalDetailSheet({
 }
 
 export default function GoalsPage() {
-  const { goals, debts, loading, error, writeError, clearWriteError, createGoal, contributeToGoal, cancelGoal, updateGoal } = useAppState();
+  const { goals, debts, loading, error, writeError, clearWriteError, retryWriteError, createGoal, contributeToGoal, cancelGoal, updateGoal } = useAppState();
   const [tab, setTab] = useState<"goals" | "debts">("goals");
   const [createOpen, setCreateOpen] = useState(false);
   const [createType, setCreateType] = useState<"goal" | "debt" | null>(null);
@@ -356,7 +356,7 @@ export default function GoalsPage() {
           <div className="mx-5 mb-3 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger">⚠ {error}</div>
         )}
 
-        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} onRetry={retryWriteError ?? undefined} />
 
         <StaleBanner domains={["goals"]} />
 

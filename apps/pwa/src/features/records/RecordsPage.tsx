@@ -49,7 +49,7 @@ interface Group {
 }
 
 export default function RecordsPage() {
-  const { transactions, categories, accounts, loading, error, writeError, clearWriteError, deleteTransaction, refreshDomains } = useAppState();
+  const { transactions, categories, accounts, loading, error, writeError, clearWriteError, retryWriteError, deleteTransaction, refreshDomains } = useAppState();
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [actionOpen, setActionOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -299,9 +299,7 @@ export default function RecordsPage() {
         <WriteErrorBanner
           message={writeError}
           onDismiss={clearWriteError}
-          onRetry={() => {
-            if (typeof window !== "undefined") window.location.reload();
-          }}
+          onRetry={retryWriteError ?? undefined}
         />
 
         {!staleDismissed && (

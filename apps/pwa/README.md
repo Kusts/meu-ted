@@ -42,7 +42,7 @@ pnpm lint       # ESLint
 | Variable | Description |
 |----------|-------------|
 | `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL` | Base URL da API autoritativa. Local: `/api/backend` (proxy same-origin para `https://api.synkroo.com.br`); Produção: `https://api.synkroo.com.br` (definido em `wrangler.jsonc` vars). |
-| `NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL` | Base URL do Agent Cloudflare (TED). Local: `/api/agent` (proxy same-origin para `https://pi-finance-agent.walissonead.workers.dev`); Produção: `https://pi-finance-agent.walissonead.workers.dev` (definido em `wrangler.jsonc` vars e em `src/app/api/agent/[...path]/route.ts` `AGENT_ORIGIN`). |
+| `NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL` | Base URL do Agent Cloudflare (TED). Local: `/api/agent` (proxy same-origin para `https://<AGENT_HOST>`); Produção: `https://<AGENT_HOST>` (definido em `wrangler.jsonc` vars e em `src/app/api/agent/[...path]/route.ts` `AGENT_ORIGIN`). |
 
 Sem `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL`, o PWA roda em modo mock **sem** requisições
 de rede — `AuthGate` é bypassado e dados vêm de mocks em memória.
@@ -65,7 +65,7 @@ URLs em código de produção e não commite `.env.local` — use apenas os prox
 
 | `BASE_URL` (API) | `AGENT_BASE_URL` (TED) | Comportamento |
 |---|---|---|
-| set (`/api/backend` ou `https://api.synkroo.com.br`) | set (`/api/agent` ou `https://pi-finance-agent.walissonead.workers.dev`) | API + TED operacionais; `AuthGate` ativo; proxies same-origin `/api/backend` e `/api/agent` encaminham para upstreams com headers `x-device-token` / `x-agent-connection-token` |
+| set (`/api/backend` ou `https://api.synkroo.com.br`) | set (`/api/agent` ou `https://<AGENT_HOST>`) | API + TED operacionais; `AuthGate` ativo; proxies same-origin `/api/backend` e `/api/agent` encaminham para upstreams com headers `x-device-token` / `x-agent-connection-token` |
 | set | unset | API operacional, TED retorna `Agent não configurado` |
 | unset | set ou unset | Mock mode: `AuthGate` bypassed, dados em memória, zero requisições de rede |
 | | | `localStorage.getItem("pi-finance:token")` usado somente quando `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL` está configurado |

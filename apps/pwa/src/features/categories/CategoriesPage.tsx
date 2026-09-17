@@ -611,6 +611,7 @@ export default function CategoriesPage() {
     error,
     writeError,
     clearWriteError,
+    retryWriteError,
     addCategory,
     updateCategory,
     deactivateCategory,
@@ -710,7 +711,7 @@ export default function CategoriesPage() {
 
         {error && <div className="mx-5 mb-3 rounded-[12px] bg-danger-tint px-4 py-2.5 text-[12px] font-semibold text-danger">⚠ {error}</div>}
 
-        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} />
+        <WriteErrorBanner message={writeError} onDismiss={clearWriteError} onRetry={retryWriteError ?? undefined} />
 
         <StaleBanner domains={["categories"]} />
 
