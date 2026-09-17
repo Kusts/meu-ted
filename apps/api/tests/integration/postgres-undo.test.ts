@@ -24,9 +24,14 @@ describeIfDb('0.5 — Postgres undo transactionality', () => {
   beforeAll(async () => {
     pool = createPool({ connectionString: DB_URL!, max: 4 });
     await runMigrations(pool);
+    // Self-cleaning on a reused database: previous runs left pending rows
+    // for the fixed TEST_HOUSEHOLD (no per-test cleanup existed), so purge
+    // before starting for deterministic second-run behavior.
+    await pool.query(`DELETE FROM pending_operations WHERE workspace_id = $1`, [TEST_HOUSEHOLD]).catch(() => undefined);
   }, 30_000);
 
   afterAll(async () => {
+    await pool?.query(`DELETE FROM pending_operations WHERE workspace_id = $1`, [TEST_HOUSEHOLD]).catch(() => undefined);
     await pool?.end();
   });
 

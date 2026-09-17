@@ -105,9 +105,26 @@ describe('Postgres LLM Fase 1b-FIX (items 1/2/4/5/6)', () => {
       pool = createPool({ connectionString: DB_URL, max: 4 });
       await runMigrations(pool);
     }
-  });
+  }, 120_000);
 
   afterAll(async () => {
+    // Leave the SHARED database canonical after per-test TRUNCATEs.
+    try {
+      await pool?.query(
+        `INSERT INTO agent_llm_providers (id, kind, transport, auth_mode, secret_alias, eligibility, runtime_status, enabled) VALUES
+          ('opencode-zen','opencode-zen','direct','api-key','OPENCODE_ZEN_API_KEY','approved','not_configured', false),
+          ('opencode-go','opencode-go','direct','api-key','OPENCODE_GO_API_KEY','approved','not_configured', false),
+          ('openai-api','openai-api','direct','api-key','OPENAI_API_KEY','approved','not_configured', false),
+          ('openai-codex-subscription','openai-codex-subscription','private-broker','chatgpt-browser', NULL,'experimental_blocked','not_configured', false)
+         ON CONFLICT (id) DO NOTHING`,
+      );
+      await pool?.query(
+        `INSERT INTO agent_llm_runtime_config (singleton, rollout_mode, security_epoch, version)
+         VALUES ('active','disabled',1,1) ON CONFLICT (singleton) DO NOTHING`,
+      );
+    } catch {
+      // ignore
+    }
     await pool?.end();
   });
 

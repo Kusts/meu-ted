@@ -8,7 +8,7 @@ import { createPostgresReminderDedupeStore } from "../../src/push/reminder-postg
 const DB_URL = process.env.DATABASE_URL_TEST;
 const ENABLED = Boolean(DB_URL && process.env.DB_TEST_MARKER);
 const itIfDatabase = ENABLED ? it : it.skip;
-const schema = `reminder_test_${process.pid}`;
+const schema = `reminder_test_${process.pid}_${Date.now()}`;
 const householdId = "11111111-1111-4111-8111-111111111111";
 const notificationId = "22222222-2222-4222-8222-222222222222";
 const notificationType = "due_today_reminder";
@@ -26,6 +26,7 @@ describe("Postgres reminder dedupe integration", () => {
   beforeAll(async () => {
     if (!DB_URL) return;
     adminPool = createPool({ connectionString: DB_URL, max: 4 });
+    await adminPool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
     await adminPool.query(`CREATE SCHEMA ${schema}`);
     pool = createPool({ connectionString: scopedUrl(DB_URL), max: 4 });
     const database = pool;
@@ -49,7 +50,7 @@ describe("Postgres reminder dedupe integration", () => {
   afterAll(async () => {
     await pool?.end();
     if (adminPool) {
-      await adminPool.query(`DROP SCHEMA ${schema} CASCADE`);
+      await adminPool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
       await adminPool.end();
     }
   });

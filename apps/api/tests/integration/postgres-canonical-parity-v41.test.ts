@@ -40,7 +40,7 @@ const SCHEMA = `v41p4_${suffix}`;
 const scopedPool = (schema: string, max: number): Pool => {
   const url = new URL(DB_URL!);
   url.searchParams.set('options', `-c search_path=${schema},public`);
-  return createPool({ connectionString: url.toString(), max });
+  return createPool({ connectionString: url.toString(), max, connectionTimeoutMillis: 30_000 });
 };
 
 let adminPool: Pool | undefined;
@@ -145,7 +145,9 @@ describeIfDb('Postgres canonical parity V4.1 (tasks 4.2–4.11)', () => {
   beforeAll(async () => {
     adminPool = createPool({ connectionString: DB_URL!, max: 2 });
     await requireTestDatabase(adminPool, 'schema-create');
-    db = scopedPool(SCHEMA, 12);
+    // 20 concurrent transfers serialize on two account rows: the pool must
+    // fit the fan-out or waiters hit the connection timeout on a reused DB.
+    db = scopedPool(SCHEMA, 24);
     await adminPool.query(`CREATE SCHEMA ${SCHEMA}`);
     await adminPool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
     await createTables(db);
@@ -277,7 +279,7 @@ describeIfDb('Postgres canonical parity V4.1 (tasks 4.2–4.11)', () => {
     expect(await balanceOf(db!, b.id)).toBe(100000);
     expect(await ledgerBalance(db!, hh, a.id, 100000)).toBe(100000);
     expect(await ledgerBalance(db!, hh, b.id, 100000)).toBe(100000);
-  });
+  }, 60_000);
 
   it('4.8–4.10 pay debits balance; unpay reopens, tombstones and restores exactly', async () => {
     const writes = createPostgresWriteStore({ pool: db! });

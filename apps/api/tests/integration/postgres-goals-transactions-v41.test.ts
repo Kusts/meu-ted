@@ -24,7 +24,11 @@ const LEGACY_SCHEMA = `g41_patch_${process.pid}_${Date.now()}`;
 const scopedPool = (admin: Pool, schema: string): Pool => {
   const url = new URL(DB_URL!);
   url.searchParams.set('options', `-c search_path=${schema},public`);
-  return createPool({ connectionString: url.toString(), max: 8 });
+  // 10 concurrent contributeToGoal tx serialize on one goal row (SELECT FOR
+  // UPDATE): each holds 1 connection for the whole tx, so max must exceed
+  // the fan-out or waiters hit the 10s connection timeout on a reused
+  // (second-run) database. Test-only sizing; production defaults untouched.
+  return createPool({ connectionString: url.toString(), max: 16, connectionTimeoutMillis: 30_000 });
 };
 
 const createLegacyTables = async (pool: Pool): Promise<void> => {
@@ -67,7 +71,7 @@ describeIfDb('V4.1 PG proofs — goals atomicity + transaction PATCH contract', 
   let legacyPool: Pool;
 
   beforeAll(async () => {
-    pool = createPool({ connectionString: DB_URL!, max: 8 });
+    pool = createPool({ connectionString: DB_URL!, max: 16, connectionTimeoutMillis: 30_000 });
     // V4.1 REVIEWFIX F9: fail-closed marker check before any DDL/DML.
     await requireTestDatabase(pool, 'postgres-goals-transactions-v41');
     await runMigrations(pool);

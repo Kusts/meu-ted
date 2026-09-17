@@ -132,17 +132,35 @@ describeIfDb('card stores: real Postgres household isolation', () => {
     await runMigrations(adminPool);
     canonicalPool = scopedPool(canonicalSchema);
     legacyPool = scopedPool(legacySchema);
+    // Defensive on a reused database: a previous timed-out run may have
+    // left same-suffix schemas behind (suffix is pid+timestamp, so this is
+    // normally a no-op).
+    await adminPool.query(`DROP SCHEMA IF EXISTS ${canonicalSchema} CASCADE`).catch(() => undefined);
+    await adminPool.query(`DROP SCHEMA IF EXISTS ${legacySchema} CASCADE`).catch(() => undefined);
     await canonicalPool.query(`CREATE SCHEMA ${canonicalSchema}`);
     await legacyPool.query(`CREATE SCHEMA ${legacySchema}`);
     await runMigrations(canonicalPool);
     await createLegacyTables(legacyPool);
     await seedCanonicalCategories(canonicalPool);
     await seedLegacyCategories(legacyPool);
-  }, 30_000);
+  }, 120_000);
 
   afterAll(async () => {
-    await canonicalPool.query(`DROP SCHEMA IF EXISTS ${canonicalSchema} CASCADE`);
-    await legacyPool.query(`DROP SCHEMA IF EXISTS ${legacySchema} CASCADE`);
+    // DROP can hit a transient deadlock against autovacuum on a heavily
+    // reused database: retry once before giving up (schemas are
+    // pid+timestamp unique, so a leftover is harmless to siblings).
+    try {
+      await canonicalPool.query(`DROP SCHEMA IF EXISTS ${canonicalSchema} CASCADE`);
+    } catch {
+      await new Promise((r) => setTimeout(r, 1000));
+      await canonicalPool.query(`DROP SCHEMA IF EXISTS ${canonicalSchema} CASCADE`).catch(() => undefined);
+    }
+    try {
+      await legacyPool.query(`DROP SCHEMA IF EXISTS ${legacySchema} CASCADE`);
+    } catch {
+      await new Promise((r) => setTimeout(r, 1000));
+      await legacyPool.query(`DROP SCHEMA IF EXISTS ${legacySchema} CASCADE`).catch(() => undefined);
+    }
     await canonicalPool.end();
     await legacyPool.end();
     await adminPool.end();

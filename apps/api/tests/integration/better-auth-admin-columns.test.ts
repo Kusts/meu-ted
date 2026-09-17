@@ -6,7 +6,7 @@ import { createPool } from '../../src/db/pool.js';
 const DB_URL = process.env.DATABASE_URL_TEST;
 const ENABLED = Boolean(DB_URL && process.env.DB_TEST_MARKER);
 const itIfDatabase = ENABLED ? it : it.skip;
-const schema = `v043_probe_${process.pid}`;
+const schema = `v043_probe_${process.pid}_${Date.now()}`;
 
 let adminPool: Pool | undefined;
 let pool: Pool | undefined;

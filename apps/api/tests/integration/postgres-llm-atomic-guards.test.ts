@@ -49,9 +49,28 @@ describe('Postgres LLM atomic runtime-conditional guards (Fase 1b F4 RED)', () =
       pool = createPool({ connectionString: DB_URL, max: 4 });
       await runMigrations(pool);
     }
-  });
+  }, 120_000);
 
   afterAll(async () => {
+    // Leave the SHARED database canonical: this file TRUNCATEs the LLM
+    // tables per test, so re-seed the V034 base rows for sibling files and
+    // second runs (all INSERTs are ON CONFLICT DO NOTHING).
+    try {
+      await pool?.query(
+        `INSERT INTO agent_llm_providers (id, kind, transport, auth_mode, secret_alias, eligibility, runtime_status, enabled) VALUES
+          ('opencode-zen','opencode-zen','direct','api-key','OPENCODE_ZEN_API_KEY','approved','not_configured', false),
+          ('opencode-go','opencode-go','direct','api-key','OPENCODE_GO_API_KEY','approved','not_configured', false),
+          ('openai-api','openai-api','direct','api-key','OPENAI_API_KEY','approved','not_configured', false),
+          ('openai-codex-subscription','openai-codex-subscription','private-broker','chatgpt-browser', NULL,'experimental_blocked','not_configured', false)
+         ON CONFLICT (id) DO NOTHING`,
+      );
+      await pool?.query(
+        `INSERT INTO agent_llm_runtime_config (singleton, rollout_mode, security_epoch, version)
+         VALUES ('active','disabled',1,1) ON CONFLICT (singleton) DO NOTHING`,
+      );
+    } catch {
+      // ignore
+    }
     await pool?.end();
   });
 
