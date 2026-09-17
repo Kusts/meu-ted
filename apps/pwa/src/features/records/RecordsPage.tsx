@@ -305,9 +305,6 @@ export default function RecordsPage() {
         {!staleDismissed && (
           <StaleBanner
             domains={["transactions", "categories", "accounts"]}
-            onRetry={() => {
-              if (typeof window !== "undefined") window.location.reload();
-            }}
             onDismiss={() => setStaleDismissed(true)}
           />
         )}

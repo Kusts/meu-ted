@@ -8,18 +8,18 @@ interface StaleBannerProps {
   domains: DomainKey[];
   /** Optional callback when user dismisses the snapshot banner. */
   onDismiss?: () => void;
-  /** Optional callback when user taps "Tentar novamente". Falls back to window.location.reload. */
+  /** Optional callback when user taps "Tentar novamente". Falls back to per-domain refresh via refreshDomains, with window.location.reload as last resort. */
   onRetry?: () => void;
 }
 
-function defaultRetry() {
+function reloadApp() {
   if (typeof window !== "undefined") {
     window.location.reload();
   }
 }
 
 export function StaleBanner({ domains, onDismiss, onRetry }: StaleBannerProps) {
-  const { sync } = useAppState();
+  const { sync, refreshDomains } = useAppState();
   const snapshotted = domains.filter((d) => sync[d].source === "snapshot");
   const unavailable = domains.filter((d) => sync[d].source === "unavailable");
   if (snapshotted.length === 0 && unavailable.length === 0) return null;
@@ -64,7 +64,15 @@ export function StaleBanner({ domains, onDismiss, onRetry }: StaleBannerProps) {
     );
   }
 
-  const handleRetry = onRetry ?? defaultRetry;
+  const handleDefaultRetry = async () => {
+    try {
+      if (typeof refreshDomains !== "function") throw new Error("refresh unavailable");
+      await refreshDomains(domains);
+    } catch {
+      reloadApp();
+    }
+  };
+  const handleRetry = onRetry ?? (() => void handleDefaultRetry());
   return (
     <div
       data-testid="stale-banner"

@@ -1,13 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { StaleBanner } from "../StaleBanner";
 import * as ctx from "@/lib/state/app-state-context";
 
 beforeEach(() => vi.restoreAllMocks());
 
-function stub(accountsSource: "live" | "snapshot" | "unavailable") {
+function stub(
+  accountsSource: "live" | "snapshot" | "unavailable",
+  overrides: { refreshDomains?: unknown } = {},
+) {
+  const refreshDomains =
+    "refreshDomains" in overrides
+      ? (overrides.refreshDomains as ctx.AppState["refreshDomains"])
+      : vi.fn().mockResolvedValue(undefined);
   vi.spyOn(ctx, "useAppState").mockReturnValue({
     readOnly: accountsSource !== "live",
+    refreshDomains,
     sync: {
       accounts: {
         source: accountsSource,
@@ -22,6 +30,17 @@ function stub(accountsSource: "live" | "snapshot" | "unavailable") {
       cardStatements: { source: "live", syncedAt: null },
     },
   } as unknown as ctx.AppState);
+  return { refreshDomains: refreshDomains as ReturnType<typeof vi.fn> };
+}
+
+function stubReload() {
+  const reloadSpy = vi.fn();
+  Object.defineProperty(window, "location", {
+    value: { ...window.location, reload: reloadSpy },
+    writable: true,
+    configurable: true,
+  });
+  return reloadSpy;
 }
 
 describe("StaleBanner", () => {
@@ -127,20 +146,40 @@ describe("StaleBanner", () => {
       expect(onRetry).toHaveBeenCalledTimes(1);
     });
 
-    it("falls back to default retry behavior (window.location.reload) when no onRetry prop", () => {
-      stub("unavailable");
+    it("falls back to window.location.reload when refreshDomains is unavailable", async () => {
+      stub("unavailable", { refreshDomains: undefined });
       // Stub reload to avoid jsdom navigation
-      const reloadSpy = vi.fn();
-      Object.defineProperty(window, "location", {
-        value: { ...window.location, reload: reloadSpy },
-        writable: true,
-        configurable: true,
-      });
+      const reloadSpy = stubReload();
       render(<StaleBanner domains={["accounts"]} />);
       fireEvent.click(
         screen.getByRole("button", { name: /tentar novamente/i }),
       );
-      expect(reloadSpy).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(reloadSpy).toHaveBeenCalledTimes(1));
+    });
+
+    it("retries via refreshDomains for the banner domains instead of reloading", async () => {
+      const { refreshDomains } = stub("unavailable");
+      const reloadSpy = stubReload();
+      render(<StaleBanner domains={["accounts"]} />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /tentar novamente/i }),
+      );
+      await waitFor(() =>
+        expect(refreshDomains).toHaveBeenCalledWith(["accounts"]),
+      );
+      expect(reloadSpy).not.toHaveBeenCalled();
+    });
+
+    it("falls back to reload when the domain refresh rejects", async () => {
+      const { refreshDomains } = stub("unavailable");
+      refreshDomains.mockRejectedValueOnce(new Error("offline"));
+      const reloadSpy = stubReload();
+      render(<StaleBanner domains={["accounts"]} />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /tentar novamente/i }),
+      );
+      await waitFor(() => expect(reloadSpy).toHaveBeenCalledTimes(1));
+      expect(refreshDomains).toHaveBeenCalledWith(["accounts"]);
     });
   });
 });
