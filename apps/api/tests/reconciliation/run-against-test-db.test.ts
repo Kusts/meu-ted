@@ -1,0 +1,185 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Pool } from "pg";
+import { createPool } from "../../src/db/pool.js";
+import { requireTestDatabase } from "../../src/db/db-guard.js";
+import { runMigrations } from "../../src/read-models/sql/migrate.js";
+import {
+  buildReconciliationQueries,
+  isSelectOnly,
+} from "../../src/scripts/reconciliation/sql.js";
+import type { SchemaLayout } from "../../src/scripts/reconciliation/sql.js";
+import {
+  parseArgs,
+  probeSchemaLayout,
+  runReconciliation,
+} from "../../src/scripts/reconciliation/run.js";
+
+const DB_URL = process.env.DATABASE_URL_TEST;
+const ENABLED = Boolean(DB_URL && process.env.DB_TEST_MARKER);
+const itIfDatabase = ENABLED ? it : it.skip;
+let pool: Pool | undefined;
+
+const LAYOUTS: SchemaLayout[] = ["canonical", "legacy"];
+
+describe("reconciliation SQL safety (no database needed)", () => {
+  it("emits single SELECT-only statements for every check and layout", () => {
+    for (const layout of LAYOUTS) {
+      for (const scoped of [false, true]) {
+        const queries = buildReconciliationQueries(
+          layout,
+          scoped ? { householdId: randomUUID() } : {},
+        );
+        for (const [check, query] of Object.entries(queries)) {
+          expect(
+            isSelectOnly(query.text),
+            `${layout}/${check} must be SELECT-only`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("rejects multi-statement and write payloads", () => {
+    expect(isSelectOnly("SELECT 1; SELECT 2")).toBe(false);
+    expect(isSelectOnly("SELECT 1; DROP TABLE accounts")).toBe(false);
+    expect(isSelectOnly("UPDATE accounts SET balance_cents = 0")).toBe(false);
+    expect(isSelectOnly("SELECT 1")).toBe(true);
+  });
+
+  it("parses CLI args and rejects invalid values", () => {
+    expect(parseArgs([])).toEqual({
+      schema: "auto",
+      format: "json",
+      failOnDrift: false,
+    });
+    expect(
+      parseArgs([
+        "--schema=legacy",
+        "--format=text",
+        "--fail-on-drift",
+        "--household=h1",
+      ]),
+    ).toEqual({
+      schema: "legacy",
+      format: "text",
+      failOnDrift: true,
+      householdId: "h1",
+    });
+    expect(() => parseArgs(["--schema=nope"])).toThrow();
+    expect(() => parseArgs(["--bogus"])).toThrow();
+  });
+});
+
+describe("reconciliation against the test database", () => {
+  beforeAll(async () => {
+    if (!DB_URL) return;
+    pool = createPool({ connectionString: DB_URL, max: 4 });
+    await requireTestDatabase(pool, "migrate");
+    await runMigrations(pool);
+  }, 60_000);
+
+  afterAll(async () => {
+    await pool?.end();
+  });
+
+  itIfDatabase(
+    "probes the canonical layout and returns a zero-drift report shape",
+    async () => {
+      const db = pool!;
+      const layout = await probeSchemaLayout(
+        async (text) => (await db.query(text)).rows,
+      );
+      expect(layout).toBe("canonical");
+
+      const householdId = randomUUID();
+      await db.query(
+        `INSERT INTO households (id, name, kind) VALUES ($1, $2, 'shared')`,
+        [householdId, "Recon H"],
+      );
+      try {
+        const account = await db.query(
+          `INSERT INTO accounts (id, household_id, name, kind, balance_cents, status)
+         VALUES (gen_random_uuid(), $1, 'Cash', 'cash', 10000, 'active') RETURNING id`,
+          [householdId],
+        );
+        const accountId = account.rows[0]!["id"] as string;
+        await db.query(
+          `INSERT INTO statements (id, household_id, account_id, cycle_year_month, closing_date, due_date, total_cents, paid_cents, status)
+         VALUES (gen_random_uuid(), $1, $2, '2026-09', '2026-09-15', '2026-09-25', 0, 0, 'open')`,
+          [householdId, accountId],
+        );
+        await db.query(
+          `INSERT INTO goals (id, household_id, name, goal_type, target_amount_cents, current_amount_cents, start_date, status)
+         VALUES (gen_random_uuid(), $1, 'Reserve', 'emergency_fund', 50000, 0, '2026-09-01', 'active')`,
+          [householdId],
+        );
+
+        const report = await runReconciliation(db, "canonical", householdId);
+        expect(report.schema).toBe("canonical");
+        expect(report.householdScope).toBe(householdId);
+        expect(report.checks).toHaveLength(7);
+        expect(report.checks.map((c) => c.check).sort()).toEqual(
+          [
+            "accounts_balance",
+            "card_purchase",
+            "duplicates",
+            "goal_contribution",
+            "payable_payment",
+            "statement_payment",
+            "statement_total",
+          ].sort(),
+        );
+        expect(report.totals.drifted).toBe(0);
+        expect(JSON.parse(JSON.stringify(report))).toEqual(report);
+      } finally {
+        await db
+          .query(`DELETE FROM card_purchases WHERE household_id = $1`, [
+            householdId,
+          ])
+          .catch(() => undefined);
+        await db
+          .query(`DELETE FROM transactions WHERE household_id = $1`, [
+            householdId,
+          ])
+          .catch(() => undefined);
+        await db
+          .query(`DELETE FROM statements WHERE household_id = $1`, [
+            householdId,
+          ])
+          .catch(() => undefined);
+        await db
+          .query(`DELETE FROM accounts_payable WHERE household_id = $1`, [
+            householdId,
+          ])
+          .catch(() => undefined);
+        await db
+          .query(
+            `DELETE FROM goal_contributions WHERE goal_id IN (SELECT id FROM goals WHERE household_id = $1)`,
+            [householdId],
+          )
+          .catch(() => undefined);
+        await db
+          .query(`DELETE FROM goals WHERE household_id = $1`, [householdId])
+          .catch(() => undefined);
+        await db
+          .query(`DELETE FROM recurring_purchases WHERE household_id = $1`, [
+            householdId,
+          ])
+          .catch(() => undefined);
+        await db
+          .query(`DELETE FROM categories WHERE household_id = $1`, [
+            householdId,
+          ])
+          .catch(() => undefined);
+        await db
+          .query(`DELETE FROM accounts WHERE household_id = $1`, [householdId])
+          .catch(() => undefined);
+        await db
+          .query(`DELETE FROM households WHERE id = $1`, [householdId])
+          .catch(() => undefined);
+      }
+    },
+    30_000,
+  );
+});

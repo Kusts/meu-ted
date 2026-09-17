@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "db:migrate": "tsx src/scripts/migrate.ts",
+    "reconciliation": "tsx src/scripts/reconciliation/run.ts",
     "reminders:run": "tsx src/scripts/reminder-job.ts",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
     "format:reminders:check": "node ../../scripts/check-reminder-format.mjs",
