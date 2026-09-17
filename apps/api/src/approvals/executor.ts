@@ -218,21 +218,17 @@ export const createPendingOperationExecutor =
 			// linked paidTransactionId — forward it as
 			// expectedPaidTransactionId so the D4 contract survives the
 			// approval round-trip instead of reversing an unverified effect.
+			// REVIEW R2: the id is REQUIRED here — an approval payload without
+			// it must fail closed, not bypass the route-level contract.
 			const unpayInput = withoutId(payload);
-			const expectedPaidTransactionId =
-				typeof unpayInput.paidTransactionId === "string"
-					? unpayInput.paidTransactionId
-					: undefined;
+			if (typeof unpayInput.paidTransactionId !== "string" || unpayInput.paidTransactionId.length === 0) {
+				throw domainErrors.invalid("payload", "operação pendente inválida");
+			}
+			const expectedPaidTransactionId = unpayInput.paidTransactionId;
 			return requireStore(
 				deps.payableStore,
 				"conta a pagar",
-			).undoPayablePayment(
-				householdId,
-				idOf(payload),
-				...(expectedPaidTransactionId !== undefined
-					? [{ expectedPaidTransactionId } as const]
-					: []),
-			);
+			).undoPayablePayment(householdId, idOf(payload), { expectedPaidTransactionId });
 		}
 			case "payables.update":
 				return requireStore(deps.payableStore, "conta a pagar").updatePayable(

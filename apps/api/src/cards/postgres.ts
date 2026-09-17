@@ -78,7 +78,7 @@ export const findOrCreateStatementTx = async (
     [householdId, accountId, cycle, closing, due],
   );
   const found = await client.query(
-    `SELECT id FROM statements WHERE account_id = $1 AND household_id = $2 AND cycle_year_month = $3`,
+    `SELECT id FROM statements WHERE account_id = $1 AND household_id = $2 AND cycle_year_month = $3 FOR UPDATE`,
     [accountId, householdId, cycle],
   );
   const id = found.rows[0]?.['id'] as string | undefined;

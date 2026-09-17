@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { createPool } from '../../src/db/pool.js';
+import { requireTestDatabase } from '../../src/db/db-guard.js';
 import { createPostgresCardStore } from '../../src/cards/postgres.js';
 import { createLegacyPostgresCardStore } from '../../src/cards/legacy-postgres.js';
 
@@ -238,6 +239,9 @@ const seedLegacyCategory = async (db: Pool, householdId: string, kind: 'expense'
 describeIfDb('Postgres cards V4.1 hardening (tasks 2.5–2.9, 2.18)', () => {
   beforeAll(async () => {
     adminPool = createPool({ connectionString: DB_URL!, max: 2 });
+    // REVIEW R2 (F9): refuse DDL against databases without the server-side
+    // test marker — env presence alone is not a safety guarantee.
+    await requireTestDatabase(adminPool, 'schema-create');
     canonPool = scopedPool(CANON_SCHEMA, 10);
     legPool = scopedPool(LEG_SCHEMA, 10);
     await adminPool.query(`CREATE SCHEMA ${CANON_SCHEMA}`);
