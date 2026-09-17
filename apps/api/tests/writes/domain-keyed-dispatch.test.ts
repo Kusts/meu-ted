@@ -11,6 +11,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { runPayableMutation } from '../../src/payables/keyed-mutations.js';
+import { runPayableBulkMutation } from '../../src/payables/keyed-mutations.js';
 import { runCardMutation } from '../../src/cards/keyed-mutations.js';
 import { runGoalMutation } from '../../src/goals/keyed-mutations.js';
 import { runBudgetMutation } from '../../src/budgets/keyed-mutations.js';
@@ -69,6 +70,37 @@ describe('runPayableMutation dispatch', () => {
     // Tx client but no InTx extension → plain fallback, never throws.
     await expect(runPayableMutation(plain as never, fakeTx, HH, 'create', input as never)).resolves.toBe(created);
     expect(plain.createPayable).toHaveBeenCalledTimes(2);
+  });
+
+  it('routes bulk autoCreate/refresh onto the claim client when InTx exists, else plain', async () => {
+    const batch = [{ id: 'p1' }, { id: 'p2' }];
+    const store = {
+      autoCreateFromTemplates: vi.fn(async () => { throw new Error('plain must not run'); }),
+      autoCreateFromTemplatesInTx: vi.fn(async () => batch),
+      refreshPayableStatus: vi.fn(async () => { throw new Error('plain must not run'); }),
+      refreshPayableStatusInTx: vi.fn(async () => batch),
+    };
+    await expect(
+      runPayableBulkMutation(store as never, fakeTx, HH, 'autoCreate', { daysAhead: 30 }),
+    ).resolves.toBe(batch);
+    expect(store.autoCreateFromTemplatesInTx).toHaveBeenCalledWith(fakeTx, HH, 30);
+    await expect(
+      runPayableBulkMutation(store as never, fakeTx, HH, 'refresh', {}),
+    ).resolves.toBe(batch);
+    expect(store.refreshPayableStatusInTx).toHaveBeenCalledWith(fakeTx, HH);
+    // No claim client → plain single-transaction methods.
+    const plain = {
+      autoCreateFromTemplates: vi.fn(async () => batch),
+      refreshPayableStatus: vi.fn(async () => batch),
+    };
+    await expect(
+      runPayableBulkMutation(plain as never, undefined, HH, 'autoCreate', { daysAhead: 7 }),
+    ).resolves.toBe(batch);
+    expect(plain.autoCreateFromTemplates).toHaveBeenCalledWith(HH, 7);
+    await expect(
+      runPayableBulkMutation(plain as never, fakeTx, HH, 'refresh', {}),
+    ).resolves.toBe(batch);
+    expect(plain.refreshPayableStatus).toHaveBeenCalledWith(HH);
   });
 });
 

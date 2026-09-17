@@ -317,6 +317,69 @@ const createPayableWithTemplateInTx = async (
 };
 
 /**
+ * V4.1 DEBT-CODER-BULKTX — client-bound bulk cores (no transaction
+ * handling). `autoCreateFromTemplates` used to fan out into one
+ * `createPayableFromTemplate` transaction PER ROW (plus a detached
+ * idempotency claim tx at the route), so a mid-batch failure left partial
+ * effects behind. Both bulk effects now run all row writes on the caller's
+ * client: the plain store methods wrap them in ONE withTransaction, and
+ * keyed route producers (see payables/keyed-mutations.ts
+ * `runPayableBulkMutation`) run them on the open idempotency claim client,
+ * so claim + every row + completion commit atomically.
+ */
+const autoCreateFromTemplatesInTx = async (
+  client: PoolClient,
+  householdId: string,
+  daysAhead = 30,
+): Promise<Payable[]> => {
+  const q = clientQueryFn(client);
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const limit = new Date(today.getTime() + daysAhead * 86_400_000).toISOString().slice(0, 10);
+  // ORDER BY keeps bulk processing deterministic (was: undefined heap order).
+  const templates = (await q<Row>(
+    `SELECT * FROM payable_templates WHERE household_id = $1 AND active = true ORDER BY name ASC, id ASC`,
+    [householdId],
+  )).map(mapTemplate);
+  const created: Payable[] = [];
+  for (const template of templates) {
+    const dueDate = nextTemplateDue(template.dayOfMonth, today);
+    if (dueDate > limit) continue;
+    const existing = await q<Row>(
+      `SELECT id FROM accounts_payable WHERE household_id = $1 AND description = $2 AND due_date = $3::date AND deleted_at IS NULL LIMIT 1`,
+      [householdId, template.description, dueDate],
+    );
+    if (existing.length > 0) continue;
+    // Client-bound core directly (never `this.createPayableFromTemplate`,
+    // which would open an independent transaction per row).
+    created.push(await createPayableFromTemplateInTx(client, householdId, {
+      templateId: template.id,
+      dueDate,
+    }));
+  }
+  return created;
+};
+
+const refreshPayableStatusInTx = async (
+  client: PoolClient,
+  householdId: string,
+): Promise<Payable[]> => {
+  // Single UPDATE statement: already atomic row-wise, but it must still run
+  // on the caller's client so it joins the claim tx under idempotency.
+  const today = todayISO();
+  await client.query(
+    `UPDATE accounts_payable SET status = 'overdue', updated_at = NOW()
+      WHERE household_id = $1 AND deleted_at IS NULL AND status = 'pending' AND due_date < $2::date`,
+    [householdId, today],
+  );
+  const rows = await client.query<Row>(
+    `SELECT * FROM accounts_payable WHERE household_id = $1 AND deleted_at IS NULL ORDER BY due_date ASC, id ASC`,
+    [householdId],
+  );
+  return rows.rows.map(mapPayable);
+};
+
+/**
  * Canonical-schema category gate for payable writes (V4.1 Task 2.15,
  * SPEC §9.8): an explicitly provided categoryId must be an active
  * expense-kind category of the household — 404 when unknown/inactive,
@@ -682,43 +745,11 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
     },
 
     async autoCreateFromTemplates(householdId, daysAhead = 30) {
-
-      const today = new Date();
-      today.setUTCHours(0, 0, 0, 0);
-      const limit = new Date(today.getTime() + daysAhead * 86_400_000).toISOString().slice(0, 10);
-      const templates = (await query<Row>(
-        `SELECT * FROM payable_templates WHERE household_id = $1 AND active = true`,
-        [householdId],
-      )).map(mapTemplate);
-      const created: Payable[] = [];
-      for (const template of templates) {
-        const dueDate = nextTemplateDue(template.dayOfMonth, today);
-        if (dueDate > limit) continue;
-        const existing = await query<Row>(
-          `SELECT id FROM accounts_payable WHERE household_id = $1 AND description = $2 AND due_date = $3::date AND deleted_at IS NULL LIMIT 1`,
-          [householdId, template.description, dueDate],
-        );
-        if (existing.length > 0) continue;
-        created.push(await this.createPayableFromTemplate(householdId, {
-          templateId: template.id,
-          dueDate,
-        }));
-      }
-      return created;
+      return withTransaction(pool, (client) => autoCreateFromTemplatesInTx(client, householdId, daysAhead));
     },
 
     async refreshPayableStatus(householdId) {
-      const today = todayISO();
-      await query(
-        `UPDATE accounts_payable SET status = 'overdue', updated_at = NOW()
-          WHERE household_id = $1 AND deleted_at IS NULL AND status = 'pending' AND due_date < $2::date`,
-        [householdId, today],
-      );
-      const rows = await query<Row>(
-        `SELECT * FROM accounts_payable WHERE household_id = $1 AND deleted_at IS NULL ORDER BY due_date ASC`,
-        [householdId],
-      );
-      return rows.map(mapPayable);
+      return withTransaction(pool, (client) => refreshPayableStatusInTx(client, householdId));
     },
 
     async listReminders(householdId) {
@@ -834,5 +865,7 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
     updatePayableInTx,
     createTemplateInTx,
     createPayableFromTemplateInTx,
+    autoCreateFromTemplatesInTx,
+    refreshPayableStatusInTx,
   });
 };

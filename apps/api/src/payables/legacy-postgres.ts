@@ -40,6 +40,22 @@ function getNextDue(dueDate: string, frequency: 'monthly' | 'quarterly' | 'yearl
   }
 }
 
+// V4.1 DEBT-CODER-BULKTX — template day-of-month → next due date, mirrored
+// from the canonical store (same clamping rule; parity by construction).
+function nextTemplateDue(dayOfMonth: number, today: Date): string {
+  const daysInMonth = (year: number, month: number): number =>
+    new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  let year = today.getUTCFullYear();
+  let month = today.getUTCMonth();
+  let candidate = new Date(Date.UTC(year, month, Math.min(dayOfMonth, daysInMonth(year, month))));
+  if (candidate < today) {
+    month += 1;
+    if (month > 11) { month = 0; year += 1; }
+    candidate = new Date(Date.UTC(year, month, Math.min(dayOfMonth, daysInMonth(year, month))));
+  }
+  return candidate.toISOString().slice(0, 10);
+}
+
 const mapPayable = (r: Row): Payable => {
   const base: Payable = {
     id: r['id'] as string,
@@ -330,6 +346,57 @@ const markPayablePaidInTxLegacy = async (
 export const createLegacyPostgresPayableStore = (pool: Pool): PayableStore => {
   const base = createPostgresPayableStore(pool);
 
+  // V4.1 DEBT-CODER-BULKTX — legacy client-bound bulk cores (same member
+  // names as the canonical extensions). The per-row work uses the legacy
+  // from-template core so legacy SQL semantics (from_account_id payments,
+  // `active` category gate) hold inside the shared transaction.
+  const autoCreateFromTemplatesInTxLegacy = async (
+    client: PoolClient,
+    householdId: string,
+    daysAhead = 30,
+  ): Promise<Payable[]> => {
+    const q = legacyClientQueryFn(client);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const limit = new Date(today.getTime() + daysAhead * 86_400_000).toISOString().slice(0, 10);
+    const templates = (await q<Row>(
+      `SELECT * FROM payable_templates WHERE household_id = $1 AND active = true ORDER BY name ASC, id ASC`,
+      [householdId],
+    )).map(mapTemplate);
+    const created: Payable[] = [];
+    for (const template of templates) {
+      const dueDate = nextTemplateDue(template.dayOfMonth, today);
+      if (dueDate > limit) continue;
+      const existing = await q<Row>(
+        `SELECT id FROM accounts_payable WHERE household_id = $1 AND description = $2 AND due_date = $3::date AND deleted_at IS NULL LIMIT 1`,
+        [householdId, template.description, dueDate],
+      );
+      if (existing.length > 0) continue;
+      created.push(await createPayableFromTemplateInTxLegacy(client, householdId, {
+        templateId: template.id,
+        dueDate,
+      }));
+    }
+    return created;
+  };
+
+  const refreshPayableStatusInTxLegacy = async (
+    client: PoolClient,
+    householdId: string,
+  ): Promise<Payable[]> => {
+    const today = todayISO();
+    await client.query(
+      `UPDATE accounts_payable SET status = 'overdue', updated_at = NOW()
+        WHERE household_id = $1 AND deleted_at IS NULL AND status = 'pending' AND due_date < $2::date`,
+      [householdId, today],
+    );
+    const rows = await client.query<Row>(
+      `SELECT * FROM accounts_payable WHERE household_id = $1 AND deleted_at IS NULL ORDER BY due_date ASC, id ASC`,
+      [householdId],
+    );
+    return rows.rows.map(mapPayable);
+  };
+
   const store: PayableStore = {
     ...base,
     async createPayable(householdId, input) {
@@ -373,6 +440,15 @@ export const createLegacyPostgresPayableStore = (pool: Pool): PayableStore => {
     async markPayablePaid(householdId, payableId, input) {
       return withTransaction(pool, (client) => markPayablePaidInTxLegacy(client, householdId, payableId, input));
     },
+
+    // V4.1 DEBT-CODER-BULKTX — bulk plain methods run the legacy bulk cores
+    // in ONE transaction (parity with the canonical store).
+    async autoCreateFromTemplates(householdId, daysAhead = 30) {
+      return withTransaction(pool, (client) => autoCreateFromTemplatesInTxLegacy(client, householdId, daysAhead));
+    },
+    async refreshPayableStatus(householdId) {
+      return withTransaction(pool, (client) => refreshPayableStatusInTxLegacy(client, householdId));
+    },
   };
   // V4.1 Phase 3 (UOW2): legacy client-bound cores override the canonical
   // extensions inherited via `...base` (same member names — the inherited
@@ -383,5 +459,7 @@ export const createLegacyPostgresPayableStore = (pool: Pool): PayableStore => {
     markPayablePaidInTx: markPayablePaidInTxLegacy,
     updatePayableInTx: updatePayableInTxLegacy,
     createPayableFromTemplateInTx: createPayableFromTemplateInTxLegacy,
+    autoCreateFromTemplatesInTx: autoCreateFromTemplatesInTxLegacy,
+    refreshPayableStatusInTx: refreshPayableStatusInTxLegacy,
   });
 };

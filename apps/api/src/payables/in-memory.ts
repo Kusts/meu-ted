@@ -343,17 +343,28 @@ export const createInMemoryPayableStore = (
       const limit = new Date(today.getTime() + daysAhead * 86_400_000);
       const limitDate = limit.toISOString().slice(0, 10);
       const created: Payable[] = [];
-      for (const template of templates.filter((item) => item.householdId === householdId && item.active)) {
-        const dueDate = nextTemplateDue(template.dayOfMonth, today);
-        if (dueDate > limitDate) continue;
-        const duplicate = payables.some((item) =>
-          item.householdId === householdId && item.description === template.description && item.dueDate === dueDate,
-        );
-        if (duplicate) continue;
-        created.push(await this.createPayableFromTemplate(householdId, {
-          templateId: template.id,
-          dueDate,
-        }));
+      // V4.1 DEBT-CODER-BULKTX: all-or-nothing mirror of the Postgres
+      // single-transaction bulk — a mid-batch throw removes exactly the rows
+      // this batch pushed (object identity, so concurrent batches are safe).
+      try {
+        for (const template of templates.filter((item) => item.householdId === householdId && item.active)) {
+          const dueDate = nextTemplateDue(template.dayOfMonth, today);
+          if (dueDate > limitDate) continue;
+          const duplicate = payables.some((item) =>
+            item.householdId === householdId && item.description === template.description && item.dueDate === dueDate,
+          );
+          if (duplicate) continue;
+          created.push(await this.createPayableFromTemplate(householdId, {
+            templateId: template.id,
+            dueDate,
+          }));
+        }
+      } catch (err) {
+        for (const p of created) {
+          const idx = payables.indexOf(p);
+          if (idx >= 0) payables.splice(idx, 1);
+        }
+        throw err;
       }
       return created;
     },

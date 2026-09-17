@@ -122,7 +122,7 @@ import { createPendingApproval } from '../approvals/guard.js';
 import type { ApprovalPolicy } from '../approvals/policy.js';
 import type { PendingOperationStore } from '../approvals/pending.js';
 import { attachMutationReceipt } from '../reconciliation/effects-registry.js';
-import { runPayableMutation } from '../payables/keyed-mutations.js';
+import { runPayableMutation, runPayableBulkMutation } from '../payables/keyed-mutations.js';
 
 export const registerPayableRoutes = (
   app: FastifyInstance,
@@ -437,8 +437,10 @@ export const registerPayableRoutes = (
     } catch (e) {
       return handleError(e, reply);
     }
-    const fn = async () => {
-      const updated = await opts.payableStore.refreshPayableStatus(ctx.householdId);
+    const fn = async (claimTx?: unknown) => {
+      // V4.1 DEBT-CODER-BULKTX: the whole recompute joins the claim tx, so a
+      // keyed retry never leaves a torn bulk effect behind.
+      const updated = await runPayableBulkMutation(opts.payableStore, claimTx, ctx.householdId, 'refresh', {});
       // FIX-P1 (SPEC §15.1): bulk status recompute mutates payable effects →
       // payable.update receipt, built inside the idempotent producer so keyed
       // replays preserve the mutationId. No single entity: bulk result.
@@ -478,11 +480,12 @@ export const registerPayableRoutes = (
     } catch (e) {
       return handleError(e, reply);
     }
-    const fn = async () => {
-      const created = await opts.payableStore.autoCreateFromTemplates(
-        ctx.householdId,
-        parsed.data.daysAhead,
-      );
+    const fn = async (claimTx?: unknown) => {
+      // V4.1 DEBT-CODER-BULKTX: every row of the batch joins the claim tx —
+      // claim + all rows + completion commit atomically (all-or-nothing).
+      const created = await runPayableBulkMutation(opts.payableStore, claimTx, ctx.householdId, 'autoCreate', {
+        daysAhead: parsed.data.daysAhead,
+      });
       // FIX-P1 (SPEC §15.1): bulk payable creation → payable.create receipt,
       // built inside the idempotent producer so keyed replays preserve the
       // mutationId. Bulk result carries no single entity.

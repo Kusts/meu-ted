@@ -59,6 +59,20 @@ export type PayableStoreTxExtensions = {
     householdId: string,
     input: PayableFromTemplateInput,
   ): Promise<Payable>;
+  /**
+   * V4.1 DEBT-CODER-BULKTX — client-bound BULK cores (no transaction
+   * handling). Same contract: on the open claim client the whole batch
+   * joins the claim tx (all-or-nothing with claim + completion).
+   */
+  autoCreateFromTemplatesInTx(
+    client: PoolClient,
+    householdId: string,
+    daysAhead?: number,
+  ): Promise<Payable[]>;
+  refreshPayableStatusInTx(
+    client: PoolClient,
+    householdId: string,
+  ): Promise<Payable[]>;
 };
 
 const txExtensions = (store: PayableStore): Partial<PayableStoreTxExtensions> =>
@@ -174,4 +188,54 @@ export async function runPayableMutation(
     case 'fromTemplate':
       return store.createPayableFromTemplate(householdId, input as PayableFromTemplateInput);
   }
+}
+
+/**
+ * V4.1 DEBT-CODER-BULKTX — keyed BULK dispatch (same single-transaction
+ * rule as `runPayableMutation`): with an open claim client the whole batch
+ * runs on that client; without one (no `Idempotency-Key`, in-memory store)
+ * the plain store method keeps its own single-transaction boundary
+ * (behavior: all-or-nothing either way).
+ */
+export async function runPayableBulkMutation(
+  store: PayableStore,
+  claimTx: unknown,
+  householdId: string,
+  op: 'autoCreate',
+  input: { daysAhead?: number },
+): Promise<Payable[]>;
+export async function runPayableBulkMutation(
+  store: PayableStore,
+  claimTx: unknown,
+  householdId: string,
+  op: 'refresh',
+  input: Record<string, never>,
+): Promise<Payable[]>;
+export async function runPayableBulkMutation(
+  store: PayableStore,
+  claimTx: unknown,
+  householdId: string,
+  op: 'autoCreate' | 'refresh',
+  input: { daysAhead?: number } | Record<string, never>,
+): Promise<Payable[]> {
+  if (isTxClient(claimTx)) {
+    const ext = txExtensions(store);
+    if (op === 'autoCreate' && typeof ext.autoCreateFromTemplatesInTx === 'function') {
+      return ext.autoCreateFromTemplatesInTx(
+        claimTx,
+        householdId,
+        (input as { daysAhead?: number }).daysAhead,
+      );
+    }
+    if (op === 'refresh' && typeof ext.refreshPayableStatusInTx === 'function') {
+      return ext.refreshPayableStatusInTx(claimTx, householdId);
+    }
+  }
+  if (op === 'autoCreate') {
+    return store.autoCreateFromTemplates(
+      householdId,
+      (input as { daysAhead?: number }).daysAhead,
+    );
+  }
+  return store.refreshPayableStatus(householdId);
 }
