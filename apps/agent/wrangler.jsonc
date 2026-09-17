@@ -11,7 +11,8 @@
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkspaceAgent"] },
-    { "tag": "v2", "new_sqlite_classes": ["FinanceChatAgent"] }
+    { "tag": "v2", "new_sqlite_classes": ["FinanceChatAgent"] },
+    { "tag": "v3", "deleted_classes": ["WorkspaceAgent"] }
   ],
   "vars": {
     "API_ORIGIN": "https://api.synkroo.com.br"
