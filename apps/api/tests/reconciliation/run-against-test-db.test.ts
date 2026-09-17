@@ -93,10 +93,19 @@ describe("reconciliation against the test database", () => {
       expect(layout).toBe("canonical");
 
       const householdId = randomUUID();
-      await db.query(
-        `INSERT INTO households (id, name, kind) VALUES ($1, $2, 'personal')`,
-        [householdId, "Recon H"],
-      );
+      // households.kind='personal' requires owner_user_id (V021) and
+      // 'shared' requires it too (V022): seed an owner first
+      // (postgres-payable-double-pay.test.ts pattern) and create shared.
+      const ownerId = randomUUID();
+      await db.query(`INSERT INTO users (id, email, name, status) VALUES ($1, $2, 'Recon Owner', 'active')`, [
+        ownerId,
+        `recon-${householdId}@example.test`,
+      ]);
+      await db.query(`INSERT INTO households (id, name, kind, owner_user_id) VALUES ($1, $2, 'shared', $3)`, [
+        householdId,
+        'Recon H',
+        ownerId,
+      ]);
       try {
         const account = await db.query(
           `INSERT INTO accounts (id, household_id, name, kind, balance_cents, status)
@@ -176,8 +185,12 @@ describe("reconciliation against the test database", () => {
           .query(`DELETE FROM accounts WHERE household_id = $1`, [householdId])
           .catch(() => undefined);
         await db
+          .query(`DELETE FROM memberships WHERE household_id = $1`, [householdId])
+          .catch(() => undefined);
+        await db
           .query(`DELETE FROM households WHERE id = $1`, [householdId])
           .catch(() => undefined);
+        await db.query(`DELETE FROM users WHERE id = $1`, [ownerId]).catch(() => undefined);
       }
     },
     30_000,

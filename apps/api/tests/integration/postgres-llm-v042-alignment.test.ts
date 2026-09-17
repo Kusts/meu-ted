@@ -28,8 +28,7 @@ const constraintNames = async (): Promise<string[]> => {
 };
 
 /** Applies every migration except V042 to simulate a legacy base. */
-const applyLegacyBase = async (): Promise<void> => {
-  if (!pool) throw new Error('database pool not initialized');
+const applyLegacyBase = async (): Promise<void> => {  if (!pool) throw new Error('database pool not initialized');
   await pool.query(
     `CREATE TABLE IF NOT EXISTS _migrations (
       version INTEGER PRIMARY KEY,
@@ -65,6 +64,65 @@ const applyLegacyBase = async (): Promise<void> => {
   }
 };
 
+/**
+ * Owns the V042 window on the SHARED test database. Sibling files may have
+ * left V042 applied (second suite run) or wiped the V034 seeds (the TRUNCATE
+ * in postgres-llm-fix), and V044 seeds kinds V042's CHECK does not know
+ * ('kimi') — so a naive re-apply would fail validation. Strip only the V042
+ * runtime FKs, detach any runtime slot pointing at a V044-only provider,
+ * drop those seed rows, rewind 42..44 (V043/V044 re-apply idempotently and
+ * V044 restores its seeds) and re-seed the V034 base rows, so the legacy-base
+ * simulation below is deterministic on fresh, populated, and second-run DBs.
+ */
+const resetToPreV042Window = async (): Promise<void> => {
+  if (!pool) throw new Error('database pool not initialized');
+  await pool.query(`DO $$
+    BEGIN
+      IF to_regclass('public.agent_llm_runtime_config') IS NOT NULL THEN
+        ALTER TABLE agent_llm_runtime_config
+          DROP CONSTRAINT IF EXISTS fk_llm_runtime_model,
+          DROP CONSTRAINT IF EXISTS fk_llm_runtime_fallback_model,
+          DROP CONSTRAINT IF EXISTS fk_llm_runtime_fallback_provider;
+      END IF;
+      -- V042's own DROPs only cover the V034 anonymous names, NOT these
+      -- named constraints (nor V044's widened kind CHECK): re-applying V042
+      -- without stripping them first fails with "already exists".
+      IF to_regclass('public.agent_llm_providers') IS NOT NULL THEN
+        ALTER TABLE agent_llm_providers
+          DROP CONSTRAINT IF EXISTS chk_llm_provider_kind,
+          DROP CONSTRAINT IF EXISTS chk_llm_provider_eligibility,
+          DROP CONSTRAINT IF EXISTS chk_llm_secret_alias;
+      END IF;
+    END $$`);
+  await pool.query(
+    `UPDATE agent_llm_runtime_config
+        SET provider_id = NULL, model_id = NULL
+      WHERE singleton = 'active' AND provider_id IN ('kimi', 'openai')`,
+  ).catch(() => undefined);
+  await pool.query(
+    `UPDATE agent_llm_runtime_config
+        SET fallback_provider_id = NULL, fallback_model_id = NULL
+      WHERE singleton = 'active'
+        AND (fallback_provider_id IN ('kimi', 'openai'))`,
+  ).catch(() => undefined);
+  await pool.query(`DELETE FROM agent_llm_providers WHERE id IN ('kimi', 'openai')`);
+  await pool.query(`DELETE FROM _migrations WHERE version IN (42, 43, 44)`);
+  // V034 base seeds (sibling TRUNCATEs may have wiped them; every INSERT is
+  // ON CONFLICT DO NOTHING so this is safe on fresh databases too).
+  await pool.query(
+    `INSERT INTO agent_llm_providers (id, kind, transport, auth_mode, secret_alias, eligibility, runtime_status, enabled) VALUES
+      ('opencode-zen','opencode-zen','direct','api-key','OPENCODE_ZEN_API_KEY','approved','not_configured', false),
+      ('opencode-go','opencode-go','direct','api-key','OPENCODE_GO_API_KEY','approved','not_configured', false),
+      ('openai-api','openai-api','direct','api-key','OPENAI_API_KEY','approved','not_configured', false),
+      ('openai-codex-subscription','openai-codex-subscription','private-broker','chatgpt-browser', NULL,'experimental_blocked','not_configured', false)
+     ON CONFLICT (id) DO NOTHING`,
+  );
+  await pool.query(
+    `INSERT INTO agent_llm_runtime_config (singleton, rollout_mode, security_epoch, version)
+     VALUES ('active','disabled',1,1) ON CONFLICT (singleton) DO NOTHING`,
+  );
+};
+
 describe('Postgres LLM V042 kind alignment (Fase 1b RED)', () => {
   beforeAll(async () => {
     if (DB_URL) {
@@ -79,9 +137,14 @@ describe('Postgres LLM V042 kind alignment (Fase 1b RED)', () => {
   itIfDatabase('applies V042 on a legacy base with orphan references (preflight nulls them)', async () => {
     if (!pool) throw new Error('database pool not initialized');
     await applyLegacyBase();
+    // Own the window AFTER the legacy base fill: rewind 42..44 so V042
+    // re-applies below even on populated/second-run databases (V044 seeds
+    // are restored by its own re-apply inside runMigrations).
+    await resetToPreV042Window();
 
-    // Legacy data: valid provider seed exists (V034); model refs have no FK yet,
-    // so orphan ids are insertable — exactly what V042 preflight must clean.
+    // Legacy data: the V034 seed provider exists again (reset above); model
+    // refs have no FK yet, so orphan ids are insertable — exactly what V042
+    // preflight must clean.
     await pool.query(
       `INSERT INTO agent_llm_models (id, provider_id, model_id, protocol, privacy_class, retention, enabled)
        VALUES ('openai-api:legacy-1', 'openai-api', 'legacy-1', 'chat-completions', 'training_prohibited', NULL, true)
@@ -142,6 +205,18 @@ describe('Postgres LLM V042 kind alignment (Fase 1b RED)', () => {
     await runMigrations(pool);
     const store = createPostgresLlmConfigStore(pool);
 
+    // Sibling files may have wiped the V034 seeds (TRUNCATE in
+    // postgres-llm-fix) — ensure the provider row first so this test owns
+    // its seed on fresh, populated, and second-run databases.
+    await store.upsertProvider({
+      id: 'openai-api',
+      kind: 'openai-api',
+      transport: 'direct',
+      authMode: 'api-key',
+      secretAlias: 'OPENAI_API_KEY',
+      enabled: true,
+      eligibility: 'approved',
+    });
     const active = await store.upsertModel({
       providerId: 'openai-api',
       modelId: 'v042-active',

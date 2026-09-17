@@ -50,14 +50,24 @@ BEGIN
 END;
 $$;
 
+-- NOTE (fresh-DB/schema-scoped applies): this function MUST stay LANGUAGE
+-- plpgsql, not sql. A LANGUAGE sql body is parse-analyzed at CREATE time
+-- against the function's pinned SET search_path (public), so applying this
+-- migration into any non-public schema fails with
+-- 'relation "ownership_transfer_contexts" does not exist' even though the
+-- table was just created in that schema. plpgsql resolves table references
+-- at execution time under the caller's search_path, keeping schema-scoped
+-- applies (isolated integration-test schemas) working with identical
+-- runtime semantics on production (public).
 CREATE OR REPLACE FUNCTION ownership_transfer_context_is_trusted(expected_user_id UUID)
 RETURNS BOOLEAN
-LANGUAGE sql
+LANGUAGE plpgsql
 SECURITY DEFINER
 STABLE
 SET search_path = public
 AS $$
-  SELECT EXISTS (
+BEGIN
+  RETURN EXISTS (
     SELECT 1
       FROM ownership_transfer_contexts
      WHERE backend_pid = pg_backend_pid()
@@ -65,6 +75,7 @@ AS $$
        AND user_id = expected_user_id
        AND nonce::text = current_setting('app.authenticated_context_nonce', true)
   );
+END;
 $$;
 
 REVOKE INSERT, UPDATE, DELETE ON ownership_transfers FROM PUBLIC;

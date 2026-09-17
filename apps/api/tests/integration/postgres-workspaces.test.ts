@@ -20,6 +20,14 @@ describe("Postgres workspace store integration", () => {
   });
 
   const seedUser = async (client: Pool, authUserId: string, email: string, name = "Integration User") => {
+    // users.auth_user_id REFERENCES "user"(id): the Better Auth native row
+    // must exist first (postgres-access-revocation.test.ts pattern).
+    await client.query(
+      `INSERT INTO "user" (id, name, email, "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [authUserId, name, email],
+    );
     const result = await client.query<{ id: string }>(
       `INSERT INTO users (auth_user_id, email, name, status)
        VALUES ($1, $2, $3, 'active')
@@ -57,9 +65,10 @@ describe("Postgres workspace store integration", () => {
       expect(list.map((w) => w.id).sort()).toEqual([shared.id, personal.id].sort());
       expect(list.find((w) => w.id === personal.id)!.role).toBe("owner");
 
-      // Members includes owner
+      // Members includes owner (listMembers.userId is the Better Auth id —
+      // removeMember accepts both forms, see workspaces-postgres.ts).
       const members = await store.listMembers({ authUserId: authUser, householdId: shared.id });
-      expect(members.some((m) => m.userId === userId && m.role === "owner")).toBe(true);
+      expect(members.some((m) => m.userId === authUser && m.role === "owner")).toBe(true);
 
       // Add a second member via SQL, then owner can remove
       const member2Auth = `auth-${randomUUID()}`;
@@ -74,10 +83,12 @@ describe("Postgres workspace store integration", () => {
       const afterRemove = await store.listMembers({ authUserId: authUser, householdId: shared.id });
       expect(afterRemove.some((m) => m.userId === member2Id)).toBe(false);
 
-      // Member cannot remove others
+      // Member cannot remove others (removeMember soft-removes with
+      // status='removed', so reactivate via upsert instead of INSERT).
       await pool.query(
         `INSERT INTO memberships (household_id, user_id, role, status)
-         VALUES ($1, $2, 'member', 'active')`,
+         VALUES ($1, $2, 'member', 'active')
+         ON CONFLICT (user_id, household_id) DO UPDATE SET role = 'member', status = 'active'`,
         [shared.id, member2Id],
       );
       await expect(
@@ -101,6 +112,7 @@ describe("Postgres workspace store integration", () => {
       // Cleanup
       await pool.query(`DELETE FROM households WHERE id = ANY($1::uuid[])`, [[shared.id, personal.id]]);
       await pool.query(`DELETE FROM users WHERE id = ANY($1::uuid[])`, [[userId, member2Id]]);
+      await pool.query(`DELETE FROM "user" WHERE id = ANY($1::text[])`, [[authUser, member2Auth]]);
     },
   );
 });

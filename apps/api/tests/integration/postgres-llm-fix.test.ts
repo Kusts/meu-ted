@@ -447,15 +447,18 @@ describe('Postgres LLM pre-V042 legacy base (item 5)', () => {
       reason: 'active_provider',
     });
     expect((await store.getProvider('openai-api'))?.kind).toBe('openai-api');
-    // A switch between compatible executable kinds still applies.
+    // A switch between compatible executable kinds still applies. NOTE (H-08):
+    // 'openai' is a legacy alias normalized to 'openai-api' before persisting,
+    // so it can no longer exercise a real kind switch — use 'deepseek'
+    // (chat-completions compatible, own secret alias) instead.
     const switched = await store.upsertProvider({
       id: 'openai-api',
-      kind: 'openai',
+      kind: 'deepseek',
       transport: 'direct',
       authMode: 'api-key',
-      secretAlias: 'OPENAI_API_KEY',
+      secretAlias: 'DEEPSEEK_API_KEY',
     });
-    expect(switched.kind).toBe('openai');
+    expect(switched.kind).toBe('deepseek');
     expect((await store.getRuntime()).version).toBe(rt.version);
   });
 

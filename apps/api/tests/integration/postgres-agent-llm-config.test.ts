@@ -14,6 +14,21 @@ describe('Postgres Agent LLM Configuration Store Integration', () => {
     if (DB_URL) {
       pool = createPool({ connectionString: DB_URL, max: 2 });
       await runMigrations(pool);
+      // Sibling files may have wiped the V034 seeds (TRUNCATE in
+      // postgres-llm-fix) — re-seed idempotently so the assertions below
+      // hold on fresh, populated, and second-run databases.
+      await pool.query(
+        `INSERT INTO agent_llm_providers (id, kind, transport, auth_mode, secret_alias, eligibility, runtime_status, enabled) VALUES
+          ('opencode-zen','opencode-zen','direct','api-key','OPENCODE_ZEN_API_KEY','approved','not_configured', false),
+          ('opencode-go','opencode-go','direct','api-key','OPENCODE_GO_API_KEY','approved','not_configured', false),
+          ('openai-api','openai-api','direct','api-key','OPENAI_API_KEY','approved','not_configured', false),
+          ('openai-codex-subscription','openai-codex-subscription','private-broker','chatgpt-browser', NULL,'experimental_blocked','not_configured', false)
+         ON CONFLICT (id) DO NOTHING`,
+      );
+      await pool.query(
+        `INSERT INTO agent_llm_runtime_config (singleton, rollout_mode, security_epoch, version)
+         VALUES ('active','disabled',1,1) ON CONFLICT (singleton) DO NOTHING`,
+      );
     }
   });
 

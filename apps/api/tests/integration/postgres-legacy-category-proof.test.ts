@@ -91,6 +91,10 @@ async function restoreCanonicalShape(db: Pool): Promise<void> {
     } else {
       await db.query(`UPDATE categories SET status = 'active'`);
     }
+    await db.query(`ALTER TABLE categories ALTER COLUMN status SET NOT NULL`);
+    await db.query(
+      `ALTER TABLE categories ADD CONSTRAINT categories_status_check CHECK (status IN ('active', 'inactive'))`,
+    );
   }
 }
 
@@ -107,6 +111,17 @@ describe('Postgres legacy category uniqueness (V049)', () => {
   }, 180_000);
 
   afterAll(async () => {
+    // Leave the SHARED database canonical: sibling files running after this
+    // one (vitest file order is not guaranteed) need categories.status for
+    // V048, _migrations 48/49 present, and no legacy unique index behind.
+    // Re-applying is idempotent.
+    if (pool) {
+      await restoreCanonicalShape(pool).catch(() => undefined);
+      await pool
+        .query(`DROP INDEX IF EXISTS categories_household_kind_parent_name_uidx_legacy`)
+        .catch(() => undefined);
+      await runMigrations(pool).catch(() => undefined);
+    }
     await pool?.end();
   });
 

@@ -31,25 +31,34 @@ const createLegacyTables = async (pool: Pool): Promise<void> => {
     );
     CREATE TABLE categories (
       id UUID PRIMARY KEY, household_id UUID NOT NULL, name TEXT NOT NULL,
-      kind TEXT NOT NULL, active BOOLEAN NOT NULL DEFAULT true, deleted_at TIMESTAMPTZ
+      kind TEXT NOT NULL, active BOOLEAN NOT NULL DEFAULT true, deleted_at TIMESTAMPTZ,
+      parent_id UUID REFERENCES categories(id),
+      icon TEXT, color TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      is_default BOOLEAN NOT NULL DEFAULT false,
+      is_system BOOLEAN NOT NULL DEFAULT false
     );
     CREATE TABLE statements (
       id UUID PRIMARY KEY, household_id UUID NOT NULL, account_id UUID NOT NULL,
       cycle_year_month TEXT NOT NULL, closing_date DATE NOT NULL, due_date DATE NOT NULL,
       total_cents BIGINT NOT NULL DEFAULT 0, paid_cents BIGINT NOT NULL DEFAULT 0,
       status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (household_id, account_id, cycle_year_month)
     );
     CREATE TABLE card_purchases (
-      id UUID PRIMARY KEY, statement_id UUID NOT NULL, description TEXT NOT NULL,
+      id UUID PRIMARY KEY, household_id UUID, account_id UUID, statement_id UUID NOT NULL, description TEXT NOT NULL,
       amount_cents BIGINT NOT NULL, date DATE NOT NULL, category_id UUID,
+      subcategory_id UUID REFERENCES categories(id), notes TEXT,
       installments_total INTEGER, installment_number INTEGER,
+      is_recurring BOOLEAN NOT NULL DEFAULT false, transaction_id UUID, deleted_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE transactions (
       id UUID PRIMARY KEY, household_id UUID NOT NULL, kind TEXT NOT NULL,
       description TEXT NOT NULL, amount_cents BIGINT NOT NULL, date DATE NOT NULL,
       from_account_id UUID, category_id UUID, statement_id UUID,
+      subcategory_id UUID REFERENCES categories(id), notes TEXT,
       installments_total INTEGER, installment_number INTEGER,
       is_recurring BOOLEAN NOT NULL DEFAULT false, is_credit_card_purchase BOOLEAN NOT NULL DEFAULT false,
       deleted_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -111,10 +120,16 @@ describeIfDb('card stores: real Postgres household isolation', () => {
   const suffix = `${process.pid}_${Date.now()}`;
   const canonicalSchema = `g2223_c_${suffix}`;
   const legacySchema = `g2223_l_${suffix}`;
+  let adminPool: Pool;
   let canonicalPool: Pool;
   let legacyPool: Pool;
 
   beforeAll(async () => {
+    // V049 probes public.categories.status to pick its canonical no-op
+    // branch: migrate public first so schema-scoped applies see the
+    // canonical shape even when this file runs first on a fresh database.
+    adminPool = createPool({ connectionString: DB_URL! });
+    await runMigrations(adminPool);
     canonicalPool = scopedPool(canonicalSchema);
     legacyPool = scopedPool(legacySchema);
     await canonicalPool.query(`CREATE SCHEMA ${canonicalSchema}`);
@@ -130,6 +145,7 @@ describeIfDb('card stores: real Postgres household isolation', () => {
     await legacyPool.query(`DROP SCHEMA IF EXISTS ${legacySchema} CASCADE`);
     await canonicalPool.end();
     await legacyPool.end();
+    await adminPool.end();
   });
 
   it('isolates canonical Postgres card data and references', async () => {

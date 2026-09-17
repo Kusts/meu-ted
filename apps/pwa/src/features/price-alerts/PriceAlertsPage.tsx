@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import StatusBar from "@/components/StatusBar";
 import PageHeader from "@/components/PageHeader";
 import { fetchPriceAlerts, createPriceAlert } from "@/lib/api/endpoints";
+import { ApiError } from "@/lib/api/client";
 import { Bell, ArrowDown, ArrowUp } from "lucide-react";
 
 type Alert = {
@@ -22,11 +23,19 @@ export default function PriceAlertsPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Phase 7 gating: the API only mounts /alerts/price* under explicit
+  // opt-in (PI_FEATURE_PRICE_ALERTS); with the flag OFF every call 404s.
+  // Degrade to an explicit unavailable state instead of an error wall.
+  const [unavailable, setUnavailable] = useState(false);
   const [productName, setProductName] = useState("");
   const [targetPrice, setTargetPrice] = useState("");
   const [condition, setCondition] = useState<"below" | "above">("below");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  function isFlagOff(e: unknown): boolean {
+    return e instanceof ApiError && e.status === 404;
+  }
 
   async function load() {
     setLoading(true);
@@ -35,7 +44,11 @@ export default function PriceAlertsPage() {
       const items = await fetchPriceAlerts();
       setAlerts(items);
     } catch (e) {
-      setError((e as Error).message);
+      if (isFlagOff(e)) {
+        setUnavailable(true);
+      } else {
+        setError((e as Error).message);
+      }
     } finally {
       setLoading(false);
     }
@@ -79,10 +92,34 @@ export default function PriceAlertsPage() {
       setTargetPrice("");
       await load();
     } catch (err) {
-      setFormError((err as Error).message);
+      if (isFlagOff(err)) {
+        setUnavailable(true);
+      } else {
+        setFormError((err as Error).message);
+      }
     } finally {
       setSaving(false);
     }
+  }
+
+  if (unavailable) {
+    return (
+      <div className="flex min-h-dvh flex-col bg-bg">
+        <StatusBar />
+        <main className="flex flex-1 flex-col pb-[var(--tab-bar-height)]">
+          <PageHeader title="Alertas de Preço" />
+          <div className="px-5 sm:px-8 lg:px-12">
+            <div className="py-10 text-center">
+              <div className="mb-2 flex h-12 w-12 mx-auto items-center justify-center rounded-full bg-surface-2 text-text-muted shadow-xs">
+                <Bell size={22} />
+              </div>
+              <div className="text-[14px] font-bold text-text-primary">Alertas de preço indisponíveis</div>
+              <div className="mt-1 text-[12px] text-text-muted">Este recurso está desativado no momento.</div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
   }
 
   return (
