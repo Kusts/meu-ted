@@ -44,22 +44,24 @@ export function newIdempotencyKey(): string {
 
 /**
  * apiFetch options for a financial mutation. Every mutation carries an
- * `idempotency-key` header at the authoritative HTTP boundary: a
- * caller-provided key wins, otherwise a fresh UUID is generated. The key is
- * never serialized into the request body.
+ * `idempotency-key` header at the authoritative HTTP boundary. Precedence:
+ * explicit `commandId` (intent-boundary id threaded by the commands layer,
+ * V4.1 Task 3.8) > caller-provided `idempotencyKey` in the body > fresh UUID.
+ * The key is never serialized into the request body.
  */
 export function mutationOptions(
   method: "POST" | "PATCH" | "DELETE",
   body?: object,
+  commandId?: string,
 ): { method: string; body?: string; idempotencyKey: string } {
   if (body === undefined) {
-    return { method, idempotencyKey: newIdempotencyKey() };
+    return { method, idempotencyKey: commandId ?? newIdempotencyKey() };
   }
   const { idempotencyKey, ...rest } = body as { idempotencyKey?: string } & Record<string, unknown>;
   return {
     method,
     body: JSON.stringify(rest),
-    idempotencyKey: idempotencyKey ?? newIdempotencyKey(),
+    idempotencyKey: commandId ?? idempotencyKey ?? newIdempotencyKey(),
   };
 }
 
@@ -274,10 +276,10 @@ export async function fetchCategoryTree(params?: { kind?: "expense" | "income" }
   return res.items;
 }
 
-export async function applyCategoryDefaults(): Promise<{ ok: boolean; created: number; skipped: number }> {
+export async function applyCategoryDefaults(commandId?: string): Promise<{ ok: boolean; created: number; skipped: number }> {
   return apiFetch<{ ok: boolean; created: number; skipped: number }>(
     "/categories/apply-defaults",
-    mutationOptions("POST", {}),
+    mutationOptions("POST", {}, commandId),
   );
 }
 
@@ -305,8 +307,8 @@ export async function addSubscription(input: {
   return apiFetch<Subscription>("/subscriptions", mutationOptions("POST", input));
 }
 
-export async function cancelSubscription(id: string): Promise<Subscription> {
-  return apiFetch<Subscription>(`/subscriptions/${id}/cancel`, mutationOptions("POST"));
+export async function cancelSubscription(id: string, commandId?: string): Promise<Subscription> {
+  return apiFetch<Subscription>(`/subscriptions/${id}/cancel`, mutationOptions("POST", undefined, commandId));
 }
 
 export async function updateSubscription(
@@ -358,8 +360,8 @@ export async function updateTransaction(
  */
 export type DeletedTransaction = Transaction & { receipt?: MutationReceipt };
 
-export async function deleteTransaction(id: string): Promise<DeletedTransaction> {
-  return apiFetch<DeletedTransaction>(`/transactions/${id}`, mutationOptions("DELETE"));
+export async function deleteTransaction(id: string, commandId?: string): Promise<DeletedTransaction> {
+  return apiFetch<DeletedTransaction>(`/transactions/${id}`, mutationOptions("DELETE", undefined, commandId));
 }
 
 export async function updateAccount(
@@ -369,8 +371,8 @@ export async function updateAccount(
   return apiFetch<Account>(`/accounts/${id}`, mutationOptions("PATCH", input));
 }
 
-export async function deactivateAccount(id: string): Promise<void> {
-  await apiFetch(`/accounts/${id}/deactivate`, mutationOptions("POST"));
+export async function deactivateAccount(id: string, commandId?: string): Promise<void> {
+  await apiFetch(`/accounts/${id}/deactivate`, mutationOptions("POST", undefined, commandId));
 }
 
 export async function updateCategory(
@@ -380,8 +382,8 @@ export async function updateCategory(
   return apiFetch<Category>(`/categories/${id}`, mutationOptions("PATCH", input));
 }
 
-export async function deactivateCategory(id: string): Promise<void> {
-  await apiFetch(`/categories/${id}/deactivate`, mutationOptions("POST"));
+export async function deactivateCategory(id: string, commandId?: string): Promise<void> {
+  await apiFetch(`/categories/${id}/deactivate`, mutationOptions("POST", undefined, commandId));
 }
 
 export async function createPayable(input: {
@@ -400,9 +402,10 @@ export async function createPayable(input: {
 
 export async function cancelPayable(
   id: string,
-  reason?: string
+  reason?: string,
+  commandId?: string,
 ): Promise<Payable> {
-  return apiFetch<Payable>(`/payables/${id}/cancel`, mutationOptions("POST", reason ? { reason } : undefined));
+  return apiFetch<Payable>(`/payables/${id}/cancel`, mutationOptions("POST", reason ? { reason } : undefined, commandId));
 }
 
 export async function updatePayable(
@@ -418,15 +421,16 @@ export async function updatePayable(
   return apiFetch<Payable>(`/payables/${id}`, mutationOptions("PATCH", input));
 }
 
-export async function undoPayablePayment(id: string, paidTransactionId: string): Promise<Payable> {
-  return apiFetch<Payable>(`/payables/${id}/unpay`, mutationOptions("POST", { paidTransactionId }));
+export async function undoPayablePayment(id: string, paidTransactionId: string, commandId?: string): Promise<Payable> {
+  return apiFetch<Payable>(`/payables/${id}/unpay`, mutationOptions("POST", { paidTransactionId }, commandId));
 }
 
 export async function markPayablePaid(
   id: string,
-  paidDate?: string
+  paidDate?: string,
+  commandId?: string,
 ): Promise<Payable> {
-  return apiFetch<Payable>(`/payables/${id}/pay`, mutationOptions("POST", paidDate ? { paidDate } : {}));
+  return apiFetch<Payable>(`/payables/${id}/pay`, mutationOptions("POST", paidDate ? { paidDate } : {}, commandId));
 }
 
 export async function createBudget(input: {
@@ -475,8 +479,8 @@ export async function contributeToGoal(
   return apiFetch<Goal>(`/goals/${id}/contribute`, mutationOptions("POST", input));
 }
 
-export async function cancelGoal(id: string): Promise<Goal> {
-  return apiFetch<Goal>(`/goals/${id}/cancel`, mutationOptions("POST"));
+export async function cancelGoal(id: string, commandId?: string): Promise<Goal> {
+  return apiFetch<Goal>(`/goals/${id}/cancel`, mutationOptions("POST", undefined, commandId));
 }
 
 export async function updateGoal(

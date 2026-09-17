@@ -793,7 +793,7 @@ describe("AppStateProvider — API write path", () => {
 
     await act(() => result.current.markPayablePaid("p1"));
 
-    expect(spy).toHaveBeenCalledWith("p1", expect.any(String));
+    expect(spy).toHaveBeenCalledWith("p1", expect.any(String), expect.any(String));
     const p = result.current.payables.find((p) => p.id === "p1");
     expect(p?.status).toBe("paid");
   });
@@ -855,10 +855,10 @@ describe("AppStateProvider — API write path", () => {
       }),
     );
 
-    expect(spy).toHaveBeenCalledWith(txId, {
+    expect(spy).toHaveBeenCalledWith(txId, expect.objectContaining({
       description: "New desc",
       amountCents: 2000,
-    });
+    }));
     // API failed — rolled back to original values
     expect(result.current.transactions[0].description).toBe("Old desc");
     expect(result.current.transactions[0].amountCents).toBe(1000);
@@ -897,7 +897,7 @@ describe("AppStateProvider — API write path", () => {
 
     await act(() => result.current.deleteTransaction(firstId));
 
-    expect(spy).toHaveBeenCalledWith(firstId);
+    expect(spy).toHaveBeenCalledWith(firstId, expect.any(String));
     // Transaction was rolled back (restored)
     expect(result.current.transactions[0].id).toBe(firstId);
     expect(result.current.writeError).toBe("Offline");
@@ -929,11 +929,11 @@ describe("AppStateProvider — API write path", () => {
     );
 
     expect(result.current.accounts).toHaveLength(prevCount + 1);
-    expect(spy).toHaveBeenCalledWith({
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       name: "New Account",
       kind: "bank",
       initialBalanceCents: 0,
-    });
+    }));
   });
 
   it("rolls back addAccount on API failure", async () => {
@@ -991,12 +991,12 @@ describe("AppStateProvider — API write path", () => {
     );
 
     expect(result.current.accounts).toHaveLength(prevCount + 1);
-    expect(spy).toHaveBeenCalledWith({
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       name: "New Card",
       creditLimitCents: 1000_00,
       closingDay: 15,
       dueDay: 25,
-    });
+    }));
   });
 
   it("rolls back addCard on API failure", async () => {
@@ -1278,13 +1278,13 @@ describe("AppStateProvider — API write path", () => {
     );
 
     expect(result.current.subscriptions).toHaveLength(prevCount + 1);
-    expect(spy).toHaveBeenCalledWith({
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       name: "Netflix",
       amountCents: 39_90,
       cycle: "monthly",
       day: 15,
       paymentMethod: "credit_card",
-    });
+    }));
   });
 
   it("rolls back addSubscription on API failure", async () => {
@@ -1353,7 +1353,7 @@ describe("AppStateProvider — API write path", () => {
 
     await act(() => result.current.cancelSubscription(sub.id));
 
-    expect(spy).toHaveBeenCalledWith(sub.id);
+    expect(spy).toHaveBeenCalledWith(sub.id, expect.any(String));
     // Rolled back because API failed — still active
     expect(
       result.current.subscriptions.find((s) => s.id === sub.id)?.status,
@@ -1457,10 +1457,10 @@ describe("AppStateProvider — API write path", () => {
       }),
     );
 
-    expect(spy).toHaveBeenCalledWith("stmt-1", {
+    expect(spy).toHaveBeenCalledWith("stmt-1", expect.objectContaining({
       amountCents: 100_00,
       fromAccountId: a1.id,
-    });
+    }));
     // Balance restored after rollback
     expect(
       result.current.accounts.find((a) => a.id === a1.id)?.balanceCents,
@@ -1580,7 +1580,7 @@ describe("AppStateProvider — API write path", () => {
     );
 
     expect(result.current.categories).toHaveLength(prevCount + 1);
-    expect(spy).toHaveBeenCalledWith({ name: "New Cat", kind: "expense" });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ name: "New Cat", kind: "expense" }));
   });
 
   it("rolls back addCategory on API failure", async () => {
@@ -1624,13 +1624,13 @@ describe("AppStateProvider — API write path", () => {
       }),
     );
 
-    expect(spy).toHaveBeenCalledWith({
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({
       accountId: "card-1",
       description: "Notebook",
       totalAmountCents: 6_000_00,
       purchaseDate: "2026-06-25",
       installmentsTotal: 12,
-    });
+    }));
   });
 
   // ── updateCard without API ──────────────────────────────────────

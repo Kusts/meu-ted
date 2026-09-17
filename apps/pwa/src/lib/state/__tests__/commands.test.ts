@@ -74,7 +74,7 @@ describe("PWA State Mutators — commands.ts", () => {
       const result = await commands.updateTransaction("tx-1", { description: "Farmácia" });
 
       expect(result).toEqual(mockUpdated);
-      expect(apiSpy).toHaveBeenCalledWith("tx-1", { description: "Farmácia" });
+      expect(apiSpy).toHaveBeenCalledWith("tx-1", expect.objectContaining({ description: "Farmácia" }));
       expect(dispatch).toHaveBeenCalledWith({ type: "CLEAR_WRITE_ERROR" });
     });
 
@@ -87,7 +87,7 @@ describe("PWA State Mutators — commands.ts", () => {
       const result = await commands.markPayablePaid("pay-1", "2026-08-20");
 
       expect(result).toEqual(mockPayable);
-      expect(apiSpy).toHaveBeenCalledWith("pay-1", "2026-08-20");
+      expect(apiSpy).toHaveBeenCalledWith("pay-1", "2026-08-20", expect.any(String));
       expect(dispatch).toHaveBeenCalledWith({ type: "CLEAR_WRITE_ERROR" });
     });
 
@@ -100,7 +100,7 @@ describe("PWA State Mutators — commands.ts", () => {
       const result = await commands.patchProfile({ name: "Alice" });
 
       expect(result).toEqual(mockProfile);
-      expect(apiSpy).toHaveBeenCalledWith({ name: "Alice" });
+      expect(apiSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "Alice" }));
       expect(dispatch).toHaveBeenCalledWith({ type: "CLEAR_WRITE_ERROR" });
     });
   });
@@ -221,7 +221,7 @@ describe("PWA State Mutators — commands.ts", () => {
 
       const result = await commands.updateBudget("budget-1", {});
       expect(result).toEqual(mockUpdated);
-      expect(apiSpy).toHaveBeenCalledWith("budget-1", {});
+      expect(apiSpy).toHaveBeenCalledWith("budget-1", expect.objectContaining({}));
     });
 
     it("3.3 trackWrite lifecycle is honored when provided or omitted", async () => {
