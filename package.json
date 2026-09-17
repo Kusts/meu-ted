@@ -26,6 +26,7 @@
     "test:e2e": "pnpm --filter pwa test",
     "build:all": "pnpm --filter meu-ted-api build && pnpm --filter pi-finance-agent build && pnpm --filter pi-finance-codex-broker build && pnpm --filter pwa build",
     "security:secrets": "node scripts/security-secrets.mjs",
+    "public-safety": "node scripts/check-public-safety.mjs",
     "security:deps": "pnpm audit --audit-level=critical",
     "security:containers": "node scripts/security-containers.mjs",
     "container:smoke": "node scripts/container-smoke.mjs",

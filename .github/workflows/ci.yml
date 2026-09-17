@@ -308,10 +308,25 @@ jobs:
       - run: pnpm plans:check
       - run: node --test scripts/lint-docs.test.mjs scripts/check-active-plan-status.test.mjs scripts/canonical-docs-contract.test.mjs scripts/documentation-facts-contract.test.mjs
 
+  # ─── Public-safety gate (V4.1 Phase 6 prep — SPEC §13.9) ──────────────
+  public-safety:
+    name: Public safety — secrets + prohibited metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pnpm public-safety
+
   # ─── Global gate ──────────────────────────────────────────────────────
   gate:
     name: Gate — all checks
-    needs: [api, agent, broker, pwa, pwa-cloudflare, postgres, docker, capabilities, write-policy, governance, security, docs]
+    needs: [api, agent, broker, pwa, pwa-cloudflare, postgres, docker, capabilities, write-policy, governance, security, docs, public-safety]
     runs-on: ubuntu-latest
     steps:
       - run: echo "All CI checks passed."
