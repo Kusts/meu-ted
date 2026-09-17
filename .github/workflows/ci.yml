@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main, master]
 
+# V4.1 Phase 9 (Task 9.11): least privilege by default; jobs that need more
+# (deploy artifact download) declare it per-job.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -55,6 +60,21 @@ jobs:
       - run: pnpm --filter pi-finance-agent --fail-if-no-match eval:ted-v2
       - run: pnpm architecture:check
       - run: pnpm --filter pi-finance-agent --fail-if-no-match build
+      # V4.1 Phase 9 (Task 9.6): SHA-pinned deploy provenance. The Agent has
+      # no compiled output (tsc --noEmit; wrangler bundles deterministically
+      # at deploy), so CI publishes a manifest proving THIS exact source tree
+      # passed CI; agent-deploy.yml refuses to deploy without it.
+      - name: Write agent deploy manifest (SHA-pinned provenance)
+        run: |
+          mkdir -p /tmp/agent-manifest
+          node -e "require('fs').writeFileSync('/tmp/agent-manifest/manifest.json', JSON.stringify({ sha: '${{ github.sha }}', workflow: 'CI', runId: '${{ github.run_id }}' }, null, 2) + '\n')"
+          cat /tmp/agent-manifest/manifest.json
+      - name: Upload agent deploy manifest
+        uses: actions/upload-artifact@v4 # pinned: v4, reviewed 2026-09-17
+        with:
+          name: agent-deploy-manifest-${{ github.sha }}
+          path: /tmp/agent-manifest/manifest.json
+          retention-days: 14
 
   # ─── Codex Broker ─────────────────────────────────────────────────────
   broker:
@@ -117,7 +137,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build shared contracts (workspace exports resolve dist)
         run: pnpm --filter @pi-finance/llm-contracts build
+      # V4.1 Phase 9 (Task 9.9): bake release identity into the bundle so the
+      # deployed PWA carries the exact commit it was built from.
       - run: pnpm --dir apps/pwa build:cloudflare
+        env:
+          NEXT_PUBLIC_BUILD_SHA: ${{ github.sha }}
+          NEXT_PUBLIC_BUILD_ID: ${{ github.run_id }}
+          NEXT_PUBLIC_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
       - run: pnpm --dir apps/pwa exec vitest run src/headers.test.ts
       - name: Check initial JS gzip <=200KB
         run: |
@@ -131,6 +157,16 @@ jobs:
           console.log('initial JS gzip: '+(init/1024).toFixed(1)+'KB');
           if(init>200*1024){console.log('FAIL: >200KB');process.exit(1)}
           "
+      # V4.1 Phase 9 (Task 9.6): build once, store the tested artifact.
+      # pwa-deploy.yml downloads THIS tarball and deploys it without rebuilding.
+      - name: Pack tested Cloudflare build (SHA-pinned artifact)
+        run: tar -czf /tmp/pwa-build-ci.tgz -C apps/pwa .open-next wrangler.jsonc
+      - name: Upload PWA Cloudflare build artifact
+        uses: actions/upload-artifact@v4 # pinned: v4, reviewed 2026-09-17
+        with:
+          name: pwa-cloudflare-build-ci-${{ github.sha }}
+          path: /tmp/pwa-build-ci.tgz
+          retention-days: 14
 
   # ─── Postgres integration ────────────────────────────────────────────
   postgres:
@@ -180,6 +216,27 @@ jobs:
         env:
           DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
           DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001
+      # V4.1 Phase 9 (Tasks 9.1–9.3, 9.5): full integration, financial
+      # concurrency, and XLT suites run against this same Postgres.
+      - name: API integration suite (all)
+        run: pnpm --filter meu-ted-api test:integration:all
+        env:
+          DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
+          DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001
+      - name: API financial concurrency suite
+        run: pnpm --filter meu-ted-api test:concurrency
+        env:
+          DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
+          DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001
+      - name: API XLT suite
+        run: pnpm --filter meu-ted-api test:xlt
+        env:
+          DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
+          DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001
+      - name: Migration validation (read-only)
+        run: pnpm --filter meu-ted-api exec tsx src/scripts/migrate.ts --validate
+        env:
+          DATABASE_URL: postgres://test:test@localhost:5432/pi_financeiro_test
 
   # ─── Docker image builds ─────────────────────────────────────────────
   docker:
@@ -195,8 +252,13 @@ jobs:
         with:
           node-version: '22'
       - uses: docker/setup-buildx-action@v3
+      # V4.1 Phase 9 (Task 9.9): bake API release identity into the image.
       - name: Build API image
-        run: docker build -f apps/api/Dockerfile -t pi-finance-api:ci .
+        run: |
+          docker build -f apps/api/Dockerfile -t pi-finance-api:ci \
+            --build-arg BUILD_SHA=${{ github.sha }} \
+            --build-arg BUILD_ID=${{ github.run_id }} \
+            --build-arg BUILD_TIME=${{ github.event.head_commit.timestamp }} .
       - name: Build Codex Broker image
         run: docker build -f apps/codex-broker/Dockerfile -t pi-finance-codex-broker:ci .
       - name: Smoke API and Codex Broker containers
@@ -307,6 +369,9 @@ jobs:
       - run: pnpm docs:lint
       - run: pnpm plans:check
       - run: node --test scripts/lint-docs.test.mjs scripts/check-active-plan-status.test.mjs scripts/canonical-docs-contract.test.mjs scripts/documentation-facts-contract.test.mjs
+      # V4.1 Phase 9 (Tasks 9.4, 9.11): no DB needed.
+      - run: pnpm test:skip-gate
+      - run: pnpm action-pins:check
 
   # ─── Public-safety gate (V4.1 Phase 6 prep — SPEC §13.9) ──────────────
   public-safety:

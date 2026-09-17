@@ -13,6 +13,10 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
 
+# V4.1 Phase 9 (Task 9.11): least privilege by default.
+permissions:
+  contents: read
+
 concurrency:
   group: pwa-ci-${{ github.ref }}
   cancel-in-progress: true
@@ -53,6 +57,20 @@ jobs:
 
       - name: Build PWA (Cloudflare)
         run: pnpm --dir apps/pwa build:cloudflare
+        env:
+          NEXT_PUBLIC_BUILD_SHA: ${{ github.sha }}
+          NEXT_PUBLIC_BUILD_ID: ${{ github.run_id }}
+          NEXT_PUBLIC_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+
+      - name: Pack tested Cloudflare build (SHA-pinned artifact)
+        run: tar -czf /tmp/pwa-build-pwaci.tgz -C apps/pwa .open-next wrangler.jsonc
+
+      - name: Upload PWA Cloudflare build artifact
+        uses: actions/upload-artifact@v4 # pinned: v4, reviewed 2026-09-17
+        with:
+          name: pwa-cloudflare-build-pwaci-${{ github.sha }}
+          path: /tmp/pwa-build-pwaci.tgz
+          retention-days: 14
 
       - name: Test PWA
         run: pnpm --dir apps/pwa exec vitest run

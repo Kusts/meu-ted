@@ -39,6 +39,8 @@
     "docs:lint": "node scripts/lint-docs.mjs",
     "plans:check": "node scripts/check-active-plan-status.mjs",
     "production:smoke:contract": "node --test scripts/production-smoke-contract.test.mjs",
+    "test:skip-gate": "node scripts/check-test-skips.mjs",
+    "action-pins:check": "node scripts/check-action-pins.mjs",
     "validate:final": "node scripts/run-final-validation.mjs"
   },
   "devDependencies": {

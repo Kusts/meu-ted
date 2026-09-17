@@ -21,7 +21,7 @@ jobs:
       actions: read
     steps:
       - name: Require CI and PWA CI success for the deployed SHA
-        uses: actions/github-script@v7
+        uses: actions/github-script@v7 # pinned: v7, reviewed 2026-09-17
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         with:
@@ -56,36 +56,90 @@ jobs:
             }
             core.info(`Deploy gate passed for ${sha}.`);
 
+      - name: Reject stale deployment (candidate must equal current main)
+        uses: actions/github-script@v7 # pinned: v7, reviewed 2026-09-17
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          script: |
+            const sha = process.env.HEAD_SHA;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const { data: branch } = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
+            core.info(`candidate=${sha} main=${branch.commit.sha}`);
+            if (branch.commit.sha !== sha) {
+              core.setFailed(`Deploy blocked: stale SHA ${sha} — main is now ${branch.commit.sha}. Rebase and re-run CI.`);
+              return;
+            }
+            core.info(`Freshness gate passed for ${sha}.`);
+
   deploy:
     needs: [gate]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
+      actions: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4 # pinned: v4, reviewed 2026-09-17
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v4 # pinned: v4, reviewed 2026-09-17
         with:
           version: 10
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v4 # pinned: v4, reviewed 2026-09-17
         with:
           node-version: 22
           cache: pnpm
 
-      - name: Install dependencies
+      - name: Install dependencies (tooling only — no rebuild below)
         run: pnpm install --frozen-lockfile
 
-      - name: Build PWA (Cloudflare)
-        run: pnpm --dir apps/pwa build:cloudflare
+      # V4.1 Phase 9 (Task 9.6): build once → store → validate → deploy.
+      # The CI-tested tarball (PWA CI preferred, CI fallback — same SHA means
+      # same source) is deployed WITHOUT rebuilding in this job.
+      - name: Resolve tested build artifact run
+        id: artifact-run
+        uses: actions/github-script@v7 # pinned: v7, reviewed 2026-09-17
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          script: |
+            const sha = process.env.HEAD_SHA;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+              owner, repo, head_sha: sha, per_page: 50,
+            });
+            for (const name of ['PWA CI', 'CI']) {
+              const runs = data.workflow_runs
+                .filter((r) => r.name === name && r.conclusion === 'success')
+                .sort((a, b) => b.created_at.localeCompare(a.created_at));
+              if (runs.length === 0) continue;
+              core.info(`Using ${name} run #${runs[0].run_number} (id=${runs[0].id}).`);
+              core.setOutput('run_id', String(runs[0].id));
+              core.setOutput('source', name === 'PWA CI' ? 'pwaci' : 'ci');
+              return;
+            }
+            core.setFailed(`Deploy blocked: no successful CI/PWA CI run found for ${sha}.`);
 
-      - name: Deploy to Cloudflare Workers
+      - name: Download tested build artifact
+        uses: actions/download-artifact@v4 # pinned: v4, reviewed 2026-09-17
+        with:
+          name: pwa-cloudflare-build-${{ steps.artifact-run.outputs.source }}-${{ github.event.workflow_run.head_sha }}
+          path: /tmp/pwa-artifact
+          run-id: ${{ steps.artifact-run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract tested build (no rebuild)
+        run: tar -xzf /tmp/pwa-artifact/pwa-build-*.tgz -C apps/pwa && ls apps/pwa/.open-next/worker.js
+
+      - name: Deploy tested artifact to Cloudflare Workers
         run: pnpm --dir apps/pwa exec wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -103,17 +157,17 @@ jobs:
       API_PROD_URL: https://api.synkroo.com.br
     steps:
       - name: Checkout deployed SHA
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4 # pinned: v4, reviewed 2026-09-17
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v4 # pinned: v4, reviewed 2026-09-17
         with:
           version: 10
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v4 # pinned: v4, reviewed 2026-09-17
         with:
           node-version: 22
           cache: pnpm
@@ -134,10 +188,13 @@ jobs:
 
       # Same read-only production-smoke logic as production-smoke.yml
       # (SMOKE-01..04: unauthenticated registration shell, GET/HEAD/OPTIONS
-      # only â€” the spec fails closed on any emitted write), pinned to the
+      # only — the spec fails closed on any emitted write), pinned to the
       # deployed SHA. Fails this workflow when the smoke fails.
+      # V4.1 Phase 9 (Task 9.10): SMOKE-05 confirms /api/build-info gitSha
+      # equals the deployed SHA via EXPECTED_SHA.
       - name: Run read-only smoke against deployed URL
         env:
           E2E_PRODUCTION_SMOKE: "1"
           E2E_PRODUCTION_URL: ${{ env.PWA_PROD_URL }}
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: pnpm --dir apps/pwa exec playwright test --config=e2e/playwright.config.ts --project=production-smoke --workers=1 --retries=0

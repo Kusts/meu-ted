@@ -21,6 +21,15 @@ export const VAL_GATES = [
   { id: "VAL.11", name: "Builds & Distribution Artifacts", command: "pnpm build:all" },
   { id: "VAL.12", name: "Security & Container Smoke", command: "pnpm security:check && pnpm container:smoke" },
   { id: "VAL.13", name: "Production Smoke Contract", command: "pnpm production:smoke:contract" },
+  // V4.1 Phase 9 (Task 9.5): CI/CD hardening gates. Integration/concurrency/XLT
+  // suites are env-gated per-file (skip cleanly without Postgres, run with it),
+  // so they are unconditional commands; migration validation reports a skip
+  // without DATABASE_URL instead of failing (see scripts/migration-validate.mjs).
+  { id: "VAL.14", name: "API Integration Suite (all)", command: "pnpm --filter meu-ted-api --fail-if-no-match test:integration:all" },
+  { id: "VAL.15", name: "Financial Concurrency Suite", command: "pnpm --filter meu-ted-api --fail-if-no-match test:concurrency" },
+  { id: "VAL.16", name: "XLT Suite", command: "pnpm --filter meu-ted-api --fail-if-no-match test:xlt" },
+  { id: "VAL.17", name: "Skip/Todo + Action-Pin Gates", command: "pnpm test:skip-gate && pnpm action-pins:check" },
+  { id: "VAL.18", name: "Migration Validation + Dependency Audit", command: "node scripts/migration-validate.mjs && pnpm security:deps" },
 ];
 
 export function executeValidationGate(gate, executor = execFileSync) {
@@ -86,7 +95,7 @@ export function runFinalValidation(gates = VAL_GATES, executor = execFileSync) {
 }
 
 export function generateFinalValidationMarkdown(report) {
-  return `# Final Project Validation Report (VAL.1–VAL.13)
+  return `# Final Project Validation Report (VAL.1–VAL.18)
 
 **Evaluated At:** ${report.evaluatedAt}  
 **Status:** ${report.allPassed ? "PASSED ✅" : "FAILED ❌"}  
@@ -113,7 +122,7 @@ ${report.results
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
-  console.log("=== Running Project Final Validation (VAL.1–VAL.13) ===");
+  console.log("=== Running Project Final Validation (VAL.1–VAL.18) ===");
   const report = runFinalValidation();
   const reportsDir = path.join(ROOT, "docs", "reports");
   if (!fs.existsSync(reportsDir)) {
