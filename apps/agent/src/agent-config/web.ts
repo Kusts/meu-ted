@@ -8,7 +8,20 @@
  * - webFetch only allows http/https, blocks private/loopback/link-local
  *   hosts and metadata IPs, follows at most 3 redirects (re-validated),
  *   times out in 10s and truncates the body. Keys never appear in errors.
+ * - V4.1 Phase 8 (SPEC §15.4): scheme/host/port checks and redirect
+ *   re-validation delegate to `security/ssrf-guard.ts`; when a `lookup`
+ *   resolver is provided, every hop is additionally validated against its
+ *   resolved IPs (DNS-rebinding protection) and non-allowlisted ports are
+ *   rejected (default 80/443).
  */
+
+import {
+  assertSafeUrl as guardAssertSafeUrl,
+  fetchWithSsrfGuard,
+  isBlockedHostname,
+  SsrfBlockedError,
+  type HostResolver,
+} from '../security/ssrf-guard.js';
 
 export type WebSearchResultItem = {
   title: string;
@@ -115,34 +128,19 @@ export class WebFetchBlockedError extends Error {
   }
 }
 
-const BLOCKED_HOST_RE =
-  /^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1?|\[(::1?|::)\]|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|169\.254\.\d{1,3}\.\d{1,3}|127\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i;
+export const isBlockedFetchHost = (hostname: string): boolean => isBlockedHostname(hostname);
 
-export const isBlockedFetchHost = (hostname: string): boolean => {
-  const host = hostname.trim().toLowerCase().replace(/\.$/, '');
-  if (host === '' || host === 'localhost' || host.endsWith('.localhost')) return true;
-  if (host === 'metadata.google.internal') return true;
-  if (host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.lan')) return true;
-  return BLOCKED_HOST_RE.test(host.replace(/^\[|\]$/g, ''));
+const rethrowAsFetchBlocked = (err: unknown): never => {
+  if (err instanceof SsrfBlockedError) throw new WebFetchBlockedError(err.message);
+  throw err;
 };
 
-export const assertFetchableUrl = (rawUrl: string): URL => {
-  let url: URL;
+export const assertFetchableUrl = (rawUrl: string, opts?: { allowedPorts?: number[] }): URL => {
   try {
-    url = new URL(rawUrl);
-  } catch {
-    throw new WebFetchBlockedError('URL inválida para leitura web.');
+    return guardAssertSafeUrl(rawUrl, opts);
+  } catch (err) {
+    return rethrowAsFetchBlocked(err);
   }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new WebFetchBlockedError('Leitura web permite apenas endereços http/https.');
-  }
-  if (url.username !== '' || url.password !== '') {
-    throw new WebFetchBlockedError('URL com credenciais não é permitida.');
-  }
-  if (isBlockedFetchHost(url.hostname)) {
-    throw new WebFetchBlockedError('Endereço interno não pode ser lido pela web.');
-  }
-  return url;
 };
 
 export type WebFetchResult = {
@@ -155,42 +153,27 @@ export type WebFetchResult = {
 
 export const WEB_FETCH_TIMEOUT_MS = 10_000;
 export const WEB_FETCH_MAX_CHARS = 50_000;
-const WEB_FETCH_MAX_REDIRECTS = 3;
 
 /**
  * SSRF-safe fetch: http/https only, no private hosts (re-validated on
- * every redirect hop), 10s budget, truncated text body.
+ * every redirect hop), 10s budget, truncated text body. When `lookup` is
+ * provided, each hop is additionally validated against its resolved IPs
+ * (DNS-rebinding protection, SPEC §15.4); `allowedPorts` defaults to
+ * 80/443.
  */
 export const webFetchUrl = async (
   rawUrl: string,
-  opts?: { fetchImpl?: typeof fetch; timeoutMs?: number; maxChars?: number },
+  opts?: {
+    fetchImpl?: typeof fetch;
+    timeoutMs?: number;
+    maxChars?: number;
+    lookup?: HostResolver;
+    allowedPorts?: number[];
+  },
 ): Promise<WebFetchResult> => {
-  const fetchImpl = opts?.fetchImpl ?? fetch;
-  const timeoutMs = opts?.timeoutMs ?? WEB_FETCH_TIMEOUT_MS;
-  const maxChars = opts?.maxChars ?? WEB_FETCH_MAX_CHARS;
-  let current = assertFetchableUrl(rawUrl).toString();
-  for (let hop = 0; hop <= WEB_FETCH_MAX_REDIRECTS; hop += 1) {
-    const res = await fetchImpl(current, {
-      method: 'GET',
-      headers: { accept: 'text/html,application/json,text/plain,text/*', 'user-agent': 'MeuTed-TED/1.0' },
-      redirect: 'manual',
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const location = res.headers.get('location');
-    if (res.status >= 300 && res.status < 400 && location) {
-      if (hop === WEB_FETCH_MAX_REDIRECTS) {
-        throw new WebFetchBlockedError('Muitos redirecionamentos na leitura web.');
-      }
-      current = assertFetchableUrl(new URL(location, current).toString()).toString();
-      continue;
-    }
-    if (!res.ok) {
-      throw Object.assign(new Error(`web fetch failed: HTTP ${res.status}`), { code: `http_${res.status}` });
-    }
-    const contentType = res.headers.get('content-type') ?? '';
-    const raw = await res.text().catch(() => '');
-    const truncated = raw.length > maxChars;
-    return { url: current, status: res.status, contentType, text: truncated ? raw.slice(0, maxChars) : raw, truncated };
+  try {
+    return await fetchWithSsrfGuard(rawUrl, opts);
+  } catch (err) {
+    return rethrowAsFetchBlocked(err);
   }
-  throw new WebFetchBlockedError('Muitos redirecionamentos na leitura web.');
 };

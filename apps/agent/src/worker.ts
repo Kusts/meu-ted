@@ -32,6 +32,13 @@ type Env = {
    * production (flag absent) stays fail-closed on the PWA origin alone.
    */
   ALLOW_LOCAL_ORIGIN?: string;
+  /**
+   * V4.1 Phase 9 (Task 9.9): release identity injected at deploy time
+   * (wrangler vars / CI env). Absent in dev → "dev" fallbacks.
+   */
+  BUILD_SHA?: string;
+  BUILD_ID?: string;
+  BUILD_TIME?: string;
 };
 
 /** Production PWA host — the only browser origin trusted in production. */
@@ -168,7 +175,15 @@ export default {
         return Response.json({ status: "ready", binding: "FINANCE_CHAT_AGENT" });
       }
       if (url.pathname === "/health") {
-        return Response.json({ status: "ready", schemaVersion: 5 });
+        // V4.1 Phase 9 (Task 9.9) — release identity from deploy-time env
+        // (BUILD_SHA/BUILD_ID/BUILD_TIME), dev fallbacks otherwise.
+        return Response.json({
+          status: "ready",
+          schemaVersion: 5,
+          buildSha: env.BUILD_SHA || "dev",
+          buildId: env.BUILD_ID || "dev",
+          builtAt: env.BUILD_TIME || "dev",
+        });
       }
 
     // Internal admin routes: Catalog & Provider Probe

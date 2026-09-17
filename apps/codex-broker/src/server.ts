@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { AuthCacheManager } from './auth-status.js';
 import { BrowserLoginManager, LoginBeginSchema, LoginCallbackSchema, type CodeExchangeResult } from './browser-login.js';
 import { CodexRuntimeAdapter, ChatCompletionRequestSchema, ALLOWLISTED_MODELS } from './runtime-adapter.js';
+import { assertBrokerConfig, assertReplayTopology, resolveBrokerConfig } from './broker-config.js';
 import {
   createInMemoryNonceReplayStore,
   verifyEnvelope,
@@ -19,6 +20,16 @@ export type ServerOptions = {
   adapter?: CodexRuntimeAdapter;
   /** ChatGPT OAuth code exchange (injected; default rejects — see browser-login.ts). */
   codeExchange?: (code: string) => Promise<CodeExchangeResult>;
+  /**
+   * Explicit escape hatch (SPEC §15.2, env BROKER_TRUST_PRIVATE_NETWORK=1):
+   * allow requests without Cloudflare Access credentials. Never implicit —
+   * in production without this flag AND without creds, every protected
+   * route is denied. Defaults to false (dev callers pass creds or omit
+   * them in non-production, where absence still means "local dev").
+   */
+  trustPrivateNetwork?: boolean;
+  /** Fail-closed Cloudflare Access behavior in production (env-derived). */
+  isProduction?: boolean;
 };
 
 export const buildCodexBrokerApp = (opts: ServerOptions): FastifyInstance => {
@@ -32,17 +43,23 @@ export const buildCodexBrokerApp = (opts: ServerOptions): FastifyInstance => {
   );
 
   const verifyCloudflareAccess = (req: FastifyRequest): boolean => {
-    if (!opts.cfAccessClientId || !opts.cfAccessClientSecret) {
-      return true; // Not required in local development
+    if (opts.cfAccessClientId && opts.cfAccessClientSecret) {
+      const clientId = req.headers['cf-access-client-id'];
+      const clientSecret = req.headers['cf-access-client-secret'];
+
+      const providedId = Array.isArray(clientId) ? clientId[0] : clientId;
+      const providedSecret = Array.isArray(clientSecret) ? clientSecret[0] : clientSecret;
+
+      return providedId === opts.cfAccessClientId && providedSecret === opts.cfAccessClientSecret;
     }
 
-    const clientId = req.headers['cf-access-client-id'];
-    const clientSecret = req.headers['cf-access-client-secret'];
-
-    const providedId = Array.isArray(clientId) ? clientId[0] : clientId;
-    const providedSecret = Array.isArray(clientSecret) ? clientSecret[0] : clientSecret;
-
-    return providedId === opts.cfAccessClientId && providedSecret === opts.cfAccessClientSecret;
+    // No credentials configured: fail closed in production unless the
+    // operator explicitly trusts the private network (SPEC §15.2).
+    // Non-production keeps the historical local-dev behavior.
+    if (opts.isProduction && !opts.trustPrivateNetwork) {
+      return false;
+    }
+    return true;
   };
 
   const verifyHmacRequest = (req: FastifyRequest, rawBodyString: string): { valid: boolean; reason?: string } => {
@@ -237,11 +254,23 @@ export const buildCodexBrokerApp = (opts: ServerOptions): FastifyInstance => {
 /** Start the broker only when this module is the container entrypoint. */
 const isDirectExecution = process.argv[1] === fileURLToPath(import.meta.url);
 if (isDirectExecution) {
+  const cfg = resolveBrokerConfig(process.env);
+  assertBrokerConfig(cfg);
+  assertReplayTopology({
+    instanceCount: cfg.instanceCount,
+    storeKind: 'memory',
+    sharedReplayConfigured: cfg.sharedReplayConfigured,
+  });
+  if (cfg.ephemeralSigningKey) {
+    console.warn('broker: CODEX_SIGNING_KEY unset — using an ephemeral development key (never for production)');
+  }
   const app = buildCodexBrokerApp({
     authCachePath: process.env.CODEX_AUTH_CACHE_PATH ?? '/var/lib/codex-auth/auth.json',
-    signingKey: process.env.CODEX_SIGNING_KEY ?? 'local-development-signing-key-change-me',
-    cfAccessClientId: process.env.CF_ACCESS_CLIENT_ID,
-    cfAccessClientSecret: process.env.CF_ACCESS_CLIENT_SECRET,
+    signingKey: cfg.signingKey,
+    cfAccessClientId: cfg.cfAccessClientId,
+    cfAccessClientSecret: cfg.cfAccessClientSecret,
+    trustPrivateNetwork: cfg.trustPrivateNetwork,
+    isProduction: cfg.isProduction,
   });
   const port = Number(process.env.PORT ?? 3005);
   const host = process.env.HOST ?? '0.0.0.0';

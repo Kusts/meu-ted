@@ -112,4 +112,26 @@ describe('SSRF-safe web fetch', () => {
       webFetchUrl('https://exemplo.test/redirect', { fetchImpl: fetchMock as unknown as typeof fetch }),
     ).rejects.toThrow(WebFetchBlockedError);
   });
+
+  it('rejects non-allowlisted ports (V4.1 Phase 8, SPEC §15.4)', async () => {
+    const fetchMock = vi.fn();
+    await expect(
+      webFetchUrl('https://exemplo.test:22/x', { fetchImpl: fetchMock as unknown as typeof fetch }),
+    ).rejects.toThrow(WebFetchBlockedError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks DNS rebinding when a resolver is provided', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } }),
+    );
+    const lookup = vi.fn().mockResolvedValue(['127.0.0.1']);
+    await expect(
+      webFetchUrl('https://evil.test/x', {
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        lookup,
+      }),
+    ).rejects.toThrow(WebFetchBlockedError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
