@@ -126,6 +126,64 @@ const findAccountInHousehold = async (
   return mapAccount(res.rows[0]!);
 };
 
+/**
+ * V4.1 Phase 4 (Tasks 4.6–4.7, D1 option B): row-lock core for every
+ * materialized-balance mutation. The SELECT … FOR UPDATE serializes
+ * concurrent debits on the same account inside the caller's transaction,
+ * and the returned balance is the decision point for the
+ * insufficient-funds validation — no silent GREATEST(0, …) clamp.
+ */
+type LockedAccount = { id: string; kind: string; status: string; balanceCents: number };
+
+const lockAccountRow = async (
+  client: import('pg').PoolClient,
+  id: string,
+  householdId: string,
+): Promise<LockedAccount> => {
+  const res = await client.query<Row>(
+    `SELECT id, kind, balance_cents, status FROM accounts
+      WHERE id = $1 AND household_id = $2
+      FOR UPDATE`,
+    [id, householdId],
+  );
+  if (res.rowCount === 0) throw domainErrors.notFound('Conta');
+  const row = res.rows[0]!;
+  return {
+    id: row['id'] as string,
+    kind: row['kind'] as string,
+    status: row['status'] as string,
+    balanceCents: Number(row['balance_cents']),
+  };
+};
+
+/**
+ * V4.1 Phase 4 Task 4.7: deterministic lock ordering. Two-account
+ * mutations (transfer, transaction move) lock in sorted id order so two
+ * opposite-direction transfers can never deadlock each other.
+ */
+const lockAccountsOrdered = async (
+  client: import('pg').PoolClient,
+  householdId: string,
+  ids: string[],
+): Promise<Map<string, LockedAccount>> => {
+  const ordered = [...new Set(ids)].sort();
+  const locked = new Map<string, LockedAccount>();
+  for (const id of ordered) {
+    locked.set(id, await lockAccountRow(client, id, householdId));
+  }
+  return locked;
+};
+
+/**
+ * V4.1 Phase 4 (D1 option B): insufficient-funds rejection. Same 400
+ * `validation.invalid` shape the payables and card stores use.
+ */
+const assertSufficientFunds = (balanceCents: number, amountCents: number): void => {
+  if (balanceCents < amountCents) {
+    throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
+  }
+};
+
 const findCategoryInHousehold = async (
   client: import('pg').PoolClient,
   id: string,
@@ -231,6 +289,11 @@ const findActiveTransaction = async (
  * Reverses the balance effect of a transaction being soft-deleted (C-04).
  * Shared by softDeleteTransaction and category-cascade so both paths keep
  * balances consistent inside the same database transaction.
+ *
+ * V4.1 Phase 4 (D1 option B, Tasks 4.6–4.7): every leg locks its account
+ * row (deterministic order) and debit legs validate instead of clamping —
+ * reversing an income (or the destination leg of a transfer) that was
+ * already spent fails with 400 instead of flooring the balance at zero.
  */
 const reverseBalanceForDelete = async (
   client: import('pg').PoolClient,
@@ -238,24 +301,37 @@ const reverseBalanceForDelete = async (
   tx: Pick<Transaction, 'kind' | 'accountId' | 'amountCents'> & { transferToAccountId?: string },
 ): Promise<void> => {
   if (tx.kind === 'expense') {
+    const locked = await lockAccountRow(client, tx.accountId, householdId);
     await client.query(
-      `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
-      [tx.accountId, tx.amountCents, householdId],
+      `UPDATE accounts SET balance_cents = $2 WHERE id = $1 AND household_id = $3`,
+      [tx.accountId, locked.balanceCents + tx.amountCents, householdId],
     );
   } else if (tx.kind === 'income') {
+    const locked = await lockAccountRow(client, tx.accountId, householdId);
+    assertSufficientFunds(locked.balanceCents, tx.amountCents);
     await client.query(
-      `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1 AND household_id = $3`,
-      [tx.accountId, tx.amountCents, householdId],
+      `UPDATE accounts SET balance_cents = $2 WHERE id = $1 AND household_id = $3`,
+      [tx.accountId, locked.balanceCents - tx.amountCents, householdId],
     );
   } else if (tx.kind === 'transfer') {
-    await client.query(
-      `UPDATE accounts SET balance_cents = balance_cents + $2 WHERE id = $1 AND household_id = $3`,
-      [tx.accountId, tx.amountCents, householdId],
+    const locked = await lockAccountsOrdered(
+      client,
+      householdId,
+      tx.transferToAccountId ? [tx.accountId, tx.transferToAccountId] : [tx.accountId],
     );
-    if (tx.transferToAccountId) {
+    const from = locked.get(tx.accountId)!;
+    const dest = tx.transferToAccountId ? locked.get(tx.transferToAccountId)! : null;
+    // Validate the debit leg BEFORE any mutation so a rejection leaves
+    // both sides untouched.
+    if (dest) assertSufficientFunds(dest.balanceCents, tx.amountCents);
+    await client.query(
+      `UPDATE accounts SET balance_cents = $2 WHERE id = $1 AND household_id = $3`,
+      [tx.accountId, from.balanceCents + tx.amountCents, householdId],
+    );
+    if (dest) {
       await client.query(
-        `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents - $2) WHERE id = $1 AND household_id = $3`,
-        [tx.transferToAccountId, tx.amountCents, householdId],
+        `UPDATE accounts SET balance_cents = $2 WHERE id = $1 AND household_id = $3`,
+        [tx.transferToAccountId, dest.balanceCents - tx.amountCents, householdId],
       );
     }
   }
@@ -329,13 +405,18 @@ const createExpenseInTx = async (
   householdId: string,
   input: CreateExpenseInput,
 ): Promise<Transaction> => {
-  const acc = await findAccountInHousehold(client, input.accountId, householdId);
+  // V4.1 Phase 4 Task 4.6: the paying account is locked before the
+  // balance decision so concurrent expenses serialize on the row.
+  const acc = await lockAccountRow(client, input.accountId, householdId);
   if (acc.status !== 'active') throw domainErrors.notFound('Conta');
   // H-01: card purchases must flow through the CardStore (statements,
   // limits, invoice semantics) — never as plain balance expenses.
   if (acc.kind === 'credit_card') {
     throw new DomainError('validation.invalid', 'compra no cartão deve usar /cards/purchases.', 422);
   }
+  // V4.1 Phase 4 (D1 option B): no silent partial debit — an expense that
+  // exceeds the balance fails with 400 like payables/cards.
+  assertSufficientFunds(acc.balanceCents, input.amountCents);
   const cat = await findCategoryInHousehold(client, input.categoryId, householdId);
   if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
   // V4.1 Task 2.15: plain expenses require an expense-kind category —
@@ -361,7 +442,7 @@ const createExpenseInTx = async (
   );
   await client.query(
     `UPDATE accounts
-        SET balance_cents = GREATEST(0, balance_cents - $2)
+        SET balance_cents = balance_cents - $2
       WHERE id = $1 AND household_id = $3`,
     [input.accountId, input.amountCents, householdId],
   );
@@ -425,14 +506,21 @@ const createTransferInTx = async (
   householdId: string,
   input: CreateTransferInput,
 ): Promise<Transaction> => {
-  const from = await findAccountInHousehold(client, input.fromAccountId, householdId);
+  // V4.1 Phase 4 Tasks 4.6–4.7: both legs locked in deterministic (sorted)
+  // order — opposite-direction concurrent transfers cannot deadlock.
+  const locked = await lockAccountsOrdered(client, householdId, [input.fromAccountId, input.toAccountId]);
+  const from = locked.get(input.fromAccountId)!;
+  const to = locked.get(input.toAccountId)!;
   if (from.status !== 'active') throw domainErrors.notFound('Conta');
-  const to = await findAccountInHousehold(client, input.toAccountId, householdId);
   if (to.status !== 'active') throw domainErrors.notFound('Conta');
   // H-01: transfers cannot touch credit cards (pay the invoice instead).
   if (from.kind === 'credit_card' || to.kind === 'credit_card') {
     throw new DomainError('validation.invalid', 'transferência não pode usar cartão de crédito.', 422);
   }
+  // V4.1 Phase 4 (D1 option B): the debit is validated BEFORE either leg
+  // moves — an over-balance transfer fails with 400 and changes NEITHER
+  // side (was: GREATEST(0, …) debit + full credit = money creation).
+  assertSufficientFunds(from.balanceCents, input.amountCents);
   const txRes = await client.query<Row>(
     `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, transfer_to_account_id)
      VALUES (gen_random_uuid(), $1, 'transfer', $2, $3, $4, $5, $6)
@@ -441,7 +529,7 @@ const createTransferInTx = async (
   );
   await client.query(
     `UPDATE accounts
-        SET balance_cents = GREATEST(0, balance_cents - $2)
+        SET balance_cents = balance_cents - $2
       WHERE id = $1 AND household_id = $3`,
     [input.fromAccountId, input.amountCents, householdId],
   );
@@ -652,9 +740,60 @@ const updateTransactionInTx = async (
   if (patch.amountCents !== undefined && patch.amountCents <= 0) {
     throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
   }
-  if (patch.accountId !== undefined) {
-    const next = await findAccountInHousehold(client, patch.accountId, householdId);
-    if (next.status !== 'active') throw domainErrors.notFound('Conta');
+  // V4.1 Phase 4 (Tasks 4.4–4.7): delta engine — compute the effective
+  // after-state, lock the affected accounts in deterministic order,
+  // validate (D1: no account may end negative; H-01: no credit-card leg),
+  // then reverse(before) + apply(after) exactly once. Validation runs
+  // before any balance UPDATE; a rejection rolls the tx back untouched.
+  const balanceTouched =
+    patch.amountCents !== undefined ||
+    (patch.accountId !== undefined && patch.accountId !== tx.accountId);
+  const newAmount = patch.amountCents ?? tx.amountCents;
+  const newAccountId = patch.accountId ?? tx.accountId;
+  if (balanceTouched) {
+    const locked = await lockAccountsOrdered(client, householdId, [tx.accountId, newAccountId]);
+    const oldAcc = locked.get(tx.accountId)!;
+    const newAcc = locked.get(newAccountId)!;
+    if (newAcc.status !== 'active') throw domainErrors.notFound('Conta');
+    if (newAcc.kind === 'credit_card') {
+      throw new DomainError(
+        'validation.invalid',
+        tx.kind === 'income'
+          ? 'receita não pode usar cartão de crédito.'
+          : 'compra no cartão deve usar /cards/purchases.',
+        422,
+      );
+    }
+    const reverseDelta = tx.kind === 'expense' ? tx.amountCents : -tx.amountCents;
+    const applyDelta = tx.kind === 'expense' ? -newAmount : newAmount;
+    if (newAccountId === tx.accountId) {
+      const final = oldAcc.balanceCents + reverseDelta + applyDelta;
+      if (final < 0) {
+        throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
+      }
+      await client.query(
+        `UPDATE accounts SET balance_cents = $2 WHERE id = $1 AND household_id = $3`,
+        [tx.accountId, final, householdId],
+      );
+    } else {
+      const oldFinal = oldAcc.balanceCents + reverseDelta;
+      const newFinal = newAcc.balanceCents + applyDelta;
+      if (oldFinal < 0 || newFinal < 0) {
+        throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
+      }
+      await client.query(
+        `UPDATE accounts SET balance_cents = $2 WHERE id = $1 AND household_id = $3`,
+        [tx.accountId, oldFinal, householdId],
+      );
+      await client.query(
+        `UPDATE accounts SET balance_cents = $2 WHERE id = $1 AND household_id = $3`,
+        [newAccountId, newFinal, householdId],
+      );
+    }
+  } else if (patch.accountId !== undefined) {
+    // Same-account no-op patch: still validate the target.
+    const same = await findAccountInHousehold(client, patch.accountId, householdId);
+    if (same.status !== 'active') throw domainErrors.notFound('Conta');
   }
   if (patch.categoryId !== undefined) {
     const next = await findCategoryInHousehold(client, patch.categoryId, householdId);
@@ -680,32 +819,9 @@ const updateTransactionInTx = async (
   if (effectiveSubcategoryId !== undefined && effectiveSubcategoryId !== null) {
     await resolveSubcategoryInTx(client, householdId, effectiveSubcategoryId, tx.kind === 'income' ? 'income' : 'expense', effectiveCategoryId);
   }
-  // Apply amount: restore old, then apply new.
-  if (patch.amountCents !== undefined) {
-    const sign = tx.kind === 'expense' ? '+' : '-';
-    await client.query(
-      `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1 AND household_id = $3`,
-      [tx.accountId, tx.amountCents, householdId],
-    );
-    const newSign = tx.kind === 'expense' ? '-' : '+';
-    await client.query(
-      `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1 AND household_id = $3`,
-      [tx.accountId, patch.amountCents, householdId],
-    );
-  }
-  if (patch.accountId !== undefined && patch.accountId !== tx.accountId) {
-    // Revert on old, apply on new.
-    const sign = tx.kind === 'expense' ? '+' : '-';
-    await client.query(
-      `UPDATE accounts SET balance_cents = balance_cents ${sign} $2 WHERE id = $1 AND household_id = $3`,
-      [tx.accountId, tx.amountCents, householdId],
-    );
-    const newSign = tx.kind === 'expense' ? '-' : '+';
-    await client.query(
-      `UPDATE accounts SET balance_cents = GREATEST(0, balance_cents ${newSign} $2) WHERE id = $1 AND household_id = $3`,
-      [patch.accountId, tx.amountCents, householdId],
-    );
-  }
+  // Balance legs were already reversed/applied exactly once by the
+  // delta engine above; the row UPDATE below only persists the new
+  // amount/account references.
   const res = await client.query<Row>(
     `UPDATE transactions
         SET description = COALESCE($3, description),
@@ -984,6 +1100,71 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
 /**
  * Postgres idempotency store. TTL 24h, lazy eviction on lookup.
  */
+
+type SettledClaimRow = {
+  id: string;
+  status: string;
+  response: unknown;
+  payload_hash: string;
+  lease_until: Date | string | null;
+};
+
+/**
+ * Finding 3: explicit `processing` handling for a lost claim race.
+ *
+ * - `completed` → replay the recorded response.
+ * - `processing` with a live lease → another worker owns the claim: an
+ *   explicit 409 `idempotency.in_progress` (never a null-response replay,
+ *   which 500s the route).
+ * - `processing` with an expired lease → take over the claim in this tx
+ *   (single-winner via the status+lease predicate) and return the record id
+ *   so the caller runs the producer through the normal completion path.
+ * - `failed`, payload mismatch, or a lost takeover race → 409 conflict
+ *   (existing behavior; the race loser never runs the producer).
+ */
+const resolveLostClaimRace = async (
+  client: PoolClient,
+  householdId: string,
+  compositeKey: string,
+  payload: unknown,
+  payloadHash: string,
+): Promise<{ response: unknown } | { recordId: string }> => {
+  const readSettled = () =>
+    client.query<SettledClaimRow>(
+      `SELECT id, status, response, payload_hash, lease_until
+         FROM operation_records
+        WHERE workspace_id = $1 AND idempotency_key = $2`,
+      [householdId, compositeKey],
+    );
+  const settled = await readSettled();
+  if (settled.rowCount === 0) throw domainErrors.idempotencyConflict();
+  const row = settled.rows[0]!;
+  if (row.status === 'failed') throw domainErrors.idempotencyConflict();
+  if (!matchesPayloadHash(row.payload_hash, payload)) throw domainErrors.idempotencyConflict();
+  if (row.status === 'completed') return { response: row.response };
+  const leaseMs = row.lease_until ? new Date(row.lease_until).getTime() : 0;
+  if (leaseMs > Date.now()) throw domainErrors.idempotencyInProgress();
+  const takeover = await client.query<{ id: string }>(
+    `UPDATE operation_records
+        SET status = 'processing', payload_hash = $3,
+            lease_until = NOW() + INTERVAL '5 minutes',
+            retry_until = NOW() + INTERVAL '7 days',
+            retention_until = NOW() + INTERVAL '90 days'
+      WHERE workspace_id = $1 AND idempotency_key = $2
+        AND status = 'processing' AND lease_until <= NOW()
+      RETURNING id`,
+    [householdId, compositeKey, payloadHash],
+  );
+  if (takeover.rowCount === 1) return { recordId: takeover.rows[0]!.id };
+  const reread = await readSettled();
+  const latest = reread.rows[0];
+  if (latest && latest.status === 'completed' && matchesPayloadHash(latest.payload_hash, payload)) {
+    return { response: latest.response };
+  }
+  if (latest && latest.status === 'processing') throw domainErrors.idempotencyInProgress();
+  throw domainErrors.idempotencyConflict();
+};
+
 export const createPostgresIdempotencyStore = (opts: { pool: Pool; legacy?: boolean }): import('./idempotency.js').IdempotencyStore => {
   const { pool, legacy } = opts;
   // V4.1 Phase 3 Tasks 3.6/3.7: new claims hash V2 (SHA-256 over canonical
@@ -1063,17 +1244,31 @@ const resolvedUserId = await resolveApplicationUserId(client, actorId);
             return { response, replayed: false };
           }
 
-          const settled = await client.query<{ status: string; response: unknown; payload_hash: string }>(
-            `SELECT status, response, payload_hash
-               FROM operation_records
-              WHERE workspace_id = $1 AND idempotency_key = $2`,
-            [householdId, compositeKey],
-          );
-          if (settled.rowCount === 0) throw domainErrors.idempotencyConflict();
-          const row = settled.rows[0]!;
-          if (row.status === 'failed') throw domainErrors.idempotencyConflict();
-          if (!matchesPayloadHash(row.payload_hash, payload)) throw domainErrors.idempotencyConflict();
-          return { response: row.response as never, replayed: true };
+          // Lost the claim race: explicit processing handling (Finding 3) —
+          // completed replays, live-lease processing 409s, expired-lease
+          // processing is taken over below via the normal completion path.
+          const lost = await resolveLostClaimRace(client, householdId, compositeKey, payload, payloadHash);
+          if ('response' in lost) return { response: lost.response as never, replayed: true };
+          {
+            const recordId = lost.recordId;
+            const response = await producer(client);
+            const effectRef = (response as { transactionId?: string } | null)?.transactionId ?? null;
+            await client.query(
+              `UPDATE operation_records
+                  SET status = 'completed', response = $3, effect_ref = $4, completed_at = NOW()
+                WHERE id = $1 AND workspace_id = $2`,
+              [recordId, householdId, JSON.stringify(response), effectRef],
+            );
+            const resolvedUserId = await resolveApplicationUserId(client, actorId);
+            const resolvedHouseholdId = await resolveHouseholdId(client, householdId);
+            await client.query(
+              `INSERT INTO audit_logs
+                 (id, household_id, user_id, action, entity_type, entity_id, before_json, after_json, created_at)
+               VALUES ($1, $2, $3, $4, 'operation', $5, $6, $7, NOW())`,
+              [randomUUID(), resolvedHouseholdId, resolvedUserId, operation ?? 'write', recordId, null, JSON.stringify(response)],
+            );
+            return { response, replayed: false };
+          }
         }
 
         // Canonical path: claim + effect + completion + audit in one
@@ -1120,19 +1315,38 @@ const resolvedUserId = await resolveApplicationUserId(client, actorId);
           return { response, replayed: false };
         }
 
-        // Lost the claim race: read the settled operation and treat it as a
-        // canonical replay (no producer execution, no duplicate effect).
-        const settled = await client.query<{ status: string; response: unknown; payload_hash: string }>(
-          `SELECT status, response, payload_hash
-             FROM operation_records
-            WHERE workspace_id = $1 AND idempotency_key = $2`,
-          [householdId, compositeKey],
-        );
-        if (settled.rowCount === 0) throw domainErrors.idempotencyConflict();
-        const row = settled.rows[0]!;
-        if (row.status === 'failed') throw domainErrors.idempotencyConflict();
-        if (!matchesPayloadHash(row.payload_hash, payload)) throw domainErrors.idempotencyConflict();
-        return { response: row.response as never, replayed: true };
+        // Lost the claim race: explicit processing handling (Finding 3) —
+        // completed replays, live-lease processing 409s, expired-lease
+        // processing is taken over below via the normal completion path.
+        const lost = await resolveLostClaimRace(client, householdId, compositeKey, payload, payloadHash);
+        if ('response' in lost) return { response: lost.response as never, replayed: true };
+        {
+          const recordId = lost.recordId;
+          const response = await producer(client);
+          const effectRef = (response as { transactionId?: string } | null)?.transactionId ?? null;
+          await client.query(
+            `UPDATE operation_records
+                SET status = 'completed', response = $3, effect_ref = $4, completed_at = NOW()
+              WHERE id = $1 AND workspace_id = $2`,
+            [recordId, householdId, JSON.stringify(response), effectRef],
+          );
+          await client.query(
+            `INSERT INTO audit_logs
+               (id, operation_record_id, workspace_id, actor_id, operation, event_type, payload_hash, effect_ref, metadata)
+             VALUES ($1, $2, $3, $4, $5, 'financial_effect.committed', $6, $7, $8)`,
+            [
+              randomUUID(),
+              recordId,
+              householdId,
+              actorId ?? 'device',
+              operation ?? 'write',
+              payloadHash,
+              effectRef,
+              JSON.stringify({ entityType }),
+            ],
+          );
+          return { response, replayed: false };
+        }
       });
     },
     clear: () => {

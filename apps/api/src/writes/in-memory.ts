@@ -133,20 +133,54 @@ export const resolveSubcategory = (
   return sub;
 };
 
+/**
+ * V4.1 Phase 4 (D1 option B): insufficient-funds guard shared by the
+ * debit paths. Same 400 `validation.invalid` shape the payables and card
+ * stores use — never a silent clamp.
+ */
+const assertSufficientFunds = (balanceCents: number, amountCents: number): void => {
+  if (balanceCents < amountCents) {
+    throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
+  }
+};
+
+/**
+ * V4.1 Phase 4 (D1 option B): H-01 parity for PATCH — an entry moved onto
+ * a credit card is rejected with the same 422 the create path uses.
+ */
+const assertNotCreditCardForKind = (
+  acc: Account,
+  kind: 'expense' | 'income',
+): void => {
+  if (acc.kind !== 'credit_card') return;
+  if (kind === 'expense') {
+    throw new DomainError('validation.invalid', 'compra no cartão deve usar /cards/purchases.', 422);
+  }
+  throw new DomainError('validation.invalid', 'receita não pode usar cartão de crédito.', 422);
+};
+
 const softDeleteTxInState = (state: InMemoryState, tx: Transaction): void => {
   if (tx.kind === 'expense') {
     const acc = state.accounts.find((a) => a.id === tx.accountId && a.householdId === tx.householdId);
     if (acc) acc.balanceCents = Math.min(acc.balanceCents + tx.amountCents, Number.MAX_SAFE_INTEGER);
   } else if (tx.kind === 'income') {
     const acc = state.accounts.find((a) => a.id === tx.accountId && a.householdId === tx.householdId);
-    if (acc) acc.balanceCents = Math.max(0, acc.balanceCents - tx.amountCents);
+    // V4.1 Phase 4 (D1): reversing an income is a debit — it must not
+    // drive the balance negative silently (was: Math.max(0, …) clamp).
+    if (acc) {
+      assertSufficientFunds(acc.balanceCents, tx.amountCents);
+      acc.balanceCents -= tx.amountCents;
+    }
   } else if (tx.kind === 'transfer') {
     // C-04 parity with softDeleteTransaction: reverse both legs.
     const from = state.accounts.find((a) => a.id === tx.accountId && a.householdId === tx.householdId);
     if (from) from.balanceCents = Math.min(from.balanceCents + tx.amountCents, Number.MAX_SAFE_INTEGER);
     if (tx.transferToAccountId) {
       const to = state.accounts.find((a) => a.id === tx.transferToAccountId && a.householdId === tx.householdId);
-      if (to) to.balanceCents = Math.max(0, to.balanceCents - tx.amountCents);
+      if (to) {
+        assertSufficientFunds(to.balanceCents, tx.amountCents);
+        to.balanceCents -= tx.amountCents;
+      }
     }
   }
   state.deletedTransactions.add(tx.id);
@@ -239,6 +273,9 @@ export const createInMemoryWriteStore = (state: InMemoryState): WriteStore => {
       resolveSubcategory(state, householdId, input.subcategoryId, 'expense', input.categoryId);
     }
     if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
+    // V4.1 Phase 4 (D1 option B): no silent clamp — an expense that
+    // exceeds the balance fails instead of recording a partial debit.
+    assertSufficientFunds(acc.balanceCents, input.amountCents);
     const tx: Transaction = {
       id: randomUUID(),
       householdId,
@@ -252,7 +289,7 @@ export const createInMemoryWriteStore = (state: InMemoryState): WriteStore => {
       ...(input.notes !== undefined ? { notes: input.notes } : {}),
     };
     state.transactions.push(tx);
-    acc.balanceCents = Math.max(0, acc.balanceCents - input.amountCents);
+    acc.balanceCents -= input.amountCents;
     return tx;
   };
 
@@ -476,6 +513,10 @@ async createAccount(householdId, input) {
         throw new DomainError('validation.invalid', 'transferência não pode usar cartão de crédito.', 422);
       }
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
+      // V4.1 Phase 4 (D1 option B): a transfer that exceeds the source
+      // balance fails BEFORE any leg moves (was: debit clamped, full
+      // credit — money creation).
+      assertSufficientFunds(from.balanceCents, input.amountCents);
       const tx: Transaction = {
         id: randomUUID(),
         householdId,
@@ -487,7 +528,7 @@ async createAccount(householdId, input) {
         transferToAccountId: input.toAccountId,
       };
       state.transactions.push(tx);
-      from.balanceCents = Math.max(0, from.balanceCents - input.amountCents);
+      from.balanceCents -= input.amountCents;
       to.balanceCents += input.amountCents;
       return tx;
     },
@@ -520,34 +561,52 @@ async createAccount(householdId, input) {
       // expense / income
       if (patch.description !== undefined) tx.description = patch.description;
       if (patch.date !== undefined) tx.date = patch.date;
-      if (patch.amountCents !== undefined) {
-        if (patch.amountCents <= 0) {
+      // V4.1 Phase 4 (Tasks 4.4–4.5): delta engine — compute the effective
+      // after-state, validate it (D1: no account may end negative; H-01:
+      // no credit-card leg), then reverse(before) + apply(after) exactly
+      // once. Validation runs BEFORE any mutation so a rejection leaves
+      // every balance untouched.
+      const balanceTouched =
+        patch.amountCents !== undefined ||
+        (patch.accountId !== undefined && patch.accountId !== tx.accountId);
+      if (balanceTouched) {
+        if (patch.amountCents !== undefined && patch.amountCents <= 0) {
           throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
         }
-        // Restore old balance, then apply new.
-        const acc = findAccount(tx.accountId, householdId);
-        if (tx.kind === 'expense') {
-          acc.balanceCents = Math.min(acc.balanceCents + tx.amountCents, Number.MAX_SAFE_INTEGER);
-          acc.balanceCents = Math.max(0, acc.balanceCents - patch.amountCents);
+        const newAmount = patch.amountCents ?? tx.amountCents;
+        const newAccountId = patch.accountId ?? tx.accountId;
+        const oldAcc = findAccount(tx.accountId, householdId);
+        const newAcc = newAccountId === tx.accountId ? oldAcc : findAccount(newAccountId, householdId);
+        assertNotDeleted(newAcc);
+        assertNotCreditCardForKind(newAcc, tx.kind);
+        // Projected finals: reverse(before) then apply(after).
+        const reverseDelta = tx.kind === 'expense' ? tx.amountCents : -tx.amountCents;
+        const applyDelta = tx.kind === 'expense' ? -newAmount : newAmount;
+        if (newAccountId === tx.accountId) {
+          const final = oldAcc.balanceCents + reverseDelta + applyDelta;
+          if (final < 0) {
+            throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
+          }
+          oldAcc.balanceCents = final;
         } else {
-          acc.balanceCents = Math.max(0, acc.balanceCents - tx.amountCents);
-          acc.balanceCents = acc.balanceCents + patch.amountCents;
+          const oldFinal = oldAcc.balanceCents + reverseDelta;
+          const newFinal = newAcc.balanceCents + applyDelta;
+          // reverseDelta on an expense is a credit (never negative);
+          // on income it is a debit that must not go negative either.
+          if (oldFinal < 0 || newFinal < 0) {
+            throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
+          }
+          oldAcc.balanceCents = oldFinal;
+          newAcc.balanceCents = newFinal;
         }
-        tx.amountCents = patch.amountCents;
+        tx.amountCents = newAmount;
+        tx.accountId = newAccountId;
       }
-      if (patch.accountId !== undefined) {
-        const old = findAccount(tx.accountId, householdId);
+      if (patch.accountId !== undefined && !balanceTouched) {
+        // Same-account no-op patch: still validate the target.
         const next = findAccount(patch.accountId, householdId);
         assertNotDeleted(next);
-        // Move balance effect.
-        if (tx.kind === 'expense') {
-          old.balanceCents = Math.min(old.balanceCents + tx.amountCents, Number.MAX_SAFE_INTEGER);
-          next.balanceCents = Math.max(0, next.balanceCents - tx.amountCents);
-        } else {
-          old.balanceCents = Math.max(0, old.balanceCents - tx.amountCents);
-          next.balanceCents = next.balanceCents + tx.amountCents;
-        }
-        tx.accountId = patch.accountId;
+        assertNotCreditCardForKind(next, tx.kind);
       }
       if (patch.categoryId !== undefined) {
         // V4.1 Task 2.15: the new category must be active in the household
@@ -586,20 +645,22 @@ async createAccount(householdId, input) {
       if (state.deletedTransactions.has(tx.id)) {
         throw domainErrors.notFound('Lançamento');
       }
-      // Restore balance effect.
+      // Restore balance effect (D1: debit legs validate, never clamp).
       if (tx.kind === 'expense') {
         const acc = findAccount(tx.accountId, householdId);
         acc.balanceCents = Math.min(acc.balanceCents + tx.amountCents, Number.MAX_SAFE_INTEGER);
       } else if (tx.kind === 'income') {
         const acc = findAccount(tx.accountId, householdId);
-        acc.balanceCents = Math.max(0, acc.balanceCents - tx.amountCents);
+        assertSufficientFunds(acc.balanceCents, tx.amountCents);
+        acc.balanceCents -= tx.amountCents;
       } else if (tx.kind === 'transfer') {
         const from = findAccount(tx.accountId, householdId);
         const to = tx.transferToAccountId
           ? findAccount(tx.transferToAccountId, householdId)
           : null;
+        if (to) assertSufficientFunds(to.balanceCents, tx.amountCents);
         from.balanceCents = Math.min(from.balanceCents + tx.amountCents, Number.MAX_SAFE_INTEGER);
-        if (to) to.balanceCents = Math.max(0, to.balanceCents - tx.amountCents);
+        if (to) to.balanceCents -= tx.amountCents;
       }
       // Soft delete: tombstone. Read store filters these out.
       state.deletedTransactions.add(tx.id);

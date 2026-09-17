@@ -142,9 +142,11 @@ const createPayableWithTemplateInTxLegacy = async (
 
   const payableId = randomUUID();
   const initialStatus = todayISO() <= input.payable.dueDate ? 'pending' : 'overdue';
+  // V4.1 Phase 4 Task 4.11: code→schema alignment (mirrors canonical) —
+  // accounts_payable has no template_id column and nothing reads it.
   await client.query(
-    `INSERT INTO accounts_payable (id, household_id, account_id, category_id, description, amount_cents, due_date, type, frequency, status, notes, template_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    `INSERT INTO accounts_payable (id, household_id, account_id, category_id, description, amount_cents, due_date, type, frequency, status, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
     [
       payableId,
       householdId,
@@ -157,7 +159,6 @@ const createPayableWithTemplateInTxLegacy = async (
       input.payable.frequency ?? null,
       initialStatus,
       input.payable.notes ?? null,
-      templateId,
     ],
   );
   const rows = await client.query<Row>(

@@ -13,6 +13,7 @@ export type DomainErrorCode =
   | "in_use"
   | "conflict"
   | "idempotency.conflict"
+  | "idempotency.in_progress"
   | "unsupported"
   | "approval.not_found"
   | "approval.requester_only"
@@ -66,6 +67,15 @@ export const domainErrors = {
     new DomainError(
       "idempotency.conflict",
       messages.idempotencyConflict(),
+      409,
+    ),
+  // Finding 3: a live `processing` claim owned by another worker is an
+  // explicit 409 (never a null-response replay). Same key+payload retries
+  // after lease expiry take over; while the lease holds the caller waits.
+  idempotencyInProgress: (): DomainError =>
+    new DomainError(
+      "idempotency.in_progress",
+      "Operação idêntica ainda em processamento; repita com a mesma chave.",
       409,
     ),
   unsupported: (what: string): DomainError =>

@@ -8,11 +8,13 @@
  */
 
 import { z } from 'zod';
+import { isoDateSchema as isoDate } from '../shared/iso-date.js';
+import { nonNegativeMoneyCentsSchema, positiveMoneyCentsSchema } from '../shared/money.js';
 
 export const createAccountInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
   kind: z.enum(['bank', 'cash']),
-  initialBalanceCents: z.number().int().nonnegative(),
+  initialBalanceCents: nonNegativeMoneyCentsSchema,
 });
 export type CreateAccountInput = z.infer<typeof createAccountInputSchema>;
 
@@ -83,14 +85,12 @@ export const deleteCategoryInputSchema = z
   });
 export type DeleteCategoryInput = z.infer<typeof deleteCategoryInputSchema>;
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
-
 /** Free-form observation from "Mais detalhes" (item 10/B4). */
 const notesField = z.string().trim().max(2000).optional();
 
 export const createExpenseInputSchema = z.object({
   description: z.string().trim().min(1).max(240),
-  amountCents: z.number().int().positive(),
+  amountCents: positiveMoneyCentsSchema,
   date: isoDate,
   accountId: z.string().uuid(),
   categoryId: z.string().uuid(),
@@ -101,7 +101,7 @@ export type CreateExpenseInput = z.infer<typeof createExpenseInputSchema>;
 
 export const createIncomeInputSchema = z.object({
   description: z.string().trim().min(1).max(240),
-  amountCents: z.number().int().positive(),
+  amountCents: positiveMoneyCentsSchema,
   date: isoDate,
   accountId: z.string().uuid(),
   categoryId: z.string().uuid(),
@@ -112,7 +112,7 @@ export type CreateIncomeInput = z.infer<typeof createIncomeInputSchema>;
 
 export const createTransferInputSchema = z.object({
   description: z.string().trim().min(1).max(240),
-  amountCents: z.number().int().positive(),
+  amountCents: positiveMoneyCentsSchema,
   date: isoDate,
   fromAccountId: z.string().uuid(),
   toAccountId: z.string().uuid(),
@@ -134,7 +134,7 @@ export const updateTransactionInputSchema = z
   .object({
     description: z.string().trim().min(1).max(240).optional(),
     date: isoDate.optional(),
-    amountCents: z.number().int().positive().optional(),
+    amountCents: positiveMoneyCentsSchema.optional(),
     accountId: z.string().uuid().optional(),
     categoryId: z.string().uuid().optional(),
     subcategoryId: z.string().uuid().optional(),
