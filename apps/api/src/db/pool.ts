@@ -40,6 +40,18 @@ export const DEFAULT_STATEMENT_TIMEOUT_MILLIS = 30_000;
 export const DEFAULT_LOCK_TIMEOUT_MILLIS = 10_000;
 export const DEFAULT_IDLE_IN_TRANSACTION_TIMEOUT_MILLIS = 15_000;
 
+/**
+ * Migration-runner timeout defaults (DEBT-CODER-INFRA, release-bridge
+ * decision): migration scripts run DDL/backfills that legitimately exceed
+ * the 30s API runtime default, so they get their own generous budget.
+ * Env-overridable via PI_DB_MIGRATION_STATEMENT_TIMEOUT_MS /
+ * PI_DB_MIGRATION_LOCK_TIMEOUT_MS. Deliberately decoupled from
+ * PI_DB_STATEMENT_TIMEOUT_MS so tightening the API default can never
+ * starve a migration.
+ */
+export const DEFAULT_MIGRATION_STATEMENT_TIMEOUT_MILLIS = 600_000;
+export const DEFAULT_MIGRATION_LOCK_TIMEOUT_MILLIS = 60_000;
+
 export type PoolTimeouts = {
   connectionTimeoutMillis: number;
   statementTimeoutMillis: number;
@@ -88,6 +100,71 @@ export const sessionTimeoutStatements = (timeouts: PoolTimeouts): string[] => [
   `SET lock_timeout = ${timeouts.lockTimeoutMillis}`,
   `SET idle_in_transaction_session_timeout = ${timeouts.idleInTransactionSessionTimeoutMillis}`,
 ];
+
+export type MigrationTimeouts = {
+  statementTimeoutMillis: number;
+  lockTimeoutMillis: number;
+};
+
+/**
+ * Resolve the migration-runner budget. Explicit config wins, then the
+ * migration-specific PI_DB_MIGRATION_* env, then the generous migration
+ * defaults. The generic PI_DB_STATEMENT_TIMEOUT_MS / PI_DB_LOCK_TIMEOUT_MS
+ * are deliberately ignored here so the API runtime budget and the
+ * migration budget stay decoupled.
+ */
+export const resolveMigrationTimeouts = (
+  config: Pick<DbConfig, 'statementTimeoutMillis' | 'lockTimeoutMillis'> = {},
+  env: Record<string, string | undefined> = process.env,
+): MigrationTimeouts => ({
+  statementTimeoutMillis:
+    config.statementTimeoutMillis ??
+    numericEnv(env, 'PI_DB_MIGRATION_STATEMENT_TIMEOUT_MS', DEFAULT_MIGRATION_STATEMENT_TIMEOUT_MILLIS),
+  lockTimeoutMillis:
+    config.lockTimeoutMillis ??
+    numericEnv(env, 'PI_DB_MIGRATION_LOCK_TIMEOUT_MS', DEFAULT_MIGRATION_LOCK_TIMEOUT_MILLIS),
+});
+
+/**
+ * Transaction-scoped override applied inside each migration transaction
+ * (SET LOCAL resets automatically on COMMIT/ROLLBACK, so a pooled
+ * connection can never leak the generous budget back to API traffic).
+ * Values are integers validated above — safe to interpolate.
+ */
+export const migrationTimeoutStatements = (timeouts: MigrationTimeouts): string[] => [
+  `SET LOCAL statement_timeout = ${timeouts.statementTimeoutMillis}`,
+  `SET LOCAL lock_timeout = ${timeouts.lockTimeoutMillis}`,
+];
+
+/** Apply the migration budget on an already-BEGINed migration client. */
+export const applyMigrationTimeouts = async (
+  client: Pick<pg.PoolClient, 'query'>,
+  config: Pick<DbConfig, 'statementTimeoutMillis' | 'lockTimeoutMillis'> = {},
+  env: Record<string, string | undefined> = process.env,
+): Promise<void> => {
+  const timeouts = resolveMigrationTimeouts(config, env);
+  for (const statement of migrationTimeoutStatements(timeouts)) {
+    await client.query(statement);
+  }
+};
+
+/**
+ * Pool factory for migration scripts (migrate.ts, migrate-job.ts). Same
+ * enforcement as createPool but with the migration budget, so even the
+ * pre/post queries outside the per-migration transactions (planner,
+ * backup marker, advisory lock) run under the generous timeout.
+ */
+export const createMigrationPool = (
+  config: DbConfig,
+  env: Record<string, string | undefined> = process.env,
+): DbPool => {
+  const timeouts = resolveMigrationTimeouts(config, env);
+  return createPool({
+    ...config,
+    statementTimeoutMillis: timeouts.statementTimeoutMillis,
+    lockTimeoutMillis: timeouts.lockTimeoutMillis,
+  });
+};
 
 export const createPool = (config: DbConfig): DbPool => {
   if (!config.connectionString) {

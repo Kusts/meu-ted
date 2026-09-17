@@ -21,7 +21,7 @@ jobs:
       actions: read
     steps:
       - name: Require CI and PWA CI success for the deployed SHA
-        uses: actions/github-script@v7 # pinned: v7, reviewed 2026-09-17
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         with:
@@ -57,7 +57,7 @@ jobs:
             core.info(`Deploy gate passed for ${sha}.`);
 
       - name: Reject stale deployment (candidate must equal current main)
-        uses: actions/github-script@v7 # pinned: v7, reviewed 2026-09-17
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         with:
@@ -82,13 +82,13 @@ jobs:
       actions: read
     steps:
       - name: Checkout approved SHA
-        uses: actions/checkout@v4 # pinned: v4, reviewed 2026-09-17
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-      - uses: pnpm/action-setup@v4 # pinned: v4, reviewed 2026-09-17
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10
-      - uses: actions/setup-node@v4 # pinned: v4, reviewed 2026-09-17
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -99,7 +99,7 @@ jobs:
       # exact source passed CI; deploy refuses to proceed without it.
       - name: Resolve CI manifest run for the approved SHA
         id: manifest-run
-        uses: actions/github-script@v7 # pinned: v7, reviewed 2026-09-17
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         with:
@@ -120,7 +120,7 @@ jobs:
             core.info(`Using CI run #${runs[0].run_number} (id=${runs[0].id}).`);
             core.setOutput('run_id', String(runs[0].id));
       - name: Download CI manifest
-        uses: actions/download-artifact@v4 # pinned: v4, reviewed 2026-09-17
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: agent-deploy-manifest-${{ github.event.workflow_run.head_sha }}
           path: /tmp/agent-manifest
@@ -154,7 +154,7 @@ jobs:
       API_PROD_URL: https://api.synkroo.com.br
     steps:
       - name: Checkout deployed SHA
-        uses: actions/checkout@v4 # pinned: v4, reviewed 2026-09-17
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
       - name: Agent worker health (public GET only)

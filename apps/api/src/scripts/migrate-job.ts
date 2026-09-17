@@ -9,7 +9,7 @@
  * Creates a backup marker before applying migrations.
  */
 
-import { createPool } from '../db/pool.js';
+import { createMigrationPool } from '../db/pool.js';
 import { runMigrations } from '../read-models/sql/migrate.js';
 import { requireTestDatabase } from '../db/db-guard.js';
 import { isBackupGateSatisfied, withMigrationAdvisoryLock } from './migration-job-policy.js';
@@ -25,7 +25,7 @@ const main = async (): Promise<void> => {
     process.exit(1);
   }
 
-  const pool = createPool({ connectionString: databaseUrl });
+  const pool = createMigrationPool({ connectionString: databaseUrl });
 
   try {
     // Local runs require the server-side test marker. Production runs are

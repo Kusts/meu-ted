@@ -8,7 +8,7 @@
  */
 
 import { loadConfig } from '../env.js';
-import { createPool } from '../db/pool.js';
+import { createMigrationPool } from '../db/pool.js';
 import { runMigrations, validateMigrations } from '../read-models/sql/migrate.js';
 
 const main = async (): Promise<void> => {
@@ -19,7 +19,7 @@ const main = async (): Promise<void> => {
     process.stderr.write('DATABASE_URL is not set; nothing to do.\n');
     process.exit(1);
   }
-  const pool = createPool({ connectionString: cfg.databaseUrl });
+  const pool = createMigrationPool({ connectionString: cfg.databaseUrl });
   try {
     if (validateOnly) {
       // V4.1 Phase 9 (Task 9.5): read-only validation — plans drift/pending,

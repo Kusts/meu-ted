@@ -11,6 +11,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DbPool } from "../../db/pool.js";
+import { applyMigrationTimeouts } from "../../db/pool.js";
 import { withMigrationAdvisoryLock } from "../../db/migration-lock.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -339,6 +340,10 @@ const runMigrationsInner = async (
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      // DEBT-CODER-INFRA: generous migration budget (SET LOCAL — resets
+      // on COMMIT/ROLLBACK). Covers pools created with the 30s API
+      // default (e.g. server boot callers) as well as migration pools.
+      await applyMigrationTimeouts(client);
       await client.query(sql);
       await client.query(
         "INSERT INTO _migrations (version, name, checksum) VALUES ($1, $2, $3)",
