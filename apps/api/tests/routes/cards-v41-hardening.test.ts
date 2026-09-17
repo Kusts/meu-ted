@@ -206,6 +206,21 @@ describe('2.7 purchase PATCH keeps purchase + transaction in sync', () => {
     const tx = detail.json().purchases[0];
     expect(tx.categoryId === CATEGORY_RENT_A.id || tx.categoryName === 'Aluguel').toBe(true);
   });
+
+  it('FINAL REVIEW: patching to an income-kind or inactive category is rejected (M-05 parity)', async () => {
+    const { app } = buildTestApp(freshSeed());
+    const { purchaseId } = await createPurchase(app);
+    const wrongKind = await app.inject({
+      method: 'PATCH', url: `/cards/purchases/${purchaseId}`, headers: auth(),
+      payload: { categoryId: CATEGORY_SALARY_A.id },
+    });
+    expect(wrongKind.statusCode).toBe(400);
+    const inactive = await app.inject({
+      method: 'PATCH', url: `/cards/purchases/${purchaseId}`, headers: auth(),
+      payload: { categoryId: INACTIVE_CATEGORY.id },
+    });
+    expect(inactive.statusCode).toBe(404);
+  });
 });
 
 describe('2.9 statement payment guards (single-node semantics)', () => {

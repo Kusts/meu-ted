@@ -480,8 +480,10 @@ const cancelPurchaseInTx = async (
   if ((lockedTx.rowCount ?? 0) === 0) throw domainErrors.notFound('Compra');
 
   await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
-  // Se existir card_purchases vinculado, também soft-deletar
-  await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE transaction_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]).catch(() => {});
+  // FINAL REVIEW: projection soft-delete must not fail silently — a swallowed
+  // error here would confirm the ledger tombstone while leaving an active
+  // card_purchases row. Let the failure roll the whole tx back.
+  await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE transaction_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]);
 
   // Task 2.8: recompute under the statement row lock.
   await recalcStatementLockedTx(client, stmtId, householdId);
@@ -643,11 +645,9 @@ export const createPostgresCardStore = (pool: Pool): CardStore => {
       // uncommitted writes.
       const stmtId = await withTransaction(pool, async (client): Promise<string> => {
         if (input.categoryId) {
-          const catRows = await client.query<Row>(
-            `SELECT id FROM categories WHERE id = $1 AND household_id = $2`,
-            [input.categoryId, householdId],
-          );
-          if (catRows.rowCount === 0 || catRows.rows.length === 0) throw domainErrors.notFound('Categoria');
+          // FINAL REVIEW: PATCH must apply the same active/expense rule as
+          // creation (M-05) — not just existence.
+          await resolveExpenseCategoryInTx(client, householdId, input.categoryId);
         }
 
         // V4.1 REVIEWFIX F5 [major]: global lock order STATEMENT →

@@ -449,7 +449,9 @@ export const createLegacyPostgresCardStore = (pool: Pool): CardStore => {
       const stmt = mapStatement(stmtRes.rows[0]!);
       if (stmt.status !== 'open') throw domainErrors.conflict('Fatura não está aberta para cancelamento.');
       await client.query(`UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`, [purchaseId, householdId]);
-      await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE transaction_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]).catch(() => {});
+      // FINAL REVIEW: projection failure must roll the tx back (ledger and
+      // projection cancel atomically — no silent catch).
+      await client.query(`UPDATE card_purchases SET deleted_at = NOW(), updated_at = NOW() WHERE transaction_id = $1 AND household_id = $2 AND deleted_at IS NULL`, [purchaseId, householdId]);
       await recalcStatement(stmtId, householdId, client);
       return;
     }

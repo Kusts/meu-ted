@@ -768,4 +768,55 @@ describeIfDb('Postgres cards V4.1 hardening (tasks 2.5–2.9, 2.18)', () => {
       }
     });
   });
+
+  // ── FINAL REVIEW: projection failure must roll the cancel back ─────────
+  describe('FINAL REVIEW — cancelPurchase rejects when the projection update fails', () => {
+    it('legacy: card_purchases failure rolls back the transaction tombstone', async () => {
+      const cards = createLegacyPostgresCardStore(legPool!);
+      const hh = randomUUID();
+      const cardId = await seedLegacyCard(legPool!, hh);
+      const catId = await seedLegacyCategory(legPool!, hh, 'expense');
+      const [tx] = await cards.createCardPurchase(hh, {
+        accountId: cardId, description: 'Cancel me', amountCents: 3000, date: FUTURE_DATE, categoryId: catId,
+      });
+      // Force the projection UPDATE to fail: hide the table. The legacy
+      // pool's search_path falls through to `public` (canonical migrations
+      // live there in this shared test DB), so BOTH copies must be hidden —
+      // otherwise the unqualified UPDATE silently lands on public's 0 rows
+      // instead of erroring. Previously the silent `.catch(() => {})` let
+      // the ledger tombstone survive a real failure.
+      await legPool!.query(`ALTER TABLE ${LEG_SCHEMA}.card_purchases RENAME TO card_purchases_hidden`);
+      const hadPublic = await adminPool!.query(
+        `SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='card_purchases'`,
+      );
+      if ((hadPublic.rowCount ?? 0) > 0) {
+        await adminPool!.query(`ALTER TABLE public.card_purchases RENAME TO card_purchases_hidden`);
+      }
+      try {
+        await expect(cards.cancelPurchase(hh, tx!.id)).rejects.toBeTruthy();
+      } finally {
+        await legPool!.query(`ALTER TABLE ${LEG_SCHEMA}.card_purchases_hidden RENAME TO card_purchases`);
+        if ((hadPublic.rowCount ?? 0) > 0) {
+          await adminPool!.query(`ALTER TABLE public.card_purchases_hidden RENAME TO card_purchases`);
+        }
+      }
+      // Rollback proof: the transaction row is still live and cancellable.
+      const live = await legPool!.query(
+        `SELECT deleted_at FROM ${LEG_SCHEMA}.transactions WHERE id = $1`,
+        [tx!.id],
+      );
+      expect(live.rows[0]?.['deleted_at']).toBeNull();
+      await cards.cancelPurchase(hh, tx!.id);
+      const after = await legPool!.query(
+        `SELECT deleted_at FROM ${LEG_SCHEMA}.transactions WHERE id = $1`,
+        [tx!.id],
+      );
+      expect(after.rows[0]?.['deleted_at']).not.toBeNull();
+      await legPool!.query(`DELETE FROM card_purchases WHERE household_id = $1`, [hh]).catch(() => undefined);
+      await legPool!.query(`DELETE FROM transactions WHERE household_id = $1`, [hh]).catch(() => undefined);
+      await legPool!.query(`DELETE FROM statements WHERE household_id = $1`, [hh]).catch(() => undefined);
+      await legPool!.query(`DELETE FROM categories WHERE household_id = $1`, [hh]).catch(() => undefined);
+      await legPool!.query(`DELETE FROM accounts WHERE household_id = $1`, [hh]).catch(() => undefined);
+    }, 30_000);
+  });
 });
