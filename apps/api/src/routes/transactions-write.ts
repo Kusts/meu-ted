@@ -166,7 +166,19 @@ export const registerTransactionWriteRoutes = (
     const params = z.object({ id: z.string().uuid() }).safeParse(req.params);
     if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues });
     const parsed = updateTransactionInputSchema.safeParse(req.body ?? {});
-    if (!parsed.success) return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    // V4.1 SPEC §9.7: unknown fields are a semantic contract violation
+    // (422, like origin_conflict), not a malformed body (400).
+    if (!parsed.success) {
+      const unknown = parsed.error.issues.some((i) => i.code === 'unrecognized_keys');
+      if (unknown) {
+        return reply.code(422).send({
+          code: 'validation.unknown_fields',
+          message: 'campos não suportados no PATCH de lançamento.',
+          issues: parsed.error.issues,
+        });
+      }
+      return reply.code(400).send({ code: 'validation.error', issues: parsed.error.issues });
+    }
     try { return reply.code(200).send(await runIdempotent(req, ctx.householdId, { id: params.data.id, ...parsed.data }, async () => attachMutationReceipt(await opts.writes.updateTransaction(ctx.householdId, params.data.id, parsed.data), 'transaction.update', { type: 'transaction', id: params.data.id }))); }
     catch (e) { return handleError(e, reply); }
   });

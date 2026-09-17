@@ -772,8 +772,12 @@ export const createPostgresWriteStore = (opts: { pool: Pool }): WriteStore => {
             patch.subcategoryId !== undefined ||
             patch.notes !== undefined
           ) {
-            throw domainErrors.unsupported(
-              'transferências só podem ter descrição e data alteradas',
+            // V4.1 SPEC §9.7: restricted transfer fields are a contract
+            // violation (422), not a malformed body.
+            throw new DomainError(
+              'unsupported',
+              'Operação não suportada: transferências só podem ter descrição e data alteradas.',
+              422,
             );
           }
           if (patch.description === undefined && patch.date === undefined) return tx;

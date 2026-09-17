@@ -125,6 +125,10 @@ export type CreateTransferInput = z.infer<typeof createTransferInputSchema>;
  * Per spec: transfer updates are limited to description/date.
  * For expense/income, description/date/amount/account/category are
  * all patchable.
+ *
+ * V4.1 SPEC §9.7: `.strict()` — unknown fields must fail validation
+ * (the route maps unrecognized_keys to 422) instead of being silently
+ * stripped.
  */
 export const updateTransactionInputSchema = z
   .object({
@@ -136,5 +140,6 @@ export const updateTransactionInputSchema = z
     subcategoryId: z.string().uuid().optional(),
     notes: notesField,
   })
+  .strict()
   .refine((v) => Object.values(v).some((x) => x !== undefined), { message: 'patch vazio' });
 export type UpdateTransactionInput = z.infer<typeof updateTransactionInputSchema>;

@@ -454,7 +454,7 @@ describe('PATCH /transactions/:id', () => {
     expect(res.json().notes).toBe('Nota adicionada depois');
   });
 
-  it('rejects amount change on transfer (unsupported)', async () => {
+  it('rejects amount change on transfer (unsupported → 422 per SPEC §9.7)', async () => {
     const { app } = buildTestApp();
     const a = await app.inject({
       method: 'POST',
@@ -486,7 +486,7 @@ describe('PATCH /transactions/:id', () => {
       headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
       payload: { amountCents: 200 },
     });
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(422);
     expect(res.json().code).toBe('unsupported');
   });
 });

@@ -495,24 +495,68 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
       });
     },
     async updateTransaction(householdId: string, id: string, patch: UpdateTransactionInput) {
+      // V4.1 SPEC §9.7: legacy applies the same PATCH contract as canonical —
+      // description/date/amountCents/accountId/categoryId/subcategoryId/notes
+      // on expense/income, description/date only on transfer. Unknown keys
+      // never reach the store (route-level .strict() → 422).
       return withTransaction(pool, async (client: PoolClient) => {
         const existing = await client.query<Row>(
-          `SELECT kind, category_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [id, householdId]);
+          `SELECT id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id, subcategory_id, notes
+             FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [id, householdId]);
         if (existing.rowCount === 0) throw domainErrors.notFound('Lançamento');
-        if (patch.description === undefined && patch.date === undefined && patch.amountCents === undefined && patch.subcategoryId === undefined && patch.notes === undefined) return mapTransaction(existing.rows[0]!);
-        if (patch.subcategoryId !== undefined) {
-          const txKind = existing.rows[0]!['kind'] as 'expense' | 'income' | 'transfer';
-          if (txKind === 'transfer') {
-            throw domainErrors.unsupported('transferências só podem ter descrição e data alteradas');
+        const current = existing.rows[0]!;
+        const txKind = current['kind'] as 'expense' | 'income' | 'transfer';
+        if (txKind === 'transfer') {
+          if (
+            patch.amountCents !== undefined ||
+            patch.accountId !== undefined ||
+            patch.categoryId !== undefined ||
+            patch.subcategoryId !== undefined ||
+            patch.notes !== undefined
+          ) {
+            throw new DomainError(
+              'unsupported',
+              'Operação não suportada: transferências só podem ter descrição e data alteradas.',
+              422,
+            );
           }
-          const parentId = patch.categoryId ?? (existing.rows[0]!['category_id'] as string | undefined);
+          if (patch.description === undefined && patch.date === undefined) return mapTransaction(current);
+          const res = await client.query<Row>(
+            `UPDATE transactions SET description = COALESCE($3, description), date = COALESCE($4, date)
+             WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
+             RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id, subcategory_id, notes`,
+            [id, householdId, patch.description ?? null, patch.date ?? null]);
+          if (res.rowCount === 0) throw domainErrors.notFound('Lançamento');
+          return mapTransaction(res.rows[0]!);
+        }
+        if (patch.description === undefined && patch.date === undefined && patch.amountCents === undefined && patch.accountId === undefined && patch.categoryId === undefined && patch.subcategoryId === undefined && patch.notes === undefined) {
+          return mapTransaction(current);
+        }
+        if (patch.amountCents !== undefined && patch.amountCents <= 0) {
+          throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
+        }
+        if (patch.accountId !== undefined) {
+          const acc = await client.query<Row>(
+            `SELECT id FROM accounts WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL`,
+            [patch.accountId, householdId]);
+          if (acc.rowCount === 0) throw domainErrors.notFound('Conta');
+        }
+        if (patch.categoryId !== undefined) {
+          const cat = await client.query<Row>(
+            `SELECT id FROM categories WHERE id = $1 AND household_id = $2 AND active = true AND deleted_at IS NULL`,
+            [patch.categoryId, householdId]);
+          if (cat.rowCount === 0) throw domainErrors.notFound('Categoria');
+        }
+        if (patch.subcategoryId !== undefined) {
+          const parentId = patch.categoryId ?? (current['category_id'] as string | undefined);
           await resolveSubcategoryLegacy(client, householdId, patch.subcategoryId, txKind, parentId);
         }
+        const accountColumn = txKind === 'expense' ? 'from_account_id' : 'to_account_id';
         const res = await client.query<Row>(
-          `UPDATE transactions SET description = COALESCE($3, description), date = COALESCE($4, date), amount_cents = COALESCE($5, amount_cents), subcategory_id = COALESCE($6, subcategory_id), notes = COALESCE($7, notes)
+          `UPDATE transactions SET description = COALESCE($3, description), date = COALESCE($4, date), amount_cents = COALESCE($5, amount_cents), subcategory_id = COALESCE($6, subcategory_id), notes = COALESCE($7, notes), category_id = COALESCE($8, category_id), ${accountColumn} = COALESCE($9, ${accountColumn})
            WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL
            RETURNING id, household_id, kind, description, amount_cents, date, from_account_id, to_account_id, category_id, subcategory_id, notes`,
-          [id, householdId, patch.description ?? null, patch.date ?? null, patch.amountCents ?? null, patch.subcategoryId ?? null, patch.notes ?? null]);
+          [id, householdId, patch.description ?? null, patch.date ?? null, patch.amountCents ?? null, patch.subcategoryId ?? null, patch.notes ?? null, patch.categoryId ?? null, patch.accountId ?? null]);
         if (res.rowCount === 0) throw domainErrors.notFound('Lançamento');
         return mapTransaction(res.rows[0]!);
       });
