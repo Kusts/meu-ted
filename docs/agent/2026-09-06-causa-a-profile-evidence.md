@@ -22,7 +22,7 @@ report, necessário à identidade do perfil).
 ```sql
 INSERT INTO profiles (household_id, name, avatar_color, greeting_style, email, phone)
 VALUES ('d36cb649-4462-486d-940a-47128ad329f2', 'Usuário', '#0E8C5A', 'auto',
-        'walissonead@gmail.com', '');
+        '<owner-email>', '');
 -- INSERT 0 1, updated_at 2026-09-06 15:14:01Z
 ```
 
@@ -43,7 +43,7 @@ Nenhuma outra linha tocada (sem UPDATE/DELETE em dados existentes).
 Row criada (identidade exata — PK `household_id`, sem coluna `id` separada):
 
 - `household_id` = `d36cb649-4462-486d-940a-47128ad329f2`
-- `name` = `Usuário`, `email` = `walissonead@gmail.com`, `phone` = `` (vazio),
+- `name` = `Usuário`, `email` = `<owner-email>`, `phone` = `` (vazio),
   `avatar_color` = `#0E8C5A`, `greeting_style` = `auto`,
   `updated_at` = `2026-09-06 15:14:01.096208+00`
 
@@ -51,7 +51,7 @@ Row criada (identidade exata — PK `household_id`, sem coluna `id` separada):
 DELETE FROM profiles
  WHERE household_id = 'd36cb649-4462-486d-940a-47128ad329f2'
    AND name = 'Usuário'
-   AND email = 'walissonead@gmail.com'
+   AND email = '<owner-email>'
    AND phone = ''
    AND avatar_color = '#0E8C5A'
    AND greeting_style = 'auto'

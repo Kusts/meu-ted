@@ -179,28 +179,28 @@ describe('PATCH /profile isAdmin consistency with GET', () => {
     });
 
   it('returns isAdmin true on PATCH for an admin session email', async () => {
-    const app = buildAdminAwareApp('walissonead@gmail.com', ['walissonead@gmail.com']);
+    const app = buildAdminAwareApp('admin@example.com', ['admin@example.com']);
     const res = await patchName(app);
     expect(res.statusCode).toBe(200);
     expect(res.json().profile.isAdmin).toBe(true);
   });
 
   it('returns isAdmin false on PATCH for a non-admin session email', async () => {
-    const app = buildAdminAwareApp('user@example.com', ['walissonead@gmail.com']);
+    const app = buildAdminAwareApp('user@example.com', ['admin@example.com']);
     const res = await patchName(app);
     expect(res.statusCode).toBe(200);
     expect(res.json().profile.isAdmin).toBe(false);
   });
 
   it('returns explicit isAdmin false on PATCH when no session resolver is configured', async () => {
-    const app = buildAdminAwareApp(undefined, ['walissonead@gmail.com']);
+    const app = buildAdminAwareApp(undefined, ['admin@example.com']);
     const res = await patchName(app);
     expect(res.statusCode).toBe(200);
     expect(res.json().profile.isAdmin).toBe(false);
   });
 
   it('PATCH and GET agree on isAdmin for the same admin session', async () => {
-    const app = buildAdminAwareApp('walissonead@gmail.com', ['walissonead@gmail.com']);
+    const app = buildAdminAwareApp('admin@example.com', ['admin@example.com']);
     const patchRes = await patchName(app);
     const getRes = await app.inject({
       method: 'GET',
@@ -234,18 +234,18 @@ describe('GET /profile auto-provisioning', () => {
     });
 
   it('auto-provisions a minimal profile on GET when a session email resolves and none exists', async () => {
-    const app = buildAutoProvisionApp('walissonead@gmail.com', ['walissonead@gmail.com']);
+    const app = buildAutoProvisionApp('admin@example.com', ['admin@example.com']);
     const res = await getProfile(app);
     expect(res.statusCode).toBe(200);
     expect(res.json().profile).toMatchObject({
       householdId: 'household-new',
-      email: 'walissonead@gmail.com',
+      email: 'admin@example.com',
       isAdmin: true,
     });
   });
 
   it('auto-provisioned profile carries isAdmin false for a non-admin session email', async () => {
-    const app = buildAutoProvisionApp('user@example.com', ['walissonead@gmail.com']);
+    const app = buildAutoProvisionApp('user@example.com', ['admin@example.com']);
     const res = await getProfile(app);
     expect(res.statusCode).toBe(200);
     expect(res.json().profile).toMatchObject({
@@ -255,14 +255,14 @@ describe('GET /profile auto-provisioning', () => {
   });
 
   it('keeps null when no session email resolves and no profile exists', async () => {
-    const app = buildAutoProvisionApp(undefined, ['walissonead@gmail.com']);
+    const app = buildAutoProvisionApp(undefined, ['admin@example.com']);
     const res = await getProfile(app);
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ profile: null });
   });
 
   it('does not clobber an existing profile on GET with a session', async () => {
-    const app = buildAutoProvisionApp('walissonead@gmail.com', ['walissonead@gmail.com']);
+    const app = buildAutoProvisionApp('admin@example.com', ['admin@example.com']);
     await app.inject({
       method: 'PATCH',
       url: '/profile',
@@ -283,8 +283,8 @@ describe('GET /profile auto-provisioning', () => {
           throw new Error('db unavailable');
         },
       },
-      adminEmails: ['walissonead@gmail.com'],
-      resolveSessionEmail: async () => 'walissonead@gmail.com',
+      adminEmails: ['admin@example.com'],
+      resolveSessionEmail: async () => 'admin@example.com',
     });
     const res = await app.inject({
       method: 'GET',

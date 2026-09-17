@@ -30,7 +30,7 @@ baseline de drift. Repo GitHub renomeado para `Kusts/meu-ted` no dia.
 - Agent 310/310; API 1319 verdes (1 falha ambiental pré-existente sem
   `DATABASE_URL_TEST`); PWA afetadas 77/77 (`--pool=forks`).
 
-## API — VPS Hostinger (deploy@187.77.249.47, ~/infra/pi-finance-api)
+## API — VPS Hostinger (<VPS_SSH_USER>@<VPS_IP>, ~/infra/pi-finance-api)
 
 Mecanismo: backup → sync → build → tag (`:main`) → `docker compose up -d`.
 
@@ -40,7 +40,7 @@ Mecanismo: backup → sync → build → tag (`:main`) → `docker compose up -d
 - Rollback: imagens `backup-before-b898d6a-*` e `app-bak-*` disponíveis
   (`docker tag <backup> :main + compose up -d`).
 
-## Cloudflare (conta walissonead@gmail.com)
+## Cloudflare (conta <owner-email>)
 
 - Agent `pi-finance-agent` — versão `78c57fb9` via `wrangler deploy`;
   name do worker inalterado → **DOs preservados** (histórico e memória

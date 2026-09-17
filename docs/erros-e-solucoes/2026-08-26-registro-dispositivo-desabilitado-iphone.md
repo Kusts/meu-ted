@@ -13,7 +13,7 @@ sintoma: "Registro de dispositivo desabilitado."
 
 ## Sintoma
 
-- Ao tentar logar no PWA (`https://pi-finance-pwa.walissonead.workers.dev`) pelo iPhone, após inserir e-mail/senha a UI exibe `Registro de dispositivo desabilitado.` (mensagem vinda de `ApiError.message` em `apps/pwa/src/features/auth/AuthGate.tsx:87`).
+- Ao tentar logar no PWA (`https://<PWA_HOST>`) pelo iPhone, após inserir e-mail/senha a UI exibe `Registro de dispositivo desabilitado.` (mensagem vinda de `ApiError.message` em `apps/pwa/src/features/auth/AuthGate.tsx:87`).
 - Em desktop o mesmo login funciona (ou falha intermitente).
 - Logs VPS `docker logs pi-finance-api` (UTC 2026-08-26 ~20:10):
   ```
@@ -29,7 +29,7 @@ sintoma: "Registro de dispositivo desabilitado."
 1. **Proteção de registro:** `apps/api/src/routes/auth.ts:71` bloqueia `POST /auth/devices/register` quando `disableDeviceRegistration === true && !isAuthenticated`, retornando `403 {code:"auth.registration_disabled", message:"Registro de dispositivos desabilitado."}`.
    - `disableDeviceRegistration` é `true` em produção via `apps/api/src/env.ts:74` (`DISABLE_DEVICE_REGISTRATION !== 'false'`), `apps/api/src/server/production-routes.ts:81,116` e `~/infra/pi-finance-api/.env:DISABLE_DEVICE_REGISTRATION=true`.
 
-2. **`isAuthenticated` depende de sessão Better-Auth via cookie:** `apps/api/src/routes/auth.ts:44-68` constrói `new Headers(req.headers)` e chama `getBetterAuthSessionContext` → `auth.api.getSession({headers})` (`apps/api/src/auth/better-auth.ts:29`). Em produção `better-auth` usa `SameSite=None; Secure; HttpOnly` (`apps/api/src/auth/better-auth.ts:54-57`) com `baseURL=https://api.synkroo.com.br` e `trustedOrigins=["https://pi-finance-pwa.walissonead.workers.dev"]` (`~/infra/pi-finance-api/.env`).
+2. **`isAuthenticated` depende de sessão Better-Auth via cookie:** `apps/api/src/routes/auth.ts:44-68` constrói `new Headers(req.headers)` e chama `getBetterAuthSessionContext` → `auth.api.getSession({headers})` (`apps/api/src/auth/better-auth.ts:29`). Em produção `better-auth` usa `SameSite=None; Secure; HttpOnly` (`apps/api/src/auth/better-auth.ts:54-57`) com `baseURL=https://api.synkroo.com.br` e `trustedOrigins=["https://<PWA_HOST>"]` (`~/infra/pi-finance-api/.env`).
 
 3. **ITP do Safari bloqueia cookie cross-site:** PWA em `workers.dev` e API em `synkroo.com.br` são cross-site. iPhone Safari com ITP (Intelligent Tracking Prevention, padrão ligado) descarta `Set-Cookie` cross-site mesmo com `SameSite=None` se não houver interação direta com `api.synkroo.com.br`. `apiFetch` em `apps/pwa/src/lib/api/client.ts:105` usa `credentials:"include"` corretamente, mas o browser não armazena/envia o cookie, então o segundo `fetch` chega sem `Cookie`, `getSession` retorna `undefined`, `isAuthenticated=false` → `403`.
 
@@ -53,14 +53,14 @@ Imagem `pi-finance-api:main` será reconstruída no próximo `docker build -f ap
 ## Validação
 
 - `pnpm typecheck` e `pnpm --filter pi-finance-api test` (815+ testes) — `tests/auth/device-register-blocked.test.ts` (`allows device registration when caller has a valid Better-Auth session`) e `tests/server/cors.test.ts` continuam verdes.
-- `curl -i -X OPTIONS https://api.synkroo.com.br/auth/devices/register -H Origin:https://pi-finance-pwa.walissonead.workers.dev -H Access-Control-Request-Headers:Content-Type,Authorization` → `204` com `allow-headers: ..., Authorization, X-Workspace-Id` e `expose-headers: set-auth-token`.
+- `curl -i -X OPTIONS https://api.synkroo.com.br/auth/devices/register -H Origin:https://<PWA_HOST> -H Access-Control-Request-Headers:Content-Type,Authorization` → `204` com `allow-headers: ..., Authorization, X-Workspace-Id` e `expose-headers: set-auth-token`.
 - Logs após patch: `POST /auth/devices/register` deve retornar `201 {token, deviceId, householdId}` quando enviado com `Authorization: Bearer <session.token>` mesmo sem cookie.
 
 ## Procedimento para o usuário (iPhone)
 
 1. Aguardar deploy Cloudflare Pages (≈2 min após push `main`).
 2. No iPhone: fechar PWA, em Safari limpar dados ou remover/re-adicionar o PWA à tela inicial (força fetch da nova `AuthGate.tsx`).
-3. Logar novamente em `https://pi-finance-pwa.walissonead.workers.dev`. Erro esperado se credencial inválida: `E-mail ou senha incorretos.` (401); se persistir `Registro desabilitado`, verificar `docker logs pi-finance-api --tail 50`.
+3. Logar novamente em `https://<PWA_HOST>`. Erro esperado se credencial inválida: `E-mail ou senha incorretos.` (401); se persistir `Registro desabilitado`, verificar `docker logs pi-finance-api --tail 50`.
 
 ## Lição / Prevenção
 

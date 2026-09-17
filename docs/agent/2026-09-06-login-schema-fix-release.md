@@ -17,7 +17,7 @@ Deploy do fix do login de produção (POST /auth/sign-in/email → 500 SCHEMA_MI
 - `pnpm docs:lint` PASS (8 docs, 0 issues).
 - `pnpm governance:check` PASS (sem mudança D01-D19).
 
-## API — VPS Hostinger (deploy@187.77.249.47, ~/infra/pi-finance-api)
+## API — VPS Hostinger (<VPS_SSH_USER>@<VPS_IP>, ~/infra/pi-finance-api)
 
 Mecanismo: backup (dump + tag + app-bak) → sync dos 4 arquivos alterados
 (`apps/api` → `app/`, checksums sha256 conferidos 4/4) → `.release` → `docker build`

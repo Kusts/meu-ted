@@ -77,6 +77,40 @@ const RULE_ALLOWLIST = [
   { rule: "url-embedded-credentials", path: "scripts/capture-production-topology.test.mjs", reason: "redaction unit-test fixture with fake strings (supersecret/abc123xyz)" },
   { rule: "url-embedded-credentials", path: "docs/ops/2026-08-18-postgres-integration-status.md", reason: "local CI test container (postgres:postgres@127.0.0.1) — ephemeral, no production credential" },
   { rule: "url-embedded-credentials", path: "docs/superpowers/goal-runs/2026-08-24-v032-v033.md", reason: "local rehearsal container (rehearse:rehearse@localhost) — ephemeral, no production credential" },
+  // Metadata WARN allowlist (DEBT-CODER-SANITIZE 2026-09-17): production endpoint
+  // constants, deploy URLs and test fixtures that must mirror runtime values.
+  // Redaction here would change runtime behavior or break assertions; moving
+  // them to env/config requires repo-level settings (publication follow-up).
+  // Detector definitions (regex source, not values).
+  { rule: "vps-host-or-ssh-user", path: "scripts/check-public-safety.mjs", reason: "detector definitions" },
+  { rule: "personal-email", path: "scripts/check-public-safety.mjs", reason: "detector definitions" },
+  // Production deploy URLs (release automation; env migration needs repo-level settings).
+  { rule: "internal-hostname", path: ".github/workflows/agent-deploy.yml", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
+  { rule: "internal-hostname", path: ".github/workflows/pwa-deploy.yml", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
+  // Runtime production-origin constants (CORS/trusted-origins/proxy wiring).
+  { rule: "internal-hostname", path: "apps/agent/src/worker.ts", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
+  { rule: "internal-hostname", path: "apps/api/src/env.ts", reason: "non-production fallback trustedOrigins (production requires TRUSTED_ORIGINS env, fail-closed); centralizing default needs repo-level settings (follow-up)" },
+  { rule: "internal-hostname", path: "apps/api/src/routes/admin-agent-llm-config.ts", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
+  { rule: "internal-hostname", path: "apps/api/src/routes/index.ts", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
+  { rule: "internal-hostname", path: "apps/pwa/src/app/api/agent/[...path]/route.ts", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
+  { rule: "internal-hostname", path: "apps/pwa/src/proxy-utils.ts", reason: "production endpoint constant; moving to env requires repo-level settings (follow-up)" },
+  { rule: "internal-hostname", path: "docker/pi-stack/docker-compose.yml", reason: "default EVOLUTION_GO_API_URL for local stack (override via env); changing default needs ops decision (follow-up)" },
+  // Non-production ADMIN_EMAILS fallbacks (production requires ADMIN_EMAILS env, fail-closed).
+  { rule: "personal-email", path: "apps/api/src/env.ts", reason: "local-dev fallback default; changing default needs product decision on admin bootstrap (follow-up)" },
+  { rule: "personal-email", path: "apps/api/src/routes/index.ts", reason: "local-dev fallback default; changing default needs product decision on admin bootstrap (follow-up)" },
+  // Test/contract fixtures that must mirror the runtime production constants.
+  { rule: "internal-hostname", path: "apps/agent/tests/finance-chat-agent-rest-contract.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
+  { rule: "internal-hostname", path: "apps/agent/tests/worker-gateway-history-migration.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
+  { rule: "internal-hostname", path: "apps/agent/tests/worker-rpc-payload-limit.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
+  { rule: "internal-hostname", path: "apps/api/tests/auth/better-auth.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
+  { rule: "internal-hostname", path: "apps/api/tests/routes/admin-agent-llm-config.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
+  { rule: "internal-hostname", path: "apps/api/tests/routes/workspace-alias.security.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
+  { rule: "internal-hostname", path: "apps/api/tests/server/better-auth-server-boot.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
+  { rule: "internal-hostname", path: "apps/pwa/e2e/playwright.config.ts", reason: "production smoke-test target URL, exercised only against live deploy (follow-up: env-driven)" },
+  { rule: "internal-hostname", path: "apps/pwa/scripts/contract-cors.mjs", reason: "contract script asserting production CORS origin; must mirror runtime until env migration (follow-up)" },
+  { rule: "internal-hostname", path: "apps/pwa/src/app/api/agent/[...path]/route.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
+  { rule: "internal-hostname", path: "apps/pwa/src/app/api/backend/[...path]/route.test.ts", reason: "test fixture asserting production origin; must mirror runtime constant until env migration (follow-up)" },
+  { rule: "internal-hostname", path: "apps/pwa/src/lib/api/__tests__/same-origin-default.t2-1.test.ts", reason: "test pins production host for same-origin default; must mirror runtime until env migration (follow-up)" },
 ];
 
 function listTrackedFiles() {
@@ -126,7 +160,9 @@ for (const path of listTrackedFiles()) {
       for (let i = 0; i < lines.length; i++) {
         const m = rule.re.exec(lines[i]);
         if (!m) continue;
-        if (rule.severity === "error" && allowlisted(rule.name, path)) break;
+        // Allowlist applies to every severity: metadata WARN entries below are
+        // explicit, per-file, and reasoned (same bar as ERROR entries).
+        if (allowlisted(rule.name, path)) break;
         const finding = { rule: rule.name, path, line: i + 1, detail: redact(lines[i], m) };
         (rule.severity === "error" ? errors : warnings).push(finding);
         break; // one hit per rule per file keeps the report bounded

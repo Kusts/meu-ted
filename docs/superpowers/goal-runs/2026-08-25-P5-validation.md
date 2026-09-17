@@ -4,7 +4,7 @@
 **Branch:** `fase-0-preparo` (119 commits à frente de `main`, `f93aff2`)
 **Gate:** `scripts/run-final-validation.mjs` VAL.1-VAL.10
 **CI ref:** `32799833399` SUCCESS 4m21s (11/11 jobs), `32799833394` PWA 45m42s
-**VPS:** `deploy@187.77.249.47` V032/V033 aplicadas, backup `cbeadbdf...` 155K
+**VPS:** `<VPS_SSH_USER>@<VPS_IP>` V032/V033 aplicadas, backup `cbeadbdf...` 155K
 
 ## VAL.1 Reproducible Frozen Install — PASS ✅
 - `git diff --exit-code -- pnpm-lock.yaml` exit 0 — `pnpm-lock.yaml` sem diff (`pnpm install --frozen-lockfile` validado em CI `pnpm/action-setup@v4`)

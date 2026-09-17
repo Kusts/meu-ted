@@ -24,7 +24,7 @@ para a conta admin e funcionar corretamente (API VPS + PWA Cloudflare).
   pelo coordenador com este registro; follow-up aberto para correção do spike.
   Nenhum outro gate foi contornado.
 
-## API — VPS Hostinger (deploy@187.77.249.47, ~/infra/pi-finance-api)
+## API — VPS Hostinger (<VPS_SSH_USER>@<VPS_IP>, ~/infra/pi-finance-api)
 
 Mecanismo padrão: backup → sync 2 arquivos (checksums sha256 2/2) → `.release` →
 `docker build` (frozen, better-auth 1.6.30) → tag `:main` → `docker compose up -d`.

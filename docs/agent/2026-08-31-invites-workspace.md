@@ -131,14 +131,14 @@ todos os dados do workspace persistam e sejam visíveis para **todas as contas**
 
 ## SMTP — decisão e validação (2026-09-01)
 
-- **Remetente escolhido**: `walissonead@gmail.com` (conta ADMIN da plataforma, ADMIN_EMAILS default).
-  A conta `synkrooia@gmail.com` foi testada com 3 credenciais (senha comum + 2 App Passwords) e o
+- **Remetente escolhido**: `<owner-email>` (conta ADMIN da plataforma, ADMIN_EMAILS default).
+  A conta `<member-email>` foi testada com 3 credenciais (senha comum + 2 App Passwords) e o
   Google rejeitou todas com `535 BadCredentials` — bloqueio por política da conta (provável 2FA/inconsistência),
   não por digitação. App Password da conta admin funcionou no 1º teste.
 - **Validação**: probe nodemailer (smtp.gmail.com:587, STARTTLS) → `SMTP_OK <8b069db9...@gmail.com>`
-  (e-mail de teste enviado com sucesso para walissonead@gmail.com + synkrooia@gmail.com).
-- **Config a aplicar na VPS**: SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, SMTP_USER/SMTP_FROM=walissonead@gmail.com,
-  SMTP_PASS=<App Password no .env da VPS, NUNCA commitar>, SMTP_SECURE=false, INVITE_ACCEPT_URL=https://pi-finance-pwa.walissonead.workers.dev/convite.
+  (e-mail de teste enviado com sucesso para <owner-email> + <member-email>).
+- **Config a aplicar na VPS**: SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, SMTP_USER/SMTP_FROM=<owner-email>,
+  SMTP_PASS=<App Password no .env da VPS, NUNCA commitar>, SMTP_SECURE=false, INVITE_ACCEPT_URL=https://<PWA_HOST>/convite.
 - **Mecanismo de release da API (descoberto)**: source standalone em `~/infra/pi-finance-api/app`
   (`WORKDIR /app`), imagem `pi-finance-api:release-<hash>` → tag `:main` → compose up.
   Não há script de release; processo manual: sync apps/api → app/, docker build, tag, restart, healthcheck.
@@ -163,7 +163,7 @@ todos os dados do workspace persistam e sejam visíveis para **todas as contas**
 - `POST /auth/sign-up/email` SEM convite → `403 auth.signup_requires_invite` (mensagem pt-BR) ✅ guard ativo.
 - `POST /auth/invites/verify` token inválido → `404 invite.not_found` ✅ rota nova no ar.
 - Tabela `invites` existe no banco prod (schema compatível: email_normalized, token_hash, consumed_at, revoked_at).
-- Probe SMTP local (walissonead@gmail.com + App Password): `SMTP_OK` ✅ (e-mail teste enviado).
+- Probe SMTP local (<owner-email> + App Password): `SMTP_OK` ✅ (e-mail teste enviado).
 
 ### Observações
 - Erro pré-existente (não relacionado): job de push reminders falha com `42P01` pois a tabela
@@ -206,14 +206,14 @@ Corrigir o legacy path de `createPostgresIdempotencyStore` (apps/api/src/writes/
 
 ### Evidências do E2E real (via browser Orca, conta admin logada)
 1. PWA local → /workspaces → Test Family (Compartilhado·Owner) → form "Convidar membro" visível.
-2. Preenchi synkrooia@gmail.com → "Convidar membro" → **apareceu em Convites pendentes** (sem erro).
-3. Banco VPS: invites(synkrooia@gmail.com, member, expires 2026-09-08, pendente); operation_records
+2. Preenchi <member-email> → "Convidar membro" → **apareceu em Convites pendentes** (sem erro).
+3. Banco VPS: invites(<member-email>, member, expires 2026-09-08, pendente); operation_records
    invite.create completed; audit_logs user_id RESOLVIDO (adbb7007… = users.id, de auth_user_id WUCGTzoQ…).
 4. Erros 42P01 restantes em produção = push reminder job pré-existente (tabela push_reminder_deliveries
    ausente no schema legacy) — SEM relação com invites.
 
 ### Pendências
-- [ ] Receber o e-mail de convite em synkrooia@gmail.com (SMTP enviou; confirmar caixa).
+- [ ] Receber o e-mail de convite em <member-email> (SMTP enviou; confirmar caixa).
 - [ ] Criar a 2ª conta via link /convite?token=... e aceitar; validar visibilidade dos dados financeiros
       nas duas contas do workspace shared (persistência multitenant — R3).
 - [ ] (Opcional) Corrigir push reminder job (tabela push_reminder_deliveries / 42P01 pré-existente).
@@ -258,8 +258,8 @@ Corrigir o legacy path de `createPostgresIdempotencyStore` (apps/api/src/writes/
 - Curl via proxy local: POST /auth/invites/accept com `Authorization: Bearer <token>` SEM sessão de cookie
   → 404 invite.not_found (antes 401) → sessão reconhecida via Bearer ✓.
 - Browser Orca local (http://localhost:3000): login admin → localStorage session-token 'present' ✓;
-  Workspaces → Test Family → convite convidado.teste.pi@gmail.com criado sem erro ✓ (rota protegida OK).
-- Convite synkrooia@gmail.com segue pendente (consumed_at NULL) — token real está no e-mail do convidado;
+  Workspaces → Test Family → convite <test-invite-email> criado sem erro ✓ (rota protegida OK).
+- Convite <member-email> segue pendente (consumed_at NULL) — token real está no e-mail do convidado;
   o aceite final precisa do dono da caixa (R2).
 
 ### Estado
@@ -437,7 +437,7 @@ account-invite.create o scope é um uuid sintético sem linha em households -> F
 ### E2E final (produção)
 - POST /admin/invites/account -> 201 (account_invites gravado, 2 pendentes de teste).
 - POST /workspaces (shared) -> 201 "WS E2E Planner" (regressão FIXADA).
-- LIMPEZA: workspace WS E2E Planner e invites de teste convidado.teste.pi@gmail.com
+- LIMPEZA: workspace WS E2E Planner e invites de teste <test-invite-email>
   devem ser revogados/removidos do banco de produção (não são dados reais).
 - Pendente: aplicar migration V040 manualmente em PROD foi feito (tabela + _migrations v40);
   o runMigrations no boot NÃO aplica .sql novos (dist não copia .sql) — processo documentado.
@@ -445,8 +445,8 @@ account-invite.create o scope é um uuid sintético sem linha em households -> F
 ## LIMPEZA de dados de teste em produção (2026-09-02, autorizada)
 
 ### Removidos (com backup CSV em /tmp/cleanup_*.csv na VPS)
-- 2 account_invites p/ convidado.teste.pi@gmail.com
-- 1 invite (workspace) p/ convidado.teste.pi@gmail.com
+- 2 account_invites p/ <test-invite-email>
+- 1 invite (workspace) p/ <test-invite-email>
 - 1 household "WS E2E Planner" (aeedbcbe...) + sua membership (via FK CASCADE,
   evitando o trigger protect_shared_workspace_owners que bloqueia DELETE direto de membership)
 

@@ -71,7 +71,7 @@ Isso é **decisão deliberada, não lacuna**. Ver §8.3.
 ### 0.7 Infraestrutura atual
 
 - **`apps/api` roda na VPS Hostinger**, exposta em `api.synkroo.com.br` via cloudflared.
-- Postgres e Evolution API — mesma VPS (`187.77.249.47`). Postgres **sem porta pública**;
+- Postgres e Evolution API — mesma VPS (`<VPS_IP>`). Postgres **sem porta pública**;
   a partir da máquina de desenvolvimento só via túnel SSH (`docker/pi-stack/ssh-tunnel-postgres.bat`).
 - `apps/pwa` — Next.js 16, builda para Cloudflare Workers via `@opennextjs/cloudflare` + wrangler.
 - Lembrete semanal — `pnpm reminder` disparado por `schtasks` **na máquina de desenvolvimento**

@@ -1,7 +1,7 @@
 # Estado do projeto e próximos passos
 
 **Data:** 2026-08-26T19:30Z
-**Branch:** `main@98cfc99` (P0-P5 + Fase 1 8 features mergeados, `pi-finance-api:main` em VPS `deploy@187.77.249.47`, PWA `pi-finance-pwa.walissonead.workers.dev` pronto para uso)
+**Branch:** `main@98cfc99` (P0-P5 + Fase 1 8 features mergeados, `pi-finance-api:main` em VPS `<VPS_SSH_USER>@<VPS_IP>`, PWA `<PWA_HOST>` pronto para uso)
 **Propósito:** documento único e estável. Atualizado com deploy produção 2026-08-26T19:30Z e Fase 1 concluída — projeto pronto para uso.
 
 ---
@@ -156,7 +156,7 @@ passou a ser padrão em todo spec delegado, não exceção.
 
 | Item | Estado 2026-08-26T18:00Z | Próximo |
 |---|---|---|
-| P3 — Descomissionamento legados | **CONCLUÍDO (bypass)** — `f640e84` stages 4-6 done, `check-legacy` 0 active, `g6-48h-gate.md` COMPLETED via unlock explícito 2026-08-26 (não aguardou 48h). Stage 7 `rotate secrets` VPS `187.77.249.47` mantido como pendência manual sem bloqueio. | Nenhum bloqueio p/ PR — Stage 7 pode ser executado quando houver janela VPS |
+| P3 — Descomissionamento legados | **CONCLUÍDO (bypass)** — `f640e84` stages 4-6 done, `check-legacy` 0 active, `g6-48h-gate.md` COMPLETED via unlock explícito 2026-08-26 (não aguardou 48h). Stage 7 `rotate secrets` VPS `<VPS_IP>` mantido como pendência manual sem bloqueio. | Nenhum bloqueio p/ PR — Stage 7 pode ser executado quando houver janela VPS |
 | V032/V033 | **Concluído 2026-08-25** — `_migrations` V032 `7a7a55...` V033 `c5e443...`, `card_purchases` 53 linhas 0 orphans, índices parciais, backup `cbeadbdf...` 155K `~/backups/pi-financeiro/pi-backup-2026-08-24.dump`, evidência `docs/superpowers/goal-runs/2026-08-24-v032-v033.md` | Nenhum — monitorar |
 | Push / PR `fase-0-preparo` | **126 commits à frente de `main` @61e8bdf** — `origin/fase-0-preparo` desatualizado (last push `6843daa`), `main` `dd92ca9`; CI `32799833399` 11/11 SUCCESS + **local** `pi-finance-api 110/110 PASS` + `security:check PASS` após Task 0 | Push `fase-0-preparo` e abrir PR |
 | Validação cutover | **PASS** — `npx tsx scripts/cutover-check.ts` 5/5 READY (`93c478e` `scripts/tsconfig.json` + shims), `cards.test.ts` 44/44 PASS | Nenhum |
@@ -234,7 +234,7 @@ Merece plano próprio: são 8 features × (endpoint + tool + tela), pela paridad
 | 0 | Fix tsconfig + CVE alpine (sem SSH) | Passo 0, PR | **CONCLUÍDO `93c478e`/`61e8bdf`** — `110/110` + `security:check PASS` |
 | 1 | Autorizar push da branch | Passo 1, e por consequência 2 | Feito `6843daa`, repush pendente `61e8bdf` |
 | 2 | Dashboard Cloudflare (Access) | Passo 3, e o formato da Fase 1 | Pendente |
-| 3 | SSH na VPS `187.77.249.47` — Stage 7 rotate secrets (soak bypass liberado) | Passo 4 (sem bloqueio PR) | **Bypass soak OK** — Stage 7 manual quando houver janela, não bloqueia PR |
+| 3 | SSH na VPS `<VPS_IP>` — Stage 7 rotate secrets (soak bypass liberado) | Passo 4 (sem bloqueio PR) | **Bypass soak OK** — Stage 7 manual quando houver janela, não bloqueia PR |
 | 4 | Captura vault `documente esse projeto` | Fechamento documental | Pendente `f799c43c` |
 
 **Nota sobre `gh`:** existe uma variável `GH_TOKEN` inválida no ambiente que tem precedência

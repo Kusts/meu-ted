@@ -31,10 +31,10 @@ Record returned Worker version ID and SHA in release notes.
 ## Public health checks
 
 ```bash
-curl --fail --silent --show-error https://pi-finance-pwa.walissonead.workers.dev/
-curl --fail --silent --show-error https://pi-finance-pwa.walissonead.workers.dev/sw.js
-curl --fail --silent --show-error https://pi-finance-pwa.walissonead.workers.dev/manifest.webmanifest
-curl --fail --silent --show-error https://pi-finance-pwa.walissonead.workers.dev/pwa-control
+curl --fail --silent --show-error https://<PWA_HOST>/
+curl --fail --silent --show-error https://<PWA_HOST>/sw.js
+curl --fail --silent --show-error https://<PWA_HOST>/manifest.webmanifest
+curl --fail --silent --show-error https://<PWA_HOST>/pwa-control
 ```
 
 `/pwa-control` must return JSON with `"enabled":true`.
@@ -44,7 +44,7 @@ curl --fail --silent --show-error https://pi-finance-pwa.walissonead.workers.dev
 Run the manual GitHub Actions workflow `production-smoke.yml` against the target production URL or run locally:
 
 ```bash
-E2E_PRODUCTION_SMOKE=1 E2E_PRODUCTION_URL=https://pi-finance-pwa.walissonead.workers.dev pnpm --dir apps/pwa e2e:production-smoke
+E2E_PRODUCTION_SMOKE=1 E2E_PRODUCTION_URL=https://<PWA_HOST> pnpm --dir apps/pwa e2e:production-smoke
 ```
 
 ## Rollback — explicit confirmation required

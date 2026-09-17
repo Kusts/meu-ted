@@ -29,7 +29,7 @@ de perfil no GET /profile (API VPS). Objetivo: item admin visível e offline-she
   bundle novo confirmado pela versão ativa).
 - Rollback: `wrangler rollback b790679a-53c5-4d19-91c7-6548c057dfc7` (versão anterior).
 
-## API — VPS Hostinger (deploy@187.77.249.47, ~/infra/pi-finance-api)
+## API — VPS Hostinger (<VPS_SSH_USER>@<VPS_IP>, ~/infra/pi-finance-api)
 
 Mecanismo padrão: backup → sync 2 arquivos (sha256 2/2) → `.release` → `docker build` →
 tag `:main` → `docker compose up -d`.

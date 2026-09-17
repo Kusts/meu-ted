@@ -3,7 +3,7 @@
 Container com bridge Node.js + Pi agent rodando juntos.
 O Pi é invocado pelo bridge via `RpcClient` (subprocess stdin/stdout).
 
-**Desde 2026-06-21, este stack roda na VPS Hostinger (187.77.249.47)**, junto com o
+**Desde 2026-06-21, este stack roda na VPS Hostinger (<VPS_IP>)**, junto com o
 Evolution GO e o Postgres (`pi_financeiro`). O que está documentado aqui serve para
 rodar uma cópia local pontual (debug), não é mais o ambiente principal.
 
@@ -12,7 +12,7 @@ rodar uma cópia local pontual (debug), não é mais o ambiente principal.
 - Docker Desktop (Windows)
 - Túnel SSH ativo para o Postgres da VPS (`docker/pi-stack/ssh-tunnel-postgres.bat`) —
   o Postgres não tem porta pública, só é alcançável via túnel
-- Evolution API agora é acessada via `https://evo.synkroo.com.br` (HTTPS público, com API key) —
+- Evolution API agora é acessada via `https://<EVO_HOST>` (HTTPS público, com API key) —
   não precisa mais rodar nada localmente para isso
 
 ## Variáveis obrigatórias
@@ -93,7 +93,7 @@ Warmup não bloqueia `/health` mas pode afetar `/webhooks/evolution` na primeira
 | Var | Exemplo | Padrão |
 |---|---|---|
 | `DATABASE_URL` | `postgresql://postgres:<senha>@host.docker.internal:5432/pi_financeiro` | via `.env.pi`, requer túnel SSH (VPS) |
-| `EVOLUTION_GO_API_URL` | `https://evo.synkroo.com.br` | `https://evo.synkroo.com.br` |
+| `EVOLUTION_GO_API_URL` | `https://<EVO_HOST>` | `https://<EVO_HOST>` |
 | `EVOLUTION_GO_INSTANCE_NAME` | `ted` | `ted` |
 | `EVOLUTION_GO_INSTANCE_TOKEN` | `seu-token` | vazio |
 | `MINIMAX_API_KEY` | `sk-...` | vazio (preencher no `.env.pi`) |
@@ -123,7 +123,7 @@ e reconecta automaticamente quando detecta desconexão.
 
 | Var | Exemplo | Padrão |
 |---|---|---|
-| `EVOLUTION_GO_API_URL` | `https://evo.synkroo.com.br` | `https://evo.synkroo.com.br` |
+| `EVOLUTION_GO_API_URL` | `https://<EVO_HOST>` | `https://<EVO_HOST>` |
 | `EVOLUTION_GO_INSTANCE_TOKEN` | `seu-token` | (obrigatória) |
 | `WATCHDOG_INTERVAL_MS` | `60000` | `60000` |
 | `WATCHDOG_MAX_RECONNECT_ATTEMPTS` | `3` | `3` |
@@ -148,10 +148,10 @@ container (pi-stack)
 ├── /workspace/apps/whatsapp-bridge/ → bridge Node.js
 ├── /usr/local/bin/pi                → Pi CLI global
 ├── host.docker.internal:5432         → Postgres (via túnel SSH para a VPS)
-└── https://evo.synkroo.com.br        → Evolution API (HTTPS público, na VPS)
+└── https://<EVO_HOST>        → Evolution API (HTTPS público, na VPS)
 ```
 
 **Em produção, este mesmo container roda direto na VPS** (`~/infra/pi-stack` em
-`187.77.249.47`), na mesma rede Docker do Evolution GO — lá ele acessa
+`<VPS_IP>`), na mesma rede Docker do Evolution GO — lá ele acessa
 `evolution-postgres:5432` e `evolution-go:4000` direto pela rede interna, sem
 túnel nem HTTPS.

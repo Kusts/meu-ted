@@ -34,7 +34,7 @@ describe('Admin Invite API (POST /admin/invite)', () => {
     // 1. Create admin user
     await auth.api.createUser({
       body: {
-        email: 'walissonead@gmail.com',
+        email: 'admin@example.com',
         password: 'AdminPassword123!',
         name: 'Walis Admin',
       },
@@ -60,7 +60,7 @@ describe('Admin Invite API (POST /admin/invite)', () => {
       tokenStore,
       idempotency: createInMemoryIdempotencyStore(),
       auth,
-      adminEmails: ['walissonead@gmail.com'],
+      adminEmails: ['admin@example.com'],
       adminInviteDelivery: async (msg) => {
         deliveredEmails.push(msg);
       },
@@ -118,7 +118,7 @@ describe('Admin Invite API (POST /admin/invite)', () => {
       method: 'POST',
       url: '/auth/sign-in/email',
       headers: { origin: 'http://localhost:3000', 'content-type': 'application/json' },
-      payload: { email: 'walissonead@gmail.com', password: 'AdminPassword123!' },
+      payload: { email: 'admin@example.com', password: 'AdminPassword123!' },
     });
     const cookie = adminLogin.headers['set-cookie'];
     const cookieStr = Array.isArray(cookie) ? cookie.join('; ') : String(cookie);
@@ -144,7 +144,7 @@ describe('Admin Invite API (POST /admin/invite)', () => {
     expect(delivered.email).toBe('invited.guest@example.com');
     expect(delivered.password).toBeDefined();
     expect(delivered.password.length).toBeGreaterThanOrEqual(12);
-    expect(delivered.invitedBy).toBe('walissonead@gmail.com');
+    expect(delivered.invitedBy).toBe('admin@example.com');
 
     // 4. Guest uses the delivered credentials to sign in
     const guestLogin = await app.inject({
@@ -185,7 +185,7 @@ describe('Admin Invite API (POST /admin/invite)', () => {
 
     await auth.api.createUser({
       body: {
-        email: 'walissonead@gmail.com',
+        email: 'admin@example.com',
         password: 'AdminPassword123!',
         name: 'Walis Admin',
       },
@@ -203,7 +203,7 @@ describe('Admin Invite API (POST /admin/invite)', () => {
       tokenStore,
       idempotency: createInMemoryIdempotencyStore(),
       auth,
-      adminEmails: ['walissonead@gmail.com'],
+      adminEmails: ['admin@example.com'],
       disableDeviceRegistration: true,
     });
 
@@ -215,7 +215,7 @@ describe('Admin Invite API (POST /admin/invite)', () => {
       method: 'POST',
       url: '/auth/sign-in/email',
       headers: { origin: 'http://localhost:3000', 'content-type': 'application/json' },
-      payload: { email: 'walissonead@gmail.com', password: 'AdminPassword123!' },
+      payload: { email: 'admin@example.com', password: 'AdminPassword123!' },
     });
     const cookie = adminLogin.headers['set-cookie'];
     const cookieStr = Array.isArray(cookie) ? cookie.join('; ') : String(cookie);

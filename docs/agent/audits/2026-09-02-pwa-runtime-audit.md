@@ -32,8 +32,8 @@ NEXT_PUBLIC_PI_FINANCE_API_BASE_URL=/api/backend
 
 ## 2. Origem configurada da API — evidência
 
-- `apps/pwa/src/app/api/backend/[...path]/route.ts` define `API_ORIGIN = "https://api.synkroo.com.br"` e encaminha todos os métodos (GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS) para a VPS, repassando `authorization`, `x-device-token`, `x-workspace-id`, `idempotency-key`, `cache-control` etc. Origin local (`localhost`/`127.0.0.1`) é reescrito para `https://pi-finance-pwa.walissonead.workers.dev` para passar no `trustedOrigins` do Better-Auth upstream.
-- `apps/pwa/src/lib/api/client.ts`: fallback de produção usa `PRODUCTION_API_BASE_URL = "https://api.synkroo.com.br"` quando o host é `pi-finance-pwa.walissonead.workers.dev`.
+- `apps/pwa/src/app/api/backend/[...path]/route.ts` define `API_ORIGIN = "https://api.synkroo.com.br"` e encaminha todos os métodos (GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS) para a VPS, repassando `authorization`, `x-device-token`, `x-workspace-id`, `idempotency-key`, `cache-control` etc. Origin local (`localhost`/`127.0.0.1`) é reescrito para `https://<PWA_HOST>` para passar no `trustedOrigins` do Better-Auth upstream.
+- `apps/pwa/src/lib/api/client.ts`: fallback de produção usa `PRODUCTION_API_BASE_URL = "https://api.synkroo.com.br"` quando o host é `<PWA_HOST>`.
 
 ### Validação em runtime (connect apenas à API pretendida)
 | Verificação | Resultado |
@@ -85,7 +85,7 @@ NEXT_PUBLIC_PI_FINANCE_API_BASE_URL=/api/backend
 **22/22 rotas → 200.** Nenhum 404/500 no smoke de documento.
 
 ### Headers de segurança (raiz)
-- `content-security-policy`: `script-src 'self' 'nonce-…'; style-src 'self' 'unsafe-inline'; worker-src 'self'; connect-src 'self' https://api.synkroo.com.br https://pi-finance-agent.walissonead.workers.dev; frame-ancestors 'none'; base-uri 'self'`
+- `content-security-policy`: `script-src 'self' 'nonce-…'; style-src 'self' 'unsafe-inline'; worker-src 'self'; connect-src 'self' https://api.synkroo.com.br https://<AGENT_HOST>; frame-ancestors 'none'; base-uri 'self'`
 - `permissions-policy`, `referrer-policy`, `strict-transport-security`, `x-content-type-options: nosniff`, `x-frame-options: DENY` — todos presentes.
 - `connect-src` inclui exatamente a API VPS pretendida e o worker do agent — coerente com a arquitetura.
 

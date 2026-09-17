@@ -15,7 +15,7 @@ describe('Admin & Internal Agent LLM Configuration Routes (Task 2)', () => {
   let auth: ReturnType<typeof createBetterAuth>;
   let llmStore: LlmConfigStore;
 
-  const ADMIN_EMAIL = 'walissonead@gmail.com';
+  const ADMIN_EMAIL = 'admin@example.com';
   const MEMBER_EMAIL = 'member@example.com';
   const CONFIG_TOKEN = 'test-secret-config-token-32-chars-minimum!';
 

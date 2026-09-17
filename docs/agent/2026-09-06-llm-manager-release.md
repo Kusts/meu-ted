@@ -18,7 +18,7 @@ Fase 0–3 + audits + Dockerfile standalone versionado).
 - `pnpm typecheck` PASS (api, pwa, agent, codex-broker)
 - `pnpm test` PASS — API 1153/1153 (147 arquivos) + PWA 1233/1233 (133 arquivos)
 
-## API — VPS Hostinger (deploy@187.77.249.47, ~/infra/pi-finance-api)
+## API — VPS Hostinger (<VPS_SSH_USER>@<VPS_IP>, ~/infra/pi-finance-api)
 
 Mecanismo: sync `apps/api` + `packages/llm-contracts` (vendored como membro
 de workspace via `pnpm-workspace.yaml` com `packages/*`, sem `workspace:*`
@@ -36,10 +36,10 @@ V042 aplica sozinha no boot (`runMigrations(pool, true)` em DB_SCHEMA=legacy;
 - Rollback: `docker tag backup-before-499d2cf-<TS> :main + compose up -d`;
   schema via dump + plano no header de V042 (código primeiro, constraints depois).
 
-## Cloudflare (wrangler manual, conta walissonead@gmail.com)
+## Cloudflare (wrangler manual, conta <owner-email>)
 
 - Agent `pi-finance-agent` — versão `73ea4217`
-  (`https://pi-finance-agent.walissonead.workers.dev/health` → `{"status":"ready","schemaVersion":5}`).
+  (`https://<AGENT_HOST>/health` → `{"status":"ready","schemaVersion":5}`).
 - PWA `pi-finance-pwa` — versão `94a94307` (3 assets novos, resto em cache)
   (`/pwa-control` → `{"version":"3.3.0","enabled":true}`).
 - Nota: `pnpm --filter pwa deploy` colide com o comando nativo `pnpm deploy`;

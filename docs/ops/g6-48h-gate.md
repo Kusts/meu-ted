@@ -24,7 +24,7 @@
 | Endpoint | Método | Resultado |
 |---|---|---|
 | `https://api.synkroo.com.br/health` | GET | `{"status":"ok"}` → 200 OK |
-| `https://pi-finance-pwa.walissonead.workers.dev/pwa-control` | GET | `{"version":"3.3.0","enabled":true}` → 200 OK |
+| `https://<PWA_HOST>/pwa-control` | GET | `{"version":"3.3.0","enabled":true}` → 200 OK |
 | `https://synkroo-ia-agent.walissonead.workers.dev/health` | GET | `ia-agent up` → 200 OK — **worker do projeto Synkroo** (`D:/projetos/synkroo/wrangler.toml`), NÃO é o agent do pi-financeiro. Não é evidência válida do Agent deste projeto | 
 | `https://api.synkroo.com.br/dashboard/month-summary?yearMonth=2026-08` | GET sem auth | 401 (serviço vivo, auth exigido) |
 

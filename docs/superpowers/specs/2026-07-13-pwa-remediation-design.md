@@ -1,7 +1,7 @@
 # PWA remediation design
 
 Data: 2026-07-13  
-Alvo: `apps/pwa` | Worker: `pi-finance-pwa.walissonead.workers.dev`
+Alvo: `apps/pwa` | Worker: `<PWA_HOST>`
 
 ## Contexto
 

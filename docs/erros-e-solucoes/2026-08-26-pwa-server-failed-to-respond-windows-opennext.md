@@ -13,8 +13,8 @@ sintoma: "Server failed to respond."
 
 ## Sintoma
 
-- Após `pnpm --dir apps/pwa exec wrangler deploy` manual em Windows (deploy `a5df4b96-626b-465a-9e3d-820232160424 2026-08-26T20:54`), a página `https://pi-finance-pwa.walissonead.workers.dev` não carrega e exibe `Server failed to respond.` (erro genérico do Workers runtime, sem HTML).
-- `curl -I https://pi-finance-pwa.walissonead.workers.dev` retornava `500`/`no response` em vez de `200 OK`.
+- Após `pnpm --dir apps/pwa exec wrangler deploy` manual em Windows (deploy `a5df4b96-626b-465a-9e3d-820232160424 2026-08-26T20:54`), a página `https://<PWA_HOST>` não carrega e exibe `Server failed to respond.` (erro genérico do Workers runtime, sem HTML).
+- `curl -I https://<PWA_HOST>` retornava `500`/`no response` em vez de `200 OK`.
 - `wrangler deployments list --name pi-finance-pwa` mostrava último deploy 7 dias atrás (`6bc2b25b-281e-40a2-a671-df15eca7be8b 2026-08-20T19:46:36`) antes do deploy quebrado; usuário reportou exatamente “últimos deploys tanto do agente quando do pwa são de 7 dias atrás”.
 
 ## Causa Raiz
@@ -57,7 +57,7 @@ O deploy Linux `b62e05fa` já contém o fix de `ERR-2026-08-26-registro-disposit
 
 - `gh run view 33015722394` → `✓ deploy`.
 - `wrangler deployments list --name pi-finance-pwa` → `b62e05fa 2026-08-26T21:32:40`.
-- `curl -I https://pi-finance-pwa.walissonead.workers.dev` → `200`, `content-security-policy: connect-src 'self' https://api.synkroo.com.br`, `x-frame-options: DENY`, HTML com `Carregando…`.
+- `curl -I https://<PWA_HOST>` → `200`, `content-security-policy: connect-src 'self' https://api.synkroo.com.br`, `x-frame-options: DENY`, HTML com `Carregando…`.
 - `wrangler versions view b62e05fa` → `Compatibility Date: 2025-06-23`, bindings `WORKER_SELF_REFERENCE`, `ASSETS`, `NEXT_PUBLIC_PI_FINANCE_API_BASE_URL`.
 
 ## Arquivos Alterados

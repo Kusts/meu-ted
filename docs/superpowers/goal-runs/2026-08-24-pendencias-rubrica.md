@@ -45,7 +45,7 @@ Plano de 8 tasks em sequência fail-closed. 3 tasks concluídas localmente com e
 
 ## Nota global
 
-**6.9 / 10** — Hygiene e gates locais selados, push/CI com **SUCCESS** (3m20s) e PWA CI 45m prova de gate, tag rollback e gate T+36h inicializados, docs sincronizados 2026-08-24. Restam bloqueios externos (VPS SSH 187.77.249.47, Cloudflare Access spike, 36h soak) que exigem consent gate explícito (spec 2026-08-16 §184). Nenhum comando destrutivo executado.
+**6.9 / 10** — Hygiene e gates locais selados, push/CI com **SUCCESS** (3m20s) e PWA CI 45m prova de gate, tag rollback e gate T+36h inicializados, docs sincronizados 2026-08-24. Restam bloqueios externos (VPS SSH <VPS_IP>, Cloudflare Access spike, 36h soak) que exigem consent gate explícito (spec 2026-08-16 §184). Nenhum comando destrutivo executado.
 
 ## Riscos remanescentes
 

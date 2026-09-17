@@ -147,7 +147,7 @@ SHA="$(git rev-parse --short=12 HEAD)"
 pnpm --dir apps/pwa build:cloudflare
 pnpm --dir apps/pwa exec wrangler deploy --message "git:${SHA}"
 pnpm --dir apps/pwa exec wrangler versions list --name pi-finance-pwa
-curl --fail --silent --show-error https://pi-finance-pwa.walissonead.workers.dev/pwa-control
+curl --fail --silent --show-error https://<PWA_HOST>/pwa-control
 # Only after explicit human confirmation if rollback is needed:
 pnpm --dir apps/pwa exec wrangler rollback 817a9ac0-6f64-455d-b811-471e0bcb96a6 --name pi-finance-pwa --message "rollback git:${SHA}"
 ```

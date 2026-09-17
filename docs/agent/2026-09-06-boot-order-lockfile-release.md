@@ -20,7 +20,7 @@ build standalone determinístico (frozen-lockfile + pin better-auth 1.6.30).
   1164/1164 testes, ambos os lockfiles em 1.6.30, demais Dockerfiles frozen.
 - `pnpm --filter pi-finance-api run build` (tsc) PASS no commit do pin.
 
-## API — VPS Hostinger (deploy@187.77.249.47, ~/infra/pi-finance-api)
+## API — VPS Hostinger (<VPS_SSH_USER>@<VPS_IP>, ~/infra/pi-finance-api)
 
 Mecanismo: backup → sync 5 arquivos (checksums sha256 5/5) → `.release` → `docker build`
 (com `--frozen-lockfile`) → tag `:main` → `docker compose up -d`. SEM restart manual.

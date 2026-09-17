@@ -24,7 +24,7 @@ Suíte final: **144 arquivos / 1364 testes 100% verdes**.
 
 Deploy do redesign mobile v2 concluído na Cloudflare.
 
-- **Produção:** https://pi-finance-pwa.walissonead.workers.dev
+- **Produção:** https://<PWA_HOST>
 - **Versão Worker:** `c4258b78-0113-4b45-b28d-a42c260b5859`
 - **Git:** push `5c4ed5a..9a0c3a4` (main), release doc `9a0c3a4`
 - **Smoke:** `/manifest.webmanifest` serve `{"name":"Meu Ted", ...}`; `/` → HTTP 200

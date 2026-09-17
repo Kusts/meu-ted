@@ -21,7 +21,7 @@ A base é sólida em autenticação (AuthGate com 401/offline), optimistic updat
 
 ### P0-2. App completo renderiza sem autenticação em modo mock fora do host de produção
 - **Impacto:** qualquer origin não-listada (previews Cloudflare, domínio custom, abre o standalone local sem `.env`) renderiza saldo/contas **fictícios como se fossem reais** e sem login — risco de confusão/dados falsos em contexto financeiro.
-- **Evidência:** `components/RootProviders.tsx:50` — `const tree = isApiConfigured() ? <AuthGate>{inner}</AuthGate> : inner;`; `lib/api/client.ts:36-45` — fallback só cobre o host hardcoded `pi-finance-pwa.walissonead.workers.dev`; sem env, `baseUrl()` retorna `undefined` → `mock-data`.
+- **Evidência:** `components/RootProviders.tsx:50` — `const tree = isApiConfigured() ? <AuthGate>{inner}</AuthGate> : inner;`; `lib/api/client.ts:36-45` — fallback só cobre o host hardcoded `<PWA_HOST>`; sem env, `baseUrl()` retorna `undefined` → `mock-data`.
 - **Recomendação:** fail-closed em builds de produção (origin allow-list ou env obrigatória no build) e banner explícito "modo demonstração" quando mock (como já faz `features/pending-operations/PendingOperationsPage.tsx:196-200`).
 
 ### P0-3. Safe-area inerte em PWA standalone iOS (`viewport-fit: cover` ausente)
