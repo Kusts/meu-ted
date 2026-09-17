@@ -63,6 +63,10 @@ const mapPayable = (r: Row): Payable =>
         r["paid_amount_cents"] != null
           ? Number(r["paid_amount_cents"])
           : undefined,
+      paidTransactionId:
+        r["paid_transaction_id"] != null
+          ? String(r["paid_transaction_id"])
+          : undefined,
       reminderDaysBefore:
         r["reminder_days_before"] != null
           ? Number(r["reminder_days_before"])
@@ -226,8 +230,11 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
 
     async markPayablePaid(householdId, payableId, input) {
       return withTransaction(pool, async (client) => {
+        // V4.1 Task 2.2: serialize concurrent payments on the payable row.
+        // The status check below the lock is the single decision point, so
+        // two concurrent payers converge on exactly one financial effect.
         const existing = await client.query<Row>(
-          `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
           [payableId, householdId],
         );
         if (existing.rowCount === 0 || existing.rows.length === 0) throw domainErrors.notFound("Conta a pagar");
@@ -239,10 +246,44 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
             409,
           );
         }
+        // V4.1 Task 2.3 (D1/D3): the payment always creates the expense
+        // transaction AND debits the paying account in the same tx. No
+        // silent clamp: insufficient balance rejects like payStatement.
+        const accRows = await client.query<Row>(
+          `SELECT id, kind, balance_cents, status FROM accounts WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
+          [p.accountId, householdId],
+        );
+        if (accRows.rowCount === 0 || accRows.rows.length === 0) throw domainErrors.notFound("Conta");
+        const acc = accRows.rows[0]!;
+        if (acc["status"] !== "active") throw domainErrors.notFound("Conta");
+        if (acc["kind"] === "credit_card") {
+          throw new DomainError("validation.invalid", "compra no cartão deve usar /cards/purchases.", 422);
+        }
+        if (Number(acc["balance_cents"]) < p.amountCents) {
+          throw domainErrors.invalid("amountCents", "saldo insuficiente na conta de origem");
+        }
         const paidDate = input.paidDate ?? todayISO();
+        const paidTxId = randomUUID();
         await client.query(
-          `UPDATE accounts_payable SET status = 'paid', paid_date = $1, paid_amount_cents = amount_cents, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
-          [paidDate, payableId, householdId],
+          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id)
+           VALUES ($1,$2,'expense',$3,$4,$5,$6,$7)`,
+          [
+            paidTxId,
+            householdId,
+            p.description,
+            p.amountCents,
+            paidDate,
+            p.accountId,
+            p.categoryId ?? null,
+          ],
+        );
+        await client.query(
+          `UPDATE accounts SET balance_cents = balance_cents - $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
+          [p.amountCents, p.accountId, householdId],
+        );
+        await client.query(
+          `UPDATE accounts_payable SET status = 'paid', paid_date = $1, paid_amount_cents = amount_cents, paid_transaction_id = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`,
+          [paidDate, paidTxId, payableId, householdId],
         );
 
         if (p.type === "recurring" && p.frequency && !input.prepayMonths) {
@@ -267,30 +308,6 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
               ],
             );
           }
-        }
-
-        let paidTxId: string | null = null;
-        if (input.createTransaction !== false) {
-          paidTxId = randomUUID();
-          await client.query(
-            `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id)
-             VALUES ($1,$2,'expense',$3,$4,$5,$6,$7)`,
-            [
-              paidTxId,
-              householdId,
-              p.description,
-              p.amountCents,
-              paidDate,
-              p.accountId,
-              p.categoryId ?? null,
-            ],
-          );
-        }
-        if (paidTxId) {
-          await client.query(
-            `UPDATE accounts_payable SET paid_transaction_id = $1 WHERE id = $2 AND household_id = $3`,
-            [paidTxId, payableId, householdId],
-          );
         }
 
         const rows = await client.query<Row>(
@@ -369,10 +386,10 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
       return mapPayable(rows[0]!);
     },
 
-    async undoPayablePayment(householdId, payableId) {
+    async undoPayablePayment(householdId, payableId, opts) {
       return withTransaction(pool, async (client) => {
         const existing = await client.query<Row>(
-          `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+          `SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
           [payableId, householdId],
         );
         if (existing.rowCount === 0 || existing.rows.length === 0) throw domainErrors.notFound("Conta a pagar");
@@ -383,12 +400,43 @@ export const createPostgresPayableStore = (pool: Pool): PayableStore => {
             409,
           );
         const p = mapPayable(existing.rows[0]!);
+        // V4.1 Task 2.x (D4): the undo contract carries the linked
+        // paidTransactionId; a caller that knows it must present the right
+        // one, otherwise the undo is rejected instead of reversing the
+        // wrong financial effect.
+        if (
+          opts?.expectedPaidTransactionId !== undefined &&
+          p.paidTransactionId !== opts.expectedPaidTransactionId
+        ) {
+          throw new DomainError(
+            "validation.invalid",
+            "paidTransactionId não confere com o pagamento vinculado",
+            409,
+          );
+        }
         const newStatus = todayISO() <= p.dueDate ? "pending" : "overdue";
         await client.query(
           `UPDATE accounts_payable SET status = $1, paid_date = NULL, paid_amount_cents = NULL, paid_transaction_id = NULL, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
           [newStatus, payableId, householdId],
         );
         if (p.paidTransactionId) {
+          // Reverse the debit booked by markPayablePaid in the same tx, then
+          // soft-delete the linked expense. The recurring successor (if any)
+          // is intentionally kept (D4).
+          const txRows = await client.query<Row>(
+            `SELECT amount_cents, account_id FROM transactions WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`,
+            [p.paidTransactionId, householdId],
+          );
+          if ((txRows.rowCount ?? 0) > 0) {
+            await client.query(
+              `SELECT id FROM accounts WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
+              [txRows.rows[0]!["account_id"], householdId],
+            );
+            await client.query(
+              `UPDATE accounts SET balance_cents = balance_cents + $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
+              [Number(txRows.rows[0]!["amount_cents"]), txRows.rows[0]!["account_id"], householdId],
+            );
+          }
           await client.query(
             `UPDATE transactions SET deleted_at = NOW() WHERE id = $1 AND household_id = $2`,
             [p.paidTransactionId, householdId],

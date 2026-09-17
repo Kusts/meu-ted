@@ -116,6 +116,19 @@ export const createInMemoryPayableStore = (
           409,
         );
       }
+      // V4.1 Task 2.3 (D1/D3): mirror of the canonical store — the payment
+      // always creates the expense transaction and debits the paying
+      // account; insufficient balance rejects instead of clamping.
+      const acc = state.accounts.find(
+        (a) => a.id === p.accountId && a.householdId === householdId,
+      );
+      if (!acc || acc.status !== "active") throw domainErrors.notFound("Conta");
+      if (acc.kind === "credit_card") {
+        throw new DomainError("validation.invalid", "compra no cartão deve usar /cards/purchases.", 422);
+      }
+      if (acc.balanceCents < p.amountCents) {
+        throw domainErrors.invalid("amountCents", "saldo insuficiente na conta de origem");
+      }
       p.status = "paid";
       p.paidDate = input.paidDate ?? todayISO(clock);
       p.paidAmountCents = p.amountCents;
@@ -144,26 +157,27 @@ export const createInMemoryPayableStore = (
           payables.push(next);
         }
       }
-      if (input.createTransaction !== false) {
-        const tx = opt<Transaction>(
-          {
-            id: randomUUID(),
-            householdId,
-            kind: "expense" as const,
-            description: p.description,
-            amountCents: p.amountCents,
-            date: p.paidDate ?? todayISO(),
-            accountId: p.accountId,
-          },
-          { categoryId: p.categoryId } as Partial<Transaction>,
-        );
-        state.transactions.push(tx);
-        p.paidTransactionId = tx.id;
-      }
+      // V4.1 Task 2.3 (D3): the payment always creates the expense
+      // transaction — the createTransaction:false escape hatch is gone.
+      const tx = opt<Transaction>(
+        {
+          id: randomUUID(),
+          householdId,
+          kind: "expense" as const,
+          description: p.description,
+          amountCents: p.amountCents,
+          date: p.paidDate ?? todayISO(),
+          accountId: p.accountId,
+        },
+        { categoryId: p.categoryId } as Partial<Transaction>,
+      );
+      state.transactions.push(tx);
+      acc.balanceCents -= p.amountCents;
+      p.paidTransactionId = tx.id;
       return p;
     },
 
-    async undoPayablePayment(householdId, payableId) {
+    async undoPayablePayment(householdId, payableId, opts) {
       const p = payables.find(
         (x) => x.id === payableId && x.householdId === householdId,
       );
@@ -174,6 +188,17 @@ export const createInMemoryPayableStore = (
           "Apenas contas pagas podem ter pagamento desfeito",
           409,
         );
+      // V4.1 Task 2.x (D4): same paidTransactionId contract as canonical.
+      if (
+        opts?.expectedPaidTransactionId !== undefined &&
+        p.paidTransactionId !== opts.expectedPaidTransactionId
+      ) {
+        throw new DomainError(
+          "validation.invalid",
+          "paidTransactionId não confere com o pagamento vinculado",
+          409,
+        );
+      }
       const txId = p.paidTransactionId;
       p.status = todayISO() <= p.dueDate ? "pending" : "overdue";
       (p as { paidDate?: string | undefined }).paidDate = undefined;
@@ -182,10 +207,24 @@ export const createInMemoryPayableStore = (
       (p as { paidTransactionId?: string | undefined }).paidTransactionId =
         undefined;
       if (txId) {
-        const idx = state.transactions.findIndex(
+        // Reverse the debit booked by markPayablePaid and tombstone the
+        // linked expense (soft-delete parity with the Postgres stores).
+        // The recurring successor (if any) is intentionally kept (D4).
+        const tx = state.transactions.find(
           (t: Transaction) => t.id === txId,
         );
-        if (idx >= 0) state.transactions.splice(idx, 1);
+        if (tx && !state.deletedTransactions.has(txId)) {
+          const linked = state.accounts.find(
+            (a) => a.id === tx.accountId && a.householdId === householdId,
+          );
+          if (linked) {
+            linked.balanceCents = Math.min(
+              linked.balanceCents + tx.amountCents,
+              Number.MAX_SAFE_INTEGER,
+            );
+          }
+          state.deletedTransactions.add(txId);
+        }
       }
       return p;
     },

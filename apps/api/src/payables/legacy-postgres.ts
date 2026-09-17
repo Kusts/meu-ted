@@ -163,12 +163,16 @@ export const createLegacyPostgresPayableStore = (pool: Pool): PayableStore => {
       });
     },
 
-    async undoPayablePayment(householdId, payableId) {
+    async undoPayablePayment(householdId, payableId, opts) {
       return withTransaction(pool, async (client) => {
-        const existing = await client.query<Row>(`SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [payableId, householdId]);
+        const existing = await client.query<Row>(`SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`, [payableId, householdId]);
         if (existing.rowCount === 0 || existing.rows.length === 0) throw domainErrors.notFound('Conta a pagar');
         if (existing.rows[0]!.status !== 'paid') throw new DomainError('validation.invalid', 'Apenas contas pagas podem ter pagamento desfeito', 409);
         const paidTxId = existing.rows[0]!.paid_transaction_id as string | null;
+        // V4.1 Task 2.x (D4): same paidTransactionId contract as canonical.
+        if (opts?.expectedPaidTransactionId !== undefined && paidTxId !== opts.expectedPaidTransactionId) {
+          throw new DomainError('validation.invalid', 'paidTransactionId não confere com o pagamento vinculado', 409);
+        }
         const dueDate = (existing.rows[0]!.due_date as Date).toISOString().slice(0, 10);
         const newStatus = todayISO() <= dueDate ? 'pending' : 'overdue';
         await client.query(
@@ -185,22 +189,29 @@ export const createLegacyPostgresPayableStore = (pool: Pool): PayableStore => {
 
     async markPayablePaid(householdId, payableId, input) {
       return withTransaction(pool, async (client) => {
-        const existing = await client.query<Row>(`SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL`, [payableId, householdId]);
+        // V4.1 Task 2.2: legacy had no status guard at all — serialize on
+        // the row and validate after the lock, mirroring canonical.
+        const existing = await client.query<Row>(`SELECT * FROM accounts_payable WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`, [payableId, householdId]);
         if (existing.rowCount === 0 || existing.rows.length === 0) throw domainErrors.notFound('Conta a pagar');
         const p = mapPayable(existing.rows[0]!);
-        const paidDate = input.paidDate ?? todayISO();
-
-        // Create the payment transaction first (legacy uses from_account_id) so we
-        // can link it via paid_transaction_id (legacy has no paid_amount_cents).
-        let txId: string | null = null;
-        if (input.createTransaction !== false) {
-          txId = randomUUID();
-          await client.query(
-            `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id)
-             VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7)`,
-            [txId, householdId, p.description, p.amountCents, paidDate, p.accountId, p.categoryId ?? null],
+        if (p.status === 'paid' || p.status === 'cancelled') {
+          throw new DomainError(
+            'validation.invalid',
+            `Conta a pagar já está ${p.status === 'paid' ? 'paga' : 'cancelada'}`,
+            409,
           );
         }
+        const paidDate = input.paidDate ?? todayISO();
+
+        // V4.1 Task 2.3 (D3): the payment always creates the transaction
+        // (legacy uses from_account_id). Legacy balances are computed, so
+        // there is no materialized balance to debit.
+        const txId = randomUUID();
+        await client.query(
+          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, from_account_id, category_id)
+           VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7)`,
+          [txId, householdId, p.description, p.amountCents, paidDate, p.accountId, p.categoryId ?? null],
+        );
 
         await client.query(
           `UPDATE accounts_payable SET status = 'paid', paid_date = $1, paid_transaction_id = $2, updated_at = NOW() WHERE id = $3 AND household_id = $4`,

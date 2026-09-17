@@ -208,7 +208,7 @@ describeDb('G2.2.5 — Postgres Unit of Work rollback', () => {
     expect(next.rows).toHaveLength(0);
   }, 30_000);
 
-  it.skip('undoes a canonical payable payment and soft-deletes its transaction (ARCHIVED DESIGN DEBT G2.2.5: markPayablePaid canônico não retorna paidTransactionId no contrato atual — requer decisão de contrato owner; fonte docs/ops/2026-08-18-postgres-integration-status.md)', async () => {
+  it('undoes a canonical payable payment and soft-deletes its transaction (V4.1 D4: undo contract returns paidTransactionId)', async () => {
     const writes = createPostgresWriteStore({ pool });
     const account = await writes.createAccount(HOUSEHOLD, { name: 'UoW undo account', kind: 'bank', initialBalanceCents: 100000 });
     const payables = createPostgresPayableStore(pool);
@@ -218,7 +218,10 @@ describeDb('G2.2.5 — Postgres Unit of Work rollback', () => {
     await payables.undoPayablePayment(HOUSEHOLD, payable.id);
     const row = await pool.query<{ status: string; paid_transaction_id: string | null }>('SELECT status, paid_transaction_id FROM accounts_payable WHERE id = $1', [payable.id]);
     const transaction = await pool.query<{ deleted_at: Date | null }>('SELECT deleted_at FROM transactions WHERE id = $1', [paid.paidTransactionId]);
-    expect(row.rows[0]).toMatchObject({ status: 'pending', paid_transaction_id: null });
+    // V4.1: undo reopens the payable (pending when due today/future,
+    // overdue when past due) and clears the link.
+    expect(row.rows[0]).toMatchObject({ paid_transaction_id: null });
+    expect(['pending', 'overdue']).toContain(row.rows[0]?.status);
     expect(transaction.rows[0]?.deleted_at).not.toBeNull();
   }, 30_000);
 

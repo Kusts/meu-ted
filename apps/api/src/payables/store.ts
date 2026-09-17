@@ -46,7 +46,6 @@ export type PayableStore = {
     payableId: string,
     input: {
       paidDate?: string;
-      createTransaction?: boolean;
       prepayMonths?: number;
     },
   ): Promise<Payable>;
@@ -69,7 +68,13 @@ export type PayableStore = {
     },
   ): Promise<Payable>;
 
-  undoPayablePayment(householdId: string, payableId: string): Promise<Payable>;
+  undoPayablePayment(
+    householdId: string,
+    payableId: string,
+    opts?: {
+      expectedPaidTransactionId?: string;
+    },
+  ): Promise<Payable>;
 
   // Templates
   listTemplates(

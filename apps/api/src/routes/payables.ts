@@ -50,11 +50,23 @@ const createSchema = z.object({
   templateName: z.string().optional(),
 });
 
-const paySchema = z.object({
-  paidDate: isoDate.optional(),
-  createTransaction: z.boolean().optional(),
-  prepayMonths: z.number().int().min(1).max(24).optional(),
-});
+const paySchema = z
+  .object({
+    paidDate: isoDate.optional(),
+    prepayMonths: z.number().int().min(1).max(24).optional(),
+  })
+  // V4.1 Task 2.x (D3): payment always creates the expense transaction —
+  // the createTransaction:false escape hatch is rejected, not ignored.
+  .strict();
+
+const unpaySchema = z
+  .object({
+    // V4.1 Task 2.x (D4): callers that know the linked paidTransactionId
+    // present it; a mismatch is rejected instead of reversing the wrong
+    // financial effect.
+    paidTransactionId: z.string().uuid().optional(),
+  })
+  .strict();
 
 const cancelSchema = z.object({ reason: z.string().optional() });
 
@@ -257,9 +269,6 @@ export const registerPayableRoutes = (
         params.data.id,
         {
           ...(parsed.data.paidDate ? { paidDate: parsed.data.paidDate } : {}),
-          ...(parsed.data.createTransaction !== undefined
-            ? { createTransaction: parsed.data.createTransaction }
-            : {}),
           ...(parsed.data.prepayMonths !== undefined
             ? { prepayMonths: parsed.data.prepayMonths }
             : {}),
@@ -296,10 +305,18 @@ export const registerPayableRoutes = (
       return reply
         .code(400)
         .send({ code: "validation.error", issues: params.error.issues });
+    const parsedUnpay = unpaySchema.safeParse(req.body ?? {});
+    if (!parsedUnpay.success)
+      return reply
+        .code(400)
+        .send({ code: "validation.error", issues: parsedUnpay.error.issues });
     try {
       const p = await opts.payableStore.undoPayablePayment(
         ctx.householdId,
         params.data.id,
+        ...(parsedUnpay.data.paidTransactionId !== undefined
+          ? [{ expectedPaidTransactionId: parsedUnpay.data.paidTransactionId } as const]
+          : []),
       );
       return reply.code(200).send(attachMutationReceipt(p, 'payable.payment.undo', { type: 'payable', id: params.data.id }));
     } catch (e) {
