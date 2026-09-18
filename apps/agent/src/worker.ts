@@ -19,6 +19,15 @@ type TypedAgentNamespace<T> = {
 type Env = {
   FINANCE_CHAT_AGENT: TypedAgentNamespace<FinanceAgentStub>;
   API_ORIGIN: string;
+  /**
+   * DEBT2 allowlist migration: the browser (PWA) origin trusted by CORS.
+   * Production MUST set this binding to the real PWA host (deploy `--var
+   * PWA_ORIGIN:<host>` or the Cloudflare dashboard — value from the
+   * PWA_PROD_URL repo variable). Absent/invalid → non-prod placeholder
+   * below, which denies the real PWA (fail-closed for legit traffic; the
+   * placeholder TLD never resolves to an attacker).
+   */
+  PWA_ORIGIN?: string;
   AGENT_CONNECTION_TOKEN_SECRET?: string;
   AGENT_AUTH_SERVICE_TOKEN?: string;
   AGENT_DELEGATION_SECRET?: string;
@@ -41,8 +50,53 @@ type Env = {
   BUILD_TIME?: string;
 };
 
-/** Production PWA host — the only browser origin trusted in production. */
-export const PRODUCTION_PWA_ORIGIN = "https://pi-finance-pwa.walissonead.workers.dev";
+/**
+ * Non-prod fallback PWA origin (DEBT2 allowlist migration). Production MUST
+ * set the PWA_ORIGIN binding to the pinned EXPECTED_PWA_ORIGIN below
+ * (deploy `--var PWA_ORIGIN:<host>` or the Cloudflare dashboard — value
+ * from the PWA_PROD_URL repo variable, itself validated by
+ * scripts/validate-deploy-origins.mjs). Kept exported under its historic
+ * name so existing importers keep compiling; treat it as the dev/test
+ * placeholder, never as the production value.
+ */
+export const PRODUCTION_PWA_ORIGIN = "https://pwa.example";
+
+/**
+ * Exact production PWA host (DEBT2-CODER-ALLOWLISTS-FIX, security review
+ * HIGH: CORS allowlist hardening). This literal is the pinned allowlist for
+ * origin validation — the worker trusts no other browser origin in
+ * production. It is a value being PINNED, not a secret; its presence is an
+ * irreducible detector-like exception, allowlisted in
+ * scripts/check-public-safety.mjs with reason and covered by the
+ * worker-cors-gate suite (the safety gate: any host change breaks those
+ * tests loudly before it can ship).
+ */
+export const EXPECTED_PWA_ORIGIN = "https://pi-finance-pwa.walissonead.workers.dev";
+
+/**
+ * Strict origin check: ONLY the exact expected https origin — no userinfo,
+ * no explicit port, no path beyond "/", no query, no fragment, exact
+ * hostname. Used for the CORS allowlist source below.
+ */
+export function isExpectedPwaOrigin(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.protocol === "https:" &&
+    parsed.username === "" &&
+    parsed.password === "" &&
+    parsed.hostname === new URL(EXPECTED_PWA_ORIGIN).hostname &&
+    parsed.port === "" &&
+    (parsed.pathname === "" || parsed.pathname === "/") &&
+    parsed.search === "" &&
+    parsed.hash === "" &&
+    parsed.origin === EXPECTED_PWA_ORIGIN
+  );
+}
 
 /**
  * FIX-FINAL-2 FINDING 2: ceiling for RPC bodies buffered before forwarding
@@ -114,16 +168,37 @@ const LOCAL_ORIGINS = [
 ];
 
 /**
- * V4 T2.7 G3 — CORS allowlist with the localhost environment gate.
- * Production (no explicit flag) accepts the production PWA origin only;
- * localhost joins exclusively behind ALLOW_LOCAL_ORIGIN=1. No route
- * contract changes: callers keep passing the same env through.
+ * Resolves the trusted PWA origin from the PWA_ORIGIN binding. Returns the
+ * pinned expected origin when the binding matches exactly, the non-prod
+ * placeholder when unset (or set to the placeholder itself, the documented
+ * dev value), and the placeholder fail-closed otherwise: a misconfigured
+ * production denies the real PWA instead of trusting an attacker-controlled
+ * value, and an invalid value is never allowlisted.
  */
-export function resolveAllowedOrigins(env?: { ALLOW_LOCAL_ORIGIN?: string }): string[] {
-  if (env?.ALLOW_LOCAL_ORIGIN === "1") {
-    return [PRODUCTION_PWA_ORIGIN, ...LOCAL_ORIGINS];
+export function resolvePwaOrigin(env?: { PWA_ORIGIN?: string }): string {
+  const configured = env?.PWA_ORIGIN?.trim();
+  if (configured) {
+    if (isExpectedPwaOrigin(configured)) return EXPECTED_PWA_ORIGIN;
+    if (configured !== PRODUCTION_PWA_ORIGIN) {
+      console.warn(`worker.config_invalid_pwa_origin fallback=${PRODUCTION_PWA_ORIGIN}`);
+    }
   }
-  return [PRODUCTION_PWA_ORIGIN];
+  return PRODUCTION_PWA_ORIGIN;
+}
+
+/**
+ * V4 T2.7 G3 — CORS allowlist with the localhost environment gate.
+ * Production (no explicit flag) accepts the PWA origin only (PWA_ORIGIN
+ * binding, placeholder fallback); localhost joins exclusively behind
+ * ALLOW_LOCAL_ORIGIN=1. No route contract changes: callers keep passing
+ * the same env through.
+ */
+export function resolveAllowedOrigins(env?: { ALLOW_LOCAL_ORIGIN?: string; PWA_ORIGIN?: string }): string[] {
+  const pwaOrigin = resolvePwaOrigin(env);
+  if (env?.ALLOW_LOCAL_ORIGIN === "1") {
+    return [pwaOrigin, ...LOCAL_ORIGINS];
+  }
+  return [pwaOrigin];
 }
 
 const verifyAdminToken = (request: Request, adminToken?: string): boolean => {

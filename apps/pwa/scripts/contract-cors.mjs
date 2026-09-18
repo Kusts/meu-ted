@@ -8,17 +8,29 @@
  *
  * This is a passive CORS test — no authentication or rate-limit probing.
  *
- * Deployment-only: if the API base URL is not configured, the test
- * skips the live check and prints a pending reminder.
+ * DEBT2 allowlist migration: the PWA production host never lives in-repo.
+ * It arrives via PWA_PROD_URL (preferred, injected by CI from the repo
+ * variable) or PWA_ORIGIN. Without either, the live check is SKIPPED
+ * (exit 0) so local runs never silently probe production.
  */
 
-const PWA_ORIGIN = "https://pi-finance-pwa.walissonead.workers.dev";
-const HOSTILE_ORIGIN = "https://evil.example.com";
-const API_BASE_URL =
-  process.env.PWA_CONTRACT_API_BASE_URL ?? "https://api.synkroo.com.br";
+import { pathToFileURL } from "node:url";
 
-async function testAcao(origin, label) {
-  const url = `${API_BASE_URL}/ping`;
+const HOSTILE_ORIGIN = "https://evil.example.com";
+const FALLBACK_API_BASE_URL = "https://api.synkroo.com.br";
+
+/**
+ * Pure config resolution (exported for unit tests). `live` is false when
+ * the PWA origin is unknown — the caller must skip the live check.
+ */
+export function resolveConfig(env = process.env) {
+  const pwaOrigin = env.PWA_PROD_URL?.trim() || env.PWA_ORIGIN?.trim() || null;
+  const apiBaseUrl = env.PWA_CONTRACT_API_BASE_URL?.trim() || FALLBACK_API_BASE_URL;
+  return { pwaOrigin, apiBaseUrl, hostileOrigin: HOSTILE_ORIGIN, live: pwaOrigin !== null };
+}
+
+async function testAcao(apiBaseUrl, origin, label) {
+  const url = `${apiBaseUrl}/ping`;
   try {
     const res = await fetch(url, {
       method: "OPTIONS",
@@ -39,14 +51,23 @@ async function testAcao(origin, label) {
 }
 
 async function main() {
+  const { pwaOrigin: PWA_ORIGIN, apiBaseUrl: API_BASE_URL, hostileOrigin: HOSTILE_ORIGIN, live } = resolveConfig();
   console.log("=== CORS Contract Test ===\n");
   console.log(`API: ${API_BASE_URL}`);
-  console.log(`PWA: ${PWA_ORIGIN}`);
+  console.log(`PWA: ${PWA_ORIGIN ?? "(unset — live check will be skipped)"}`);
   console.log("");
 
+  if (!live) {
+    console.log("SKIP: PWA production origin is not configured — set PWA_PROD_URL");
+    console.log("  (CI injects it from the repo variable) or PWA_ORIGIN to run the live check.");
+    console.log("  Local default: no live probe against production. Exiting 0.");
+    process.exit(0);
+  }
+
   // Live check — requires network access to the API
-  const pwaResult = await testAcao(PWA_ORIGIN, "Canonical PWA origin");
+  const pwaResult = await testAcao(API_BASE_URL, PWA_ORIGIN, "Canonical PWA origin");
   const hostileResult = await testAcao(
+    API_BASE_URL,
     HOSTILE_ORIGIN,
     "Hostile origin (must deny)",
   );
@@ -92,7 +113,12 @@ async function main() {
   process.exit(pass ? 0 : 1);
 }
 
-main().catch((err) => {
-  console.error("Fatal:", err);
-  process.exit(1);
-});
+const invokedDirectly =
+  typeof process.argv[1] === "string" &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error("Fatal:", err);
+    process.exit(1);
+  });
+}

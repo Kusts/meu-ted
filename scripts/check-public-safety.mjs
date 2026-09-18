@@ -77,27 +77,41 @@ const RULE_ALLOWLIST = [
   { rule: "url-embedded-credentials", path: "scripts/capture-production-topology.test.mjs", reason: "redaction unit-test fixture with fake strings (supersecret/abc123xyz)" },
   { rule: "url-embedded-credentials", path: "docs/ops/2026-08-18-postgres-integration-status.md", reason: "local CI test container (postgres:postgres@127.0.0.1) — ephemeral, no production credential" },
   { rule: "url-embedded-credentials", path: "docs/superpowers/goal-runs/2026-08-24-v032-v033.md", reason: "local rehearsal container (rehearse:rehearse@localhost) — ephemeral, no production credential" },
-  // Metadata WARN allowlist (DEBT2-CODER-ORIGINS 2026-09-17): only the
-  // irreducible production endpoint constants remain in-repo. Deploy URLs
-  // moved to gh repo variables (vars.PWA_PROD_URL / vars.AGENT_PROD_URL);
-  // API non-prod defaults became example.* placeholders (production is
+  // Metadata WARN allowlist (DEBT2-CODER-ALLOWLISTS 2026-09-18): the
+  // production endpoint constants migrated out of the repo. Deploy URLs
+  // live in gh repo variables (vars.PWA_PROD_URL / vars.AGENT_PROD_URL);
+  // API non-prod defaults are example.* placeholders (production is
   // env-required fail-closed); fixtures use example.* or import the runtime
-  // constant. What stays below MUST mirror a live runtime value with no
-  // out-of-repo var available — see reasons per entry.
+  // constant. The Agent worker reads the PWA_ORIGIN binding (deploy
+  // --var PWA_ORIGIN, fallback is the example.* placeholder — production
+  // without the binding denies the real PWA, never trusts a third party);
+  // the PWA agent proxy reads PWA_AGENT_PROXY_ORIGIN/AGENT_ORIGIN plus
+  // PWA_ORIGIN from the Cloudflare runtime (deploy --var, process.env
+  // fallback; production missing all three answers 500 without calling
+  // upstream); the CORS contract script takes PWA_PROD_URL/PWA_ORIGIN from
+  // env and skips the live check when unset (never silently probes prod).
+  // What stays below is irreducible without an ops/product decision.
   // Detector definitions (regex source, not values).
   { rule: "vps-host-or-ssh-user", path: "scripts/check-public-safety.mjs", reason: "detector definitions" },
   { rule: "personal-email", path: "scripts/check-public-safety.mjs", reason: "detector definitions" },
-  // Irreducible runtime production-origin constants (no out-of-repo var
-  // configures these today; removing the literal breaks production, so the
-  // fail-safe choice is keep + allowlist).
-  { rule: "internal-hostname", path: "apps/agent/src/worker.ts", reason: "production CORS allowlist; deployed worker has no PWA_ORIGIN var — removing the literal breaks prod CORS (fail-safe keep)" },
-  { rule: "internal-hostname", path: "apps/pwa/src/app/api/agent/[...path]/route.ts", reason: "deployed PWA proxy upstream; no AGENT_ORIGIN worker var configured — removing the literal breaks prod proxy (fail-safe keep)" },
-  { rule: "internal-hostname", path: "apps/pwa/src/proxy-utils.ts", reason: "deployed PWA spoof target + reference constants; no override worker vars configured (fail-safe keep)" },
+  // Pinned production hosts — irreducible detector-like exceptions
+  // (DEBT2-CODER-ALLOWLISTS-FIX, security review HIGH). Each literal below
+  // is a value being PINNED for exact-host validation (fail-closed), not a
+  // secret and not a live credential: the PWA/agent proxies and the deploy
+  // validator accept no other host. Safety gate: edge-gate.test.ts,
+  // agent route.test.ts, worker-cors-gate.test.ts and
+  // validate-deploy-origins.test.mjs pin the behavior AND the exact host
+  // values — any host change breaks those suites before it can ship.
+  { rule: "internal-hostname", path: "apps/pwa/src/proxy-utils.ts", reason: "EXPECTED_PWA/AGENT_ORIGIN pins for isExpectedOrigin exact-host validation (fail-closed proxy); covered by edge-gate + route suites" },
+  { rule: "internal-hostname", path: "apps/agent/src/worker.ts", reason: "EXPECTED_PWA_ORIGIN pin for isExpectedPwaOrigin CORS validation (fail-closed); covered by worker-cors-gate suite" },
+  { rule: "internal-hostname", path: "scripts/validate-deploy-origins.mjs", reason: "EXPECTED_*_HOST pins for deploy-time repo-variable validation (fail-closed); covered by validate-deploy-origins.test.mjs" },
+  { rule: "internal-hostname", path: "scripts/validate-deploy-origins.test.mjs", reason: "pins the exact expected host VALUES asserted by the deploy-validation safety gate (no other production-host use)" },
+  // Irreducible without ops decision: default EVOLUTION_GO_API_URL for the
+  // local pi-stack (override via env / gitignored .env.pi on the VPS).
+  // The watchdog command is retired (bridge removed in P3 f640e84) and no
+  // test pins this default, so changing it to example.* needs an explicit
+  // ops call — kept + allowlisted (fail-safe keep).
   { rule: "internal-hostname", path: "docker/pi-stack/docker-compose.yml", reason: "default EVOLUTION_GO_API_URL for local stack (override via env); changing default needs ops decision (follow-up)" },
-  // Live contract script: must assert the REAL production CORS origin against
-  // the deployed API (runs in PWA CI); an example.* placeholder would fail
-  // every reachable live check.
-  { rule: "internal-hostname", path: "apps/pwa/scripts/contract-cors.mjs", reason: "live CORS contract must assert the real production origin (PWA CI step)" },
 ];
 
 function listTrackedFiles() {

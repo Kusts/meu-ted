@@ -7,8 +7,62 @@
 /** Production API origin (retired from the production CSP — see below). */
 export const PRODUCTION_API_ORIGIN = "https://api.synkroo.com.br";
 
-/** Production Agent (TED chat) origin (retired from the production CSP — see below). */
-export const PRODUCTION_AGENT_ORIGIN = "https://pi-finance-agent.walissonead.workers.dev";
+/**
+ * Non-prod fallback Agent origin (DEBT2 allowlist migration). Reference
+ * only (upstream target the PWA agent proxy forwards to in dev/test);
+ * production MUST set PWA_AGENT_PROXY_ORIGIN (or AGENT_ORIGIN) — see
+ * resolveAgentOrigin in src/app/api/agent/[...path]/route.ts. Kept exported
+ * under its historic name so existing importers keep compiling.
+ */
+export const PRODUCTION_AGENT_ORIGIN = "https://agent.example";
+
+/**
+ * Exact production hosts (DEBT2-CODER-ALLOWLISTS-FIX, security review HIGH:
+ * shell-injection / open-proxy hardening). These literals are the pinned
+ * allowlist for origin validation — every runtime origin (deploy repo
+ * variables, worker bindings, proxy env) must match them exactly, or the
+ * code fails closed. They are values being PINNED, not secrets; their
+ * presence is an irreducible detector-like exception, allowlisted in
+ * scripts/check-public-safety.mjs with reason and covered by the
+ * edge-gate / route test suites (the safety gate: any host change breaks
+ * those tests loudly before it can ship).
+ */
+export const EXPECTED_PWA_ORIGIN = "https://pi-finance-pwa.walissonead.workers.dev";
+export const EXPECTED_AGENT_ORIGIN = "https://pi-finance-agent.walissonead.workers.dev";
+
+/**
+ * Strict origin check shared by the PWA proxies and deploy validation.
+ * Accepts ONLY the exact expected https origin: no userinfo, no explicit
+ * port, no path beyond "/", no query, no fragment, exact hostname. Any
+ * deviation (lookalike hosts, userinfo smuggling, scheme downgrade,
+ * shell metacharacters — none of which survive URL parsing as the exact
+ * origin) returns false and the caller fails closed.
+ */
+export function isExpectedOrigin(value: string, expectedOrigin: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  let expected: URL;
+  try {
+    expected = new URL(expectedOrigin);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.protocol === "https:" &&
+    parsed.username === "" &&
+    parsed.password === "" &&
+    parsed.hostname === expected.hostname &&
+    parsed.port === "" &&
+    (parsed.pathname === "" || parsed.pathname === "/") &&
+    parsed.search === "" &&
+    parsed.hash === "" &&
+    parsed.origin === expected.origin
+  );
+}
 
 /**
  * V4 T2.7 G1 — remaining external origins allowed by the production CSP.
@@ -22,10 +76,18 @@ export const PRODUCTION_AGENT_ORIGIN = "https://pi-finance-agent.walissonead.wor
  */
 export const REMAINING_EXTERNAL_ORIGINS: readonly string[] = [];
 
-/** Production PWA host — the only trusted browser origin for the proxies. */
-export const PRODUCTION_PWA_ORIGIN = "https://pi-finance-pwa.walissonead.workers.dev";
+/**
+ * Non-prod fallback PWA host (DEBT2 allowlist migration). Used as the
+ * localhost-spoof target in dev/test and as the fallback when PWA_ORIGIN is
+ * unset/malformed (see resolvePwaOrigin); production MUST set PWA_ORIGIN to
+ * the pinned EXPECTED_PWA_ORIGIN (wrangler vars / Cloudflare dashboard,
+ * value from the PWA_PROD_URL repo variable). Kept exported under its
+ * historic name so existing importers keep compiling; treat it as the
+ * dev/test placeholder, never as the production value.
+ */
+export const PRODUCTION_PWA_ORIGIN = "https://pwa.example";
 
-type EnvLike = { NODE_ENV?: string; ALLOW_LOCAL_ORIGIN?: string };
+type EnvLike = { NODE_ENV?: string; ALLOW_LOCAL_ORIGIN?: string; PWA_ORIGIN?: string };
 
 function readEnv(env: EnvLike | undefined): EnvLike {
   if (env) return env;
@@ -87,6 +149,23 @@ export function isBrowserOriginAllowed(
 }
 
 /**
+ * Resolves the trusted PWA origin from the PWA_ORIGIN env (Cloudflare
+ * runtime binding or process.env). Returns the pinned expected origin when
+ * the binding matches exactly, the non-prod placeholder when unset (or set
+ * to the placeholder itself, the documented dev value), and the placeholder
+ * fail-closed otherwise — a misconfigured value never becomes a trusted or
+ * spoofed origin (the upstream worker enforces the same pin).
+ */
+export function resolvePwaOrigin(env?: EnvLike): string {
+  const configured = env?.PWA_ORIGIN?.trim();
+  if (configured) {
+    if (isExpectedOrigin(configured, EXPECTED_PWA_ORIGIN)) return EXPECTED_PWA_ORIGIN;
+    if (configured === PRODUCTION_PWA_ORIGIN) return PRODUCTION_PWA_ORIGIN;
+  }
+  return PRODUCTION_PWA_ORIGIN;
+}
+
+/**
  * V4 T2.7 G3 — shared upstream-Origin decision used by both Next proxies.
  * The spoof to the production host (upstream trustedOrigins escape hatch)
  * happens ONLY when the bypass is enabled; otherwise the origin is
@@ -97,7 +176,7 @@ export function resolveForwardOrigin(
   env?: EnvLike,
 ): string | null {
   if (origin && isLocalOrigin(origin) && isLocalBypassEnabled(env)) {
-    return PRODUCTION_PWA_ORIGIN;
+    return resolvePwaOrigin(env);
   }
   return origin;
 }

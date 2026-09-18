@@ -136,8 +136,17 @@ jobs:
           if (m.sha !== process.env.HEAD_SHA) { console.error('manifest sha mismatch: ' + m.sha); process.exit(1); }
           console.log('manifest verified for ' + m.sha);
           "
+      # DEBT2-CODER-ALLOWLISTS-FIX (shell-injection hardening): the repo
+      # variable enters ONLY via step `env:` below — never interpolated into
+      # `run:` text. The helper pins it to the exact expected PWA host and
+      # persists ONLY the sanitized canonical origin to $GITHUB_ENV.
+      - name: Validate PWA_PROD_URL repo variable (fail closed)
+        env:
+          PWA_PROD_URL: ${{ vars.PWA_PROD_URL }}
+        run: |
+          node scripts/validate-deploy-origins.mjs --name PWA_PROD_URL --expect pwa --env-file "$GITHUB_ENV"
       - name: Deploy Agent Worker (source verified, no independent rebuild)
-        run: pnpm --dir apps/agent exec wrangler deploy --var BUILD_SHA:${{ github.event.workflow_run.head_sha }} --var BUILD_ID:${{ github.event.workflow_run.id }} --var BUILD_TIME:${{ github.event.workflow_run.created_at }}
+        run: pnpm --dir apps/agent exec wrangler deploy --var BUILD_SHA:${{ github.event.workflow_run.head_sha }} --var BUILD_ID:${{ github.event.workflow_run.id }} --var BUILD_TIME:${{ github.event.workflow_run.created_at }} --var "PWA_ORIGIN:$PWA_PROD_URL"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -153,16 +162,21 @@ jobs:
       AGENT_PROD_URL: ${{ vars.AGENT_PROD_URL }}
       API_PROD_URL: https://api.synkroo.com.br
     steps:
-      - name: Require AGENT_PROD_URL repo variable (fail closed)
-        run: |
-          if [ -z "${{ vars.AGENT_PROD_URL }}" ]; then
-            echo "::error::AGENT_PROD_URL repo variable is unset — set it with: gh variable set AGENT_PROD_URL --body \"https://<agent-host>\""
-            exit 1
-          fi
       - name: Checkout deployed SHA
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+      # DEBT2-CODER-SMOKE-URL-FIX: validate BEFORE any curl (runner-provided
+      # node is enough — the helper has no dependencies). The repo variable
+      # enters ONLY via step `env:` below; the helper pins it to the exact
+      # expected Agent host and persists the canonical origin to $GITHUB_ENV,
+      # so every smoke curl uses the validated value. (If unset:
+      # gh variable set AGENT_PROD_URL --body "https://<agent-host>".)
+      - name: Validate AGENT_PROD_URL (fail closed)
+        env:
+          AGENT_PROD_URL: ${{ vars.AGENT_PROD_URL }}
+        run: |
+          node scripts/validate-deploy-origins.mjs --name AGENT_PROD_URL --expect agent --env-file "$GITHUB_ENV"
       - name: Agent worker health (public GET only)
         run: |
           curl -fsS "$AGENT_PROD_URL/health" | grep -q '"status":"ready"'

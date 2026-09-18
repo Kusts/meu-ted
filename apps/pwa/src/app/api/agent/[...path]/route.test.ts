@@ -1,10 +1,23 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { PRODUCTION_PWA_ORIGIN } from "@/proxy-utils";
-import { GET, POST } from "./route";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@opennextjs/cloudflare", () => ({
+  getCloudflareContext: vi.fn(),
+}));
+
+import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { EXPECTED_AGENT_ORIGIN, PRODUCTION_PWA_ORIGIN } from "@/proxy-utils";
+import { GET, POST, resolveAgentOrigin } from "./route";
 
 describe("Agent Next.js Proxy Route (/api/agent/[...path])", () => {
+  beforeEach(() => {
+    // Default: no Cloudflare runtime context (local dev/test) — the route
+    // falls back to process.env, mirroring pwa-control/route.test.ts.
+    vi.mocked(getCloudflareContext).mockRejectedValue(new Error("no ctx"));
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(getCloudflareContext).mockRejectedValue(new Error("no ctx"));
   });
 
   it("forwards allowed token headers and strips forged x-agent-actor or x-agent-role headers", async () => {
@@ -146,6 +159,9 @@ describe("Agent Next.js Proxy Route (/api/agent/[...path])", () => {
   it("rejects localhost origin for state-changing requests in production even with the flag", async () => {
     vi.stubEnv("ALLOW_LOCAL_ORIGIN", "1");
     vi.stubEnv("NODE_ENV", "production");
+    // Origin-gating path needs a pinned upstream (otherwise the
+    // production fail-closed 500 answers first — covered below).
+    vi.stubEnv("PWA_AGENT_PROXY_ORIGIN", EXPECTED_AGENT_ORIGIN);
     try {
       const fetchMock = vi.spyOn(globalThis, "fetch");
       const response = await POST(new Request("https://pwa.example/api/agent/turn", {
@@ -200,5 +216,104 @@ describe("Agent Next.js Proxy Route (/api/agent/[...path])", () => {
     expect(res.headers.get("cache-control")).toContain("no-store");
     expect(capturedUpstreamRequest!.headers.get("cookie")).toBe("better-auth.session_token=abc");
     expect(capturedUpstreamRequest!.headers.get("x-agent-connection-token")).toBe("conn-1");
+  });
+});
+
+describe("resolveAgentOrigin (DEBT2 allowlist migration)", () => {
+  it("accepts the pinned expected origin and normalizes trailing slashes", () => {
+    expect(
+      resolveAgentOrigin({ PWA_AGENT_PROXY_ORIGIN: `${EXPECTED_AGENT_ORIGIN}/` }),
+    ).toBe(EXPECTED_AGENT_ORIGIN);
+  });
+
+  it("falls back to AGENT_ORIGIN when the primary var is blank (still pinned)", () => {
+    expect(
+      resolveAgentOrigin({ PWA_AGENT_PROXY_ORIGIN: "   ", AGENT_ORIGIN: EXPECTED_AGENT_ORIGIN }),
+    ).toBe(EXPECTED_AGENT_ORIGIN);
+  });
+
+  it("uses the non-prod placeholder outside production when nothing is configured", () => {
+    expect(resolveAgentOrigin({ NODE_ENV: "development" })).toBe("https://agent.example");
+    expect(resolveAgentOrigin({})).toBe("https://agent.example");
+  });
+
+  it("fails closed in production when no upstream origin is configured", () => {
+    expect(() => resolveAgentOrigin({ NODE_ENV: "production" })).toThrow(/PWA_AGENT_PROXY_ORIGIN/);
+    expect(() => resolveAgentOrigin({ NODE_ENV: "production", PWA_AGENT_PROXY_ORIGIN: "   " })).toThrow();
+  });
+
+  it("rejects a non-pinned external host (non-prod placeholder, production throw)", () => {
+    expect(resolveAgentOrigin({ PWA_AGENT_PROXY_ORIGIN: "https://agent.example.net" })).toBe(
+      "https://agent.example",
+    );
+    expect(() =>
+      resolveAgentOrigin({ NODE_ENV: "production", PWA_AGENT_PROXY_ORIGIN: "https://agent.example.net" }),
+    ).toThrow();
+  });
+
+  it("rejects http, userinfo, path, query, fragment, and port overrides", () => {
+    const bad = [
+      EXPECTED_AGENT_ORIGIN.replace("https://", "http://"),
+      EXPECTED_AGENT_ORIGIN.replace("https://", "https://user:pass@"),
+      `${EXPECTED_AGENT_ORIGIN}/rpc/chat`,
+      `${EXPECTED_AGENT_ORIGIN}?q=1`,
+      `${EXPECTED_AGENT_ORIGIN}#h`,
+      `${EXPECTED_AGENT_ORIGIN}:8443`,
+    ];
+    for (const value of bad) {
+      expect(resolveAgentOrigin({ PWA_AGENT_PROXY_ORIGIN: value })).toBe("https://agent.example");
+      expect(() =>
+        resolveAgentOrigin({ NODE_ENV: "production", PWA_AGENT_PROXY_ORIGIN: value }),
+      ).toThrow();
+    }
+  });
+});
+
+describe("Agent proxy upstream origin (runtime env)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    // NOTE: this describe is a sibling of the main one above, so its
+    // afterEach (restoreAllMocks) does not apply here — restore locally or
+    // fetch-spy call history leaks between these tests.
+    vi.restoreAllMocks();
+  });
+
+  function historyContext() {
+    return { params: Promise.resolve({ path: ["agents", "x", "rpc", "history"] }) };
+  }
+
+  it("proxies to the Cloudflare runtime AGENT origin when provided", async () => {
+    vi.mocked(getCloudflareContext).mockReset();
+    vi.mocked(getCloudflareContext).mockResolvedValue({
+      env: { PWA_AGENT_PROXY_ORIGIN: EXPECTED_AGENT_ORIGIN },
+    } as never);
+    const seen: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      seen.push(String(input));
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    const res = await GET(new Request("https://pwa.example/api/agent/agents/x/rpc/history"), historyContext());
+    expect(res.status).toBe(200);
+    expect(seen[0]).toBe(`${EXPECTED_AGENT_ORIGIN}/agents/x/rpc/history`);
+  });
+
+  it("returns 500 without calling upstream when production has no origin configured", async () => {
+    // Local/test path: no Cloudflare runtime context → process.env only.
+    vi.mocked(getCloudflareContext).mockReset();
+    vi.mocked(getCloudflareContext).mockRejectedValue(new Error("no ctx"));
+    vi.stubEnv("NODE_ENV", "production");
+    // Hermetic: no agent upstream anywhere in process.env.
+    vi.stubEnv("PWA_AGENT_PROXY_ORIGIN", "");
+    vi.stubEnv("AGENT_ORIGIN", "");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+    try {
+      const res = await GET(new Request("https://pwa.example/api/agent/agents/x/rpc/history"), historyContext());
+      expect(res.status).toBe(500);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe("upstream_misconfigured");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

@@ -16,6 +16,9 @@
   ],
   "vars": {
     "API_ORIGIN": "https://api.synkroo.com.br"
+    // PWA_ORIGIN (browser origin trusted by CORS) is injected at deploy
+    // time (--var PWA_ORIGIN, value from the PWA_PROD_URL repo variable).
+    // Never commit the production host here (DEBT2 allowlist migration).
   },
   "observability": { "enabled": true }
 }

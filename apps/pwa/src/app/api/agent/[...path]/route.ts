@@ -1,10 +1,77 @@
 import { NextResponse } from "next/server";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {
+  EXPECTED_AGENT_ORIGIN,
   isBrowserOriginAllowed,
+  isExpectedOrigin,
   resolveForwardOrigin,
 } from "@/proxy-utils";
 
-const AGENT_ORIGIN = "https://pi-finance-agent.walissonead.workers.dev";
+/**
+ * Non-prod fallback Agent upstream (DEBT2 allowlist migration — no
+ * production host literal may live in-repo). Production MUST set
+ * PWA_AGENT_PROXY_ORIGIN (preferred) or AGENT_ORIGIN in the Cloudflare
+ * runtime env (wrangler `--var` / dashboard, value from the AGENT_PROD_URL
+ * repo variable); without it production fails closed (500, no upstream
+ * call) instead of proxying to a placeholder.
+ */
+export const FALLBACK_AGENT_ORIGIN = "https://agent.example";
+
+type ProxyEnv = {
+  NODE_ENV?: string;
+  ALLOW_LOCAL_ORIGIN?: string;
+  PWA_ORIGIN?: string;
+  PWA_AGENT_PROXY_ORIGIN?: string;
+  AGENT_ORIGIN?: string;
+};
+
+/**
+ * Resolves the Agent upstream origin. An explicitly configured env wins
+ * ONLY when it matches the pinned EXPECTED_AGENT_ORIGIN exactly
+ * (https, no userinfo/port/path/query/fragment, exact hostname — see
+ * isExpectedOrigin); anything else is unusable by construction, so an
+ * invalid override can never turn this proxy into an open relay. Outside
+ * production the non-prod placeholder lets dev/test boot without env;
+ * production with nothing (valid) configured throws fail-closed.
+ */
+export function resolveAgentOrigin(env?: ProxyEnv): string {
+  const override = env?.PWA_AGENT_PROXY_ORIGIN?.trim() || env?.AGENT_ORIGIN?.trim();
+  if (override) {
+    if (isExpectedOrigin(override, EXPECTED_AGENT_ORIGIN)) return EXPECTED_AGENT_ORIGIN;
+    console.error("agent-proxy.invalid_upstream_origin");
+  } else if (env?.NODE_ENV !== "production") {
+    return FALLBACK_AGENT_ORIGIN;
+  }
+  if (env?.NODE_ENV === "production") {
+    throw new Error(
+      "FATAL: PWA_AGENT_PROXY_ORIGIN (or AGENT_ORIGIN) must match the pinned Agent origin in production; refusing to proxy to unsafe defaults.",
+    );
+  }
+  return FALLBACK_AGENT_ORIGIN;
+}
+
+/**
+ * Reads the proxy env with the Cloudflare runtime first (wrangler vars /
+ * dashboard bindings via getCloudflareContext, the in-repo pwa-control
+ * pattern) and process.env as the local/test fallback. Runtime wins so a
+ * deploy-time `--var` overrides anything baked in at build time.
+ */
+async function readProxyEnv(): Promise<ProxyEnv> {
+  try {
+    const ctx = await getCloudflareContext({ async: true });
+    const cloudEnv = (ctx?.env ?? {}) as ProxyEnv;
+    return {
+      NODE_ENV: cloudEnv.NODE_ENV ?? process.env.NODE_ENV,
+      ALLOW_LOCAL_ORIGIN: cloudEnv.ALLOW_LOCAL_ORIGIN ?? process.env.ALLOW_LOCAL_ORIGIN,
+      PWA_ORIGIN: cloudEnv.PWA_ORIGIN ?? process.env.PWA_ORIGIN,
+      PWA_AGENT_PROXY_ORIGIN: cloudEnv.PWA_AGENT_PROXY_ORIGIN ?? process.env.PWA_AGENT_PROXY_ORIGIN,
+      AGENT_ORIGIN: cloudEnv.AGENT_ORIGIN ?? process.env.AGENT_ORIGIN,
+    };
+  } catch {
+    return process.env as ProxyEnv;
+  }
+}
+
 /** Upstream budget: generous for streaming/LLM agent responses. */
 const UPSTREAM_TIMEOUT_MS = 120_000;
 const MAX_BODY_BYTES = 2_097_152;
@@ -20,12 +87,12 @@ const HOP_BY_HOP_HEADERS = new Set([
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
-function upstreamUrl(path: string[], search: string): string {
+function upstreamUrl(agentOrigin: string, path: string[], search: string): string {
   const encodedPath = path.map((segment) => encodeURIComponent(segment)).join("/");
-  return `${AGENT_ORIGIN}/${encodedPath}${search}`;
+  return `${agentOrigin}/${encodedPath}${search}`;
 }
 
-function forwardHeaders(request: Request): Headers {
+function forwardHeaders(request: Request, env: ProxyEnv): Headers {
   const headers = new Headers();
   for (const name of [
     "accept",
@@ -44,7 +111,7 @@ function forwardHeaders(request: Request): Headers {
   // ONLY when the localhost bypass is enabled (non-production + explicit
   // ALLOW_LOCAL_ORIGIN=1); production forwards unchanged (fail-closed).
   const origin = request.headers.get("origin");
-  const forwarded = resolveForwardOrigin(origin, process.env);
+  const forwarded = resolveForwardOrigin(origin, env);
   if (forwarded) {
     headers.set("origin", forwarded);
   }
@@ -58,8 +125,8 @@ function upstreamErrorResponse(status: number, code: string, message: string): N
   );
 }
 
-function hasValidBrowserOrigin(request: Request): boolean {
-  return isBrowserOriginAllowed(request.headers.get("origin"), request.url, process.env);
+function hasValidBrowserOrigin(request: Request, env: ProxyEnv): boolean {
+  return isBrowserOriginAllowed(request.headers.get("origin"), request.url, env);
 }
 
 function isTimeoutError(cause: unknown): boolean {
@@ -71,7 +138,15 @@ function isTimeoutError(cause: unknown): boolean {
 }
 
 async function proxy(request: Request, context: RouteContext): Promise<NextResponse> {
-  if (!["GET", "HEAD", "OPTIONS"].includes(request.method) && !hasValidBrowserOrigin(request)) {
+  const env = await readProxyEnv();
+  let agentOrigin: string;
+  try {
+    agentOrigin = resolveAgentOrigin(env);
+  } catch (err) {
+    console.error(`agent-proxy.misconfigured: ${(err as Error).message}`);
+    return upstreamErrorResponse(500, "upstream_misconfigured", "O assistente não está configurado. Tente novamente mais tarde.");
+  }
+  if (!["GET", "HEAD", "OPTIONS"].includes(request.method) && !hasValidBrowserOrigin(request, env)) {
     return upstreamErrorResponse(403, "csrf.origin_mismatch", "Origem da requisição não autorizada.");
   }
   const declaredLength = Number(request.headers.get("content-length") ?? 0);
@@ -85,9 +160,9 @@ async function proxy(request: Request, context: RouteContext): Promise<NextRespo
   }
   let upstream: Response;
   try {
-    upstream = await fetch(upstreamUrl(path, new URL(request.url).search), {
+    upstream = await fetch(upstreamUrl(agentOrigin, path, new URL(request.url).search), {
       method: request.method,
-      headers: forwardHeaders(request),
+      headers: forwardHeaders(request, env),
       ...(body ? { body } : {}),
       redirect: "manual",
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),

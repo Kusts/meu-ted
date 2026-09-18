@@ -105,6 +105,10 @@ jobs:
       - name: CORS contract (passive)
         run: timeout 10 node apps/pwa/scripts/contract-cors.mjs
         continue-on-error: true
+        env:
+          # DEBT2: the production PWA host comes from the repo variable —
+          # unset (e.g. fork PRs) means the script skips the live check.
+          PWA_PROD_URL: ${{ vars.PWA_PROD_URL }}
 
       - name: Install Playwright browser
         run: pnpm --dir apps/pwa exec playwright install --with-deps chromium
