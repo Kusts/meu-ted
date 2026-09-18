@@ -1,54 +1,13 @@
 import { NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {
-  EXPECTED_AGENT_ORIGIN,
   isBrowserOriginAllowed,
-  isExpectedOrigin,
+  resolveAgentOrigin,
   resolveForwardOrigin,
+  type AgentProxyEnv,
 } from "@/proxy-utils";
 
-/**
- * Non-prod fallback Agent upstream (DEBT2 allowlist migration — no
- * production host literal may live in-repo). Production MUST set
- * PWA_AGENT_PROXY_ORIGIN (preferred) or AGENT_ORIGIN in the Cloudflare
- * runtime env (wrangler `--var` / dashboard, value from the AGENT_PROD_URL
- * repo variable); without it production fails closed (500, no upstream
- * call) instead of proxying to a placeholder.
- */
-export const FALLBACK_AGENT_ORIGIN = "https://agent.example";
-
-type ProxyEnv = {
-  NODE_ENV?: string;
-  ALLOW_LOCAL_ORIGIN?: string;
-  PWA_ORIGIN?: string;
-  PWA_AGENT_PROXY_ORIGIN?: string;
-  AGENT_ORIGIN?: string;
-};
-
-/**
- * Resolves the Agent upstream origin. An explicitly configured env wins
- * ONLY when it matches the pinned EXPECTED_AGENT_ORIGIN exactly
- * (https, no userinfo/port/path/query/fragment, exact hostname — see
- * isExpectedOrigin); anything else is unusable by construction, so an
- * invalid override can never turn this proxy into an open relay. Outside
- * production the non-prod placeholder lets dev/test boot without env;
- * production with nothing (valid) configured throws fail-closed.
- */
-export function resolveAgentOrigin(env?: ProxyEnv): string {
-  const override = env?.PWA_AGENT_PROXY_ORIGIN?.trim() || env?.AGENT_ORIGIN?.trim();
-  if (override) {
-    if (isExpectedOrigin(override, EXPECTED_AGENT_ORIGIN)) return EXPECTED_AGENT_ORIGIN;
-    console.error("agent-proxy.invalid_upstream_origin");
-  } else if (env?.NODE_ENV !== "production") {
-    return FALLBACK_AGENT_ORIGIN;
-  }
-  if (env?.NODE_ENV === "production") {
-    throw new Error(
-      "FATAL: PWA_AGENT_PROXY_ORIGIN (or AGENT_ORIGIN) must match the pinned Agent origin in production; refusing to proxy to unsafe defaults.",
-    );
-  }
-  return FALLBACK_AGENT_ORIGIN;
-}
+type ProxyEnv = AgentProxyEnv;
 
 /**
  * Reads the proxy env with the Cloudflare runtime first (wrangler vars /

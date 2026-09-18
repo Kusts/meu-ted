@@ -6,7 +6,8 @@ vi.mock("@opennextjs/cloudflare", () => ({
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { EXPECTED_AGENT_ORIGIN, PRODUCTION_PWA_ORIGIN } from "@/proxy-utils";
-import { GET, POST, resolveAgentOrigin } from "./route";
+import { GET, POST } from "./route";
+import { resolveAgentOrigin } from "@/proxy-utils";
 
 describe("Agent Next.js Proxy Route (/api/agent/[...path])", () => {
   beforeEach(() => {

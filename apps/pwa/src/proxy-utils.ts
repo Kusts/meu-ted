@@ -11,10 +11,12 @@ export const PRODUCTION_API_ORIGIN = "https://api.synkroo.com.br";
  * Non-prod fallback Agent origin (DEBT2 allowlist migration). Reference
  * only (upstream target the PWA agent proxy forwards to in dev/test);
  * production MUST set PWA_AGENT_PROXY_ORIGIN (or AGENT_ORIGIN) — see
- * resolveAgentOrigin in src/app/api/agent/[...path]/route.ts. Kept exported
- * under its historic name so existing importers keep compiling.
+ * resolveAgentOrigin below. Kept exported under its historic name so existing
+ * importers keep compiling.
  */
 export const PRODUCTION_AGENT_ORIGIN = "https://agent.example";
+
+export const FALLBACK_AGENT_ORIGIN = "https://agent.example";
 
 /**
  * Exact production hosts (DEBT2-CODER-ALLOWLISTS-FIX, security review HIGH:
@@ -87,7 +89,15 @@ export const REMAINING_EXTERNAL_ORIGINS: readonly string[] = [];
  */
 export const PRODUCTION_PWA_ORIGIN = "https://pwa.example";
 
-type EnvLike = { NODE_ENV?: string; ALLOW_LOCAL_ORIGIN?: string; PWA_ORIGIN?: string };
+type EnvLike = {
+  NODE_ENV?: string;
+  ALLOW_LOCAL_ORIGIN?: string;
+  PWA_ORIGIN?: string;
+  PWA_AGENT_PROXY_ORIGIN?: string;
+  AGENT_ORIGIN?: string;
+};
+
+export type AgentProxyEnv = EnvLike;
 
 function readEnv(env: EnvLike | undefined): EnvLike {
   if (env) return env;
@@ -163,6 +173,27 @@ export function resolvePwaOrigin(env?: EnvLike): string {
     if (configured === PRODUCTION_PWA_ORIGIN) return PRODUCTION_PWA_ORIGIN;
   }
   return PRODUCTION_PWA_ORIGIN;
+}
+
+/**
+ * Resolves the Agent upstream only when the runtime binding matches the
+ * pinned production origin. This keeps the same-origin proxy from forwarding
+ * user credentials to a misconfigured target.
+ */
+export function resolveAgentOrigin(env?: AgentProxyEnv): string {
+  const override = env?.PWA_AGENT_PROXY_ORIGIN?.trim() || env?.AGENT_ORIGIN?.trim();
+  if (override) {
+    if (isExpectedOrigin(override, EXPECTED_AGENT_ORIGIN)) return EXPECTED_AGENT_ORIGIN;
+    console.error("agent-proxy.invalid_upstream_origin");
+  } else if (env?.NODE_ENV !== "production") {
+    return FALLBACK_AGENT_ORIGIN;
+  }
+  if (env?.NODE_ENV === "production") {
+    throw new Error(
+      "FATAL: PWA_AGENT_PROXY_ORIGIN (or AGENT_ORIGIN) must match the pinned Agent origin in production; refusing to proxy to unsafe defaults.",
+    );
+  }
+  return FALLBACK_AGENT_ORIGIN;
 }
 
 /**
