@@ -27,8 +27,5 @@
   "vars": {
     "NEXT_PRIVATE_MINIMAL_MODE": "1",
     "NEXT_PUBLIC_TED_MICROPHONE": "true"
-    // PWA_ORIGIN + PWA_AGENT_PROXY_ORIGIN are injected at deploy time
-    // (--var, values from the PWA_PROD_URL / AGENT_PROD_URL repo variables).
-    // Never commit production hosts here (DEBT2 allowlist migration).
   }
 }
