@@ -367,7 +367,9 @@ export default function PayablesPage() {
 
   // F4 pull-to-refresh: revalida os domínios exibidos nesta tela.
   const handleRefresh = useCallback(
-    () => refreshDomains(["payables", "accounts"]),
+    async () => {
+      await refreshDomains(["payables", "accounts"]);
+    },
     [refreshDomains],
   );
   const pull = usePullToRefresh({ onRefresh: handleRefresh });

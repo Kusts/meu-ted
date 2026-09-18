@@ -12,7 +12,7 @@ function stub(
   const refreshDomains =
     "refreshDomains" in overrides
       ? (overrides.refreshDomains as ctx.AppState["refreshDomains"])
-      : vi.fn().mockResolvedValue(undefined);
+      : vi.fn().mockResolvedValue(true);
   vi.spyOn(ctx, "useAppState").mockReturnValue({
     readOnly: accountsSource !== "live",
     refreshDomains,
@@ -173,6 +173,18 @@ describe("StaleBanner", () => {
     it("falls back to reload when the domain refresh rejects", async () => {
       const { refreshDomains } = stub("unavailable");
       refreshDomains.mockRejectedValueOnce(new Error("offline"));
+      const reloadSpy = stubReload();
+      render(<StaleBanner domains={["accounts"]} />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /tentar novamente/i }),
+      );
+      await waitFor(() => expect(reloadSpy).toHaveBeenCalledTimes(1));
+      expect(refreshDomains).toHaveBeenCalledWith(["accounts"]);
+    });
+
+    it("falls back to reload when the domain refresh reports no live data", async () => {
+      const { refreshDomains } = stub("unavailable");
+      refreshDomains.mockResolvedValueOnce(false);
       const reloadSpy = stubReload();
       render(<StaleBanner domains={["accounts"]} />);
       fireEvent.click(

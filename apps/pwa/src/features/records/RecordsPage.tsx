@@ -231,7 +231,9 @@ export default function RecordsPage() {
 
   // F4 pull-to-refresh: revalida os domínios exibidos nesta tela.
   const handleRefresh = useCallback(
-    () => refreshDomains(["transactions", "accounts"]),
+    async () => {
+      await refreshDomains(["transactions", "accounts"]);
+    },
     [refreshDomains],
   );
   const pull = usePullToRefresh({ onRefresh: handleRefresh });

@@ -67,7 +67,8 @@ export function StaleBanner({ domains, onDismiss, onRetry }: StaleBannerProps) {
   const handleDefaultRetry = async () => {
     try {
       if (typeof refreshDomains !== "function") throw new Error("refresh unavailable");
-      await refreshDomains(domains);
+      const refreshed = await refreshDomains(domains);
+      if (!refreshed) reloadApp();
     } catch {
       reloadApp();
     }

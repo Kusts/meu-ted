@@ -290,7 +290,7 @@ export interface AppState {
    * (used to invalidate stale data after out-of-band mutations, e.g.
    * approving a pending operation).
    */
-  refreshDomains: (domains: DomainKey[]) => Promise<void>;
+  refreshDomains: (domains: DomainKey[]) => Promise<boolean>;
   /**
    * Single reconciliation entry (SPEC §15.2, T3.3): consumes a
    * MutationReceipt from either origin (TED approval with operationId or
@@ -2194,20 +2194,24 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   /**
    * Re-fetches the given domains and dispatches DOMAIN_LIVE so provider state
    * is invalidated and rebuilt from the authoritative API. Domains outside the
-   * supported set are ignored. A failed refresh keeps the current data.
+   * supported set are ignored. A failed refresh keeps the current data and
+   * returns false so callers that need a hard recovery can react explicitly.
    */
   const refreshDomains = useCallback(
     async (domains: DomainKey[]) => {
-      if (!apiUsable()) return;
-      await Promise.all(
+      if (!apiUsable()) return false;
+      const results = await Promise.all(
         domains.map(async (domain) => {
           try {
             await refreshDomainStrict(domain);
+            return true;
           } catch {
             // Refresh failure keeps the current domain data.
+            return false;
           }
         }),
       );
+      return results.every(Boolean);
     },
     [refreshDomainStrict],
   );
