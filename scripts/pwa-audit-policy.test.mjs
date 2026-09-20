@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import fixture from "./__fixtures__/pwa-audit-current.json" with { type: "json" };
+import allowlist from "./pwa-audit-allowlist.json" with { type: "json" };
 import { evaluateAudit } from "./pwa-audit-policy.mjs";
 
-const TODAY = "2026-07-27";
+const TODAY = "2026-09-19";
 
 // ---- helpers ----
 
@@ -15,6 +16,7 @@ function makeAllowlistEntry(pkgName, overrides = {}) {
     scope: "dev-only",
     owner: "project-maintainer",
     justification: "No compatible upstream release as of 2026-07-27.",
+    expiresOn: "2026-12-31",
     ...vuln,
     ...overrides,
   };
@@ -35,6 +37,13 @@ test("accepted: all fixture entries matched", () => {
   const result = evaluateAudit({ audit: fixture, allowlist, today: TODAY });
   assert.equal(result.status, "ACCEPTED");
   assert.equal(result.blocked.length, 0);
+});
+
+test("real allowlist accepts the current audit only through expiring entries", () => {
+  const result = evaluateAudit({ audit: fixture, allowlist, today: TODAY });
+  assert.equal(result.status, "ACCEPTED");
+  assert.equal(result.accepted.length, 8);
+  assert.ok(result.accepted.every((entry) => entry.expiresOn === "2026-12-31"));
 });
 
 // ---- new record: vulnerability not in allowlist ----
@@ -67,15 +76,30 @@ test("blocked: expired allowlist entry when expiresOn is set", () => {
   assert.equal(result.status, "BLOCKED");
 });
 
-// ---- permanent: no expiresOn = never expires ----
+// ---- expiry is mandatory ----
 
-test("accepted: permanent entries without expiresOn", () => {
+test("blocked: missing allowlist expiry", () => {
   const names = fixturePackageNames();
   const allowlist = buildAllowlist(names);
-  // entries have no expiresOn by default — should be accepted even with old today
-  const result = evaluateAudit({ audit: fixture, allowlist, today: "2027-01-01" });
-  assert.equal(result.status, "ACCEPTED");
-  assert.equal(result.blocked.length, 0);
+  delete allowlist[0].expiresOn;
+  const result = evaluateAudit({ audit: fixture, allowlist, today: TODAY });
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.blocked[0].reason, /missing field: expiresOn/);
+});
+
+test("blocked: calendar-invalid allowlist expiry", () => {
+  const names = fixturePackageNames();
+  const allowlist = buildAllowlist(names);
+  allowlist[0].expiresOn = "2026-02-30";
+  const result = evaluateAudit({ audit: fixture, allowlist, today: TODAY });
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.blocked[0].reason, /invalid expiresOn/);
+});
+
+test("fixture metadata counts every current vulnerability", () => {
+  const count = Object.keys(fixture.vulnerabilities).length;
+  assert.equal(fixture.metadata.vulnerabilities.high, count);
+  assert.equal(fixture.metadata.vulnerabilities.total, count);
 });
 
 // ---- malformed: missing required fields ----

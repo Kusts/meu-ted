@@ -10,8 +10,17 @@
  *   code): `validateActorIntentForMutation` blocks planted calls on
  *   read-only turns, and `requiresApproval` tools need an explicit user
  *   confirmation in the last message before executing.
- * - Capability classes don't change: only the 52 generated tools plus the
+ * - Capability classes don't change: only the generated tools plus the
  *   two worker-local web tools are exposed (capabilities:check untouched).
+ * - Pending V1 tools (`get/confirm/cancel_pending_operation`) and
+ *   conversational undo (`undo_last_action`) are retired from the model
+ *   surface (debt-pending-v1-v2-agent + debt-undo-confirmation-protocol):
+ *   they fail under the production v2Only composition (V1) or must never
+ *   execute from model text (undo). Transactions use PendingOperation V2
+ *   (approval card + RPC decision); undo is a separate DO-persisted service
+ *   (proposal via chat turn, confirm/cancel via authenticated PWA RPC).
+ *   The generated registry still lists these entries (OpenAPI-owned); the
+ *   guards below ensure they are never selected or built into model tools.
  */
 
 import { jsonSchema, tool } from 'ai';
@@ -62,7 +71,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   delete_transaction: 'excluir lançamento',
   create_transfer: 'transferência entre contas',
   detect_duplicate: 'checagem de lançamento duplicado',
-  undo_last_action: 'desfazer a última ação do workspace',
   create_card_purchase: 'compra no cartão (à vista ou 1ª parcela)',
   create_card_installments: 'compra parcelada no cartão',
   list_statements: 'faturas dos cartões',
@@ -85,9 +93,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   refresh_payable_status: 'recalcular status de vencimentos',
   list_payable_templates: 'listar modelos de recorrência',
   check_payable_reminders: 'lembretes de vencimento',
-  get_pending_operation: 'ver aprovação pendente do turno',
-  confirm_pending_operation: 'confirmar aprovação pendente',
-  cancel_pending_operation: 'recusar aprovação pendente',
   list_notifications: 'ver notificações',
   audit_logs: 'trilha de auditoria (leitura)',
   remember_fact: 'guardar fato durável (com pedido)',
@@ -97,6 +102,21 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   web_search: 'busca na web (dados externos atuais)',
   web_fetch: 'ler o conteúdo de uma página',
 };
+
+/**
+ * Tools retired from the model surface (debt-pending-v1-v2-agent +
+ * debt-undo-confirmation-protocol). V1 pending tools fail under the
+ * production v2Only composition; `undo_last_action` must never execute from
+ * model text — undo is a separate DO-persisted proposal + authenticated RPC
+ * service. The generated registry still lists these entries
+ * (OpenAPI-owned), so selection and exposure filter them defensively.
+ */
+export const RETIRED_MODEL_TOOLS: ReadonlySet<string> = new Set([
+  'get_pending_operation',
+  'confirm_pending_operation',
+  'cancel_pending_operation',
+  'undo_last_action',
+]);
 
 /** Full tool→skill map, derived from skill definitions. */
 export const toolSkillMap = (): Record<string, string> => {
@@ -152,12 +172,22 @@ export const selectToolsFor = (skillNames: string[]): string[] => {
     ...CORE_READ_TOOLS.filter((name) => wanted.has(name)),
     ...[...wanted].filter((name) => !CORE_READ_TOOLS.includes(name)).sort(),
   ];
-  return ordered.slice(0, MAX_EXPOSED_TOOLS);
+  return ordered.filter((name) => !RETIRED_MODEL_TOOLS.has(name)).slice(0, MAX_EXPOSED_TOOLS);
 };
 
-const CONFIRMATION_RE = /(confirmo|confirmado|pode (fazer|executar|pagar|criar|confirmar)|pode sim|sim, pode|autorizo|autorizado|vai em frente|pode ir|fechado|ok, pode|confirmar)/i;
+const CONFIRMATION_RE = /(confirmo|confirmado|pode (fazer|executar|pagar|criar|confirmar|desfazer)|pode sim|sim, pode|autorizo|autorizado|vai em frente|pode ir|fechado|ok, pode|confirmar)/i;
 
 export const isExplicitConfirmation = (message: string): boolean => CONFIRMATION_RE.test(message ?? '');
+
+/**
+ * Historical conversational-undo intent matcher, kept for the chat-turn
+ * proposal path (the model tool itself is retired above). The `\bundo\b`
+ * boundary keeps common words like "segundo" from matching. Textual
+ * confirmation NEVER executes undo — only the authenticated RPC decides.
+ */
+const UNDO_INTENT_RE = /(desfaz|desfazer|\bundo\b)/i;
+
+export const hasUndoIntent = (message: string): boolean => UNDO_INTENT_RE.test(message ?? '');
 
 /**
  * Backstop against executing mutations the user didn't ask for (the model
@@ -196,6 +226,10 @@ export const buildExposedTools = (
   const webProvider = createWebSearchProvider(ctx.webEnv ?? {}, ctx.fetchImpl ?? fetch);
 
   for (const name of toolNames) {
+    // Retired V1 pending tools are never built, even when requested
+    // explicitly (defense in depth: the generated registry still lists
+    // them, but the model must not see or call them).
+    if (RETIRED_MODEL_TOOLS.has(name)) continue;
     const extra = extraTools?.[name];
     if (extra) {
       out[name] = extra;

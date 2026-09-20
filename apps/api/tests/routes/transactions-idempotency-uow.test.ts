@@ -2,7 +2,7 @@
  * V4.1 Phase 3 Tasks 3.2–3.4 — V1 write routes: single-phase keyed mutations.
  *
  * Route-level contract (in-memory app):
- * - Idempotency-Key OPTIONAL; without it the route works as before.
+ * - Idempotency-Key REQUIRED for financial mutations; without it → 400 validation.required.
  * - With a key: replay returns the ORIGINAL response (same status + body,
  *   incl. the mutation receipt) with `Idempotent-Replayed: true`.
  * - Same key + divergent payload → 409 idempotency.conflict.
@@ -23,10 +23,10 @@ const auth = (key?: string) => ({
 const setup = async () => {
   const { app, state } = buildTestApp();
   const acc = await app.inject({
-    method: 'POST', url: '/accounts', headers: auth(), payload: { name: 'A', kind: 'bank', initialBalanceCents: 10_000 },
+    method: 'POST', url: '/accounts', headers: auth(crypto.randomUUID()), payload: { name: 'A', kind: 'bank', initialBalanceCents: 10_000 },
   });
   const cat = await app.inject({
-    method: 'POST', url: '/categories', headers: auth(), payload: { name: 'Food', kind: 'expense' },
+    method: 'POST', url: '/categories', headers: auth(crypto.randomUUID()), payload: { name: 'Food', kind: 'expense' },
   });
   return { app, state, accountId: acc.json().id as string, categoryId: cat.json().id as string };
 };
@@ -36,16 +36,17 @@ const expensePayload = (accountId: string, categoryId: string, description = 'Lu
 });
 
 describe('V4.1 Phase 3 — POST /transactions/expense keyed unit of work', () => {
-  it('works without a key (contract unchanged: Idempotency-Key optional)', async () => {
+  it('requires a key (authenticated without Idempotency-Key → 400)', async () => {
     const { app, state } = buildTestApp();
     void state;
     const res = await app.inject({
       method: 'POST', url: '/transactions/expense', headers: auth(),
-      // Well-formed UUID that names no account → domain 404, not a key error.
+      // Well-formed UUID that names no account → still 400: key enforcement runs before the producer.
       payload: expensePayload('00000000-0000-4000-8000-000000000099', '00000000-0000-4000-8000-000000000098'),
     });
-    // Invalid account still surfaces the domain error — the route path is intact.
-    expect(res.statusCode).toBe(404);
+    // Missing key surfaces the enforcement error — the route path is intact when keyed.
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('validation.required');
   });
 
   it('replays the ORIGINAL response with the same receipt on retry', async () => {
@@ -136,7 +137,7 @@ describe('V4.1 Phase 3 — PATCH /transactions/:id keyed unit of work', () => {
   it('replays the original PATCH response on retry', async () => {
     const s = await setup();
     const created = await s.app.inject({
-      method: 'POST', url: '/transactions/expense', headers: auth(), payload: expensePayload(s.accountId, s.categoryId),
+      method: 'POST', url: '/transactions/expense', headers: auth(crypto.randomUUID()), payload: expensePayload(s.accountId, s.categoryId),
     });
     const id = created.json().id as string;
     const first = await s.app.inject({
@@ -155,7 +156,7 @@ describe('V4.1 Phase 3 — DELETE /transactions/:id keyed unit of work', () => {
   it('replays the original DELETE receipt on retry', async () => {
     const s = await setup();
     const created = await s.app.inject({
-      method: 'POST', url: '/transactions/expense', headers: auth(), payload: expensePayload(s.accountId, s.categoryId),
+      method: 'POST', url: '/transactions/expense', headers: auth(crypto.randomUUID()), payload: expensePayload(s.accountId, s.categoryId),
     });
     const id = created.json().id as string;
     // No content-type on DELETE: Fastify rejects an empty JSON body.
@@ -176,7 +177,7 @@ describe('V4.1 Phase 3 — POST /transfers keyed unit of work', () => {
   it('replays the original transfer response on retry (single effect)', async () => {
     const { app } = buildTestApp();
     const mkAcc = (name: string) => app.inject({
-      method: 'POST', url: '/accounts', headers: auth(), payload: { name, kind: 'bank', initialBalanceCents: 10_000 },
+      method: 'POST', url: '/accounts', headers: auth(crypto.randomUUID()), payload: { name, kind: 'bank', initialBalanceCents: 10_000 },
     });
     const a = (await mkAcc('From')).json().id as string;
     const b = (await mkAcc('To')).json().id as string;

@@ -20,13 +20,9 @@
   },
   "dependencies": {
     "@pi-finance/llm-contracts": "workspace:*",
-    "@ai-sdk/react": "^2.0.0",
-    "@cloudflare/ai-chat": "^0.1.0",
     "@serwist/next": "9.5.11",
     "@serwist/precaching": "9.5.11",
     "@serwist/sw": "9.5.11",
-    "agents": "^0.2.0",
-    "ai": "^5.0.0",
     "lucide-react": "^1.35.0",
     "next": "16.3.5",
     "react": "19.2.4",
@@ -49,16 +45,19 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.0.3",
-    "@vitest/coverage-v8": "^4.1.10",
+    "@vitest/coverage-v8": "4.1.11",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "fake-indexeddb": "^6.0.0",
     "jsdom": "^29.1.1",
-    "sharp": "^0.35.4",
+    "sharp": "0.34.5",
     "tailwindcss": "^4",
     "tsx": "^4.22.3",
     "typescript": "^5",
-    "vitest": "^4.1.10",
-    "wrangler": "^4.104.0"
+    "vitest": "4.1.11",
+    "wrangler": "4.135.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

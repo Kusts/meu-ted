@@ -25,6 +25,7 @@ export type { SkillFit } from './select-skill.js';
 export { PLAYBOOK_BODY, PLAYBOOK_SUMMARY_TOOLS } from './playbook.js';
 export {
   TOOL_DESCRIPTIONS,
+  RETIRED_MODEL_TOOLS,
   CORE_READ_TOOLS,
   MAX_EXPOSED_TOOLS,
   toolSkillMap,
@@ -32,6 +33,7 @@ export {
   selectToolsFor,
   isExplicitConfirmation,
   hasMutationIntent,
+  hasUndoIntent,
   buildApprovalRequest,
   buildExposedTools,
 } from './tools.js';

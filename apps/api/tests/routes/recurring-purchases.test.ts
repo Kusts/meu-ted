@@ -13,7 +13,7 @@ describe('GET /cards/recurring', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/cards/recurring',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId: CARD_A1.id,
         description: 'Streaming',
@@ -28,7 +28,7 @@ describe('GET /cards/recurring', () => {
     const listed = await app.inject({
       method: 'GET',
       url: `/cards/recurring?accountId=${CARD_A1.id}&status=active`,
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(listed.statusCode).toBe(200);
     expect(listed.json()).toMatchObject({

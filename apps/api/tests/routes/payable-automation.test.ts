@@ -14,7 +14,7 @@ describe('POST /payables/auto-create-from-templates', () => {
     const template = await app.inject({
       method: 'POST',
       url: '/payables/templates',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId: ACCOUNT_A1.id,
         name: 'Internet',

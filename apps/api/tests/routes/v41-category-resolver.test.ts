@@ -29,13 +29,13 @@ const seed = {
   transactions: [],
 };
 
-const auth = { 'x-device-token': TOKEN_A, 'content-type': 'application/json' };
+const auth = () => ({ 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() });
 
 const createExpense = (app: ReturnType<typeof buildTestApp>['app'], categoryId: string) =>
   app.inject({
     method: 'POST',
     url: '/transactions/expense',
-    headers: auth,
+    headers: auth(),
     payload: {
       description: 'Lunch',
       amountCents: 1500,
@@ -63,7 +63,7 @@ describe('2.15 transaction writes enforce category kind', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/transactions/income',
-      headers: auth,
+      headers: auth(),
       payload: {
         description: 'Salary',
         amountCents: 5000,
@@ -82,7 +82,7 @@ describe('2.15 transaction writes enforce category kind', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/transactions/${created.json().id}`,
-      headers: auth,
+      headers: auth(),
       payload: { categoryId: CATEGORY_SALARY_A.id },
     });
     expect(res.statusCode).toBe(400);
@@ -103,7 +103,7 @@ describe('2.15 budgets enforce an active expense-kind category', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/budgets',
-      headers: auth,
+      headers: auth(),
       payload: budgetPayload(UNKNOWN_CATEGORY),
     });
     expect(res.statusCode).toBe(404);
@@ -114,7 +114,7 @@ describe('2.15 budgets enforce an active expense-kind category', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/budgets',
-      headers: auth,
+      headers: auth(),
       payload: budgetPayload(CATEGORY_SALARY_A.id),
     });
     expect(res.statusCode).toBe(400);
@@ -125,7 +125,7 @@ describe('2.15 budgets enforce an active expense-kind category', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/budgets',
-      headers: auth,
+      headers: auth(),
       payload: budgetPayload(CATEGORY_FOOD_A.id),
     });
     expect(res.statusCode).toBe(201);
@@ -146,7 +146,7 @@ describe('2.15 payables enforce an active expense-kind category', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/payables',
-      headers: auth,
+      headers: auth(),
       payload: payablePayload(CATEGORY_SALARY_A.id),
     });
     expect(res.statusCode).toBe(400);
@@ -157,7 +157,7 @@ describe('2.15 payables enforce an active expense-kind category', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/payables',
-      headers: auth,
+      headers: auth(),
       payload: payablePayload(UNKNOWN_CATEGORY),
     });
     expect(res.statusCode).toBe(404);
@@ -168,7 +168,7 @@ describe('2.15 payables enforce an active expense-kind category', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/payables',
-      headers: auth,
+      headers: auth(),
       payload: {
         accountId: ACCOUNT_A1.id,
         description: 'Luz',
@@ -181,7 +181,7 @@ describe('2.15 payables enforce an active expense-kind category', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/payables/${created.json().id}`,
-      headers: auth,
+      headers: auth(),
       payload: { categoryId: CATEGORY_SALARY_A.id },
     });
     expect(res.statusCode).toBe(400);
@@ -194,7 +194,7 @@ describe('2.16 installments use clamped billing-month arithmetic', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards/installments',
-      headers: auth,
+      headers: auth(),
       payload: {
         accountId: CARD_A1.id,
         description: 'Parcela overflow',

@@ -1465,7 +1465,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           if (a.id === input.fromAccountId) {
             return {
               ...a,
-              balanceCents: Math.max(0, a.balanceCents - input.amountCents),
+              // ADR-018: bank/cash may go negative (exact delta, no zero floor).
+              balanceCents: a.balanceCents - input.amountCents,
             };
           }
           if (a.id === input.toAccountId) {
@@ -1878,10 +1879,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           a.id === input.fromAccountId
             ? {
                 ...a,
-                balanceCents: Math.max(
-                  0,
-                  a.balanceCents - input.amountCents,
-                ),
+                // ADR-018: bank/cash may go negative (exact delta, no zero floor).
+                balanceCents: a.balanceCents - input.amountCents,
               }
             : a,
         ),

@@ -55,7 +55,7 @@ test('container gate fails on high or critical vulnerabilities for both CI image
 test('runtime images install dependencies and exclude package-manager stores', () => {
   assert.match(apiDockerfile, /pnpm install --frozen-lockfile/);
   assert.match(brokerDockerfile, /pnpm install --frozen-lockfile/);
-  assert.match(apiDockerfile, /FROM node:22-alpine/);
+  assert.match(apiDockerfile, /FROM node:24-alpine/);
 });
 
 test('CI security job runs scans and global gate depends on it', () => {

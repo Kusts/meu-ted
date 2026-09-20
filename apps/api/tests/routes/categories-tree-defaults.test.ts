@@ -8,10 +8,10 @@ import { buildCategoryTree } from '../../src/categories/tree.js';
 const H = { 'x-device-token': TOKEN_A, 'content-type': 'application/json' };
 const HB = { 'x-device-token': TOKEN_B, 'content-type': 'application/json' };
 
-const createCategory = async (app: ReturnType<typeof buildTestApp>['app'], payload: unknown, headers = H) =>
+const createCategory = async (app: ReturnType<typeof buildTestApp>['app'], payload: unknown, headers = { ...H, 'idempotency-key': crypto.randomUUID() }) =>
   app.inject({ method: 'POST', url: '/categories', headers, payload });
 
-const applyDefaults = async (app: ReturnType<typeof buildTestApp>['app'], headers = H) =>
+const applyDefaults = async (app: ReturnType<typeof buildTestApp>['app'], headers = { ...H, 'idempotency-key': crypto.randomUUID() }) =>
   app.inject({ method: 'POST', url: '/categories/apply-defaults', headers, payload: {} });
 
 describe('GET /categories/tree — canonical macro/sub contract', () => {
@@ -27,7 +27,7 @@ describe('GET /categories/tree — canonical macro/sub contract', () => {
     });
     expect(sub.statusCode).toBe(201);
 
-    const res = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_A } });
+    const res = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.total).toBe(1);
@@ -44,12 +44,12 @@ describe('GET /categories/tree — canonical macro/sub contract', () => {
   it('is household-scoped and supports kind filter', async () => {
     const { app } = buildTestApp();
     await createCategory(app, { name: 'Salário', kind: 'income' });
-    const other = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_B } });
+    const other = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_B, 'idempotency-key': crypto.randomUUID() } });
     expect(other.json()).toMatchObject({ items: [], total: 0 });
     const filtered = await app.inject({
       method: 'GET',
       url: '/categories/tree?kind=income',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(filtered.json().total).toBe(1);
     expect(filtered.json().items[0]).toMatchObject({ kind: 'macro', type: 'income' });
@@ -75,7 +75,7 @@ describe('POST /categories/apply-defaults — idempotent pt-BR template', () => 
     expect(second.json().created).toBe(0);
     expect(second.json().skipped).toBe(first.json().created);
 
-    const tree = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_A } });
+    const tree = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     expect(tree.json().total).toBe(DEFAULT_CATEGORY_CATALOG.length);
     const moradia = tree.json().items.find((m: { name: string }) => m.name === 'Moradia');
     expect(moradia.subcategories.map((s: { name: string }) => s.name)).toEqual(
@@ -89,7 +89,7 @@ describe('POST /categories/apply-defaults — idempotent pt-BR template', () => 
     const { app } = buildTestApp();
     await createCategory(app, { name: 'moradia', kind: 'expense' });
     const res = await applyDefaults(app);
-    const tree = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_A } });
+    const tree = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     const moradias = tree.json().items.filter((m: { name: string }) => m.name.toLowerCase() === 'moradia');
     expect(moradias).toHaveLength(1);
     expect(moradias[0].subcategories.length).toBeGreaterThan(0);
@@ -99,7 +99,7 @@ describe('POST /categories/apply-defaults — idempotent pt-BR template', () => 
   it('is household-scoped', async () => {
     const { app } = buildTestApp();
     await applyDefaults(app);
-    const other = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_B } });
+    const other = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_B, 'idempotency-key': crypto.randomUUID() } });
     expect(other.json().total).toBe(0);
   });
 
@@ -108,20 +108,20 @@ describe('POST /categories/apply-defaults — idempotent pt-BR template', () => 
     const acc = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Nubank', kind: 'bank', initialBalanceCents: 0 },
     });
     expect(acc.statusCode).toBe(201);
-    const tree = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_A } });
+    const tree = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     expect(tree.json().total).toBe(DEFAULT_CATEGORY_CATALOG.length);
     // Second account does not duplicate.
     await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Itaú', kind: 'bank', initialBalanceCents: 0 },
     });
-    const again = await app.inject({ method: 'GET', url: '/categories', headers: { 'x-device-token': TOKEN_A } });
+    const again = await app.inject({ method: 'GET', url: '/categories', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     const macros = again.json().items.filter((c: { parentId?: string }) => !c.parentId);
     expect(macros).toHaveLength(DEFAULT_CATEGORY_CATALOG.length);
   });
@@ -133,7 +133,7 @@ describe('subcategoryId on records', () => {
     const acc = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'X', kind: 'bank', initialBalanceCents: 10000 },
     });
     const macro = await createCategory(app, { name: 'Comida', kind: 'expense' });
@@ -141,7 +141,7 @@ describe('subcategoryId on records', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Feira',
         amountCents: 1000,
@@ -160,7 +160,7 @@ describe('subcategoryId on records', () => {
     const acc = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'X', kind: 'bank', initialBalanceCents: 10000 },
     });
     const macro = await createCategory(app, { name: 'Comida', kind: 'expense' });
@@ -176,14 +176,14 @@ describe('subcategoryId on records', () => {
     const asMacro = await app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { ...base, subcategoryId: macro.json().id },
     });
     expect(asMacro.statusCode).toBe(400);
     const crossKind = await app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { ...base, subcategoryId: bonus.json().id },
     });
     expect(crossKind.statusCode).toBe(400);
@@ -194,7 +194,7 @@ describe('subcategoryId on records', () => {
     const acc = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'X', kind: 'bank', initialBalanceCents: 10000 },
     });
     const macroA = await createCategory(app, { name: 'Comida', kind: 'expense' });
@@ -203,7 +203,7 @@ describe('subcategoryId on records', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Y',
         amountCents: 100,
@@ -222,19 +222,19 @@ describe('subcategoryId on records', () => {
     const acc = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'X', kind: 'bank', initialBalanceCents: 10000 },
     });
     const macro = await createCategory(app, { name: 'Comida', kind: 'expense' });
     // Same tree shape in household B; its sub id must not resolve in A.
-    const macroB = await createCategory(app, { name: 'Comida', kind: 'expense' }, HB);
+    const macroB = await createCategory(app, { name: 'Comida', kind: 'expense' }, { ...HB, 'idempotency-key': crypto.randomUUID() });
     expect(macroB.statusCode).toBe(201);
-    const subB = await createCategory(app, { name: 'Mercado', kind: 'expense', parentId: macroB.json().id }, HB);
+    const subB = await createCategory(app, { name: 'Mercado', kind: 'expense', parentId: macroB.json().id }, { ...HB, 'idempotency-key': crypto.randomUUID() });
     expect(subB.statusCode).toBe(201);
     const res = await app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Y',
         amountCents: 100,
@@ -253,7 +253,7 @@ describe('subcategoryId on records', () => {
     const acc = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'X', kind: 'bank', initialBalanceCents: 10000 },
     });
     const macroA = await createCategory(app, { name: 'Comida', kind: 'expense' });
@@ -262,7 +262,7 @@ describe('subcategoryId on records', () => {
     const tx = await app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Feira',
         amountCents: 1000,
@@ -276,7 +276,7 @@ describe('subcategoryId on records', () => {
     const upd = await app.inject({
       method: 'PATCH',
       url: `/transactions/${tx.json().id}`,
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { categoryId: macroB.json().id },
     });
     expect(upd.statusCode).toBe(200);
@@ -291,7 +291,7 @@ describe('POST /categories/:id/delete — move or cascade', () => {
     const acc = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'X', kind: 'bank', initialBalanceCents: 100000 },
     });
     const macro = await createCategory(app, { name: 'Comida', kind: 'expense' });
@@ -299,7 +299,7 @@ describe('POST /categories/:id/delete — move or cascade', () => {
     const tx = await app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Feira',
         amountCents: 1000,
@@ -319,7 +319,7 @@ describe('POST /categories/:id/delete — move or cascade', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/categories/${macroId}/delete`,
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { mode: 'move' },
     });
     expect(res.statusCode).toBe(400);
@@ -332,16 +332,16 @@ describe('POST /categories/:id/delete — move or cascade', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/categories/${macroId}/delete`,
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { mode: 'move', destinationCategoryId: dest.json().id },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ ok: true, movedTransactions: 1, softDeletedTransactions: 0 });
-    const txs = await app.inject({ method: 'GET', url: '/transactions', headers: { 'x-device-token': TOKEN_A } });
+    const txs = await app.inject({ method: 'GET', url: '/transactions', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     const tx = txs.json().items.find((t: { id: string }) => t.id === txId);
     expect(tx.categoryId).toBe(dest.json().id);
     expect(tx.subcategoryId).toBeUndefined();
-    const tree = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_A } });
+    const tree = await app.inject({ method: 'GET', url: '/categories/tree', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     // Only bootstrapped defaults + destination remain; the deleted macro is gone.
     expect(tree.json().items.some((m: { id: string }) => m.id === macroId)).toBe(false);
   });
@@ -351,19 +351,19 @@ describe('POST /categories/:id/delete — move or cascade', () => {
     const noConfirm = await app.inject({
       method: 'POST',
       url: `/categories/${macroId}/delete`,
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { mode: 'cascade' },
     });
     expect(noConfirm.statusCode).toBe(400);
     const res = await app.inject({
       method: 'POST',
       url: `/categories/${macroId}/delete`,
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { mode: 'cascade', confirm: true },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ ok: true, softDeletedTransactions: 1 });
-    const txs = await app.inject({ method: 'GET', url: '/transactions', headers: { 'x-device-token': TOKEN_A } });
+    const txs = await app.inject({ method: 'GET', url: '/transactions', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     expect(txs.json().items.some((t: { id: string }) => t.id === txId)).toBe(false);
   });
 
@@ -374,14 +374,14 @@ describe('POST /categories/:id/delete — move or cascade', () => {
     const crossKind = await app.inject({
       method: 'POST',
       url: `/categories/${macroId}/delete`,
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { mode: 'move', destinationCategoryId: income.json().id },
     });
     expect(crossKind.statusCode).toBe(400);
     const inScope = await app.inject({
       method: 'POST',
       url: `/categories/${macroId}/delete`,
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { mode: 'move', destinationCategoryId: subId },
     });
     expect(inScope.statusCode).toBe(400);
@@ -392,7 +392,7 @@ describe('POST /categories/:id/delete — move or cascade', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/categories/${macroId}/delete`,
-      headers: HB,
+      headers: { ...HB, 'idempotency-key': crypto.randomUUID() },
       payload: { mode: 'cascade', confirm: true },
     });
     expect(res.statusCode).toBe(404);

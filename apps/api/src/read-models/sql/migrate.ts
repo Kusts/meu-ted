@@ -44,6 +44,9 @@ type MigrationManifestEntry = {
 // exists). V048 is deliberately NOT here (canonical-only: needs
 // categories.status); see LEGACY_EXCLUDED_JUSTIFICATIONS and
 // docs/ops/v048-legacy-boot-decision.md.
+// V055 = negative bank/cash balances (guarded DO block: swaps the V001
+// all-kind balance check for a credit-card-only check on the canonical
+// accounts shape; verified no-op on the legacy computed-balance shape).
 // The canonical V001/V002/V004-V007 and modern workspace/auth migrations V013-V031
 // are skipped in legacy mode because they assume canonical schema or rely on modern
 // tables (Better Auth, workspaces, ownership transfers).
@@ -72,6 +75,7 @@ export const LEGACY_SAFE_PREFIXES = [
   "V052",
   "V053",
   "V054",
+  "V055",
 ];
 
 /**
@@ -91,6 +95,8 @@ export const LEGACY_SAFE_PREFIXES = [
  */
 export const LEGACY_EXCLUDED_JUSTIFICATIONS: Record<string, string> = {
   V048: 'requires canonical categories.status; legacy categories use an active boolean',
+  V056: 'canonical-only structured statement-payment link (transactions.statement_payment_id); legacy keeps description-matched coverage untouched',
+  V057: 'canonical-only composite household upgrade of the V056 statement-payment link; legacy keeps description-matched coverage untouched',
 };
 
 export const migrationChecksum = (sql: string): string =>

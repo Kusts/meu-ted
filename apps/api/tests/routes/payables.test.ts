@@ -8,7 +8,7 @@ const seed = {
   transactions: [],
 };
 
-function auth(token: string) { return { 'x-device-token': token }; }
+function auth(token: string) { return { 'x-device-token': token, 'idempotency-key': crypto.randomUUID() }; }
 
 describe('GET /payables', () => {
   it('returns empty when no payables exist', async () => {
@@ -30,7 +30,7 @@ describe('POST /payables', () => {
     const { app } = buildTestApp(seed);
     const res = await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Luz', amountCents: 185_00, dueDate: '2026-07-10' },
     });
     expect(res.statusCode).toBe(201);
@@ -43,7 +43,7 @@ describe('POST /payables', () => {
     const { app } = buildTestApp(seed);
     const res = await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Internet', amountCents: 99_90, dueDate: '2026-07-15', type: 'recurring', frequency: 'monthly', reminderDaysBefore: 3 },
     });
     expect(res.statusCode).toBe(201);
@@ -55,7 +55,7 @@ describe('POST /payables', () => {
     const { app } = buildTestApp(seed);
     await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Netflix', amountCents: 39_90, dueDate: '2026-07-15', type: 'recurring', frequency: 'monthly', templateName: 'Netflix' },
     });
     const tRes = await app.inject({ method: 'GET', url: '/payables/templates', headers: auth(TOKEN_A) });
@@ -67,7 +67,7 @@ describe('POST /payables', () => {
     const { app } = buildTestApp(seed);
     await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Aluguel', amountCents: 2_400_00, dueDate: '2026-07-05' },
     });
     const list = await app.inject({ method: 'GET', url: '/payables', headers: auth(TOKEN_A) });
@@ -79,7 +79,7 @@ describe('POST /payables', () => {
     const { app } = buildTestApp(seed);
     const res = await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id },
     });
     expect(res.statusCode).toBe(400);
@@ -110,14 +110,14 @@ describe('POST /payables/:id/pay', () => {
     const { app, state } = buildTestApp(seed);
     const create = await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Luz', amountCents: 185_00, dueDate: '2026-06-01' },
     });
     const id = create.json().id;
 
     const pay = await app.inject({
       method: 'POST', url: `/payables/${id}/pay`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { paidDate: '2026-06-01' },
     });
     expect(pay.statusCode).toBe(200);
@@ -134,14 +134,14 @@ describe('POST /payables/:id/pay', () => {
     const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const create = await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Internet', amountCents: 99_90, dueDate: '2026-06-15', type: 'recurring', frequency: 'monthly' },
     });
     const id = create.json().id;
 
     await app.inject({
       method: 'POST', url: `/payables/${id}/pay`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {},
     });
 
@@ -156,7 +156,7 @@ describe('POST /payables/:id/pay', () => {
     const { app } = buildTestApp(seed);
     const res = await app.inject({
       method: 'POST', url: '/payables/00000000-0000-0000-0000-000000000000/pay',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {},
     });
     expect(res.statusCode).toBe(404);
@@ -168,14 +168,14 @@ describe('POST /payables/:id/cancel', () => {
     const { app } = buildTestApp(seed);
     const create = await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Cancelar', amountCents: 50_00, dueDate: '2026-07-01' },
     });
     const id = create.json().id;
 
     const cancel = await app.inject({
       method: 'POST', url: `/payables/${id}/cancel`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { reason: 'Não precisa mais' },
     });
     expect(cancel.statusCode).toBe(200);
@@ -189,7 +189,7 @@ describe('GET /payables/templates', () => {
     // Create a template
     await app.inject({
       method: 'POST', url: '/payables/templates',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, name: 'Luz', description: 'Conta de luz', amountCents: 185_00, frequency: 'monthly', dayOfMonth: 10 },
     });
     const res = await app.inject({ method: 'GET', url: '/payables/templates', headers: auth(TOKEN_A) });
@@ -204,7 +204,7 @@ describe('POST /payables/from-template', () => {
     const { app } = buildTestApp(seed);
     await app.inject({
       method: 'POST', url: '/payables/templates',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, name: 'Netflix', description: 'Netflix', amountCents: 39_90, frequency: 'monthly', dayOfMonth: 15 },
     });
 
@@ -223,7 +223,7 @@ describe('POST /payables/from-template', () => {
     const { app } = buildTestApp(seed);
     await app.inject({
       method: 'POST', url: '/payables/templates',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, name: 'Luz', description: 'Luz', amountCents: 185_00, frequency: 'monthly', dayOfMonth: 10 },
     });
     const res = await app.inject({
@@ -252,12 +252,12 @@ describe('GET /payables/reminders', () => {
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Vencida', amountCents: 100_00, dueDate: yesterday },
     });
     await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Hoje', amountCents: 50_00, dueDate: today },
     });
 
@@ -281,7 +281,7 @@ describe('POST /notifications', () => {
     const { app } = buildTestApp(seed);
     const res = await app.inject({
       method: 'POST', url: '/notifications',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { chatId: 'chat-1', notificationType: 'overdue_reminder', enabled: true, scheduleHour: 9, thresholdDays: 1 },
     });
     expect(res.statusCode).toBe(201);
@@ -293,12 +293,12 @@ describe('POST /notifications', () => {
     const { app } = buildTestApp(seed);
     await app.inject({
       method: 'POST', url: '/notifications',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { chatId: 'chat-1', notificationType: 'overdue_reminder', enabled: true },
     });
     const update = await app.inject({
       method: 'POST', url: '/notifications',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { chatId: 'chat-1', notificationType: 'overdue_reminder', enabled: false },
     });
     expect(update.statusCode).toBe(201);
@@ -311,18 +311,18 @@ describe('GET /payables — filters', () => {
     const { app } = buildTestApp(seed);
     await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Paga', amountCents: 100_00, dueDate: '2026-12-15' },
     });
     const create = await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Pendente', amountCents: 200_00, dueDate: '2026-12-01' },
     });
     // Pay the first one
     await app.inject({
       method: 'POST', url: `/payables/${create.json().id}/pay`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {},
     });
 
@@ -339,7 +339,7 @@ describe('GET /payables — filters', () => {
     const { app } = buildTestApp(seed);
     await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Recorrente', amountCents: 100_00, dueDate: '2026-07-01', type: 'recurring', frequency: 'monthly' },
     });
     const res = await app.inject({ method: 'GET', url: '/payables?type=recurring', headers: auth(TOKEN_A) });
@@ -352,7 +352,7 @@ describe('GET /payables — filters', () => {
     const nextWeek = new Date(); nextWeek.setDate(nextWeek.getDate() + 5);
     await app.inject({
       method: 'POST', url: '/payables',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: ACCOUNT_A1.id, description: 'Próxima', amountCents: 100_00, dueDate: nextWeek.toISOString().slice(0, 10) },
     });
     const res = await app.inject({ method: 'GET', url: '/payables?dueWithinDays=7', headers: auth(TOKEN_A) });
@@ -364,13 +364,13 @@ describe('GET /payables — filters', () => {
       const { app } = buildTestApp(seed);
       const created = await app.inject({
         method: 'POST', url: '/payables',
-        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
         payload: { accountId: ACCOUNT_A1.id, description: 'Teste', amountCents: 100_00, dueDate: '2026-07-15' },
       });
       const id = created.json().id;
       const res = await app.inject({
         method: 'PATCH', url: `/payables/${id}`,
-        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
         payload: { description: 'Atualizado', amountCents: 200_00 },
       });
       expect(res.statusCode).toBe(200);
@@ -382,14 +382,14 @@ describe('GET /payables — filters', () => {
       const { app } = buildTestApp(seed);
       const created = await app.inject({
         method: 'POST', url: '/payables',
-        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
         payload: { accountId: ACCOUNT_A1.id, description: 'Teste', amountCents: 100_00, dueDate: '2026-07-15' },
       });
       const id = created.json().id;
-      await app.inject({ method: 'POST', url: `/payables/${id}/pay`, headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' }, payload: {} });
+      await app.inject({ method: 'POST', url: `/payables/${id}/pay`, headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' }, payload: {} });
       const res = await app.inject({
         method: 'PATCH', url: `/payables/${id}`,
-        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
         payload: { description: 'Atualizado apos pagamento', amountCents: 200_00 },
       });
       expect(res.statusCode).toBe(200);
@@ -401,14 +401,14 @@ describe('GET /payables — filters', () => {
       const { app } = buildTestApp(seed);
       const created = await app.inject({
         method: 'POST', url: '/payables',
-        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
         payload: { accountId: ACCOUNT_A1.id, description: 'Teste', amountCents: 100_00, dueDate: '2026-07-15' },
       });
       const id = created.json().id;
       await app.inject({ method: 'POST', url: `/payables/${id}/cancel`, headers: auth(TOKEN_A) });
       const res = await app.inject({
         method: 'PATCH', url: `/payables/${id}`,
-        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
         payload: { description: 'Nao deve' },
       });
       expect(res.statusCode).toBe(409);
@@ -418,7 +418,7 @@ describe('GET /payables — filters', () => {
       const { app } = buildTestApp(seed);
       const res = await app.inject({
         method: 'PATCH', url: '/payables/00000000-0000-4000-8000-000000000099',
-        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
         payload: { description: 'Nao existe' },
       });
       expect(res.statusCode).toBe(404);
@@ -440,7 +440,7 @@ describe('GET /payables — filters', () => {
       const { app } = buildTestApp(seed);
       const created = await app.inject({
         method: 'POST', url: '/payables',
-        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
         payload: { accountId: ACCOUNT_A1.id, description: 'Undo Test', amountCents: 100_00, dueDate: '2099-01-01' },
       });
       const id = created.json().id;
@@ -464,7 +464,7 @@ describe('GET /payables — filters', () => {
       const today = new Date().toISOString().slice(0, 10);
       const created = await app.inject({
         method: 'POST', url: '/payables',
-        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
         payload: { accountId: ACCOUNT_A1.id, description: 'Hoje', amountCents: 100_00, dueDate: today },
       });
       const id = created.json().id;
@@ -493,7 +493,7 @@ describe('GET /payables — filters', () => {
       const { app } = buildTestApp(seed);
       const created = await app.inject({
         method: 'POST', url: '/payables',
-        headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+        headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
         payload: { accountId: ACCOUNT_A1.id, description: 'Nao Paga', amountCents: 100_00, dueDate: '2099-01-01' },
       });
       const id = created.json().id;

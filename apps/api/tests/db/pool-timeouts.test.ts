@@ -52,20 +52,79 @@ describe('DB pool hardening (V4.1 Phase 8, task 8.7)', () => {
     expect(statements).toContain('SET idle_in_transaction_session_timeout = 15000');
   });
 
+  it('applies session timeouts via awaited pool onConnect without a connect listener', async () => {
+    const pool = createPool({ connectionString: 'postgres://localhost/x' });
+    try {
+      const options = (pool as unknown as { options: { onConnect?: (client: unknown) => unknown } }).options;
+      expect(typeof options.onConnect).toBe('function');
+      expect(pool.listenerCount('connect')).toBe(0);
+
+      let resolveQuery!: (value: unknown) => void;
+      const pending = new Promise((resolve) => {
+        resolveQuery = resolve;
+      });
+      const queries: string[] = [];
+      const fakeClient = {
+        query: (sql: string) => {
+          queries.push(sql);
+          return pending;
+        },
+      };
+      const onConnect = options.onConnect as (client: unknown) => Promise<void>;
+      const onConnectPromise = onConnect(fakeClient);
+      let settled = false;
+      void Promise.resolve(onConnectPromise).then(() => {
+        settled = true;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      resolveQuery({ rows: [] });
+      await onConnectPromise;
+      expect(settled).toBe(true);
+      expect(queries.join(';')).toContain('statement_timeout');
+      expect(queries.join(';')).toContain('lock_timeout');
+      expect(queries.join(';')).toContain('idle_in_transaction_session_timeout');
+    } finally {
+      await pool.end().catch(() => undefined);
+    }
+  });
+
+  it('tolerates SET failure on connect without rejecting (non-fatal onConnect contract)', async () => {
+    const pool = createPool({ connectionString: 'postgres://localhost/x' });
+    try {
+      const options = (pool as unknown as {
+        options: { onConnect?: (client: unknown) => Promise<void> };
+      }).options;
+      expect(typeof options.onConnect).toBe('function');
+      const failingClient = {
+        query: async () => {
+          throw new Error('SET failed');
+        },
+      };
+      await expect(options.onConnect?.(failingClient)).resolves.toBeUndefined();
+    } finally {
+      await pool.end().catch(() => undefined);
+    }
+  });
+
   it('wires connectionTimeoutMillis into pg and applies session timeouts on connect', async () => {
     const pool = createPool({ connectionString: 'postgres://localhost/x' });
     try {
-      expect((pool as unknown as { options: { connectionTimeoutMillis: number } }).options.connectionTimeoutMillis).toBe(
-        DEFAULT_CONNECTION_TIMEOUT_MILLIS,
-      );
+      const options = (pool as unknown as {
+        options: {
+          connectionTimeoutMillis: number;
+          onConnect?: (client: unknown) => Promise<void>;
+        };
+      }).options;
+      expect(options.connectionTimeoutMillis).toBe(DEFAULT_CONNECTION_TIMEOUT_MILLIS);
       const queries: string[] = [];
-      (pool as unknown as { emit: (event: string, client: unknown) => void }).emit('connect', {
+      await options.onConnect?.({
         query: async (sql: string) => {
           queries.push(sql);
           return { rows: [] };
         },
       });
-      await new Promise((resolve) => setImmediate(resolve));
       expect(queries.join(';')).toContain('statement_timeout');
       expect(queries.join(';')).toContain('lock_timeout');
       expect(queries.join(';')).toContain('idle_in_transaction_session_timeout');

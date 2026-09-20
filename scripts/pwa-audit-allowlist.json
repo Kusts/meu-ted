@@ -1,358 +1,70 @@
 [
   {
-    "id": "pwa-2026-07-27-eslint-config-array",
-    "scope": "dev-only",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "@eslint/config-array",
-    "severity": "high",
-    "via": [
-      "minimatch"
-    ],
-    "effects": [
-      "eslint"
-    ],
-    "range": "<=0.22.0"
-  },
-  {
-    "id": "pwa-2026-07-27-eslint-eslintrc",
-    "scope": "dev-only",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "@eslint/eslintrc",
-    "severity": "high",
-    "via": [
-      "minimatch"
-    ],
-    "effects": [
-      "eslint"
-    ],
-    "range": "0.0.1 || >=0.1.1"
-  },
-  {
-    "id": "pwa-2026-07-27-lhci-cli",
+    "id": "pwa-2026-09-19-lhci-cli",
     "scope": "build-time",
     "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
+    "justification": "Lighthouse CI only. This advisory is in the same extract-zip chain and npm's only proposed resolution is the breaking @lhci/cli downgrade to 0.12.0.",
+    "expiresOn": "2026-12-31",
     "name": "@lhci/cli",
     "severity": "high",
-    "via": [
-      "chrome-launcher"
-    ],
-    "effects": [],
-    "range": ">=0.3.4"
-  },
-  {
-    "id": "pwa-2026-07-27-node-minify-core",
-    "scope": "build-time",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "@node-minify/core",
-    "severity": "high",
-    "via": [
-      "glob"
-    ],
-    "effects": [
-      "@opennextjs/aws"
-    ],
-    "range": "<=5.3.0 || 8.0.6 || 9.0.1 - 9.0.2"
-  },
-  {
-    "id": "pwa-2026-07-27-opennextjs-aws",
-    "scope": "build-time",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "@opennextjs/aws",
-    "severity": "high",
-    "via": [
-      "@node-minify/core",
-      "next"
-    ],
-    "effects": [
-      "@opennextjs/cloudflare"
-    ],
-    "range": "*"
-  },
-  {
-    "id": "pwa-2026-07-27-opennextjs-cloudflare",
-    "scope": "build-time",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "@opennextjs/cloudflare",
-    "severity": "high",
-    "via": [
-      "@opennextjs/aws",
-      "next"
-    ],
-    "effects": [],
-    "range": "0.3.0 - 0.6.6 || >=1.16.0"
-  },
-  {
-    "id": "pwa-2026-07-27-brace-expansion",
-    "scope": "dev-only",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "brace-expansion",
-    "severity": "high",
-    "via": [
-      {
-        "source": 1124334,
-        "name": "brace-expansion",
-        "dependency": "brace-expansion",
-        "title": "brace-expansion: DoS via unbounded expansion length causing an out-of-memory process crash",
-        "url": "https://github.com/advisories/GHSA-mh99-v99m-4gvg",
-        "severity": "high",
-        "cwe": [
-          "CWE-400",
-          "CWE-770"
-        ],
-        "cvss": {
-          "score": 7.5,
-          "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
-        },
-        "range": "<=5.0.7"
-      }
-    ],
-    "effects": [
-      "minimatch"
-    ],
-    "range": "<=5.0.7"
-  },
-  {
-    "id": "pwa-2026-07-27-chrome-launcher",
-    "scope": "build-time",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "chrome-launcher",
-    "severity": "high",
-    "via": [
-      "rimraf"
-    ],
-    "effects": [
-      "@lhci/cli"
-    ],
-    "range": "0.3.1 - 0.13.4"
-  },
-  {
-    "id": "pwa-2026-07-27-eslint",
-    "scope": "dev-only",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "eslint",
-    "severity": "high",
-    "via": [
-      "@eslint/config-array",
-      "@eslint/eslintrc",
-      "minimatch"
-    ],
-    "effects": [],
-    "range": "0.12.0 - 2.0.0-rc.1 || 4.1.0 - 10.0.0-rc.2"
-  },
-  {
-    "id": "pwa-2026-07-27-eslint-config-next",
-    "scope": "dev-only",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "eslint-config-next",
-    "severity": "high",
-    "via": [
-      "eslint-plugin-import",
-      "eslint-plugin-jsx-a11y",
-      "eslint-plugin-react"
-    ],
-    "effects": [],
-    "range": ">=10.2.1-canary.2"
-  },
-  {
-    "id": "pwa-2026-07-27-eslint-plugin-import",
-    "scope": "dev-only",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "eslint-plugin-import",
-    "severity": "high",
-    "via": [
-      "minimatch"
-    ],
-    "effects": [
-      "eslint-config-next"
-    ],
-    "range": ">=1.15.0"
-  },
-  {
-    "id": "pwa-2026-07-27-eslint-plugin-jsx-a11y",
-    "scope": "dev-only",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "eslint-plugin-jsx-a11y",
-    "severity": "high",
-    "via": [
-      "minimatch"
-    ],
-    "effects": [
-      "eslint-config-next"
-    ],
-    "range": ">=6.5.0"
-  },
-  {
-    "id": "pwa-2026-07-27-eslint-plugin-react",
-    "scope": "dev-only",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "eslint-plugin-react",
-    "severity": "high",
-    "via": [
-      "minimatch"
-    ],
-    "effects": [],
-    "range": ">=7.23.0"
-  },
-  {
-    "id": "pwa-2026-07-27-glob",
-    "scope": "dev-only",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "glob",
-    "severity": "high",
-    "via": [
-      "minimatch"
-    ],
-    "effects": [
-      "@node-minify/core",
-      "rimraf"
-    ],
-    "range": "4.3.0 - 10.5.0"
-  },
-  {
-    "id": "pwa-2026-07-27-minimatch",
-    "scope": "dev-only",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "minimatch",
-    "severity": "high",
-    "via": [
-      "brace-expansion"
-    ],
-    "effects": [
-      "@eslint/config-array",
-      "@eslint/eslintrc",
-      "eslint",
-      "eslint-plugin-import",
-      "eslint-plugin-jsx-a11y",
-      "eslint-plugin-react",
-      "glob"
-    ],
-    "range": "2.0.0 - 10.0.2"
-  },
-  {
-    "id": "pwa-2026-07-27-next",
-    "scope": "runtime",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "next",
-    "severity": "high",
-    "via": [
-      "sharp"
-    ],
-    "effects": [
-      "@opennextjs/aws",
-      "@opennextjs/cloudflare"
-    ],
-    "range": "9.5.6-canary.0 - 10.0.7 || 14.3.0-canary.0 - 16.3.0-preview.7"
-  },
-  {
-    "id": "pwa-2026-07-27-rimraf",
-    "scope": "dev-only",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "rimraf",
-    "severity": "high",
-    "via": [
-      "glob"
-    ],
-    "effects": [
-      "chrome-launcher"
-    ],
-    "range": "2.3.0 - 3.0.2 || 4.2.0 - 5.0.10"
-  },
-  {
-    "id": "pwa-2026-07-27-sharp",
-    "scope": "runtime",
-    "owner": "project-maintainer",
-    "justification": "Ecosystem not ready — no compatible upstream release available.",
-    "name": "sharp",
-    "severity": "high",
-    "via": [
-      {
-        "source": 1124066,
-        "name": "sharp",
-        "dependency": "sharp",
-        "title": "sharp inherited vulnerabilities in libvips: CVE-2026-33327, CVE-2026-33328, CVE-2026-35590, CVE-2026-35591",
-        "url": "https://github.com/advisories/GHSA-f88m-g3jw-g9cj",
-        "severity": "high",
-        "cwe": [
-          "CWE-1395"
-        ],
-        "cvss": {
-          "score": 0,
-          "vectorString": null
-        },
-        "range": "<0.35.0"
-      }
-    ],
-    "effects": [
-      "next"
-    ],
-    "range": "<0.35.0"
-  },
-  {
-    "id": "pwa-2026-08-23-lhci-cli",
-    "scope": "build-time",
-    "owner": "project-maintainer",
-    "justification": "Lighthouse CI audit tool chain — build time only.",
-    "name": "@lhci/cli",
-    "severity": "high",
-    "via": [
-      "@lhci/utils",
-      "lighthouse"
-    ],
+    "via": ["@lhci/utils", "lighthouse"],
     "effects": [],
     "range": "<=0.1.1-alpha.5 || >=0.13.0"
   },
   {
-    "id": "pwa-2026-08-23-lhci-utils",
+    "id": "pwa-2026-09-19-lhci-utils",
     "scope": "build-time",
     "owner": "project-maintainer",
-    "justification": "Lighthouse CI audit tool chain — build time only.",
+    "justification": "Lighthouse CI only. This advisory is in the same extract-zip chain and npm's only proposed resolution is the breaking @lhci/cli downgrade to 0.12.0.",
+    "expiresOn": "2026-12-31",
     "name": "@lhci/utils",
     "severity": "high",
-    "via": [
-      "lighthouse"
-    ],
-    "effects": [
-      "@lhci/cli"
-    ],
+    "via": ["lighthouse"],
+    "effects": ["@lhci/cli"],
     "range": ">=0.13.0"
   },
   {
-    "id": "pwa-2026-08-23-puppeteer-browsers",
+    "id": "pwa-2026-09-19-puppeteer-browsers",
     "scope": "build-time",
     "owner": "project-maintainer",
-    "justification": "Lighthouse CI puppeteer browser downloader — build time only.",
+    "justification": "Lighthouse CI only. This advisory is in the same extract-zip chain and npm's only proposed resolution is the breaking @lhci/cli downgrade to 0.12.0.",
+    "expiresOn": "2026-12-31",
     "name": "@puppeteer/browsers",
     "severity": "high",
-    "via": [
-      "extract-zip"
-    ],
-    "effects": [
-      "puppeteer-core"
-    ],
+    "via": ["extract-zip"],
+    "effects": ["puppeteer-core"],
     "range": "<=2.13.2"
   },
   {
-    "id": "pwa-2026-08-23-extract-zip",
+    "id": "pwa-2026-09-19-lighthouse",
     "scope": "build-time",
     "owner": "project-maintainer",
-    "justification": "Lighthouse CI dependency for archive unpacking — build time only.",
+    "justification": "Lighthouse CI only. This advisory is in the same extract-zip chain and npm's only proposed resolution is the breaking @lhci/cli downgrade to 0.12.0.",
+    "expiresOn": "2026-12-31",
+    "name": "lighthouse",
+    "severity": "high",
+    "via": ["puppeteer-core"],
+    "effects": ["@lhci/cli", "@lhci/utils"],
+    "range": "10.1.1-dev.20230414 - 10.1.1-dev.20230503 || 10.2.0-dev.20230504 - 13.3.0"
+  },
+  {
+    "id": "pwa-2026-09-19-puppeteer-core",
+    "scope": "build-time",
+    "owner": "project-maintainer",
+    "justification": "Lighthouse CI only. This advisory is in the same extract-zip chain and npm's only proposed resolution is the breaking @lhci/cli downgrade to 0.12.0.",
+    "expiresOn": "2026-12-31",
+    "name": "puppeteer-core",
+    "severity": "high",
+    "via": ["@puppeteer/browsers"],
+    "effects": ["lighthouse"],
+    "range": "19.8.4 - 24.43.1"
+  },
+  {
+    "id": "pwa-2026-09-19-extract-zip",
+    "scope": "build-time",
+    "owner": "project-maintainer",
+    "justification": "Lighthouse CI only. The two current extract-zip advisories have no non-breaking upstream fix; npm proposes downgrading @lhci/cli from 0.15.1 to 0.12.0.",
+    "expiresOn": "2026-12-31",
     "name": "extract-zip",
     "severity": "high",
     "via": [
@@ -363,63 +75,82 @@
         "title": "extract-zip unvalidated symlink path traversal",
         "url": "https://github.com/advisories/GHSA-jmr9-qjv8-65gv",
         "severity": "high",
-        "cwe": [
-          "CWE-22"
-        ],
+        "cwe": ["CWE-22"],
         "cvss": {
           "score": 8.1,
           "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N"
         },
         "range": "<=2.0.1"
+      },
+      {
+        "source": 1193685,
+        "name": "extract-zip",
+        "dependency": "extract-zip",
+        "title": "extract-zip allows arbitrary file writes through symlink archive entries",
+        "url": "https://github.com/advisories/GHSA-7pqw-9j4j-h8q3",
+        "severity": "high",
+        "cwe": ["CWE-22"],
+        "cvss": {
+          "score": 8.1,
+          "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:H/A:H"
+        },
+        "range": "<=2.0.1"
       }
     ],
-    "effects": [
-      "@puppeteer/browsers"
-    ],
+    "effects": ["@puppeteer/browsers"],
     "range": "*"
   },
   {
-    "id": "pwa-2026-08-23-lighthouse",
-    "scope": "build-time",
-    "owner": "project-maintainer",
-    "justification": "Lighthouse audit dependency — build time only.",
-    "name": "lighthouse",
-    "severity": "high",
-    "via": [
-      "puppeteer-core"
-    ],
-    "effects": [
-      "@lhci/cli",
-      "@lhci/utils"
-    ],
-    "range": "10.1.1-dev.20230414 - 10.1.1-dev.20230503 || 10.2.0-dev.20230504 - 13.3.0"
-  },
-  {
-    "id": "pwa-2026-08-23-next-sharp",
+    "id": "pwa-2026-09-19-next-sharp",
     "scope": "runtime",
     "owner": "project-maintainer",
-    "justification": "Next.js 16 image optimization transitive sharp dependency.",
+    "justification": "Effect of the approved sharp exception. sharp@0.35.4 fails the OpenNext Cloudflare bundle on Windows by resolving native .node modules.",
+    "expiresOn": "2026-12-31",
     "name": "next",
     "severity": "high",
-    "via": [
-      "sharp"
-    ],
+    "via": ["sharp"],
     "effects": [],
-    "range": "9.5.6-canary.0 - 10.0.7 || 14.3.0-canary.0 - 16.3.0-preview.10"
+    "range": "9.5.6-canary.0 - 10.0.7 || 14.3.0-canary.0 - 15.5.23 || 15.6.0-canary.0 - 16.3.0-preview.10"
   },
   {
-    "id": "pwa-2026-08-23-puppeteer-core",
-    "scope": "build-time",
+    "id": "pwa-2026-09-19-sharp",
+    "scope": "runtime",
     "owner": "project-maintainer",
-    "justification": "Lighthouse browser automation — build time only.",
-    "name": "puppeteer-core",
+    "justification": "sharp@0.35.4 is fixed but fails the OpenNext Cloudflare bundle on Windows; retain the scoped next>sharp@0.34.5 pin until upstream compatibility is available.",
+    "expiresOn": "2026-12-31",
+    "name": "sharp",
     "severity": "high",
     "via": [
-      "@puppeteer/browsers"
+      {
+        "source": 1124066,
+        "name": "sharp",
+        "dependency": "sharp",
+        "title": "sharp inherited vulnerabilities in libvips: CVE-2026-33327, CVE-2026-33328, CVE-2026-35590, CVE-2026-35591",
+        "url": "https://github.com/advisories/GHSA-f88m-g3jw-g9cj",
+        "severity": "high",
+        "cwe": ["CWE-1395"],
+        "cvss": {
+          "score": 0,
+          "vectorString": null
+        },
+        "range": "<0.35.0"
+      },
+      {
+        "source": 1193725,
+        "name": "sharp",
+        "dependency": "sharp",
+        "title": "sharp: Vulnerabilities in libheif: GHSA-g89c-p67h-r497 and GHSA-2jg2-4ch7-h545",
+        "url": "https://github.com/advisories/GHSA-rgj7-g3m4-5g8c",
+        "severity": "high",
+        "cwe": ["CWE-122"],
+        "cvss": {
+          "score": 0,
+          "vectorString": null
+        },
+        "range": "<0.35.4"
+      }
     ],
-    "effects": [
-      "lighthouse"
-    ],
-    "range": "19.8.4 - 24.43.1"
+    "effects": ["next"],
+    "range": "<=0.35.4-rc.0"
   }
 ]

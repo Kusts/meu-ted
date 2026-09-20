@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildTestApp, TOKEN_A } from '../test-app.js';
 
-const auth = () => ({ 'x-device-token': TOKEN_A, 'content-type': 'application/json' });
+const auth = () => ({ 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() });
 
 /**
  * V4.1 REVIEWFIX F2 [major] — unpay requires paidTransactionId (D4).

@@ -1,4 +1,4 @@
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 
 # CVE-2026-14456 libcrypto3/libssl3 3.5.7-r0 -> 3.5.8-r0: force upgrade on alpine 3.24
 RUN apk update && apk upgrade --no-cache libcrypto3 libssl3
@@ -14,7 +14,7 @@ WORKDIR /monorepo/apps/codex-broker
 RUN pnpm build
 RUN pnpm deploy --legacy --filter pi-finance-codex-broker --prod /runtime
 
-FROM node:22-alpine AS runner
+FROM node:24-alpine AS runner
 
 # Keep OS libs at the same fixed level as the builder stage.
 RUN apk update && apk upgrade --no-cache libcrypto3 libssl3

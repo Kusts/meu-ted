@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildTestApp, TOKEN_A, TOKEN_B } from '../test-app.js';
 
-const authA = { 'x-device-token': TOKEN_A, 'content-type': 'application/json' };
+const authA = () => ({ 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() });
 const _authB = { 'x-device-token': TOKEN_B, 'content-type': 'application/json' };
 
 describe('GET /subscriptions', () => {
@@ -10,7 +10,7 @@ describe('GET /subscriptions', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/subscriptions',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().items).toHaveLength(0);
@@ -30,7 +30,7 @@ describe('POST /subscriptions', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/subscriptions',
-      headers: authA,
+      headers: authA(),
       payload: {
         name: 'Netflix',
         amountCents: 39_90,
@@ -55,13 +55,13 @@ describe('POST /subscriptions', () => {
     await app.inject({
       method: 'POST',
       url: '/subscriptions',
-      headers: authA,
+      headers: authA(),
       payload: { name: 'Spotify', amountCents: 19_90, cycle: 'monthly', day: 10, paymentMethod: 'credit_card' },
     });
     const list = await app.inject({
       method: 'GET',
       url: '/subscriptions',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(list.statusCode).toBe(200);
     expect(list.json().items).toHaveLength(1);
@@ -73,13 +73,13 @@ describe('POST /subscriptions', () => {
     await app.inject({
       method: 'POST',
       url: '/subscriptions',
-      headers: authA,
+      headers: authA(),
       payload: { name: 'Netflix', amountCents: 39_90, cycle: 'monthly', day: 15, paymentMethod: 'credit_card' },
     });
     const listB = await app.inject({
       method: 'GET',
       url: '/subscriptions',
-      headers: { 'x-device-token': TOKEN_B },
+      headers: { 'x-device-token': TOKEN_B, 'idempotency-key': crypto.randomUUID() },
     });
     expect(listB.json().items).toHaveLength(0);
   });
@@ -89,7 +89,7 @@ describe('POST /subscriptions', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/subscriptions',
-      headers: authA,
+      headers: authA(),
       payload: { name: 'Netflix' }, // missing fields
     });
     expect(res.statusCode).toBe(400);
@@ -100,7 +100,7 @@ describe('POST /subscriptions', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/subscriptions',
-      headers: authA,
+      headers: authA(),
       payload: { name: 'X', amountCents: 100, cycle: 'daily', day: 1, paymentMethod: 'credit_card' },
     });
     expect(res.statusCode).toBe(400);
@@ -114,7 +114,7 @@ describe('POST /subscriptions', () => {
     const r1 = await app.inject({
       method: 'POST',
       url: '/subscriptions',
-      headers: { ...authA, 'idempotency-key': key },
+      headers: { ...authA(), 'idempotency-key': key },
       payload,
     });
     expect(r1.statusCode).toBe(201);
@@ -122,7 +122,7 @@ describe('POST /subscriptions', () => {
     const r2 = await app.inject({
       method: 'POST',
       url: '/subscriptions',
-      headers: { ...authA, 'idempotency-key': key },
+      headers: { ...authA(), 'idempotency-key': key },
       payload,
     });
     expect(r2.statusCode).toBe(201);
@@ -136,7 +136,7 @@ describe('POST /subscriptions/:id/cancel', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/subscriptions',
-      headers: authA,
+      headers: authA(),
       payload: { name: 'Netflix', amountCents: 39_90, cycle: 'monthly', day: 15, paymentMethod: 'credit_card' },
     });
     const id = created.json().id;
@@ -144,7 +144,7 @@ describe('POST /subscriptions/:id/cancel', () => {
     const cancelRes = await app.inject({
       method: 'POST',
       url: `/subscriptions/${id}/cancel`,
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(cancelRes.statusCode).toBe(200);
     expect(cancelRes.json().status).toBe('cancelled');
@@ -152,14 +152,14 @@ describe('POST /subscriptions/:id/cancel', () => {
     const activeList = await app.inject({
       method: 'GET',
       url: '/subscriptions?status=active',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(activeList.json().items).toHaveLength(0);
 
     const allList = await app.inject({
       method: 'GET',
       url: '/subscriptions',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(allList.json().items).toHaveLength(1);
     expect(allList.json().items[0].status).toBe('cancelled');
@@ -170,7 +170,7 @@ describe('POST /subscriptions/:id/cancel', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/subscriptions/00000000-0000-4000-8000-000000000000/cancel',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(res.statusCode).toBe(404);
   });
@@ -180,7 +180,7 @@ describe('POST /subscriptions/:id/cancel', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/subscriptions',
-      headers: authA,
+      headers: authA(),
       payload: { name: 'Netflix', amountCents: 39_90, cycle: 'monthly', day: 15, paymentMethod: 'credit_card' },
     });
     const id = created.json().id;
@@ -188,13 +188,13 @@ describe('POST /subscriptions/:id/cancel', () => {
     await app.inject({
       method: 'POST',
       url: `/subscriptions/${id}/cancel`,
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
 
     const secondCancel = await app.inject({
       method: 'POST',
       url: `/subscriptions/${id}/cancel`,
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(secondCancel.statusCode).toBe(400);
   });
@@ -204,7 +204,7 @@ describe('POST /subscriptions/:id/cancel', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/subscriptions',
-      headers: authA,
+      headers: authA(),
       payload: { name: 'Spotify', amountCents: 19_90, cycle: 'monthly', day: 10, paymentMethod: 'credit_card' },
     });
     const id = created.json().id;
@@ -212,13 +212,13 @@ describe('POST /subscriptions/:id/cancel', () => {
     await app.inject({
       method: 'POST',
       url: `/subscriptions/${id}/cancel`,
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
 
     const list = await app.inject({
       method: 'GET',
       url: '/subscriptions?status=cancelled',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(list.statusCode).toBe(200);
     expect(list.json().items).toHaveLength(1);
@@ -231,7 +231,7 @@ describe('POST /subscriptions/:id/cancel', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/subscriptions',
-        headers: authA,
+        headers: authA(),
         payload: { name: 'Netflix', amountCents: 39_90, cycle: 'monthly', day: 15, paymentMethod: 'credit_card' },
       });
       const id = created.json().id;
@@ -239,7 +239,7 @@ describe('POST /subscriptions/:id/cancel', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: `/subscriptions/${id}`,
-        headers: authA,
+        headers: authA(),
         payload: { name: 'Netflix Premium', amountCents: 55_90, cycle: 'yearly', day: 10, paymentMethod: 'boleto' },
       });
       expect(res.statusCode).toBe(200);
@@ -256,7 +256,7 @@ describe('POST /subscriptions/:id/cancel', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/subscriptions',
-        headers: authA,
+        headers: authA(),
         payload: { name: 'Spotify', amountCents: 19_90, cycle: 'monthly', day: 10, paymentMethod: 'credit_card' },
       });
       const id = created.json().id;
@@ -264,7 +264,7 @@ describe('POST /subscriptions/:id/cancel', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: `/subscriptions/${id}`,
-        headers: authA,
+        headers: authA(),
         payload: { amountCents: 24_90 },
       });
       expect(res.statusCode).toBe(200);
@@ -277,7 +277,7 @@ describe('POST /subscriptions/:id/cancel', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: '/subscriptions/00000000-0000-4000-8000-000000000000',
-        headers: authA,
+        headers: authA(),
         payload: { name: 'Test' },
       });
       expect(res.statusCode).toBe(404);
@@ -298,7 +298,7 @@ describe('POST /subscriptions/:id/cancel', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/subscriptions',
-        headers: authA,
+        headers: authA(),
         payload: { name: 'X', amountCents: 100, cycle: 'monthly', day: 1, paymentMethod: 'pix' },
       });
       const id = created.json().id;
@@ -306,7 +306,7 @@ describe('POST /subscriptions/:id/cancel', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: `/subscriptions/${id}`,
-        headers: authA,
+        headers: authA(),
         payload: {},
       });
       expect(res.statusCode).toBe(400);
@@ -317,7 +317,7 @@ describe('POST /subscriptions/:id/cancel', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/subscriptions',
-        headers: authA,
+        headers: authA(),
         payload: { name: 'Netflix', amountCents: 39_90, cycle: 'monthly', day: 15, paymentMethod: 'credit_card' },
       });
       const id = created.json().id;
@@ -325,7 +325,7 @@ describe('POST /subscriptions/:id/cancel', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: `/subscriptions/${id}`,
-        headers: { 'x-device-token': TOKEN_B, 'content-type': 'application/json' },
+        headers: { 'x-device-token': TOKEN_B, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
         payload: { name: 'Hacked' },
       });
       expect(res.statusCode).toBe(404);
@@ -336,7 +336,7 @@ describe('POST /subscriptions/:id/cancel', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/subscriptions',
-        headers: authA,
+        headers: authA(),
         payload: { name: 'Netflix', amountCents: 39_90, cycle: 'monthly', day: 15, paymentMethod: 'credit_card' },
       });
       const id = created.json().id;
@@ -344,13 +344,13 @@ describe('POST /subscriptions/:id/cancel', () => {
       await app.inject({
         method: 'POST',
         url: `/subscriptions/${id}/cancel`,
-        headers: { 'x-device-token': TOKEN_A },
+        headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
       });
 
       const res = await app.inject({
         method: 'PATCH',
         url: `/subscriptions/${id}`,
-        headers: authA,
+        headers: authA(),
         payload: { name: 'Netflix (cancelada)' },
       });
       expect(res.statusCode).toBe(200);

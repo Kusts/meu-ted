@@ -9,12 +9,16 @@
 
 import { z } from 'zod';
 import { isoDateSchema as isoDate } from '../shared/iso-date.js';
-import { nonNegativeMoneyCentsSchema, positiveMoneyCentsSchema } from '../shared/money.js';
+import { moneyCentsSchema, positiveMoneyCentsSchema } from '../shared/money.js';
 
 export const createAccountInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
   kind: z.enum(['bank', 'cash']),
-  initialBalanceCents: nonNegativeMoneyCentsSchema,
+  // Negative-balance rule (user-approved): bank/cash accounts may start
+  // negative — signed cents bounded by MAX_MONEY_CENTS. A negative initial
+  // balance for `credit_card` is rejected at the store layer (cards are
+  // created via /cards with zero balance and keep non-negative semantics).
+  initialBalanceCents: moneyCentsSchema,
 });
 export type CreateAccountInput = z.infer<typeof createAccountInputSchema>;
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildTestApp, TOKEN_A } from '../test-app.js';
 
-const auth = () => ({ 'x-device-token': TOKEN_A, 'content-type': 'application/json' });
+const auth = () => ({ 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() });
 
 describe('ledger idempotent retry and conflict handling', () => {
   it('replays the canonical response on retry with the same key and payload', async () => {

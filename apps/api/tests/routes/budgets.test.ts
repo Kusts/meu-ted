@@ -3,7 +3,7 @@ import { buildTestApp, TOKEN_A, } from '../test-app.js';
 import { ACCOUNT_A1, CATEGORY_FOOD_A, CATEGORY_RENT_A } from '../fixtures/seed.js';
 
 const seed = { accounts: [ACCOUNT_A1], categories: [CATEGORY_FOOD_A, CATEGORY_RENT_A], transactions: [] };
-function auth(t: string) { return { 'x-device-token': t }; }
+function auth(t: string) { return { 'x-device-token': t, 'idempotency-key': crypto.randomUUID() }; }
 
 describe('GET /budgets', () => {
   it('returns empty when no budgets', async () => {
@@ -24,7 +24,7 @@ describe('POST /budgets', () => {
     const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({
       method: 'POST', url: '/budgets',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { categoryId: CATEGORY_FOOD_A.id, name: 'Mercado', amountCents: 1_000_00, period: 'monthly', startDate: '2026-06-01' },
     });
     expect(res.statusCode).toBe(201);
@@ -35,7 +35,7 @@ describe('POST /budgets', () => {
     const { app, state } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     await app.inject({
       method: 'POST', url: '/budgets',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { categoryId: CATEGORY_FOOD_A.id, name: 'Mercado', amountCents: 1_000_00, period: 'monthly', startDate: '2026-06-01' },
     });
     // Add an expense to compute spent
@@ -48,7 +48,7 @@ describe('POST /budgets', () => {
     const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({
       method: 'POST', url: '/budgets',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { categoryId: CATEGORY_FOOD_A.id },
     });
     expect(res.statusCode).toBe(400);
@@ -60,13 +60,13 @@ describe('PATCH /budgets/:id', () => {
     const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const create = await app.inject({
       method: 'POST', url: '/budgets',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { categoryId: CATEGORY_FOOD_A.id, name: 'Mercado', amountCents: 1_000_00, period: 'monthly', startDate: '2026-06-01' },
     });
     const id = create.json().id;
     const res = await app.inject({
       method: 'PATCH', url: `/budgets/${id}`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { amountCents: 2_000_00 },
     });
     expect(res.statusCode).toBe(200);
@@ -76,7 +76,7 @@ describe('PATCH /budgets/:id', () => {
     const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const res = await app.inject({
       method: 'PATCH', url: '/budgets/00000000-0000-0000-0000-000000000000',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { amountCents: 100_00 },
     });
     expect(res.statusCode).toBe(404);
@@ -88,7 +88,7 @@ describe('GET /budgets/check', () => {
     const { app, state } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     await app.inject({
       method: 'POST', url: '/budgets',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { categoryId: CATEGORY_FOOD_A.id, name: 'Mercado', amountCents: 1_000_00, period: 'monthly', startDate: '2026-06-01', alertThreshold: 50 },
     });
     state.transactions.push({ id: 'tx1', householdId: seed.accounts[0]!.householdId ?? 'h1', kind: 'expense', description: 'Feira', amountCents: 600_00, date: '2026-06-15', accountId: ACCOUNT_A1.id, categoryId: CATEGORY_FOOD_A.id });
@@ -102,7 +102,7 @@ describe('GET /budgets/:id/trends', () => {
     const { app } = buildTestApp(seed, () => new Date('2026-06-15T12:00:00Z'));
     const create = await app.inject({
       method: 'POST', url: '/budgets',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { categoryId: CATEGORY_FOOD_A.id, name: 'Mercado', amountCents: 1_000_00, period: 'monthly', startDate: '2026-06-01' },
     });
     const id = create.json().id;

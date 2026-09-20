@@ -33,7 +33,7 @@ function freshSeed() {
 }
 
 function auth() {
-  return { 'x-device-token': TOKEN_A, 'content-type': 'application/json' };
+  return { 'x-device-token': TOKEN_A, 'content-type': 'application/json' , 'idempotency-key': crypto.randomUUID() };
 }
 
 const purchase = (overrides: Record<string, unknown> = {}) => ({

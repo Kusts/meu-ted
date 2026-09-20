@@ -14,7 +14,7 @@ const CLOCK = () => new Date('2026-09-07T12:00:00.000Z');
  * as household-wide, never silently mixed into an account-scoped total.
  */
 const seedTwoAccounts = async (app: ReturnType<typeof buildTestApp>['app']) => {
-  const post = (url: string, payload: unknown) => app.inject({ method: 'POST', url, headers: H, payload });
+  const post = (url: string, payload: unknown) => app.inject({ method: 'POST', url, headers: { ...H, 'idempotency-key': crypto.randomUUID() }, payload });
 
   const a1 = await post('/accounts', { name: 'Conta A1', kind: 'bank', initialBalanceCents: 0 });
   expect(a1.statusCode).toBe(201);
@@ -68,7 +68,7 @@ const seedTwoAccounts = async (app: ReturnType<typeof buildTestApp>['app']) => {
 };
 
 const get = (app: ReturnType<typeof buildTestApp>['app'], url: string) =>
-  app.inject({ method: 'GET', url, headers: { 'x-device-token': TOKEN_A } });
+  app.inject({ method: 'GET', url, headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
 
 const SEPT = 'period=custom&from=2026-09-01&to=2026-09-30';
 

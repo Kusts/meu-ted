@@ -75,14 +75,16 @@ describe('migration statement_timeout override (DEBT-CODER-INFRA)', () => {
   it('createMigrationPool wires the migration timeouts into session SETs', async () => {
     const pool = createMigrationPool({ connectionString: 'postgres://localhost/x' }, {});
     try {
+      const options = (pool as unknown as { options: { onConnect?: (client: unknown) => Promise<void> } }).options;
+      expect(typeof options.onConnect).toBe('function');
+      expect(pool.listenerCount('connect')).toBe(0);
       const queries: string[] = [];
-      (pool as unknown as { emit: (event: string, client: unknown) => void }).emit('connect', {
+      await options.onConnect?.({
         query: async (sql: string) => {
           queries.push(sql);
           return { rows: [] };
         },
       });
-      await new Promise((resolve) => setImmediate(resolve));
       const joined = queries.join(';');
       expect(joined).toContain('statement_timeout = 600000');
       expect(joined).toContain('lock_timeout = 60000');

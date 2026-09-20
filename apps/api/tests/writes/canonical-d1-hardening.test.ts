@@ -1,14 +1,12 @@
 /**
- * V4.1 PHASE 4 (Tasks 4.2–4.5, 4.8–4.10) — Canonical D1 hardening, in-memory proofs.
+ * V4.1 PHASE 4 (Tasks 4.2–4.5, 4.8–4.10) — Canonical balance proofs, in-memory.
  *
- * D1 (option B, docs/reports/v4.1-decision-gates.md): negative balances are
- * forbidden. No silent clamps: an expense/transfer that exceeds the balance
- * FAILS with 400 validation.invalid (same shape as payables/cards), and the
- * transaction is not recorded. Transaction updates use reverse(before) /
+ * Negative-balance rule (user-approved, supersedes D1 option B for
+ * bank/cash): bank/cash debits may cross below zero with exact ledger
+ * deltas — no silent clamps, no rejections. `credit_card` legs keep the
+ * zero floor and all card-specific guards (H-01 422s, statement
+ * remaining/overpay). Transaction updates use reverse(before) /
  * apply(after) semantics exactly once.
- *
- * RED: each rejection/mutation test below fails before the fix (silent clamp
- * or double balance restore) and passes after.
  */
 import { describe, expect, it } from 'vitest';
 import { createInMemoryStores } from '../../src/writes/in-memory.js';
@@ -27,40 +25,33 @@ const setup = async (balanceA = 20_00, balanceB = 50_00) => {
   return { state, writes, a, b, catExp, catInc, balanceOf };
 };
 
-const expectInvalidFunds = async (p: Promise<unknown>): Promise<void> => {
-  await expect(p).rejects.toMatchObject({ code: 'validation.invalid', statusCode: 400 });
-};
-
-describe('V4.1 Phase 4 — D1 no-negative-balance (in-memory canonical)', () => {
-  it('4.2/4.3 expense exceeding balance FAILS 400 and leaves balance and ledger unchanged', async () => {
+describe('V4.1 Phase 4 — negative bank/cash balances (in-memory canonical)', () => {
+  it('4.2/4.3 expense exceeding balance SUCCEEDS with the exact negative delta', async () => {
     const { state, writes, a, catExp, balanceOf } = await setup(20_00);
-    await expectInvalidFunds(
-      writes.createExpense(H, {
-        description: 'Too big',
-        amountCents: 100_00,
-        date: '2026-09-01',
-        accountId: a.id,
-        categoryId: catExp.id,
-      }),
-    );
-    expect(balanceOf(a.id)).toBe(20_00);
-    expect(state.transactions).toHaveLength(0);
+    const tx = await writes.createExpense(H, {
+      description: 'Too big',
+      amountCents: 100_00,
+      date: '2026-09-01',
+      accountId: a.id,
+      categoryId: catExp.id,
+    });
+    expect(tx.amountCents).toBe(100_00);
+    expect(balanceOf(a.id)).toBe(20_00 - 100_00);
+    expect(state.transactions).toHaveLength(1);
   });
 
-  it('4.2/4.3 transfer exceeding source balance FAILS 400 and changes NEITHER side', async () => {
+  it('4.2/4.3 transfer exceeding source balance SUCCEEDS with exact deltas on both sides', async () => {
     const { state, writes, a, b, balanceOf } = await setup(20_00, 50_00);
-    await expectInvalidFunds(
-      writes.createTransfer(H, {
-        description: 'Too big',
-        amountCents: 100_00,
-        date: '2026-09-01',
-        fromAccountId: a.id,
-        toAccountId: b.id,
-      }),
-    );
-    expect(balanceOf(a.id)).toBe(20_00);
-    expect(balanceOf(b.id)).toBe(50_00);
-    expect(state.transactions).toHaveLength(0);
+    await writes.createTransfer(H, {
+      description: 'Too big',
+      amountCents: 100_00,
+      date: '2026-09-01',
+      fromAccountId: a.id,
+      toAccountId: b.id,
+    });
+    expect(balanceOf(a.id)).toBe(20_00 - 100_00);
+    expect(balanceOf(b.id)).toBe(50_00 + 100_00);
+    expect(state.transactions).toHaveLength(1);
   });
 
   it('4.2/4.3 exact-balance expense and transfer still succeed (boundary)', async () => {
@@ -84,7 +75,7 @@ describe('V4.1 Phase 4 — D1 no-negative-balance (in-memory canonical)', () => 
     expect(balanceOf(b.id)).toBe(50_00);
   });
 
-  it('4.4/4.5 amount-only increase beyond balance FAILS 400 and restores the old balance', async () => {
+  it('4.4/4.5 amount-only increase beyond the old balance SUCCEEDS with the exact delta', async () => {
     const { writes, a, catExp, balanceOf } = await setup(1000_00);
     const tx = await writes.createExpense(H, {
       description: 'Lunch',
@@ -94,8 +85,9 @@ describe('V4.1 Phase 4 — D1 no-negative-balance (in-memory canonical)', () => 
       categoryId: catExp.id,
     });
     expect(balanceOf(a.id)).toBe(800_00);
-    await expectInvalidFunds(writes.updateTransaction(H, tx.id, { amountCents: 1500_00 }));
-    expect(balanceOf(a.id)).toBe(800_00);
+    const updated = await writes.updateTransaction(H, tx.id, { amountCents: 1500_00 });
+    expect(updated.amountCents).toBe(1500_00);
+    expect(balanceOf(a.id)).toBe(1000_00 - 1500_00);
   });
 
   it('4.4/4.5 amount-only change applies reverse(before)/apply(after) exactly once', async () => {
@@ -147,7 +139,7 @@ describe('V4.1 Phase 4 — D1 no-negative-balance (in-memory canonical)', () => 
     expect(balanceOf(b.id)).toBe(200_00);
   });
 
-  it('4.4/4.5 combined change that exceeds the destination balance FAILS 400 with both sides intact', async () => {
+  it('4.4/4.5 combined change onto a thin destination SUCCEEDS with exact reverse/apply', async () => {
     const { writes, a, b, catExp, balanceOf } = await setup(1000_00, 100_00);
     const tx = await writes.createExpense(H, {
       description: 'Lunch',
@@ -156,11 +148,11 @@ describe('V4.1 Phase 4 — D1 no-negative-balance (in-memory canonical)', () => 
       accountId: a.id,
       categoryId: catExp.id,
     });
-    await expectInvalidFunds(
-      writes.updateTransaction(H, tx.id, { amountCents: 600_00, accountId: b.id }),
-    );
-    expect(balanceOf(a.id)).toBe(800_00);
-    expect(balanceOf(b.id)).toBe(100_00);
+    const updated = await writes.updateTransaction(H, tx.id, { amountCents: 600_00, accountId: b.id });
+    expect(updated.amountCents).toBe(600_00);
+    // reverse(before): A back to 1000_00. apply(after): B 100_00 - 600_00.
+    expect(balanceOf(a.id)).toBe(1000_00);
+    expect(balanceOf(b.id)).toBe(100_00 - 600_00);
   });
 
   it('4.4/4.5 moving an expense onto a credit card is rejected (H-01 parity with create)', async () => {
@@ -224,7 +216,7 @@ describe('V4.1 Phase 4 — D1 no-negative-balance (in-memory canonical)', () => 
     expect(state.deletedTransactions.has(paidTxId)).toBe(true);
   });
 
-  it('4.8 payable payment beyond balance FAILS 400 (same shape as payStatement)', async () => {
+  it('4.8 payable payment beyond the balance SUCCEEDS with the exact negative delta', async () => {
     const { state, a, catExp, balanceOf } = await setup(100_00);
     const payables = createInMemoryPayableStore(state);
     const payable = await payables.createPayable(H, {
@@ -234,7 +226,9 @@ describe('V4.1 Phase 4 — D1 no-negative-balance (in-memory canonical)', () => 
       dueDate: '2026-09-05',
       categoryId: catExp.id,
     });
-    await expectInvalidFunds(payables.markPayablePaid(H, payable.id, { paidDate: '2026-09-05' }));
-    expect(balanceOf(a.id)).toBe(100_00);
+    const paid = await payables.markPayablePaid(H, payable.id, { paidDate: '2026-09-05' });
+    expect(paid.status).toBe('paid');
+    expect(paid.paidTransactionId).toBeDefined();
+    expect(balanceOf(a.id)).toBe(100_00 - 500_00);
   });
 });

@@ -20,13 +20,19 @@ function formatBRL(cents: number): string {
   }).format(cents / 100);
 }
 
-function formatInputBRL(value: string): string {
+export function formatInputBRL(value: string): string {
+  // ADR-018: bank/cash accounts may open with a negative initial balance, so
+  // a leading "-" survives masking (valid signed pt-BR formatting). A lone
+  // "-" is kept so the user can keep typing; zero never carries a sign.
+  const negative = value.trimStart().startsWith("-");
   const digits = value.replace(/\D/g, "");
-  if (!digits) return "";
+  if (!digits) return negative ? "-" : "";
   const padded = digits.padStart(3, "0");
   const intPart = padded.slice(0, -2);
   const decPart = padded.slice(-2);
-  return `${parseInt(intPart, 10).toLocaleString("pt-BR")},${decPart}`;
+  const magnitude = `${parseInt(intPart, 10).toLocaleString("pt-BR")},${decPart}`;
+  if (negative && !/^0+$/.test(digits)) return `-${magnitude}`;
+  return magnitude;
 }
 
 const ACCOUNT_KINDS = [
@@ -47,7 +53,7 @@ const BANK_COLORS = BANK_PRESETS.filter((p) => !p.id.includes("prime") && !p.id.
  * the payload via bankColor and kept here explicit instead of a degenerate
  * ternary.
  */
-function toApiAccountKind(kind: string): "bank" | "cash" | "credit_card" {
+export function toApiAccountKind(kind: string): "bank" | "cash" | "credit_card" {
   switch (kind) {
     case "cash": return "cash";
     case "credit_card": return "credit_card";
@@ -55,9 +61,23 @@ function toApiAccountKind(kind: string): "bank" | "cash" | "credit_card" {
   }
 }
 
-function parseBRLToCents(value: string): number {
-  const cleaned = value.replace(/[.\s]/g, "").replace(",", ".");
-  return Math.round(parseFloat(cleaned) * 100) || 0;
+/**
+ * ADR-018: bank/cash accounts may open with a negative initial balance
+ * (real overdraft); a credit_card balance is open debt and must never be
+ * negative. The create form enforces this before submitting so the PWA never
+ * sends a payload the authoritative API would reject.
+ */
+export function isNegativeInitialBalanceAllowed(kind: "bank" | "cash" | "credit_card"): boolean {
+  return kind !== "credit_card";
+}
+
+export function parseBRLToCents(value: string): number {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "-") return 0;
+  const cleaned = trimmed.replace(/[.\s]/g, "").replace(",", ".");
+  const cents = Math.round(parseFloat(cleaned) * 100);
+  if (!Number.isFinite(cents)) return 0;
+  return cents === 0 ? 0 : cents;
 }
 
 function AccountFormSheet({
@@ -78,18 +98,28 @@ function AccountFormSheet({
   const [kind, setKind] = useState("checking");
   const [bankColor, setBankColor] = useState("#820AD1");
   const [balance, setBalance] = useState("");
+  const [balanceError, setBalanceError] = useState<string | null>(null);
 
   async function handleSave() {
     const displayName = name.trim() || (bankColor === "#820AD1" ? "Nubank" : bankColor);
+    const apiKind = toApiAccountKind(kind);
+    const initialBalanceCents = parseBRLToCents(balance);
+    // ADR-018: bank/cash may open negative; credit_card must never be
+    // negative — reject locally instead of sending a payload the API refuses.
+    if (!isNegativeInitialBalanceAllowed(apiKind) && initialBalanceCents < 0) {
+      setBalanceError("Cartão não aceita saldo inicial negativo.");
+      return;
+    }
     try {
       await onAdd({
         name: displayName,
-        kind: toApiAccountKind(kind),
-        initialBalanceCents: parseBRLToCents(balance),
+        kind: apiKind,
+        initialBalanceCents,
         bankColor,
       });
       setName("");
       setBalance("");
+      setBalanceError(null);
       onClose();
     } catch {
       // Save failed: sheet stays open with the typed values; the error is
@@ -174,13 +204,22 @@ function AccountFormSheet({
               inputMode="numeric"
               value={balance}
               onChange={(e) => {
-                const raw = e.target.value.replace(/\D/g, "");
-                if (raw.length > 12) return;
+                const raw = e.target.value;
+                // ADR-018: keep a leading "-" so a negative initial balance
+                // survives masking; only the digit count is limited.
+                if (raw.replace(/\D/g, "").length > 12) return;
                 setBalance(formatInputBRL(raw));
+                if (balanceError) setBalanceError(null);
               }}
               placeholder="0,00"
+              aria-invalid={balanceError !== null}
               className="w-full rounded-[14px] border border-border-subtle bg-surface-2 py-3 pl-11 pr-3.5 font-mono tabular-nums text-[16px] font-bold text-text-primary outline-none transition-colors focus:border-primary"
             />
+            {balanceError && (
+              <p role="alert" className="mt-1.5 text-[12px] font-semibold text-danger">
+                {balanceError}
+              </p>
+            )}
           </div>
         </fieldset>
 

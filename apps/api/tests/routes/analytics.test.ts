@@ -11,7 +11,7 @@ const CLOCK = () => new Date('2026-09-07T12:00:00.000Z');
  * credit-card statement due 2026-09-10 (within 3 days of the clock).
  */
 const seedAnalytics = async (app: ReturnType<typeof buildTestApp>['app']) => {
-  const post = (url: string, payload: unknown, headers = H) =>
+  const post = (url: string, payload: unknown, headers = { ...H, 'idempotency-key': crypto.randomUUID() }) =>
     app.inject({ method: 'POST', url, headers, payload });
   const account = await post('/accounts', { name: 'Nubank', kind: 'bank', initialBalanceCents: 100_000 });
   expect(account.statusCode).toBe(201);
@@ -92,7 +92,7 @@ describe('GET /analytics/kpis', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/analytics/kpis?period=custom&from=2026-09-01&to=2026-09-30',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json();
@@ -116,7 +116,7 @@ describe('GET /analytics/kpis', () => {
     const other = await app.inject({
       method: 'GET',
       url: '/analytics/kpis?period=custom&from=2026-09-01&to=2026-09-30',
-      headers: { 'x-device-token': TOKEN_B },
+      headers: { 'x-device-token': TOKEN_B, 'idempotency-key': crypto.randomUUID() },
     });
     expect(other.json().incomeCents).toBe(0);
     expect(other.json().expenseCents).toBe(0);
@@ -129,13 +129,13 @@ describe('GET /analytics/kpis', () => {
     const badPeriod = await app.inject({
       method: 'GET',
       url: '/analytics/kpis?period=never',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(badPeriod.statusCode).toBe(400);
     const badCustom = await app.inject({
       method: 'GET',
       url: '/analytics/kpis?period=custom&from=2026-09-01',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(badCustom.statusCode).toBe(400);
   });
@@ -148,7 +148,7 @@ describe('GET /analytics/cashflow-series', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/analytics/cashflow-series?period=custom&from=2026-09-01&to=2026-09-07',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json();
@@ -170,14 +170,14 @@ describe('GET /analytics/category-breakdown', () => {
     const sub = await app.inject({
       method: 'POST',
       url: '/categories',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Aluguel Loja', kind: 'expense', parentId: macroIds[0] },
     });
     expect(sub.statusCode).toBe(201);
     const res = await app.inject({
       method: 'GET',
       url: '/analytics/category-breakdown?period=custom&from=2026-09-01&to=2026-09-30',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json();
@@ -199,17 +199,17 @@ describe('GET /analytics/budget-consumption', () => {
     const extra = await app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: H,
+      headers: { ...H, 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Extra',
         amountCents: 10_000,
         date: '2026-09-06',
-        accountId: (await app.inject({ method: 'GET', url: '/accounts', headers: { 'x-device-token': TOKEN_A } })).json().items[0].id,
+        accountId: (await app.inject({ method: 'GET', url: '/accounts', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } })).json().items[0].id,
         categoryId: macroIds[0],
       },
     });
     expect(extra.statusCode).toBe(201);
-    const res = await app.inject({ method: 'GET', url: '/analytics/budget-consumption', headers: { 'x-device-token': TOKEN_A } });
+    const res = await app.inject({ method: 'GET', url: '/analytics/budget-consumption', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     expect(res.statusCode).toBe(200);
     const item = res.json().items.find((b: { name: string }) => b.name === 'Teto Macro 1');
     expect(item).toMatchObject({ spentCents: 20_000, amountCents: 15_000, overBudget: true });
@@ -221,7 +221,7 @@ describe('GET /analytics/daily-heatmap', () => {
   it('returns a 7x4 grid scaled to the busiest day', async () => {
     const { app } = buildTestApp({}, CLOCK);
     await seedAnalytics(app);
-    const res = await app.inject({ method: 'GET', url: '/analytics/daily-heatmap', headers: { 'x-device-token': TOKEN_A } });
+    const res = await app.inject({ method: 'GET', url: '/analytics/daily-heatmap', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.endDate).toBe('2026-09-07');
@@ -239,7 +239,7 @@ describe('GET /analytics/net-worth-history', () => {
   it('returns 12 ascending months ending at the current net worth', async () => {
     const { app } = buildTestApp({}, CLOCK);
     await seedAnalytics(app);
-    const res = await app.inject({ method: 'GET', url: '/analytics/net-worth-history', headers: { 'x-device-token': TOKEN_A } });
+    const res = await app.inject({ method: 'GET', url: '/analytics/net-worth-history', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     expect(res.statusCode).toBe(200);
     const months = res.json().months;
     expect(months).toHaveLength(12);
@@ -248,7 +248,7 @@ describe('GET /analytics/net-worth-history', () => {
     const kpis = await app.inject({
       method: 'GET',
       url: '/analytics/kpis?period=custom&from=2026-09-01&to=2026-09-30',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(months[11]!.netWorthCents).toBe(kpis.json().netWorthCents);
   });

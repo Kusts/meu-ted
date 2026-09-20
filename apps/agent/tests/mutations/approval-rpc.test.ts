@@ -1,9 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MutationExecutor } from '../../src/mutations/mutation-executor.js';
 import { FinanceChatAgent } from '../../src/finance-chat-agent.js';
 import { createAgentConnectionToken } from '../../../api/src/auth/agent-connection-token.js';
 
 describe('MutationExecutor approval decision RPC', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    vi.restoreAllMocks();
+  });
   /** API execute response shaped like the authoritative record (mapV2). */
   const apiExecutionWithReceipt = {
     id: 'op-1',
@@ -105,6 +110,8 @@ describe('MutationExecutor approval decision RPC', () => {
     expect(json.receipt).toEqual({ ...expectedReceipt, mutationId: 'mut-4', operationId: 'op-4', entity: { type: 'transaction', id: 'op-4' } });
     expect(JSON.stringify(json)).not.toContain('attestation');
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/pending-operations/v2/op-4/confirm');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/pending-operations/v2/op-4/execute');
   });
 
   it('cancels without accepting browser-supplied identity or attestation fields', async () => {
@@ -145,6 +152,8 @@ describe('MutationExecutor approval decision RPC', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ operationId: 'op-3', status: 'succeeded' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/pending-operations/v2/op-3/confirm');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/pending-operations/v2/op-3/execute');
   });
 
   it('fails closed when the connection token/device is absent or the browser adds fields to the strict body', async () => {

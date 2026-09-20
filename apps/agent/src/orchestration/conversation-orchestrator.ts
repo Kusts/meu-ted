@@ -32,6 +32,9 @@ import {
   isRetryText,
   renderDisambiguation,
 } from './pending-operation-coordinator.js';
+import { hasUndoIntent, isExplicitConfirmation } from '../agent-config/tools.js';
+import { UndoProposalService } from '../mutations/undo-proposal.js';
+import { isUndoNegation } from '../mutations/undo-proposal.js';
 
 export type ConversationChannel = 'pwa-rest' | 'sdk' | 'broker';
 
@@ -108,6 +111,16 @@ export type TurnResult = Readonly<{
     draft?: MutationDraftChannelMessage;
   }>;
   response?: Readonly<{ text: string }>;
+  /**
+   * debt-undo-confirmation-protocol: separate undo proposal relayed to the
+   * PWA (requestId for the authenticated decision RPC). Never a V2
+   * mutation, never authority material — the fixed target stays server-side.
+   */
+  undoProposal?: Readonly<{
+    requestId: string;
+    status: 'proposed';
+    expiresAt: string;
+  }>;
 }>;
 export type TurnResponseProvider = (input: TurnInput, plan: TurnPlan) => Promise<string>;
 export type AuthenticatedIdentity = Readonly<{
@@ -197,6 +210,20 @@ export class ConversationOrchestrator {
     draftNow?: () => number;
     /** Bounded propose attempts per handoff (default 2, same key always). */
     draftMaxProposeAttempts?: number;
+    /**
+     * debt-undo-confirmation-protocol: separate undo proposal service deps.
+     * Absent = undo requests degrade to a deterministic no-proposal reply
+     * (never execution). The preview fixes the target at proposal time;
+     * the api is only used by the RPC decision path (tests may inject a
+     * spy to prove free text never executes).
+     */
+    undoProposals?: {
+      store: import('../mutations/undo-proposal.js').SqlUndoProposalStore;
+      preview: import('../mutations/undo-proposal.js').UndoPreview;
+      api?: import('../mutations/undo-proposal.js').UndoApi;
+      now?: () => number;
+      ttlMs?: number;
+    };
   } = {}) {}
 
   private emit(eventType: string, fields: Record<string, unknown>): void {
@@ -721,6 +748,72 @@ export class ConversationOrchestrator {
     });
   }
 
+  /**
+   * debt-undo-confirmation-protocol: free text only proposes. Returns null
+   * when this turn is not an undo turn (normal flow continues). Every
+   * returned path is terminal for the turn: proposal, deterministic
+   * negation/confirmation-fail-closed, or device-missing fail-closed. The
+   * undo API is NEVER called here — only the RPC decision path executes.
+   */
+  private async runUndoTurn(
+    input: TurnInput,
+    plan: TurnPlan,
+    startedAt: number,
+    base: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy },
+  ): Promise<TurnResult | null> {
+    const text = input.text ?? '';
+    if (!hasUndoIntent(text)) return null;
+    // Natural-language negation fails closed: no proposal, no execution.
+    if (isUndoNegation(text)) {
+      const reply = 'Entendido — nada será desfeito.';
+      this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
+      return freeze({ ...base, response: freeze({ text: reply }) });
+    }
+    // Textual confirmation of an undo (with or without a pending proposal)
+    // NEVER executes: the authenticated PWA button owns the decision.
+    if (isExplicitConfirmation(text)) {
+      const reply = 'Para desfazer, confirme no botão da proposta. A confirmação por texto não desfaz.';
+      this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
+      return freeze({ ...base, response: freeze({ text: reply }) });
+    }
+    const undoDeps = this.dependencies.undoProposals;
+    if (!input.deviceId) {
+      return freeze({ ...base, response: freeze({ text: 'Não foi possível preparar o desfazer com segurança. A sessão precisa de um dispositivo autenticado.' }) });
+    }
+    if (!undoDeps) {
+      return freeze({ ...base, response: freeze({ text: 'Não foi possível preparar o desfazer agora. Tente novamente.' }) });
+    }
+    const service = new UndoProposalService({
+      store: undoDeps.store,
+      preview: undoDeps.preview,
+      api: undoDeps.api ?? { undo: async () => { throw new Error('undo.rpc_required'); } },
+      ...(undoDeps.now ? { now: undoDeps.now } : {}),
+      ...(undoDeps.ttlMs !== undefined ? { ttlMs: undoDeps.ttlMs } : {}),
+    });
+    let outcome: Awaited<ReturnType<UndoProposalService['propose']>>;
+    try {
+      outcome = await service.propose({
+        requestId: input.intentionId,
+        identity: { workspaceId: input.workspaceId, actorId: input.actorId, deviceId: input.deviceId },
+      });
+    } catch {
+      this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
+      return freeze({ ...base, response: freeze({ text: 'Não foi possível preparar o desfazer agora. Tente novamente.' }) });
+    }
+    if (outcome.kind === 'unavailable') {
+      this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
+      return freeze({ ...base, response: freeze({ text: 'Não há ação para desfazer.' }) });
+    }
+    const record = outcome.record;
+    const reply = 'Encontrei a última ação para desfazer. Confirme no botão para desfazer.';
+    this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
+    return freeze({
+      ...base,
+      undoProposal: freeze({ requestId: record.requestId, status: 'proposed' as const, expiresAt: record.expiresAt }),
+      response: freeze({ text: reply }),
+    });
+  }
+
   private async runMutationTurn(
     input: TurnInput,
     plan: TurnPlan,
@@ -1063,6 +1156,13 @@ export class ConversationOrchestrator {
     this.emit('plan.validated', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode });
     const policy = freeze({ capability: 'financial.read' as const, writeAuthorized: false as const, approvalRequired: true as const });
     const result: { input: TurnInput; plan: TurnPlan; policy: MutationPolicy; mutation?: { operationId: string; status: 'proposed' | 'succeeded'; receipt?: MutationReceipt }; response?: { text: string } } = { input, plan: freeze(plan), policy };
+    // debt-undo-confirmation-protocol: free text only ever requests an undo
+    // proposal (or fails closed). Textual confirmation NEVER executes undo —
+    // only the authenticated PWA RPC decides. This check runs before every
+    // V2 path so an undo turn can never fall through to a generative or
+    // V2-confirmation path.
+    const undoTurn = await this.runUndoTurn(input, plan, startedAt, result);
+    if (undoTurn) return undoTurn;
     const client = this.dependencies.mutationApiClient;
     // A proposal may never fall through to a generative response when the
     // channel was unable to construct its narrowly-scoped API client (for

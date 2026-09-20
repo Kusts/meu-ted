@@ -7,10 +7,11 @@
  * is broken at HEAD by pre-existing V049 drift).
  *
  * RED coverage (fails before the fix, passes after):
- * - 4.2/4.3: over-balance expense/transfer fail 400 with balances and
- *   ledger untouched (were: silent GREATEST(0, …) clamp / money creation).
- * - 4.4/4.5: update delta matrix on Postgres (amount-only over-balance,
- *   combined amount+account with exact reverse/apply, account-only move).
+ * - 4.2/4.3: over-balance expense/transfer succeed with exact negative
+ *   deltas (were: silent GREATEST(0, …) clamp / money creation).
+ * - 4.4/4.5: update delta matrix on Postgres (amount-only beyond the old
+ *   balance, combined amount+account with exact reverse/apply, account-only
+ *   move).
  * - 4.6/4.7: opposite-direction concurrent transfers complete without
  *   deadlock and conserve total money (deterministic lock ordering).
  * - 4.8–4.10: pay debits the materialized balance; unpay reopens the
@@ -50,10 +51,11 @@ const createTables = async (pool: Pool): Promise<void> => {
   await pool.query(`
     CREATE TABLE accounts (
       id UUID PRIMARY KEY, household_id UUID NOT NULL, name TEXT NOT NULL,
-      kind TEXT NOT NULL, balance_cents BIGINT NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
+      kind TEXT NOT NULL, balance_cents BIGINT NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active',
       deleted_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT accounts_balance_nonnegative_card_chk CHECK (kind <> 'credit_card' OR balance_cents >= 0)
     );
     CREATE TABLE categories (
       id UUID PRIMARY KEY, household_id UUID NOT NULL, name TEXT NOT NULL,
@@ -159,41 +161,39 @@ describeIfDb('Postgres canonical parity V4.1 (tasks 4.2–4.11)', () => {
     await adminPool?.end();
   });
 
-  it('4.2/4.3 over-balance expense fails 400 with balance and ledger untouched', async () => {
+  it('4.2/4.3 over-balance expense succeeds with the exact negative delta', async () => {
     const writes = createPostgresWriteStore({ pool: db! });
     const hh = randomUUID();
     const acc = await writes.createAccount(hh, { name: 'A', kind: 'bank', initialBalanceCents: 2000 });
     const cat = await seedCategory(db!, hh, 'expense');
-    await expect(
-      writes.createExpense(hh, {
-        description: 'Too big',
-        amountCents: 10000,
-        date: '2026-09-01',
-        accountId: acc.id,
-        categoryId: cat,
-      }),
-    ).rejects.toMatchObject({ code: 'validation.invalid', statusCode: 400 });
-    expect(await balanceOf(db!, acc.id)).toBe(2000);
-    expect(await txCount(db!, hh)).toBe(0);
+    const tx = await writes.createExpense(hh, {
+      description: 'Too big',
+      amountCents: 10000,
+      date: '2026-09-01',
+      accountId: acc.id,
+      categoryId: cat,
+    });
+    expect(tx.amountCents).toBe(10000);
+    expect(await balanceOf(db!, acc.id)).toBe(2000 - 10000);
+    expect(await txCount(db!, hh)).toBe(1);
+    expect(await ledgerBalance(db!, hh, acc.id, 2000)).toBe(await balanceOf(db!, acc.id));
   });
 
-  it('4.2/4.3 over-balance transfer fails 400 and changes NEITHER side', async () => {
+  it('4.2/4.3 over-balance transfer succeeds with exact deltas on both sides', async () => {
     const writes = createPostgresWriteStore({ pool: db! });
     const hh = randomUUID();
     const a = await writes.createAccount(hh, { name: 'A', kind: 'bank', initialBalanceCents: 2000 });
     const b = await writes.createAccount(hh, { name: 'B', kind: 'bank', initialBalanceCents: 5000 });
-    await expect(
-      writes.createTransfer(hh, {
-        description: 'Too big',
-        amountCents: 10000,
-        date: '2026-09-01',
-        fromAccountId: a.id,
-        toAccountId: b.id,
-      }),
-    ).rejects.toMatchObject({ code: 'validation.invalid', statusCode: 400 });
-    expect(await balanceOf(db!, a.id)).toBe(2000);
-    expect(await balanceOf(db!, b.id)).toBe(5000);
-    expect(await txCount(db!, hh)).toBe(0);
+    await writes.createTransfer(hh, {
+      description: 'Too big',
+      amountCents: 10000,
+      date: '2026-09-01',
+      fromAccountId: a.id,
+      toAccountId: b.id,
+    });
+    expect(await balanceOf(db!, a.id)).toBe(2000 - 10000);
+    expect(await balanceOf(db!, b.id)).toBe(5000 + 10000);
+    expect(await txCount(db!, hh)).toBe(1);
   });
 
   it('4.4/4.5 update delta matrix: amount-only, account-only, both', async () => {
@@ -208,13 +208,6 @@ describeIfDb('Postgres canonical parity V4.1 (tasks 4.2–4.11)', () => {
       description: 'T1', amountCents: 20000, date: '2026-09-01', accountId: a.id, categoryId: cat,
     });
     await writes.updateTransaction(hh, t1.id, { amountCents: 30000 });
-    expect(await balanceOf(db!, a.id)).toBe(70000);
-
-    // amount-only beyond balance → 400, untouched
-    await expect(writes.updateTransaction(hh, t1.id, { amountCents: 150000 })).rejects.toMatchObject({
-      code: 'validation.invalid',
-      statusCode: 400,
-    });
     expect(await balanceOf(db!, a.id)).toBe(70000);
 
     // account-only move: reverses A fully, applies B
@@ -235,12 +228,11 @@ describeIfDb('Postgres canonical parity V4.1 (tasks 4.2–4.11)', () => {
     expect(await balanceOf(db!, a.id)).toBe(70000);
     expect(await balanceOf(db!, b.id)).toBe(10000);
 
-    // combined change beyond destination balance → 400, both sides intact
-    await expect(
-      writes.updateTransaction(hh, t3.id, { amountCents: 60000, accountId: b.id }),
-    ).rejects.toMatchObject({ code: 'validation.invalid', statusCode: 400 });
+    // amount-only increase beyond the balance succeeds with the exact
+    // negative delta (t3 sits on B at 30000; B holds 10000).
+    await writes.updateTransaction(hh, t3.id, { amountCents: 130000 });
     expect(await balanceOf(db!, a.id)).toBe(70000);
-    expect(await balanceOf(db!, b.id)).toBe(10000);
+    expect(await balanceOf(db!, b.id)).toBe(10000 + 30000 - 130000);
 
     // invariant: materialized == ledger-derived on both accounts
     expect(await ledgerBalance(db!, hh, a.id, 100000)).toBe(await balanceOf(db!, a.id));

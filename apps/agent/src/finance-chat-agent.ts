@@ -68,6 +68,13 @@ import { createRequestEntityReader, type EntityReader } from "./mutations/entity
 import { MutationApiClient } from "./mutations/mutation-api-client.js";
 import { PendingOperationCoordinator, isRetryText } from "./orchestration/pending-operation-coordinator.js";
 import { initializeMutationDraftSchema, SqlMutationDraftStore, hasRecoverableDraft } from "./mutations/mutation-draft.js";
+import {
+  initializeUndoProposalSchema,
+  SqlUndoProposalStore,
+  UndoProposalService,
+  UNDO_DELEGATED_CAPABILITY,
+  type UndoIdentity,
+} from "./mutations/undo-proposal.js";
 
 export type Env = {
   AGENT_DELEGATION_SECRET?: string;
@@ -617,6 +624,8 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     events?: (eventType: string, fields: Record<string, unknown>) => void;
     /** SPEC §7.8 draft store (DO storage). Absent = legacy single-turn flow. */
     draftStore?: SqlMutationDraftStore;
+    /** debt-undo-confirmation-protocol override (tests). Absent = DO store + authoritative preview. */
+    undoProposals?: ConstructorParameters<typeof ConversationOrchestrator>[0] extends { undoProposals?: infer U } ? U : never;
   } = {}): ConversationOrchestrator {
     // AGENT-005 production grounding: every channel (pwa-rest, sdk, broker)
     // reads through the same evidence provider over the canonical read
@@ -638,6 +647,16 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       responseProvider: (input, plan) => this.provideUnifiedResponse(input, plan),
       evidenceProvider: dependencies.evidenceProvider ?? grounding.evidenceProvider,
       correctionProvider: dependencies.correctionProvider ?? grounding.correctionProvider,
+      // debt-undo-confirmation-protocol: every channel proposes through the
+      // same persistent DO store + authoritative preview. Tests may override
+      // the pair; production always resolves it here (absent store = the
+      // orchestrator degrades to a deterministic no-proposal reply).
+      ...(() => {
+        if (dependencies.undoProposals !== undefined) return { undoProposals: dependencies.undoProposals };
+        const store = this.undoStoreForRequest();
+        if (!store) return {};
+        return { undoProposals: { store, preview: (identity) => this.previewUndoTarget(identity) } };
+      })(),
     });
   }
 
@@ -1152,6 +1171,176 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     }
   }
 
+  /**
+   * debt-undo-confirmation-protocol: persistent undo proposal store over DO
+   * SQLite storage. Undefined when storage is unavailable — chat turns then
+   * degrade to a deterministic no-proposal reply (never execution).
+   */
+  private undoStoreForRequest(): SqlUndoProposalStore | undefined {
+    const sql = this.state?.storage?.sql as unknown as { exec<T>(query: string, ...bindings: unknown[]): Iterable<T> } | undefined;
+    if (!sql || typeof sql.exec !== 'function') return undefined;
+    try {
+      initializeUndoProposalSchema(sql);
+      return new SqlUndoProposalStore(sql);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Authoritative undo preview: the FIXED target for a proposal, resolved
+   * server-side from GET /audit-logs (most recent reversible operation,
+   * preferring the actor's own). Null = genuinely nothing to undo; throw =
+   * transport failure (the turn degrades to try-again, never "no action").
+   */
+  private async previewUndoTarget(identity: UndoIdentity): Promise<{ id: string } | null> {
+    const secret = this.env?.AGENT_DELEGATION_SECRET?.trim();
+    if (!secret) throw new Error('agent.persistence_unavailable');
+    const readToken = await createDelegatedTurnToken({
+      actorId: identity.actorId,
+      workspaceId: identity.workspaceId,
+      role: 'member',
+      capabilities: ['financial.read'],
+      requestId: crypto.randomUUID(),
+      deviceId: identity.deviceId,
+    }, secret);
+    const result = await requestPiApiJson<{ items?: Array<{ id?: unknown; operation?: unknown; actorId?: unknown; createdAt?: unknown }> }>(
+      'GET',
+      '/audit-logs?limit=50',
+      { delegatedToken: readToken, apiOrigin: this.env?.API_ORIGIN },
+    );
+    const reversible = new Set([
+      'transactions.expense.create',
+      'transactions.income.create',
+      'transactions.transfer.create',
+      'accounts.create',
+      'categories.create',
+    ]);
+    const items = Array.isArray(result.items) ? result.items : [];
+    const candidates = items
+      .filter((item) => typeof item.id === 'string' && reversible.has(String(item.operation ?? '')))
+      .sort((a, b) => Date.parse(String(b.createdAt ?? 0)) - Date.parse(String(a.createdAt ?? 0)));
+    if (candidates.length === 0) return null;
+    const own = candidates.filter((item) => item.actorId === identity.actorId);
+    const target = (own.length > 0 ? own[0] : candidates[0])!;
+    return { id: String(target.id) };
+  }
+
+  /**
+   * debt-undo-confirmation-protocol decision RPC: strict {decision,requestId}
+   * body, identity SOLELY from the gateway-verified headers. Confirm calls
+   * the existing undo API with the FIXED target, the STABLE
+   * proposal-derived idempotency key, and the NARROW undo capability.
+   */
+  private async handleUndoDecision(request: Request): Promise<Response> {
+    const actorId = request.headers.get("x-agent-actor")?.trim();
+    const workspaceId = request.headers.get("x-agent-workspace")?.trim();
+    const deviceId = request.headers.get("x-agent-device")?.trim();
+    const secret = this.env?.AGENT_DELEGATION_SECRET?.trim();
+    if (!actorId || !workspaceId || !deviceId || !secret) {
+      return Response.json({ code: "agent.approval_context_required" }, { status: 401 });
+    }
+    const role = request.headers.get("x-agent-role") === "owner" ? "owner" : "member";
+    let body: { decision?: unknown; requestId?: unknown };
+    try {
+      body = await request.json() as { decision?: unknown; requestId?: unknown };
+    } catch {
+      return Response.json({ code: "agent.invalid_payload" }, { status: 400 });
+    }
+    const keys = Object.keys(body);
+    if (keys.some((key) => key !== "decision" && key !== "requestId") ||
+      (body.decision !== "confirm" && body.decision !== "cancel") ||
+      typeof body.requestId !== "string" || body.requestId.trim() === "" || body.requestId.length > 128) {
+      return Response.json({ code: "agent.invalid_payload" }, { status: 400 });
+    }
+    const proposalId = body.requestId.trim();
+    const store = this.undoStoreForRequest();
+    if (!store) {
+      return Response.json({ code: "agent.persistence_unavailable", message: "Undo storage is not available" }, { status: 503 });
+    }
+    const identity: UndoIdentity = { workspaceId, actorId, deviceId };
+    const service = new UndoProposalService({
+      store,
+      preview: (id) => this.previewUndoTarget(id),
+      api: {
+        undo: async ({ lastOperationId, idempotencyKey }) => {
+          const delegatedToken = await createDelegatedTurnToken({
+            actorId,
+            workspaceId,
+            role,
+            capabilities: [UNDO_DELEGATED_CAPABILITY],
+            requestId: proposalId,
+            deviceId,
+          }, secret);
+          return requestPiApiJson<unknown>('POST', '/pending-operations/undo', {
+            body: { lastOperationId },
+            idempotencyKey,
+            delegatedToken,
+            apiOrigin: this.env?.API_ORIGIN,
+          });
+        },
+      },
+    });
+    try {
+      const outcome = await service.decide({ requestId: proposalId, decision: body.decision, identity });
+      if (outcome.kind === 'cancelled') {
+        try { emitSanitizedEvent('approval.rejected', { status: 'rejected' }); } catch { /* best effort */ }
+        return Response.json({ requestId: proposalId, status: 'cancelled' });
+      }
+      try {
+        emitSanitizedEvent('approval.confirmed', { status: 'confirmed' });
+        emitSanitizedEvent('mutation.executed', { status: 'succeeded' });
+      } catch { /* best effort */ }
+      return Response.json({ requestId: proposalId, status: 'confirmed', result: outcome.result ?? null });
+    } catch (error) {
+      const code = (error as { code?: string })?.code ?? 'agent.approval_failed';
+      if (code === 'undo.not_found') return Response.json({ code, message: 'Undo proposal not found.' }, { status: 404 });
+      if (code === 'undo.binding_mismatch') return Response.json({ code, message: 'Undo proposal belongs to another actor/device/workspace.' }, { status: 403 });
+      if (code === 'undo.expired') return Response.json({ code, message: 'Undo proposal expired.' }, { status: 410 });
+      if (code === 'undo.executing') return Response.json({ code, message: 'Undo already in progress.' }, { status: 409 });
+      if (code === 'undo.terminal') return Response.json({ code, message: 'Undo proposal already decided.' }, { status: 409 });
+      return Response.json({ code: "agent.approval_failed", message: "Não foi possível concluir a decisão." }, { status: 502 });
+    }
+  }
+
+  /**
+   * debt-undo-proposal-rehydration: read-only active-listing for chat
+   * startup/workspace change (`GET /rpc/undo/active`). Identity SOLELY from
+   * the gateway-verified headers; returns ONLY bound live summaries
+   * (`proposed` + truthful `executing`, safe projection — never targets,
+   * keys or raw operation data). Never previews, never calls the undo API,
+   * never decides: the `api` dependency throws if ever touched.
+   */
+  private async handleUndoActive(request: Request): Promise<Response> {
+    const actorId = request.headers.get("x-agent-actor")?.trim();
+    const workspaceId = request.headers.get("x-agent-workspace")?.trim();
+    const deviceId = request.headers.get("x-agent-device")?.trim();
+    if (!actorId || !workspaceId || !deviceId) {
+      return Response.json({ code: "agent.approval_context_required" }, { status: 401 });
+    }
+    const store = this.undoStoreForRequest();
+    if (!store) {
+      return Response.json({ code: "agent.persistence_unavailable", message: "Undo storage is not available" }, { status: 503 });
+    }
+    const service = new UndoProposalService({
+      store,
+      preview: () => {
+        throw Object.assign(new Error('agent.rehydration_read_only'), { code: 'agent.rehydration_read_only' });
+      },
+      api: {
+        undo: async () => {
+          throw Object.assign(new Error('agent.rehydration_read_only'), { code: 'agent.rehydration_read_only' });
+        },
+      },
+    });
+    try {
+      const items = service.listActive({ workspaceId, actorId, deviceId });
+      return Response.json({ items, total: items.length });
+    } catch {
+      return Response.json({ code: "agent.approval_failed", message: "Não foi possível carregar as propostas agora." }, { status: 502 });
+    }
+  }
+
   private async enqueueChat<T>(task: () => Promise<T>): Promise<T> {
     const prev = this.chatQueue ?? Promise.resolve();
     const next = prev.then(() => task(), () => task());
@@ -1178,6 +1367,16 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
     const decisionMatch = url.pathname.match(/^\/rpc\/pending-operations\/([^/]+)\/decision$/);
     if (decisionMatch && request.method === "POST") {
       return this.handleApprovalDecision(request, decodeURIComponent(decisionMatch[1]!));
+    }
+    // debt-undo-proposal-rehydration: read-only active listing for chat
+    // startup/workspace change (identity from verified headers only).
+    if (url.pathname === "/rpc/undo/active" && request.method === "GET") {
+      return this.handleUndoActive(request);
+    }
+    // debt-undo-confirmation-protocol: separate undo decision RPC (strict
+    // {decision,requestId} body, identity from verified headers only).
+    if (url.pathname === "/rpc/undo/decision" && request.method === "POST") {
+      return this.handleUndoDecision(request);
     }
     if (url.pathname === "/rpc/chat" && request.method === "POST") {
       const actorId = request.headers.get("x-agent-actor");
@@ -1335,7 +1534,16 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
                 })(),
               }
             : undefined;
-          return Response.json({ status: "completed", output: turnResult.response.text, ...(pendingOperation ? { pendingOperation } : {}) });
+          return Response.json({ status: "completed", output: turnResult.response.text, ...(pendingOperation ? { pendingOperation } : {}),
+            // debt-undo-confirmation-protocol: separate undo proposal relay
+            // (requestId for the decision RPC; the fixed target never leaves
+            // the DO). Re-validated shape — unknown keys are dropped.
+            ...(() => {
+              const proposal = (turnResult as { undoProposal?: unknown }).undoProposal as { requestId?: unknown; status?: unknown; expiresAt?: unknown } | undefined;
+              if (!proposal || typeof proposal.requestId !== 'string' || proposal.status !== 'proposed' || typeof proposal.expiresAt !== 'string') return {};
+              return { undoProposal: { requestId: proposal.requestId, status: 'proposed' as const, expiresAt: proposal.expiresAt } };
+            })(),
+          });
         }
       } catch (error) {
         const status = (error as { status?: unknown }).status;

@@ -29,6 +29,46 @@ function lineOf(source, index) {
   return source.slice(0, index).split(/\r?\n/).length;
 }
 
+function lineTextOf(source, index) {
+  const start = index > 0 ? source.lastIndexOf('\n', index - 1) + 1 : 0;
+  let end = source.indexOf('\n', index);
+  if (end === -1) end = source.length;
+  return source.slice(start, end);
+}
+
+/**
+ * Mask comment bodies with spaces (length-preserving, so match indices and
+ * line numbers stay valid). A capability string mentioned in prose
+ * documentation is not a capability USE — matching it is a false positive.
+ * Code (including string literals) is left intact so real uses still flag.
+ */
+function maskComments(source) {
+  const withoutBlocks = source.replace(/\/\*[\s\S]*?\*\//g, (match) =>
+    match.replace(/[^\n]/g, ' '),
+  );
+  return withoutBlocks.replace(/\/\/[^\n]*/g, (match, offset, full) => {
+    const prev = offset > 0 ? full[offset - 1] : '\n';
+    // Keep `https://`-style sequences and `//` inside quotes untouched.
+    if (prev === ':' || prev === "'" || prev === '"' || prev === '`') return match;
+    return ' '.repeat(match.length);
+  });
+}
+
+/**
+ * A4 allowlist (narrow, auditable): the API preHandler in
+ * `apps/api/src/routes/index.ts` is the delegated-capability VERIFIER — it
+ * fail-closed CHECKS `claims.capabilities` and never mints or grants a
+ * capability. Only the `mutationCapability` verifier definition line is
+ * exempt; any other `financial.write` literal in that file (minting,
+ * defaulting, granting) still flags, as does every occurrence elsewhere.
+ * Issuance outside MutationExecutor (Agent) stays forbidden.
+ */
+function isApiVerifierDefinition(relative, source, index) {
+  if (relative !== 'apps/api/src/routes/index.ts') return false;
+  const line = lineTextOf(source, index);
+  return line.includes('mutationCapability') && line.includes('financial.write');
+}
+
 function diagnostic(code, root, filePath, source, index, message) {
   return {
     code,
@@ -96,10 +136,18 @@ export function checkInvariants(root = path.resolve(SCRIPT_DIR, '..')) {
     }
 
     if (!executor) {
-      for (const match of source.matchAll(/financial\.write/g)) {
+      // Match against comment-masked code: prose mentions are not uses.
+      const code = maskComments(source);
+      for (const match of code.matchAll(/financial\.write/g)) {
+        if (isApiVerifierDefinition(relative, code, match.index)) continue;
         diagnostics.push(diagnostic('A4_WRITE_CAPABILITY_OUTSIDE_EXECUTOR', root, filePath, source, match.index, 'financial.write capability/default appears outside MutationExecutor'));
       }
-      for (const match of source.matchAll(/\b(?:mutationApproved|approvedTool)\b/g)) {
+      // Obfuscated construction (join/concat/array-split) must never bypass
+      // the gate: the capability has to appear as an auditable open literal.
+      for (const match of code.matchAll(/['"]financial['"]\s*,\s*['"]write['"]/g)) {
+        diagnostics.push(diagnostic('A4_WRITE_CAPABILITY_OUTSIDE_EXECUTOR', root, filePath, source, match.index, 'financial.write capability assembled obliquely (join/concat) outside MutationExecutor — use the open literal so the gate can audit it'));
+      }
+      for (const match of code.matchAll(/\b(?:mutationApproved|approvedTool)\b/g)) {
         diagnostics.push(diagnostic('A5_MUTATION_ISSUER_OUTSIDE_EXECUTOR', root, filePath, source, match.index, 'mutation approval issuer appears outside MutationExecutor'));
       }
     }

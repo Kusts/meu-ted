@@ -3,7 +3,7 @@
  * mutating routes (payables, cards, goals, budgets, subscriptions).
  *
  * Route-level contract (in-memory app; mirrors transactions-idempotency-uow):
- * - Idempotency-Key OPTIONAL everywhere below; without it behavior is unchanged.
+ * - Idempotency-Key REQUIRED for financial mutations; without it → 400 validation.required.
  * - With a key: same key + same payload replays the ORIGINAL response
  *   (same status + body, incl. the mutation receipt) with
  *   `Idempotent-Replayed: true`, and produces exactly ONE effect.
@@ -26,19 +26,19 @@ const auth = (key?: string) => ({
 const setupBase = async () => {
   const { app, state } = buildTestApp();
   const acc = await app.inject({
-    method: 'POST', url: '/accounts', headers: auth(),
+    method: 'POST', url: '/accounts', headers: auth(crypto.randomUUID()),
     payload: { name: 'Bank', kind: 'bank', initialBalanceCents: 500_000 },
   });
   expect(acc.statusCode).toBe(201);
   const accountId = acc.json().id as string;
   const cat = await app.inject({
-    method: 'POST', url: '/categories', headers: auth(),
+    method: 'POST', url: '/categories', headers: auth(crypto.randomUUID()),
     payload: { name: 'Food', kind: 'expense' },
   });
   expect(cat.statusCode).toBe(201);
   const categoryId = cat.json().id as string;
   const card = await app.inject({
-    method: 'POST', url: '/cards', headers: auth(),
+    method: 'POST', url: '/cards', headers: auth(crypto.randomUUID()),
     payload: { name: 'Visa', creditLimitCents: 100_000, closingDay: 10, dueDay: 20 },
   });
   expect(card.statusCode).toBe(201);
@@ -48,7 +48,7 @@ const setupBase = async () => {
 
 const createPayable = async (app: ReturnType<typeof buildTestApp>['app'], accountId: string, key?: string, description = 'Aluguel') => {
   const res = await app.inject({
-    method: 'POST', url: '/payables', headers: auth(key),
+    method: 'POST', url: '/payables', headers: auth(key ?? crypto.randomUUID()),
     payload: { accountId, description, amountCents: 2000, dueDate: '2026-08-10' },
   });
   expect(res.statusCode).toBe(201);
@@ -63,15 +63,18 @@ describe('POST /payables keyed', () => {
     expect(second.statusCode).toBe(201);
     expect(second.headers['idempotent-replayed']).toBe('true');
     expect(second.json()).toEqual(first.json());
-    const items = await s.app.inject({ method: 'GET', url: '/payables', headers: auth() });
+    const items = await s.app.inject({ method: 'GET', url: '/payables', headers: auth(crypto.randomUUID()) });
     expect(items.json().total).toBe(1);
   });
 
-  it('works without a key (contract unchanged)', async () => {
+  it('requires a key (authenticated without Idempotency-Key → 400)', async () => {
     const s = await setupBase();
-    const a = await createPayable(s.app, s.accountId, undefined, 'A');
-    const b = await createPayable(s.app, s.accountId, undefined, 'B');
-    expect(a.json().id).not.toBe(b.json().id);
+    const res = await s.app.inject({
+      method: 'POST', url: '/payables', headers: auth(),
+      payload: { accountId: s.accountId, description: 'NoKey', amountCents: 2000, dueDate: '2026-08-10' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('validation.required');
   });
 });
 
@@ -201,7 +204,7 @@ describe('cards keyed mutations', () => {
     expect(r2.headers['idempotent-replayed']).toBe('true');
     expect(r2.json()).toEqual(r1.json());
 
-    const stmts = await s.app.inject({ method: 'GET', url: `/cards/statements?accountId=${s.cardId}`, headers: auth() });
+    const stmts = await s.app.inject({ method: 'GET', url: `/cards/statements?accountId=${s.cardId}`, headers: auth(crypto.randomUUID()) });
     expect(stmts.statusCode).toBe(200);
     const stmtId = stmts.json().items[0].id as string;
     const remaining = (stmts.json().items[0].totalCents as number) - (stmts.json().items[0].paidCents as number);
@@ -219,7 +222,7 @@ describe('cards keyed mutations', () => {
     // Future date keeps the statement open under the real clock.
     const future = new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10);
     const buy = await s.app.inject({
-      method: 'POST', url: '/cards/purchases', headers: auth(),
+      method: 'POST', url: '/cards/purchases', headers: auth(crypto.randomUUID()),
       payload: { accountId: s.cardId, description: 'Cancelavel', amountCents: 700, date: future },
     });
     expect(buy.statusCode).toBe(201);
@@ -296,7 +299,7 @@ describe('POST /subscriptions keyed', () => {
     const s2 = await s.app.inject({ method: 'POST', url: '/subscriptions', headers: auth('sub-create-1'), payload: sub });
     expect(s2.headers['idempotent-replayed']).toBe('true');
     expect(s2.json()).toEqual(s1.json());
-    const list = await s.app.inject({ method: 'GET', url: '/subscriptions', headers: auth() });
+    const list = await s.app.inject({ method: 'GET', url: '/subscriptions', headers: auth(crypto.randomUUID()) });
     expect(list.json().total).toBe(1);
   });
 });

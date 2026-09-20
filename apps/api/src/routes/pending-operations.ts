@@ -282,6 +282,12 @@ catch (error) { return handleError(error, reply, true); }
   app.post('/pending-operations/undo', async (req, reply) => {
     let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); }
     try {
+      // debt-undo-confirmation-protocol: delegated callers must carry the
+      // NARROW undo capability. Device-token callers (no delegatedTurn)
+      // keep the legacy path unchanged.
+      if (req.delegatedTurn && !req.delegatedTurn.capabilities.includes('financial.undo.execute')) {
+        return reply.code(403).send({ code: 'auth.delegation_scope_forbidden', message: 'Capability de undo delegada obrigatória.' });
+      }
       if (!undoService) throw domainErrors.unsupported('undo');
       const idempotencyKey = requireIdempotencyKey(req.headers as Record<string, unknown>);
       const bodySchema = z.object({ lastOperationId: z.string().uuid().optional() });

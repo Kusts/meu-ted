@@ -21,9 +21,6 @@ export const compromissosSkill: Skill = {
     'auto_create_from_templates',
     'refresh_payable_status',
     'check_payable_reminders',
-    'get_pending_operation',
-    'confirm_pending_operation',
-    'cancel_pending_operation',
     'list_notifications',
     'configure_notification',
   ],
@@ -31,7 +28,7 @@ export const compromissosSkill: Skill = {
     'Liste o que está pendente com list_accounts_payable antes de afirmar qualquer vencimento.',
     'Dar baixa (mark_account_paid) e cancelar são mutações com approval: confirme conta, valor e data.',
     'Recorrência (aluguel, mensalidade): prefira create_payable_template a criar uma a uma.',
-    'Aprovações do chat (get/confirm/cancel_pending_operation) valem para o turno atual — explique o que será aprovado.',
+    'Aprovações de transações usam o fluxo V2 (cartão de aprovação + decisão no RPC) — nunca exponha nem chame tools V1 de pending operation.',
     'Ao listar, ordene por urgência: vencidas, vencendo esta semana, futuras.',
   ],
   pitfalls: [

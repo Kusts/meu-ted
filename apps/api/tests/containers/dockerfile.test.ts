@@ -9,7 +9,7 @@ const contractsPackage = JSON.parse(readFileSync(resolve(process.cwd(), '../../p
 
 describe('API canonical container', () => {
   it('builds the workspace contract and runs as a non-root health-checked image', () => {
-    expect(dockerfile).toMatch(/FROM node:22-alpine AS builder/);
+    expect(dockerfile).toMatch(/FROM node:24-alpine AS builder/);
     expect(dockerfile).toContain('COPY packages packages');
     expect(dockerfile).toContain('pnpm --filter @pi-finance/llm-contracts build');
     expect(dockerfile).toContain('pnpm deploy --legacy --filter meu-ted-api --prod /runtime');

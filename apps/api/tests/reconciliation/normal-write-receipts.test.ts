@@ -25,13 +25,13 @@ const setupAccountAndCategory = async (): Promise<Setup> => {
   const acc = await app.inject({
     method: 'POST',
     url: '/accounts',
-    headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+    headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
     payload: { name: 'A', kind: 'bank', initialBalanceCents: 50_000 },
   });
   const cat = await app.inject({
     method: 'POST',
     url: '/categories',
-    headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+    headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
     payload: { name: 'Food', kind: 'expense' },
   });
   return { app, accountId: acc.json().id, categoryId: cat.json().id };
@@ -47,7 +47,7 @@ describe('normal-write receipts', () => {
     const res = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Lunch',
         amountCents: 1500,
@@ -73,14 +73,14 @@ describe('normal-write receipts', () => {
     const secondAcc = await s.app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'B', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const make = () =>
       s.app.inject({
         method: 'POST',
         url: '/transfers',
-        headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+        headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
         payload: {
           description: 'hop',
           amountCents: 100,
@@ -105,7 +105,7 @@ describe('normal-write receipts', () => {
     const created = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'bye',
         amountCents: 100,
@@ -117,7 +117,7 @@ describe('normal-write receipts', () => {
     const del = await s.app.inject({
       method: 'DELETE',
       url: `/transactions/${created.json().id}`,
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(del.statusCode).toBe(200);
     const body = del.json();

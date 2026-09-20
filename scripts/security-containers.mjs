@@ -1,10 +1,16 @@
 import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
+import { validateTrivyignoreFile } from './trivyignore-policy.mjs';
 
 const images = ['pi-finance-api:ci', 'pi-finance-codex-broker:ci'];
 const repoPath = process.cwd();
-const hasIgnore = fs.existsSync(path.join(repoPath, '.trivyignore'));
+const ignoreValidation = validateTrivyignoreFile(repoPath);
+if (!ignoreValidation.ok) {
+  console.error('Refusing container scan: .trivyignore failed expiry validation (fail-closed).');
+  for (const error of ignoreValidation.errors) console.error(` - ${error}`);
+  console.error('Each ignored CVE needs a parseable, unexpired `Expiry: YYYY-MM-DD` declaration.');
+  process.exit(1);
+}
+const hasIgnore = ignoreValidation.entries.length > 0;
 
 const commonArgs = [
   'run',

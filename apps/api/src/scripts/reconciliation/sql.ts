@@ -26,6 +26,7 @@ export const CHECKS_BY_LAYOUT: Record<SchemaLayout, ReconCheck[]> = {
     "accounts_balance",
     "statement_total",
     "statement_payment",
+    "statement_payment_coverage",
     "payable_payment",
     "goal_contribution",
     "card_purchase",
@@ -73,6 +74,7 @@ const accountsBalance = (
   if (layout === "canonical") {
     return {
       text: `SELECT a.id AS account_id, a.household_id,
+        a.kind AS account_kind,
         a.balance_cents AS stored_cents,
         NULL::bigint AS initial_cents,
         COALESCE(SUM(t.amount_cents) FILTER (WHERE t.kind = 'income' AND t.account_id = a.id), 0)::bigint AS income_cents,
@@ -82,13 +84,14 @@ const accountsBalance = (
       FROM accounts a
       LEFT JOIN transactions t ON t.household_id = a.household_id AND t.deleted_at IS NULL
       WHERE a.deleted_at IS NULL${scoped("a.household_id", scope, values)}
-      GROUP BY a.id, a.household_id, a.balance_cents
+      GROUP BY a.id, a.household_id, a.kind, a.balance_cents
       ORDER BY a.household_id, a.id`,
       values,
     };
   }
   return {
     text: `SELECT a.id AS account_id, a.household_id,
+      CASE WHEN a.is_credit_card THEN 'credit_card' ELSE 'bank' END AS account_kind,
       (COALESCE(a.initial_balance_cents, 0)
         + COALESCE(SUM(t.amount_cents) FILTER (WHERE t.kind = 'income' AND t.to_account_id = a.id), 0)
         - COALESCE(SUM(t.amount_cents) FILTER (WHERE t.kind = 'expense' AND t.from_account_id = a.id), 0)
@@ -102,7 +105,7 @@ const accountsBalance = (
     FROM accounts a
     LEFT JOIN transactions t ON t.household_id = a.household_id AND t.deleted_at IS NULL
     WHERE a.deleted_at IS NULL${scoped("a.household_id", scope, values)}
-    GROUP BY a.id, a.household_id, a.initial_balance_cents
+    GROUP BY a.id, a.household_id, a.is_credit_card, a.initial_balance_cents
     ORDER BY a.household_id, a.id`,
     values,
   };
@@ -114,11 +117,21 @@ const statementTotal = (scope: ReconScope): ReconQuery => {
     text: `SELECT s.id AS statement_id, s.household_id,
       s.total_cents AS stored_total_cents,
       COALESCE(SUM(t.amount_cents), 0)::bigint AS linked_sum_cents,
-      COUNT(t.id)::int AS linked_count
+      COUNT(t.id)::int AS linked_count,
+      COALESCE(cp.purchase_sum_cents, 0)::bigint AS purchase_sum_cents,
+      COALESCE(cp.purchase_count, 0)::int AS purchase_count
     FROM statements s
     LEFT JOIN transactions t ON t.statement_id = s.id AND t.household_id = s.household_id AND t.deleted_at IS NULL
+    LEFT JOIN (
+      SELECT statement_id,
+        COALESCE(SUM(amount_cents), 0)::bigint AS purchase_sum_cents,
+        COUNT(*)::int AS purchase_count
+      FROM card_purchases
+      WHERE deleted_at IS NULL
+      GROUP BY statement_id
+    ) cp ON cp.statement_id = s.id
     WHERE 1 = 1${scoped("s.household_id", scope, values)}
-    GROUP BY s.id, s.household_id, s.total_cents
+    GROUP BY s.id, s.household_id, s.total_cents, cp.purchase_sum_cents, cp.purchase_count
     ORDER BY s.household_id, s.id`,
     values,
   };
@@ -136,8 +149,39 @@ const statementPayment = (scope: ReconScope): ReconQuery => {
   };
 };
 
-const statementPaymentCoverage = (scope: ReconScope): ReconQuery => {
+const statementPaymentCoverage = (
+  layout: SchemaLayout,
+  scope: ReconScope,
+): ReconQuery => {
   const values: unknown[] = [];
+  if (layout === "canonical") {
+    // Canonical (V056) per-statement grain: payStatement writes a structured
+    // origin (transactions.statement_payment_id → statements.id). Coverage
+    // projects one row per statement and sums only the payment legs linked
+    // DIRECTLY to that statement id — never via the cycle, never on the
+    // free-text display description. A manual `Pagamento fatura {cycle}`
+    // expense (no link) counts nowhere, and a payment linked to the wrong
+    // same-cycle statement leaves BOTH statements gapped instead of masking
+    // inside a household+cycle aggregate.
+    return {
+      text: `SELECT s.id AS statement_id, s.household_id, s.cycle_year_month AS cycle,
+        s.paid_cents AS statements_paid_sum,
+        (SELECT COALESCE(SUM(t.amount_cents), 0)::bigint
+          FROM transactions t
+          WHERE t.statement_payment_id = s.id
+            AND t.household_id = s.household_id
+            AND t.deleted_at IS NULL
+            AND t.kind = 'expense') AS payment_tx_sum_cents,
+        1::int AS statement_count
+      FROM statements s
+      WHERE 1 = 1${scoped("s.household_id", scope, values)}
+      ORDER BY s.household_id, s.id`,
+      values,
+    };
+  }
+  // Legacy semantics preserved verbatim: the legacy payStatement writes
+  // only `Pagamento fatura {cycle}` with no structured link, so legacy
+  // coverage keeps matching on household + cycle description.
   return {
     text: `SELECT s.household_id, s.cycle_year_month AS cycle,
       SUM(s.paid_cents)::bigint AS statements_paid_sum,
@@ -173,6 +217,9 @@ const payablePaymentBase = (
     text: `SELECT p.id AS payable_id, p.household_id, p.status, p.amount_cents,
       ${paidAmount},
       p.paid_transaction_id,
+      p.account_id::text AS account_id,
+      p.description AS description,
+      p.paid_date::text AS paid_date,
       EXISTS(SELECT 1 FROM transactions t WHERE t.id = p.paid_transaction_id AND t.household_id = p.household_id AND t.deleted_at IS NULL) AS paid_tx_exists,
       EXISTS(SELECT 1 FROM transactions t WHERE t.id = p.paid_transaction_id AND t.household_id = p.household_id AND t.deleted_at IS NOT NULL) AS paid_tx_deleted,
       (SELECT COUNT(*)::int FROM transactions t
@@ -210,6 +257,7 @@ const cardPurchase = (scope: ReconScope): ReconQuery => {
   const values: unknown[] = [];
   return {
     text: `SELECT cp.id AS card_purchase_id, cp.household_id, cp.statement_id,
+      cp.account_id::text AS account_id,
       cp.amount_cents AS purchase_amount_cents,
       cp.description AS purchase_description,
       cp.date::text AS purchase_date,
@@ -346,7 +394,7 @@ export const buildReconciliationQueries = (
     accounts_balance: accountsBalance(layout, scope),
     statement_total: statementTotal(scope),
     statement_payment: statementPayment(scope),
-    statement_payment_coverage: statementPaymentCoverage(scope),
+    statement_payment_coverage: statementPaymentCoverage(layout, scope),
     payable_payment: payablePaymentBase(layout, scope),
     goal_contribution: goalContribution(scope),
     card_purchase: cardPurchase(scope),

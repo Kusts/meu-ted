@@ -22,6 +22,14 @@ import type {
   StatementTotalRow,
 } from "./detectors.js";
 import {
+  APPROVED_HISTORICAL_ALLOWLIST,
+  applyHistoricalExceptions,
+} from "./historical-exceptions.js";
+import {
+  APPROVED_TEST_FIXTURE_ALLOWLIST,
+  applyTestFixtureExceptions,
+} from "./test-fixtures.js";
+import {
   buildReconciliationQueries,
   CHECKS_BY_LAYOUT,
   isSelectOnly,
@@ -131,6 +139,7 @@ const mapRows = {
       expenseCents: num(r["expense_cents"]),
       transferInCents: num(r["transfer_in_cents"]),
       transferOutCents: num(r["transfer_out_cents"]),
+      accountKind: str(r["account_kind"]),
     })),
   statement_total: (rows: Row[]): StatementTotalRow[] =>
     rows.map((r) => ({
@@ -139,6 +148,8 @@ const mapRows = {
       storedTotalCents: num(r["stored_total_cents"]),
       linkedSumCents: num(r["linked_sum_cents"]),
       linkedCount: num(r["linked_count"]),
+      purchaseSumCents: num(r["purchase_sum_cents"]),
+      purchaseCount: num(r["purchase_count"]),
     })),
   statement_payment: (rows: Row[]): StatementPaymentRow[] =>
     rows.map((r) => ({
@@ -156,6 +167,11 @@ const mapRows = {
       statementsPaidSum: num(r["statements_paid_sum"]),
       paymentTxSumCents: num(r["payment_tx_sum_cents"]),
       statementCount: num(r["statement_count"]),
+      // Canonical per-statement grain projects s.id AS statement_id;
+      // legacy cycle aggregates carry no statement_id (stays undefined).
+      ...(r["statement_id"] === null || r["statement_id"] === undefined
+        ? {}
+        : { statementId: reqStr(r["statement_id"]) }),
     })),
   payable_payment: (rows: Row[]): PayablePaymentRow[] =>
     rows.map((r) => ({
@@ -171,6 +187,9 @@ const mapRows = {
       paidTxExists: r["paid_tx_exists"] === true,
       paidTxDeleted: r["paid_tx_deleted"] === true,
       paymentTxCount: num(r["payment_tx_count"]),
+      accountId: str(r["account_id"]),
+      description: str(r["description"]),
+      paidDate: str(r["paid_date"]),
     })),
   goal_contribution: (rows: Row[]): GoalContributionRow[] =>
     rows.map((r) => ({
@@ -185,6 +204,7 @@ const mapRows = {
       cardPurchaseId: reqStr(r["card_purchase_id"]),
       householdId: reqStr(r["household_id"]),
       statementId: reqStr(r["statement_id"]),
+      accountId: str(r["account_id"]),
       purchaseAmountCents: num(r["purchase_amount_cents"]),
       purchaseDescription: reqStr(r["purchase_description"]),
       purchaseDate: reqStr(r["purchase_date"]),
@@ -227,22 +247,20 @@ export const runReconciliation = async (
   }
   const rowsOf = (check: ReconCheck): Row[] => fetched.get(check) ?? [];
   const payableRows = mapRows.payable_payment(rowsOf("payable_payment"));
+  const statementRows = mapRows.statement_total(rowsOf("statement_total"));
+  const cardRows = mapRows.card_purchase(rowsOf("card_purchase"));
+  const coverageRows = mapRows.statement_payment_coverage(
+    rowsOf("statement_payment_coverage"),
+  );
   const checks: CheckResult[] = [
     detectAccountsBalanceDrift(
       mapRows.accounts_balance(rowsOf("accounts_balance")),
       householdId,
     ),
-    detectStatementTotalDrift(
-      mapRows.statement_total(rowsOf("statement_total")),
-      householdId,
-    ),
+    detectStatementTotalDrift(statementRows, householdId),
     detectStatementPaymentDrift(
       mapRows.statement_payment(rowsOf("statement_payment")),
-      layout === "legacy"
-        ? mapRows.statement_payment_coverage(
-            rowsOf("statement_payment_coverage"),
-          )
-        : [],
+      coverageRows,
       householdId,
     ),
     detectPayablePaymentDrift(payableRows, householdId),
@@ -250,17 +268,83 @@ export const runReconciliation = async (
       mapRows.goal_contribution(rowsOf("goal_contribution")),
       householdId,
     ),
-    detectCardPurchaseDrift(
-      mapRows.card_purchase(rowsOf("card_purchase")),
-      householdId,
-    ),
+    detectCardPurchaseDrift(cardRows, householdId),
     detectDuplicates(buildDuplicatesInput(rowsOf, payableRows), householdId),
   ];
-  const report: ReconReport = buildReport(checks, {
+  // ADR-017 closed exception: exact fingerprint matches leave the active
+  // drift set and are reported separately; any missing/changed fingerprint
+  // (global and household-scoped runs) raises a drift gate so --fail-on-drift exits 1.
+  const { checks: adjustedChecks, summary: historicalSummary } =
+    applyHistoricalExceptions(
+      checks,
+      {
+        orphans: cardRows.map((row) => ({
+          cardPurchaseId: row.cardPurchaseId,
+          householdId: row.householdId,
+          statementId: row.statementId,
+          accountId: row.accountId,
+          amountCents: row.purchaseAmountCents,
+          purchaseDate: row.purchaseDate,
+          description: row.purchaseDescription,
+          transactionId: row.txId,
+        })),
+        statements: statementRows.map((row) => ({
+          statementId: row.statementId,
+          householdId: row.householdId,
+          storedTotalCents: row.storedTotalCents,
+          linkedSumCents: row.linkedSumCents,
+          linkedCount: row.linkedCount,
+          purchaseSumCents: row.purchaseSumCents,
+          purchaseCount: row.purchaseCount,
+        })),
+      },
+      APPROVED_HISTORICAL_ALLOWLIST,
+      householdId,
+    );
+  // ADR-019 closed exception (legacy layout only): exact fingerprint matches
+  // leave the active drift set and are reported separately under
+  // `report.testFixtures`; any missing/changed fixture in a legacy run
+  // (global or approved household-scoped) raises a drift gate so
+  // --fail-on-drift exits 1. Canonical runs expect zero ADR-019 fixtures
+  // and never suppress: canonical coverage rows are now fetched by layout,
+  // and any canonical payment_coverage_gap/missing_payment_transaction
+  // finding stays as active drift. ADR-017 provenance is untouched.
+  const { checks: finalChecks, summary: testFixtureSummary } =
+    applyTestFixtureExceptions(
+      adjustedChecks,
+      {
+        coverages: coverageRows.map((row) => ({
+          householdId: row.householdId,
+          cycle: row.cycle,
+          statementsPaidSum: row.statementsPaidSum,
+          paymentTxSumCents: row.paymentTxSumCents,
+          statementCount: row.statementCount,
+        })),
+        payables: payableRows.map((row) => ({
+          payableId: row.payableId,
+          householdId: row.householdId,
+          accountId: row.accountId,
+          description: row.description,
+          amountCents: row.amountCents,
+          status: row.status,
+          paidDate: row.paidDate,
+          paidTransactionId: row.paidTransactionId,
+          paidTxExists: row.paidTxExists,
+          paidTxDeleted: row.paidTxDeleted,
+          paymentTxCount: row.paymentTxCount,
+        })),
+      },
+      APPROVED_TEST_FIXTURE_ALLOWLIST,
+      householdId,
+      layout,
+    );
+  const report: ReconReport = buildReport(finalChecks, {
     schema: layout,
     generatedAt: new Date().toISOString(),
     ...(householdId === undefined ? {} : { householdScope: householdId }),
   });
+  report.historicalExceptions = historicalSummary;
+  report.testFixtures = testFixtureSummary;
   return report;
 };
 
@@ -316,6 +400,18 @@ export const formatTextReport = (report: ReconReport): string => {
   const lines = [
     `reconciliation schema=${report.schema} checked=${report.totals.checked} drifted=${report.totals.drifted} info=${report.totals.info}`,
   ];
+  if (report.historicalExceptions !== undefined) {
+    const historical = report.historicalExceptions;
+    lines.push(
+      `historical-exceptions version=${historical.version} orphans=${historical.orphanCardPurchases.matched}/${historical.orphanCardPurchases.expected} statements=${historical.statementTotals.matched}/${historical.statementTotals.expected}`,
+    );
+  }
+  if (report.testFixtures !== undefined) {
+    const fixtures = report.testFixtures;
+    lines.push(
+      `test-fixtures version=${fixtures.version} coverage=${fixtures.coverage.matched}/${fixtures.coverage.expected} payables=${fixtures.payables.matched}/${fixtures.payables.expected}`,
+    );
+  }
   for (const check of report.checks) {
     lines.push(
       `- ${check.check}: checked=${check.counts.checked} drifted=${check.counts.drifted}`,

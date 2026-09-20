@@ -5,22 +5,25 @@ import { useWorkspaceSafe } from "@/lib/auth/workspace-context";
 import {
   fetchAgentHistory,
   fetchActivePendingOperations,
+  fetchActiveUndoProposals,
   sendAgentMessage,
   renewAgentSession,
   composeChatSend,
   PENDING_OPERATION_STATUS,
   type ActivePendingOperation,
+  type ActiveUndoProposal,
   type AgentMessage,
   type PendingChatSend,
 } from "@/lib/api/agent-client";
 import { TedMessage, type TedDeliveryState } from "./TedMessage";
 import { TedApprovalCard, type TedPendingOperation } from "./TedApprovalCard";
+import { TedUndoCard, type TedUndoProposal } from "./TedUndoCard";
 import { useRecordingState } from "./use-recording-state";
 import { getChatAttachmentCapabilities } from "@/lib/capabilities";
 import { useOptionalAppState } from "@/lib/state/app-state-context";
 import { resolveTedMutationKind } from "@/lib/state/mutation-reconciler";
 import type { MutationReceipt } from "@pi-finance/llm-contracts/types";
-import type { PendingOperationDecision } from "@/lib/api/agent-client";
+import type { PendingOperationDecision, UndoDecision } from "@/lib/api/agent-client";
 import { useBodyScrollLock, useOverlayDialog } from "@/lib/ui/overlay-a11y";
 import { notifyPendingOperationsChanged } from "@/lib/state/use-pending-operations";
 import { Sparkles, X, Send, Mic, MicOff, Image as ImageIcon, FileText, Paperclip, Trash2, RefreshCw } from "lucide-react";
@@ -87,6 +90,13 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
   const members = ws?.members ?? [];
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pendingOps, setPendingOps] = useState<TedPendingOperation[]>([]);
+  // debt-undo-confirmation-protocol + debt-undo-proposal-rehydration: live
+  // undo proposals come EXCLUSIVELY from structured server state — the turn
+  // response's `undoProposal` field (immediate) plus the authenticated
+  // active-list RPC below (reload/remount/workspace change). Model text is
+  // never parsed or acted on, and rehydration never decides. Entries are
+  // deduped by requestId; expired summaries are dropped.
+  const [undoProposals, setUndoProposals] = useState<TedUndoProposal[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -200,6 +210,34 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
     },
   });
 
+  // debt-undo-rehydration-terminal-fix: the authoritative active list is
+  // the SOURCE OF TRUTH. A successful refresh REPLACES local undo cards —
+  // terminal (confirmed/cancelled), expired, or otherwise omitted proposals
+  // must never reappear from old local state on reload/remount. The ONLY
+  // exception is the in-flight turn path below (executeSend applies the
+  // just-returned `undoProposal` AFTER loadHistory, so a card minted by the
+  // current turn is never erased by the refresh that preceded it).
+  const applyActiveUndoProposals = useCallback((items: ActiveUndoProposal[]) => {
+    const now = Date.now();
+    const next: TedUndoProposal[] = [];
+    const seen = new Set<string>();
+    for (const item of items) {
+      // Safety net over the authoritative server filter: never render an
+      // already-expired card (unparseable dates are kept — only the server
+      // can prove expiry).
+      const time = Date.parse(item.expiresAt);
+      if (!Number.isNaN(time) && time <= now) continue;
+      if (seen.has(item.requestId)) continue;
+      seen.add(item.requestId);
+      next.push({
+        requestId: item.requestId,
+        status: item.status,
+        expiresAt: item.expiresAt,
+      });
+    }
+    setUndoProposals(next);
+  }, []);
+
   const loadHistory = useCallback(async (preserveError = false) => {
     if (!activeWorkspace) return;
     let history: AgentMessage[];
@@ -242,7 +280,17 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
       setError(ACTIVE_LOAD_ERROR);
       setStatus("ready");
     }
-  }, [activeWorkspace]);
+    // debt-undo-proposal-rehydration: reload/remount rehydrates the live undo
+    // cards from the authenticated active-list RPC (bound summaries only).
+    // Read-only: failures keep last-known cards, never invent, never decide.
+    try {
+      const activeUndo = await fetchActiveUndoProposals(activeWorkspace.id);
+      applyActiveUndoProposals(activeUndo);
+    } catch {
+      // Last-known undo cards stay (untouched); staleness is already
+      // signaled by the history/active error paths above when they fail.
+    }
+  }, [activeWorkspace, applyActiveUndoProposals]);
 
   // Post-approval reconciliation (SPEC §15.4, T3.3): chat history AND
   // financial UI refresh. The REAL execution receipt (API-emitted, relayed
@@ -283,6 +331,15 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
     await loadHistory();
   };
 
+  // debt-undo-confirmation-protocol: a confirmed undo reversed a mutation,
+  // so external reflections refetch and the authoritative history reloads.
+  // A cancel changes nothing — only the external badge state is refreshed.
+  const handleUndoResolved = async (decision: UndoDecision): Promise<void> => {
+    notifyPendingOperationsChanged();
+    if (decision.status === "confirmed") {
+      await loadHistory();
+    }
+  };
   // Isolamento por workspace: limpar histórico imediatamente ao trocar de workspace
   // (SPEC §17: troca de workspace também encerra o microfone via cleanup único)
   useEffect(() => {
@@ -295,6 +352,7 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
       discardDrafts();
       setMessages([]);
       setPendingOps([]);
+      setUndoProposals([]);
       setHistoryLoaded(false);
       setError(null);
       setStatus("ready");
@@ -322,7 +380,7 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
     if (typeof messagesEndRef.current?.scrollIntoView === "function") {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, pendingOps]);
+  }, [messages, pendingOps, undoProposals]);
 
   // T5.3 deep-link: the launcher routes one authoritative operation id here.
   // Only AUTHORITATIVE cards (history rehydration + turn responses) can match
@@ -433,6 +491,7 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
         flashNotice(`TED memorizou: ${turn.memorized.slice(0, 2).join(" · ")}`);
       }
       const returnedPendingOperation = turn.pendingOperation;
+      const returnedUndoProposal = turn.undoProposal;
       // T3.3 (§15.4): a natural-language confirmation turn that EXECUTED in
       // the same round-trip carries the real execution receipt — reconcile
       // from it immediately (same single reconciler as the button path).
@@ -458,6 +517,18 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
         setPendingOps((previous) => [
           returnedPendingOperation,
           ...previous.filter((operation) => operation.id !== returnedPendingOperation.id),
+        ]);
+      }
+      // debt-undo-confirmation-protocol: the structured turn field is the
+      // ONLY source of the undo card — output text never mints one.
+      if (returnedUndoProposal) {
+        setUndoProposals((previous) => [
+          {
+            requestId: returnedUndoProposal.requestId,
+            status: "proposed",
+            expiresAt: returnedUndoProposal.expiresAt,
+          },
+          ...previous.filter((proposal) => proposal.requestId !== returnedUndoProposal.requestId),
         ]);
       }
       // §19.3: success consumed the draft — the authoritative history
@@ -545,6 +616,7 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
       await renewAgentSession(activeWorkspace.id);
       setMessages([]);
       setPendingOps([]);
+      setUndoProposals([]);
       setHistoryLoaded(false);
       setInput("");
       flashNotice("Nova sessão iniciada — o TED mantém o que aprendeu.");
@@ -679,6 +751,17 @@ export function TedChat({ open, onClose, focusedOperationId = null }: TedChatPro
                 </div>
               );
             })}
+
+          {activeWorkspace &&
+            undoProposals.map((proposal) => (
+              <div key={proposal.requestId} data-testid="ted-undo-item">
+                <TedUndoCard
+                  proposal={proposal}
+                  workspaceId={activeWorkspace.id}
+                  onResolved={(decision) => void handleUndoResolved(decision)}
+                />
+              </div>
+            ))}
 
           {showFocusedMissing && (
             <div

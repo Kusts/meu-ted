@@ -1,5 +1,4 @@
-// PWA audit policy — strict acceptance with optional expiring allowlist.
-// expiresOn is optional — entries without it are permanent.
+// PWA audit policy — strict acceptance with mandatory expiring allowlist.
 // Pure functions: no side effects, no filesystem, no network.
 
 const REQUIRED_ALLOWLIST_FIELDS = [
@@ -12,6 +11,7 @@ const REQUIRED_ALLOWLIST_FIELDS = [
   "scope",
   "owner",
   "justification",
+  "expiresOn",
 ];
 
 const VALID_SCOPES = new Set(["runtime", "build-time", "dev-only"]);
@@ -20,7 +20,13 @@ const VALID_SCOPES = new Set(["runtime", "build-time", "dev-only"]);
 
 function isValidDate(yyyymmdd) {
   if (typeof yyyymmdd !== "string") return false;
-  return /^\d{4}-\d{2}-\d{2}$/.test(yyyymmdd) && !isNaN(Date.parse(yyyymmdd));
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(yyyymmdd);
+  if (!match) return false;
+  const [, year, month, day] = match;
+  const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  return parsed.getUTCFullYear() === Number(year) &&
+    parsed.getUTCMonth() === Number(month) - 1 &&
+    parsed.getUTCDate() === Number(day);
 }
 
 function validateAllowlistEntry(entry) {
@@ -33,7 +39,7 @@ function validateAllowlistEntry(entry) {
   if (!Array.isArray(entry.via)) errors.push("via must be an array");
   if (!Array.isArray(entry.effects)) errors.push("effects must be an array");
   if (entry.scope && !VALID_SCOPES.has(entry.scope)) errors.push(`invalid scope: ${entry.scope}`);
-  if (entry.expiresOn !== undefined && entry.expiresOn !== null && !isValidDate(entry.expiresOn)) {
+  if (!isValidDate(entry.expiresOn)) {
     errors.push(`invalid expiresOn: ${entry.expiresOn}`);
   }
   if (typeof entry.name !== "string" || entry.name.length === 0) errors.push("name must be a non-empty string");
@@ -84,7 +90,7 @@ export function evaluateAudit({ audit, allowlist, today }) {
     return { status: "BLOCKED", blocked, resolved, accepted };
   }
 
-  // Check allowlist expiry (only when expiresOn is present)
+  // Every accepted record has an explicit review deadline.
   for (const entry of allowlist) {
     if (entry.expiresOn && entry.expiresOn < today) {
       blocked.push({ name: entry.name, reason: `allowlist entry expired on ${entry.expiresOn}` });

@@ -8,13 +8,13 @@ No live DB connection available; fingerprint based on SQL schema + TypeScript ty
 - **Engine:** PostgreSQL 16+
 - **Extension:** pgcrypto (UUID generation)
 - **Schema:** `public`
-- **Balance semantics:** STORED column (`accounts.balance_cents`), manually maintained by write store. Constraint: `balance_cents >= 0`. Updates use `GREATEST(0, balance_cents - X)` to prevent negative values. No computed/trigger-based balance.
+- **Balance semantics:** STORED column (`accounts.balance_cents`), manually maintained by write store. Per-kind rule (ADR-018, supersedes D1=B): `bank`/`cash` may be negative (exact deltas, no clamp); `credit_card` stays non-negative (`balance_cents >= 0`, enforced by conditional CHECK design V055 + write validation). No computed/trigger-based balance.
 
 ## Tables (15)
 
 | # | Table | Primary Key | Key Constraints |
 |---|-------|-------------|-----------------|
-| 1 | `accounts` | `id UUID` | `kind IN ('bank','cash','credit_card')`, `balance_cents >= 0`, `status IN ('active','inactive')` |
+| 1 | `accounts` | `id UUID` | `kind IN ('bank','cash','credit_card')`, CHECK por kind (ADR-018: `bank`/`cash` sem restrição de não-negatividade; `credit_card` `balance_cents >= 0`), `status IN ('active','inactive')` |
 | 2 | `categories` | `id UUID` | `kind IN ('expense','income')`, `status IN ('active','inactive')`, `parent_id → categories(id)` |
 | 3 | `transactions` | `id UUID` | `kind IN ('expense','income','transfer')`, `amount_cents > 0`, FK→accounts, FK→categories, FK→transfer_to_account, `CHECK (kind='transfer' XOR category_id IS NOT NULL)`, `CHECK (kind='transfer' XOR transfer_to_account_id IS NULL)` |
 | 4 | `device_tokens` | `token TEXT` | FK→household, `revoked_at` soft-delete |

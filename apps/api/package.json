@@ -20,6 +20,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "db:migrate": "tsx src/scripts/migrate.ts",
+    "canonical:preflight": "tsx src/scripts/canonical-conversion-preflight.ts",
     "reconciliation": "tsx src/scripts/reconciliation/run.ts",
     "reminders:run": "tsx src/scripts/reminder-job.ts",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
@@ -43,11 +44,11 @@
     "@types/web-push": "^3.6.4",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^3.2.6",
+    "vitest": "4.1.11",
     "prettier": "3.6.2",
     "@biomejs/biome": "2.2.4"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.12.0"
   }
 }

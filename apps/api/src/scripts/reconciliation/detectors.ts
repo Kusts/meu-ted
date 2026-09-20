@@ -36,6 +36,8 @@ export type AccountBalanceRow = {
   expenseCents: number;
   transferInCents: number;
   transferOutCents: number;
+  /** Account kind ('bank' | 'cash' | 'credit_card'); absent stays permissive. */
+  accountKind?: string | null;
 };
 
 export type StatementTotalRow = {
@@ -44,6 +46,10 @@ export type StatementTotalRow = {
   storedTotalCents: number;
   linkedSumCents: number;
   linkedCount: number;
+  /** Aggregate of live card_purchases for this statement (ADR-017 fingerprint). */
+  purchaseSumCents?: number;
+  /** Count of live card_purchases for this statement (ADR-017 fingerprint). */
+  purchaseCount?: number;
 };
 
 export type StatementPaymentRow = {
@@ -61,6 +67,13 @@ export type CyclePaymentRow = {
   statementsPaidSum: number;
   paymentTxSumCents: number;
   statementCount: number;
+  /**
+   * Canonical per-statement grain (V056 follow-up): when present, this row
+   * covers ONE statement id (payment legs linked directly via
+   * transactions.statement_payment_id). Absent = legacy household+cycle
+   * aggregate. Canonical rows always carry it; legacy rows never do.
+   */
+  statementId?: string;
 };
 
 export type PayablePaymentRow = {
@@ -73,6 +86,12 @@ export type PayablePaymentRow = {
   paidTxExists: boolean;
   paidTxDeleted: boolean;
   paymentTxCount: number;
+  /** Owning account (ADR-019 fingerprint); SELECT-only projection. */
+  accountId?: string | null;
+  /** Payable description (ADR-019 fingerprint); SELECT-only projection. */
+  description?: string | null;
+  /** Paid date ISO text or null (ADR-019 fingerprint); SELECT-only projection. */
+  paidDate?: string | null;
 };
 
 export type GoalContributionRow = {
@@ -87,6 +106,8 @@ export type CardPurchaseRow = {
   cardPurchaseId: string;
   householdId: string;
   statementId: string;
+  /** Owning account (ADR-017 fingerprint); may be absent on legacy-unbackfilled rows. */
+  accountId?: string | null;
   purchaseAmountCents: number;
   purchaseDescription: string;
   purchaseDate: string;
@@ -134,6 +155,34 @@ export type ReconReport = {
   checks: CheckResult[];
   totals: { checked: number; drifted: number; info: number };
   householdScope?: string;
+  /** Closed ADR-017 historical exception, when evaluated by the CLI runner. */
+  historicalExceptions?: HistoricalExceptionSummary;
+  /** Closed ADR-019 test-fixture exception, when evaluated by the CLI runner. */
+  testFixtures?: TestFixtureExceptionSummary;
+};
+
+export type TestFixtureExceptionClassSummary = {
+  expected: number;
+  matched: number;
+  recognized: Array<{ entity: string; kind: string; entityId: string }>;
+};
+
+export type TestFixtureExceptionSummary = {
+  version: string;
+  coverage: TestFixtureExceptionClassSummary;
+  payables: TestFixtureExceptionClassSummary;
+};
+
+export type HistoricalExceptionClassSummary = {
+  expected: number;
+  matched: number;
+  recognized: Array<{ entity: string; kind: string; entityId: string }>;
+};
+
+export type HistoricalExceptionSummary = {
+  version: string;
+  orphanCardPurchases: HistoricalExceptionClassSummary;
+  statementTotals: HistoricalExceptionClassSummary;
 };
 
 const emptyResult = (
@@ -166,25 +215,35 @@ export const detectAccountsBalanceDrift = (
   workspaceScope?: string,
 ): CheckResult => {
   const result = emptyResult("accounts_balance", workspaceScope);
+  const flagNegativeCredit = (row: AccountBalanceRow): void => {
+    // V055 domain rule: only credit_card rows must stay non-negative, so a
+    // negative stored balance on a credit card is drift even when it matches
+    // the ledger derivation. Bank/cash (and unknown kinds) stay permissive.
+    if (row.storedCents < 0 && row.accountKind === "credit_card") {
+      pushDrift(result, {
+        entity: "accounts",
+        entityId: row.accountId,
+        kind: "negative_credit_balance",
+        actual: row.storedCents,
+        detail: { account_kind: row.accountKind },
+      });
+    }
+  };
   for (const row of rows) {
     result.counts.checked += 1;
     if (row.initialCents === null) {
-      if (row.storedCents < 0) {
-        pushDrift(result, {
-          entity: "accounts",
-          entityId: row.accountId,
-          kind: "negative_stored_balance",
-          actual: row.storedCents,
-        });
-      } else {
-        pushDrift(result, {
-          entity: "accounts",
-          entityId: row.accountId,
-          kind: "unanchored_basis",
-          severity: "info",
-          actual: row.storedCents,
-        });
-      }
+      // Negative-balance rule (user-approved): a negative stored balance
+      // is legitimate for bank/cash, so an unanchored row is always info
+      // (never drift) regardless of sign — except credit cards, which must
+      // stay non-negative (flagNegativeCredit below).
+      pushDrift(result, {
+        entity: "accounts",
+        entityId: row.accountId,
+        kind: "unanchored_basis",
+        severity: "info",
+        actual: row.storedCents,
+      });
+      flagNegativeCredit(row);
       continue;
     }
     const derived =
@@ -208,14 +267,11 @@ export const detectAccountsBalanceDrift = (
           transfer_out_cents: row.transferOutCents,
         },
       });
-    } else if (row.storedCents < 0) {
-      pushDrift(result, {
-        entity: "accounts",
-        entityId: row.accountId,
-        kind: "negative_stored_balance",
-        actual: row.storedCents,
-      });
     }
+    // Negative-balance rule (user-approved): a stored balance that matches
+    // the ledger derivation is coherent even when negative — no finding,
+    // except on credit cards, which must stay non-negative (V055).
+    flagNegativeCredit(row);
   }
   return result;
 };
@@ -292,7 +348,8 @@ export const detectStatementPaymentDrift = (
       });
     } else if (
       row.paidCents === 0 &&
-      (row.status === "paid" || row.status === "partial")
+      (row.status === "partial" ||
+        (row.status === "paid" && row.totalCents > 0))
     ) {
       pushDrift(result, {
         entity: "statements",
@@ -306,6 +363,22 @@ export const detectStatementPaymentDrift = (
   }
   for (const cycle of cyclePayments) {
     result.counts.checked += 1;
+    // Canonical per-statement grain: the payment legs counted are exactly
+    // those linked to this statement id, so a cross-link to another
+    // same-cycle statement gaps BOTH sides instead of masking in a total.
+    if (cycle.statementId !== undefined) {
+      if (cycle.paymentTxSumCents !== cycle.statementsPaidSum) {
+        pushDrift(result, {
+          entity: "statements",
+          entityId: cycle.statementId,
+          kind: "payment_coverage_gap",
+          expected: cycle.statementsPaidSum,
+          actual: cycle.paymentTxSumCents,
+          detail: { cycle: cycle.cycle },
+        });
+      }
+      continue;
+    }
     if (cycle.paymentTxSumCents !== cycle.statementsPaidSum) {
       pushDrift(result, {
         entity: "statement_cycle",

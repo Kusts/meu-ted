@@ -129,16 +129,14 @@ export const createInMemoryPayableStore = (
       }
       // V4.1 Task 2.3 (D1/D3): mirror of the canonical store — the payment
       // always creates the expense transaction and debits the paying
-      // account; insufficient balance rejects instead of clamping.
+      // account. Negative-balance rule (user-approved): bank/cash payers
+      // may cross below zero — no insufficient-balance rejection.
       const acc = state.accounts.find(
         (a) => a.id === p.accountId && a.householdId === householdId,
       );
       if (!acc || acc.status !== "active") throw domainErrors.notFound("Conta");
       if (acc.kind === "credit_card") {
         throw new DomainError("validation.invalid", "compra no cartão deve usar /cards/purchases.", 422);
-      }
-      if (acc.balanceCents < p.amountCents) {
-        throw domainErrors.invalid("amountCents", "saldo insuficiente na conta de origem");
       }
       p.status = "paid";
       p.paidDate = input.paidDate ?? todayISO(clock);

@@ -440,6 +440,13 @@ export const createLegacyPostgresWriteStore = (opts: { pool: Pool }): WriteStore
   const store: WriteStore = {
     async createAccount(householdId: string, input: CreateAccountInput) {
       return withTransaction(pool, async (client: PoolClient) => {
+        // Negative-balance rule: only bank/cash may start negative (legacy
+        // balances are computed, so no zero floor exists to remove here).
+        // The kind check guards direct store callers; the route schema
+        // already limits kind to bank|cash.
+        if ((input.kind as string) === 'credit_card' && input.initialBalanceCents < 0) {
+          throw domainErrors.invalid('initialBalanceCents', 'cartão de crédito não pode iniciar com saldo negativo');
+        }
         const res = await client.query<Row>(
           `INSERT INTO accounts (id, household_id, name, initial_balance_cents, active)
            VALUES (gen_random_uuid(), $1, $2, $3, true)
