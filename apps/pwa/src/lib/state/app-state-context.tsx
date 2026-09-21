@@ -36,6 +36,7 @@ import {
   mockDashboardSummary,
 } from "./mock-data";
 import { isApiConfigured, getAuthToken, getSessionToken } from "@/lib/api/client";
+import { getSessionStatus } from "@/lib/auth/session-authority";
 import { type DomainKey } from "./snapshot-store";
 import { useSession } from "@/lib/auth/session-context";
 import { ApiError } from "@/lib/api/client";
@@ -365,16 +366,24 @@ function initialSync(source: DataSource): Record<DomainKey, DomainSync> {
 }
 
 /**
- * True when API base URL is configured AND a session can authenticate.
- * FIX-AUTH-BOOT FINDING 2 (session-first, ADR-015 Opção C): the online-use
- * gate no longer requires a device token — a valid session (compat session
- * bearer; cookie via `credentials: "include"` in apiFetch) boots normally
- * without one. No credential at all → gate stays closed (no bootstrap).
- * Device-scoped flows and the offline snapshot keying still use the device
- * token where present (snapshot partition key untouched).
+ * True when API base URL is configured AND the session authority allows
+ * online use (V4.1 Closure AUTH-01, session-first, SPEC §4/INV-02).
+ *
+ * The online-use gate no longer requires a device/session bearer in
+ * storage: a server-confirmed `authenticated` session (cookie via
+ * `credentials: "include"` in apiFetch) boots normally with zero storage
+ * tokens (compat OFF). Only an explicit `unauthenticated` session (or a
+ * missing API base) keeps the gate closed. `unknown`/`unreachable` fall
+ * back to the legacy bearer presence so compat-ON flows and direct
+ * (non-AuthGate) boots behave exactly as before. Device-scoped flows and
+ * the offline snapshot keying still use the device token where present
+ * (snapshot partition key untouched — V3 lands in Phase 3).
  */
 function apiUsable(): boolean {
   if (!isApiConfigured()) return false;
+  const session = getSessionStatus();
+  if (session.status === "authenticated") return true;
+  if (session.status === "unauthenticated") return false;
   if (getAuthToken() !== undefined) return true;
   return getSessionToken() !== undefined;
 }
@@ -717,17 +726,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     const load = async () => {
-      // Session-first: device token wins (snapshot key), session bearer falls
-      // back. Online auth itself rides cookie + compat bearer in apiFetch.
+      // Session-first: online auth rides the cookie (+ compat bearer) in
+      // apiFetch — no storage token required. Snapshot migration/preload
+      // still need a token-derived key, so they are skipped cookie-only
+      // (offline snapshot V3 keyed by identity lands in Phase 3); the
+      // online bootstrap itself MUST run (AUTH-T02).
       const token = effectiveOnlineToken();
-      if (!token) return;
 
       try {
         // 1. Migrate v1 → v2 (reads v1 localStorage, writes v2 IndexedDB, deletes v1)
-        await migrateV1toV2(token).catch(() => {});
+        if (token) {
+          await migrateV1toV2(token).catch(() => {});
+        }
 
         // 2. Preload existing v2 snapshot for offline fallback
-        const snapshotPreload = await preloadSnapshot(token).catch(() => ({}));
+        const snapshotPreload = token ? await preloadSnapshot(token).catch(() => ({})) : {};
 
         // 2b. T2.6: reflect a locked snapshot in UI state before bootstrapping
         // (offline boot with an expired/unverifiable snapshot shows the lock,
@@ -1413,8 +1426,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // ── Lazy load subscriptions (not fetched during bootstrap) ────
 
   const refreshSubscriptions = useCallback(async () => {
+    // Session-first: subscriptions lazy-load whenever the session authority
+    // allows online use — no storage token required (cookie-only boots too).
+    // Snapshot persistence inside the adapter is best-effort and skipped
+    // without a token-derived key until offline V3 (Phase 3).
+    if (!apiUsable()) return;
     const token = effectiveOnlineToken();
-    if (!token) return;
 
     const adapter = createSubscriptionsAdapter({ token, online: apiUsable() });
     const result = await adapter.refresh();

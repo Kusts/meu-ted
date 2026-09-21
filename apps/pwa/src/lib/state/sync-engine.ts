@@ -37,14 +37,17 @@ export interface BootstrapExtras {
  * Run the full bootstrap: fetch all domains, classify results, dispatch,
  * and persist live data to v2 snapshot.
  *
- * @param token — auth token
+ * @param token — snapshot key (token-derived fingerprint). `undefined` on
+ *   cookie-only boots: reads still run via the cookie session, but v2
+ *   snapshot writes are skipped (identity-keyed offline V3 lands in
+ *   Phase 3; never persist a snapshot that cannot be owner-checked).
  * @param dispatch — dispatches reducer actions
  * @param expireSession — called on 401
  * @param snapshotPreload — optional preloaded v2 snapshot data for offline boot
  * @returns the profile and quick insights fetched during the bootstrap
  */
 export async function runBootstrap(
-  token: string,
+  token: string | undefined,
   dispatch: Dispatch,
   expireSession: () => void,
   snapshotPreload?: SnapshotPreload,
@@ -92,7 +95,10 @@ export async function runBootstrap(
     quickInsights: insightsResult.status === "fulfilled" ? (insightsResult.value as QuickInsight[]) : [],
   };
 
-  // Collect v2 save promises so we await them before BOOTSTRAP_COMPLETE
+  // Collect v2 save promises so we await them before BOOTSTRAP_COMPLETE.
+  // Skipped cookie-only (token undefined): without an owner-checkable key
+  // no snapshot write is safe — Phase 3 (V3) reintroduces it keyed by
+  // authenticated identity.
   const savePromises: Promise<void>[] = [];
 
   // ── Accounts + credit cards merge ────────────────────────
@@ -113,11 +119,11 @@ export async function runBootstrap(
         else merged.push(c);
       }
       dispatch({ type: "DOMAIN_LIVE", domain: "accounts", data: merged, syncedAt: new Date().toISOString() });
-      savePromises.push(saveSnapshotDomain(token, "accounts", merged));
+      if (token !== undefined) savePromises.push(saveSnapshotDomain(token, "accounts", merged));
     } else if (cardsData.length > 0) {
       merged = cardsData;
       dispatch({ type: "DOMAIN_LIVE", domain: "accounts", data: cardsData, syncedAt: new Date().toISOString() });
-      savePromises.push(saveSnapshotDomain(token, "accounts", cardsData));
+      if (token !== undefined) savePromises.push(saveSnapshotDomain(token, "accounts", cardsData));
     } else {
       // Snapshot fallback from preload or unavailable
       const preloaded = snapshotPreload?.accounts;
@@ -135,7 +141,7 @@ export async function runBootstrap(
     if (result.status === "fulfilled") {
       const value = result.value;
       dispatch({ type: "DOMAIN_LIVE", domain, data: value, syncedAt: new Date().toISOString() });
-      savePromises.push(saveSnapshotDomain(token, domain, value as never));
+      if (token !== undefined) savePromises.push(saveSnapshotDomain(token, domain, value as never));
     } else {
       const preloaded = snapshotPreload?.[domain];
       if (preloaded) {
@@ -154,7 +160,7 @@ export async function runBootstrap(
     if (txResult.status === "fulfilled") {
       const items = (txResult.value as { items: unknown }).items;
       dispatch({ type: "DOMAIN_LIVE", domain: "transactions", data: items, syncedAt: new Date().toISOString() });
-      savePromises.push(saveSnapshotDomain(token, "transactions", items as never));
+      if (token !== undefined) savePromises.push(saveSnapshotDomain(token, "transactions", items as never));
     } else {
       const preloaded = snapshotPreload?.transactions;
       if (preloaded) {
@@ -192,7 +198,7 @@ export async function runBootstrap(
  * Synchronizes a paginated slice of transactions.
  */
 export async function syncTransactionsPage(
-  token: string,
+  token: string | undefined,
   options: PaginationOptions = { page: 1, limit: 50 },
   dispatch?: Dispatch,
 ): Promise<{ items: Transaction[]; total: number; page: number; limit: number }> {
@@ -206,7 +212,7 @@ export async function syncTransactionsPage(
       data: res.items,
       syncedAt: new Date().toISOString(),
     });
-    void saveSnapshotDomain(token, "transactions", res.items);
+    if (token !== undefined) void saveSnapshotDomain(token, "transactions", res.items);
   }
   return {
     items: res.items,

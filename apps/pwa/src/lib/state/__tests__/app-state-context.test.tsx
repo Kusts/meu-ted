@@ -1726,7 +1726,7 @@ describe("AppStateProvider — runtime 401", () => {
       new ApiError(401, "auth.error", "Token inválido"),
     );
     const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <SessionProvider value={{ expireSession }}>
+      <SessionProvider value={{ expireSession, session: { status: "unknown" } }}>
         <AppStateProvider>{children}</AppStateProvider>
       </SessionProvider>
     );
@@ -1744,7 +1744,7 @@ describe("AppStateProvider — runtime 401", () => {
       new ApiError(401, "auth.error", "Token inválido"),
     );
     const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <SessionProvider value={{ expireSession }}>
+      <SessionProvider value={{ expireSession, session: { status: "unknown" } }}>
         <AppStateProvider>{children}</AppStateProvider>
       </SessionProvider>
     );
@@ -2198,7 +2198,7 @@ describe("AppStateProvider � boot dedupe, value stability and central 401", ()
   it("expires the session for a 401 that never passes through AppState handlers", async () => {
     const expireSession = vi.fn();
     const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <SessionProvider value={{ expireSession }}>
+      <SessionProvider value={{ expireSession, session: { status: "unknown" } }}>
         <AppStateProvider>{children}</AppStateProvider>
       </SessionProvider>
     );

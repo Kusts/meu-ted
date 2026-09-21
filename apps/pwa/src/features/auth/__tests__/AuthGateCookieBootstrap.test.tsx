@@ -108,7 +108,9 @@ describe("Cookie-only bootstrap (AUTH-T01 / AUTH-T02 — RED)", () => {
     expect(probe).toBeInTheDocument();
 
     // …mas o bootstrap financeiro precisa executar sem nenhum bearer em storage.
-    expect(endpoints.fetchAccounts).toHaveBeenCalled();
+    // (waitFor: o probe monta em "loading" antes do load() assíncrono chamar
+    // os endpoints.)
+    await waitFor(() => expect(endpoints.fetchAccounts).toHaveBeenCalled(), { timeout: 3000 });
     await waitFor(() =>
       expect(screen.getByTestId("cookie-bootstrap-probe")).toHaveTextContent("accounts:1"),
     );
@@ -132,7 +134,7 @@ describe("Cookie-only bootstrap (AUTH-T01 / AUTH-T02 — RED)", () => {
 
     // Bootstrap não pode exigir device token: só a sessão cookie + autoridade.
     expect(localStorage.getItem("pi-finance:token")).toBeNull();
-    expect(endpoints.fetchAccounts).toHaveBeenCalled();
+    await waitFor(() => expect(endpoints.fetchAccounts).toHaveBeenCalled(), { timeout: 3000 });
     await waitFor(() =>
       expect(screen.getByTestId("cookie-bootstrap-probe")).toHaveTextContent("accounts:1"),
     );

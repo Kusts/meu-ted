@@ -7,7 +7,13 @@ import * as endpoints from "@/lib/api/endpoints";
 import { saveSnapshotDomain, loadSnapshotDomain } from "./snapshot-store";
 
 export interface SubscriptionsAdapterOptions {
-  token: string;
+  /**
+   * Snapshot key (token-derived). `undefined` on cookie-only boots: live
+   * reads still run via the cookie session, but v2 snapshot
+   * persist/fallback is skipped (identity-keyed offline V3 lands in
+   * Phase 3). Never a secret at rest beyond the existing fingerprint.
+   */
+  token: string | undefined;
   online: boolean;
 }
 
@@ -34,16 +40,19 @@ export function createSubscriptionsAdapter(options: SubscriptionsAdapterOptions)
 
     try {
       const data = await endpoints.fetchSubscriptions();
-      // Best-effort: persist to v2 snapshot (failure must not break UI)
-      await saveSnapshotDomain(token, "subscriptions", data).catch(() => {});
+      // Best-effort: persist to v2 snapshot (failure must not break UI).
+      // Skipped cookie-only (no owner-checkable key until V3).
+      if (token !== undefined) {
+        await saveSnapshotDomain(token, "subscriptions", data).catch(() => {});
+      }
       return {
         data,
         source: "live",
         syncedAt: new Date().toISOString(),
       };
     } catch {
-      // Nonessential failure: fallback to snapshot
-      const snap = await loadSnapshotDomain(token, "subscriptions");
+      // Nonessential failure: fallback to snapshot (only when keyed)
+      const snap = token !== undefined ? await loadSnapshotDomain(token, "subscriptions") : null;
       if (snap) {
         return {
           data: snap.data as Subscription[],

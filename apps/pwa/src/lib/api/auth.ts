@@ -1,5 +1,6 @@
-import { apiFetch, apiGet } from "./client";
+import { apiFetch, apiGet, ApiError } from "./client";
 import { getSessionToken } from "@/lib/auth/token-store";
+import { classifyAuthSignal } from "@/lib/auth/auth-state-machine";
 
 export type VerifyAccountInviteResult = {
   email: string;
@@ -71,18 +72,44 @@ export async function fetchPendingMe(): Promise<PendingMeResult> {
   });
 }
 
-export async function fetchSession(): Promise<{ user: { id: string; email: string; name: string } | null }> {
+export type SessionUser = { id: string; email: string; name: string };
+
+/** Session probe signal (V4.1 Closure AUTH-04, INV-05). */
+export type SessionProbeStatus = "authenticated" | "unauthenticated" | "unreachable";
+
+export interface SessionProbeResult {
+  user: SessionUser | null;
+  /**
+   * authenticated: 2xx with a user. unauthenticated: the server answered
+   * "no session" (2xx without user, 401/403 → purge + login). unreachable:
+   * the server never answered about the session (network/timeout/5xx →
+   * NEVER logout, NEVER offline-unlock of an invalid session by itself).
+   */
+  status: SessionProbeStatus;
+}
+
+/**
+ * Session probe (cookie-first: `credentials: "include"` in apiFetch, compat
+ * bearer only as fallback). Distinguishes 2xx / 401+403 / unreachable via
+ * the auth state machine — network errors are NOT collapsed into logout.
+ */
+export async function fetchSession(): Promise<SessionProbeResult> {
   try {
     const headers: Record<string, string> = {};
     const token = getSessionToken();
     if (token) headers.Authorization = `Bearer ${token}`;
-    const res = await apiFetch<{ user: { id: string; email: string; name: string }; session: unknown }>("/auth/session", {
+    const res = await apiFetch<{ user: SessionUser; session: unknown }>("/auth/session", {
       method: "GET",
       headers,
     });
-    return { user: res.user };
-  } catch {
-    return { user: null };
+    if (!res.user) return { user: null, status: "unauthenticated" };
+    return { user: res.user, status: "authenticated" };
+  } catch (e) {
+    if (e instanceof ApiError) {
+      const state = classifyAuthSignal({ kind: "http", status: e.status, code: e.code });
+      return { user: null, status: state === "unauthenticated" ? "unauthenticated" : "unreachable" };
+    }
+    return { user: null, status: "unreachable" };
   }
 }
 
