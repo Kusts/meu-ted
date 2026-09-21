@@ -3,6 +3,10 @@ import { renderHook, act, waitFor } from "@/lib/test-utils";
 import { AppStateProvider, useAppState } from "../app-state-context";
 import * as endpoints from "@/lib/api/endpoints";
 import { setOfflineSubjectId } from "@/lib/auth/offline-subject";
+import {
+  resetSessionStatus,
+  setSessionStatus,
+} from "@/lib/auth/session-authority";
 import type { Account, CardStatement, Transaction } from "@/lib/state/types";
 
 const apiConfigState = vi.hoisted(() => ({ forceUnconfigured: false }));
@@ -18,6 +22,7 @@ vi.mock("@/lib/api/client", async (importOriginal) => {
 beforeEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  resetSessionStatus();
   apiConfigState.forceUnconfigured = false;
   localStorage.clear();
   const dbs = await indexedDB.databases();
@@ -30,6 +35,8 @@ function apiReady() {
   apiConfigState.forceUnconfigured = false;
   vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "http://localhost:3001");
   localStorage.setItem("pi-finance:token", "test-token-abc");
+  // V41C FIX 1: live bootstrap requires a probe-confirmed session.
+  setSessionStatus({ status: "authenticated", user: { userId: "test-user" } });
   setOfflineSubjectId("66666666-7777-4888-8999-aaaaaaaaaaaa");
 }
 
