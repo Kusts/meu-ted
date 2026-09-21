@@ -135,17 +135,23 @@ jobs:
             const { data } = await github.rest.actions.listWorkflowRunsForRepo({
               owner, repo, head_sha: sha, per_page: 50,
             });
-            for (const name of ['PWA CI', 'CI']) {
-              const runs = data.workflow_runs
+            // INV-08 (no silent skips): resolve candidates without
+            // `continue;` — prefer PWA CI, fall back to CI, fail closed
+            // when no successful run exists for the deployed SHA.
+            const artifactSources = ['PWA CI', 'CI'].map((name) => ({
+              name,
+              runs: data.workflow_runs
                 .filter((r) => r.name === name && r.conclusion === 'success')
-                .sort((a, b) => b.created_at.localeCompare(a.created_at));
-              if (runs.length === 0) continue;
-              core.info(`Using ${name} run #${runs[0].run_number} (id=${runs[0].id}).`);
-              core.setOutput('run_id', String(runs[0].id));
-              core.setOutput('source', name === 'PWA CI' ? 'pwaci' : 'ci');
+                .sort((a, b) => b.created_at.localeCompare(a.created_at)),
+            }));
+            const resolved = artifactSources.find((source) => source.runs.length > 0);
+            if (!resolved) {
+              core.setFailed(`Deploy blocked: no successful CI/PWA CI run found for ${sha}.`);
               return;
             }
-            core.setFailed(`Deploy blocked: no successful CI/PWA CI run found for ${sha}.`);
+            core.info(`Using ${resolved.name} run #${resolved.runs[0].run_number} (id=${resolved.runs[0].id}).`);
+            core.setOutput('run_id', String(resolved.runs[0].id));
+            core.setOutput('source', resolved.name === 'PWA CI' ? 'pwaci' : 'ci');
 
       - name: Download tested build artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
