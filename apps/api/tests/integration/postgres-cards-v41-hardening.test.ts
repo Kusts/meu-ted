@@ -91,6 +91,12 @@ const createCanonicalTables = async (db: Pool): Promise<void> => {
       description TEXT NOT NULL, amount_cents BIGINT NOT NULL, date DATE NOT NULL,
       account_id UUID NOT NULL, category_id UUID, subcategory_id UUID, notes TEXT,
       transfer_to_account_id UUID, statement_id UUID,
+      -- V056/V057: structured statement-payment link (canonical-only).
+      -- Mirrors the migrated final state: nullable column + composite
+      -- (statement_payment_id, household_id) -> statements(id, household_id)
+      -- FK + partial index. Legacy fixture tables deliberately omit it
+      -- (legacy payStatement keeps description-matched coverage).
+      statement_payment_id UUID,
       installments_total INTEGER, installment_number INTEGER,
       deleted_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -112,6 +118,19 @@ const createCanonicalTables = async (db: Pool): Promise<void> => {
       status TEXT NOT NULL DEFAULT 'active',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    -- V057 backing UNIQUE for the composite statement-payment FK below
+    -- (statements.id is the PK, but Postgres only accepts a PK or an
+    -- explicit UNIQUE covering the exact referenced columns).
+    ALTER TABLE statements
+      ADD CONSTRAINT statements_id_household_uidx UNIQUE (id, household_id);
+    -- V056+V057 final state: composite household FK + partial index.
+    ALTER TABLE transactions
+      ADD CONSTRAINT transactions_statement_payment_household_fkey
+      FOREIGN KEY (statement_payment_id, household_id)
+      REFERENCES statements (id, household_id);
+    CREATE INDEX transactions_statement_payment_idx
+      ON transactions (statement_payment_id)
+      WHERE statement_payment_id IS NOT NULL AND deleted_at IS NULL;
   `);
 };
 
