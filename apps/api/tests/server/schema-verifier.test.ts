@@ -45,6 +45,14 @@ describe('G0.4.5 — read-only schema verification', () => {
     await expect(verifySchema(fakePool(legacyRows, expectedMigrationManifest(true)), true)).resolves.toBe(true);
   });
 
+  it('accepts a production VPS legacy ledger topped at V054 (V055 stays canonical-only)', async () => {
+    const legacyManifest = expectedMigrationManifest(true);
+    expect(legacyManifest.map(({ version }) => version)).not.toContain(55);
+    expect(Math.max(...legacyManifest.map(({ version }) => version))).toBe(54);
+    const vpsLedger = legacyManifest.filter(({ version }) => version <= 54);
+    await expect(verifySchema(fakePool(legacyRows, vpsLedger), true)).resolves.toBe(true);
+  });
+
   it('fails closed when schema query errors', async () => {
     await expect(verifySchema(fakePool([], [], true))).resolves.toBe(false);
   });

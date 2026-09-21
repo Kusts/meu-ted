@@ -8,9 +8,9 @@ const v055 = readFileSync(
 );
 
 describe('V055 negative bank/cash balances', () => {
-  it('is registered in the canonical and legacy manifests', () => {
+  it('is registered in the canonical manifest only (VPS legacy ledger tops at V054)', () => {
     expect(expectedMigrationManifest(false).map(({ version }) => version)).toContain(55);
-    expect(expectedMigrationManifest(true).map(({ version }) => version)).toContain(55);
+    expect(expectedMigrationManifest(true).map(({ version }) => version)).not.toContain(55);
   });
 
   it('does not touch V001 and never drops tables or columns', () => {
@@ -29,7 +29,7 @@ describe('V055 negative bank/cash balances', () => {
     expect(v055).toMatch(/kind <> 'credit_card' OR balance_cents >= 0/);
   });
 
-  it('is legacy-safe by guard (no-op where the canonical accounts shape is absent)', () => {
+  it('keeps its SQL-level no-op guard but is not a legacy manifest member', () => {
     expect(v055).toMatch(/IF EXISTS/);
     expect(v055).toMatch(/information_schema\.columns/);
     expect(v055).toMatch(/column_name = 'balance_cents'/);

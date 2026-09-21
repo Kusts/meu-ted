@@ -52,7 +52,12 @@ como autorização de semântica de saldo.
    `accounts_balance_nonnegative_card_chk CHECK (kind <> 'credit_card' OR
    balance_cents >= 0)`, sem tocar a V001, com bloco `DO` guardado por
    `information_schema` — no-op verificado no shape legado de saldo
-   computado — e registro em `migrate.ts` `LEGACY_SAFE_PREFIXES`);
+   computado — e registro **canônico** em `migrate.ts`;
+   **correção fix-v055-legacy-startup-contract: a V055 é canônica
+   exclusiva, fora de `LEGACY_SAFE_PREFIXES` com justificativa em
+   `LEGACY_EXCLUDED_JUSTIFICATIONS`, porque o ledger legado da VPS
+   termina em V054 e o `verifySchema` legado recusa boot com entrada
+   V055 no manifesto**);
    validação de débito por kind (`assertDebitAllowed` em
    `writes/postgres.ts`, com paridade em `writes/in-memory.ts`,
    `payables/*` e `cards/*`: `BANK`/`CASH` nunca rejeitam por saldo

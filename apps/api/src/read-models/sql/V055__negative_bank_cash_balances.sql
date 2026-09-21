@@ -8,9 +8,9 @@
 -- old constraint, hence satisfy the weaker new one — safe on upgrade and
 -- on fresh databases (V001 runs first, this migration swaps the check).
 --
--- Legacy-safe by guard: the legacy pi_financeiro accounts shape carries
+-- Canonical-only by manifest: the legacy pi_financeiro accounts shape carries
 -- computed balances (initial_balance_cents, no stored balance_cents/kind
--- check), where this block is a verified no-op.
+-- check), but its production ledger intentionally stops at V054.
 DO $$
 BEGIN
   IF EXISTS (
