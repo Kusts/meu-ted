@@ -1,6 +1,6 @@
 {
   "version": "1.2.0",
-  "lastVerified": "2026-09-16T16:30Z",
+  "lastVerified": "2026-09-21",
   "activeWorkspaces": [
     "apps/api",
     "apps/pwa",
@@ -8,7 +8,7 @@
   ],
   "apps": {
     "api": {
-      "name": "pi-finance-api",
+      "name": "meu-ted-api",
       "framework": "Fastify",
       "runtime": "Node.js (Hostinger VPS)"
     },
@@ -21,18 +21,18 @@
       "name": "pi-finance-agent",
       "framework": "Cloudflare Workers / Agents SDK (FinanceChatAgent extends AIChatAgent)",
       "runtime": "Cloudflare Workers / Durable Objects (v2 FinanceChatAgent)",
-      "bindings": ["FINANCE_CHAT_AGENT (FinanceChatAgent)"],
+      "bindings": [
+        "FINANCE_CHAT_AGENT (FinanceChatAgent)"
+      ],
       "llmConfig": "V034 global, providers opencode-zen/go, openai-api, openai-codex-subscription experimental_blocked"
     }
   },
   "counts": {
-    "apiRoutes": 104,
-    "databaseMigrations": 35,
-    "latestMigration": "V035__agent_connection_token_replay.sql",
+    "apiRoutes": 127,
+    "databaseMigrations": 55,
+    "latestMigration": "V057__statement_payment_household_fk.sql",
     "capabilitiesTotal": 72,
-    "capabilitiesInApiMode": 52,
-    "pwaRoutes": 3,
-    "agentTools": 52
+    "capabilitiesInApiMode": 51
   },
   "architecture": {
     "sourceOfTruth": "Fastify PostgreSQL API (apps/api)",

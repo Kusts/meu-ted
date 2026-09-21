@@ -1,5 +1,11 @@
 # Production Runtime Topology Snapshot
 
+> **SNAPSHOT HISTÓRICO — não usar como estado atual.**
+>
+> - **status:** `historical`
+> - **verifiedAt:** `2026-08-18T17:13:47.130Z` (data de congelamento deste documento, pré-V4.1)
+> - **supersededBy:** `docs/ARCHITECTURE-CURRENT.md` e `AGENTS.md` (estado canônico atual)
+
 **Timestamp:** 2026-08-18T17:13:47.130Z  
 **Host:** hostinger-vps-financeiro  
 **Uptime:** up 45 days, 12:30  
