@@ -139,7 +139,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (current && selected !== current) {
         setLoading(true);
         closeAllSockets("workspace access revoked");
-        await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true });
+        // V41C FIX 3 (AUTH-T07): the revocation-triggered auto-switch purges
+        // the workspace-side offline binding (workspace id, subject
+        // partition, age stamp) — binding X must never survive as Y. The
+        // user principal survives for rebinding; tokens are untouched.
+        await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true, clearWorkspaceBinding: true });
       }
       activeWorkspaceIdRef.current = selected;
       setActiveWorkspaceIdState(selected);
@@ -173,7 +177,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         if (current && selected !== current) {
           setLoading(true);
           closeAllSockets("workspace access revoked");
-          await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true });
+          // V41C FIX 3 (AUTH-T07): same binding purge as refreshWorkspaces —
+          // see the note above.
+          await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true, clearWorkspaceBinding: true });
         }
         activeWorkspaceIdRef.current = selected;
         setActiveWorkspaceIdState(selected);
