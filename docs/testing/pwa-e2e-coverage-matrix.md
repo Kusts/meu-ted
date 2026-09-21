@@ -146,6 +146,7 @@ Every ID is atomic: one visible action, required state, expected UI/API effect, 
 | SMOKE-02 | `/registros` | opt-in | direct load `/registros` → registration shell renders | no auth | production-smoke |
 | SMOKE-03 | `/contas` | opt-in | direct load `/contas` → registration shell renders | no auth | production-smoke |
 | SMOKE-04 | `/cartoes` | opt-in | direct load `/cartoes` → registration shell renders | no auth | production-smoke |
+| SMOKE-05 | `/api/build-info` | opt-in | deployed bundle release identity (`gitSha`) equals the approved deploy SHA (`EXPECTED_SHA`) | no auth | production-smoke |
 | PAYSTMT-01 | `/cartoes` (statement detail) | M | pay invoice in full → `POST /cards/statements/:id/pay` | wrong id 404 path | card-statement-payment |
 | PAYSTMT-02 | `/cartoes` (statement detail) | M | paid invoice shows "Paga" badge and disabled pay CTA after reload | unpaid state keeps CTA | card-statement-payment |
 | TRF-01 | `/registros` (quick menu) | M | transfer via quick menu → `POST /transfers` | missing field aborts | transfer-record |

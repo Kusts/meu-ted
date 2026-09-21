@@ -152,5 +152,46 @@
     ],
     "effects": ["next"],
     "range": "<=0.35.4-rc.0"
+  },
+  {
+    "id": "pwa-2026-09-21-sharp-audit-shape",
+    "scope": "runtime",
+    "owner": "project-maintainer",
+    "justification": "Same accepted sharp pin risk as pwa-2026-09-19-sharp, alternate npm audit graph shape: some npm versions report sharp with effects [] (next not listed). Kept so the strict canonical matcher passes on both npm shapes.",
+    "expiresOn": "2026-12-31",
+    "name": "sharp",
+    "severity": "high",
+    "via": [
+      {
+        "source": 1124066,
+        "name": "sharp",
+        "dependency": "sharp",
+        "title": "sharp inherited vulnerabilities in libvips: CVE-2026-33327, CVE-2026-33328, CVE-2026-35590, CVE-2026-35591",
+        "url": "https://github.com/advisories/GHSA-f88m-g3jw-g9cj",
+        "severity": "high",
+        "cwe": ["CWE-1395"],
+        "cvss": {
+          "score": 0,
+          "vectorString": null
+        },
+        "range": "<0.35.0"
+      },
+      {
+        "source": 1193725,
+        "name": "sharp",
+        "dependency": "sharp",
+        "title": "sharp: Vulnerabilities in libheif: GHSA-g89c-p67h-r497 and GHSA-2jg2-4ch7-h545",
+        "url": "https://github.com/advisories/GHSA-rgj7-g3m4-5g8c",
+        "severity": "high",
+        "cwe": ["CWE-122"],
+        "cvss": {
+          "score": 0,
+          "vectorString": null
+        },
+        "range": "<0.35.4"
+      }
+    ],
+    "effects": [],
+    "range": "<=0.35.4-rc.0"
   }
 ]

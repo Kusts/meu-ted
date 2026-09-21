@@ -219,11 +219,11 @@ jobs:
       - name: Create disposable database marker
         run: |
           PGPASSWORD=test psql -h localhost -U test -d pi_financeiro_test \
-            -c "CREATE TABLE IF NOT EXISTS _test_marker (marker_value TEXT NOT NULL); TRUNCATE _test_marker; INSERT INTO _test_marker(marker_value) VALUES ('ci-test-marker-00000000-0000-0000-0000-000000000001');"
+            -c "CREATE TABLE IF NOT EXISTS _test_marker (marker_value TEXT NOT NULL); TRUNCATE _test_marker; INSERT INTO _test_marker(marker_value) VALUES ('00000000-0000-4000-8000-000000000001');"
       - run: pnpm --filter meu-ted-api test:integration
         env:
           DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
-          DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001
+          DB_TEST_MARKER: 00000000-0000-4000-8000-000000000001
       - name: Build shared contracts (workspace exports resolve dist)
         run: pnpm --filter @pi-finance/llm-contracts build
       - name: Apply API migrations to test database
@@ -234,24 +234,24 @@ jobs:
         run: pnpm --filter meu-ted-api test
         env:
           DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
-          DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001
+          DB_TEST_MARKER: 00000000-0000-4000-8000-000000000001
       # V4.1 Phase 9 (Tasks 9.1–9.3, 9.5): full integration, financial
       # concurrency, and XLT suites run against this same Postgres.
       - name: API integration suite (all)
         run: pnpm --filter meu-ted-api test:integration:all
         env:
           DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
-          DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001
+          DB_TEST_MARKER: 00000000-0000-4000-8000-000000000001
       - name: API financial concurrency suite
         run: pnpm --filter meu-ted-api test:concurrency
         env:
           DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
-          DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001
+          DB_TEST_MARKER: 00000000-0000-4000-8000-000000000001
       - name: API XLT suite
         run: pnpm --filter meu-ted-api test:xlt
         env:
           DATABASE_URL_TEST: postgres://test:test@localhost:5432/pi_financeiro_test
-          DB_TEST_MARKER: ci-test-marker-00000000-0000-0000-0000-000000000001
+          DB_TEST_MARKER: 00000000-0000-4000-8000-000000000001
       - name: Migration validation (read-only)
         run: pnpm --filter meu-ted-api exec tsx src/scripts/migrate.ts --validate
         env:
