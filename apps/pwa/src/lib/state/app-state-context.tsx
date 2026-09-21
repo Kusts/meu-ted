@@ -376,23 +376,20 @@ function initialSync(source: DataSource): Record<DomainKey, DomainSync> {
  * True when API base URL is configured AND the session authority allows
  * online use (V4.1 Closure AUTH-01, session-first, SPEC §4/INV-02).
  *
- * The online-use gate no longer requires a device/session bearer in
- * storage: a server-confirmed `authenticated` session (cookie via
- * `credentials: "include"` in apiFetch) boots normally with zero storage
- * tokens (compat OFF). Only an explicit `unauthenticated` session (or a
- * missing API base) keeps the gate closed. `unknown`/`unreachable` fall
- * back to the legacy bearer presence so compat-ON flows and direct
- * (non-AuthGate) boots behave exactly as before. Device-scoped flows and
- * the offline snapshot keying still use the device token where present
- * (snapshot partition key untouched — V3 lands in Phase 3).
+ * Online use requires a server-confirmed `authenticated` session (cookie via
+ * `credentials: "include"` in apiFetch) — a legacy bearer in storage NEVER
+ * unlocks live I/O by itself (V41C FIX 1). `unauthenticated` stays closed;
+ * `unreachable` routes exclusively through the V3 offline path
+ * (`resolveUnreachableOfflineRoute`, never live bootstrap); `unknown`
+ * (pre-probe boot) waits for probe resolution instead of bootstrapping on
+ * bearer presence. Compat ON keeps the normal legacy boot working (bearer
+ * present + probe succeeds → `authenticated`); compat OFF is cookie session
+ * authority only. Device-scoped flows and the offline snapshot keying still
+ * use the device token where present (snapshot partition key untouched).
  */
 function apiUsable(): boolean {
   if (!isApiConfigured()) return false;
-  const session = getSessionStatus();
-  if (session.status === "authenticated") return true;
-  if (session.status === "unauthenticated") return false;
-  if (getAuthToken() !== undefined) return true;
-  return getSessionToken() !== undefined;
+  return getSessionStatus().status === "authenticated";
 }
 
 /**
