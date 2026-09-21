@@ -135,8 +135,8 @@ jobs:
             const { data } = await github.rest.actions.listWorkflowRunsForRepo({
               owner, repo, head_sha: sha, per_page: 50,
             });
-            // INV-08 (no silent skips): resolve candidates without
-            // `continue;` — prefer PWA CI, fall back to CI, fail closed
+            // INV-08 (no silent skips): resolve candidates without loop
+            // short-circuit — prefer PWA CI, fall back to CI, fail closed
             // when no successful run exists for the deployed SHA.
             const artifactSources = ['PWA CI', 'CI'].map((name) => ({
               name,
