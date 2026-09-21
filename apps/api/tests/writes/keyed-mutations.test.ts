@@ -158,6 +158,37 @@ describe('V4.1 Phase 3 — legacy store joins the claim tx', () => {
   });
 });
 
+describe('V4.1 Phase 4 — fail-closed when the claim tx has no InTx extension', () => {
+  it('claimTx present but no *InTx → invariant error, plain method never runs', async () => {
+    const plain = {
+      createExpense: vi.fn(async () => ({ id: 'tx-1' })),
+      createIncome: vi.fn(async () => ({ id: 'tx-1' })),
+      createTransfer: vi.fn(async () => ({ id: 'tx-1' })),
+      updateTransaction: vi.fn(async () => ({ id: 'tx-1' })),
+      softDeleteTransaction: vi.fn(async () => ({ id: 'tx-1' })),
+    };
+    const claimTx = makeClaimClient([]);
+    await expect(
+      runTransactionMutation(plain as never, claimTx, H, 'expense', expenseInput),
+    ).rejects.toMatchObject({ code: 'idempotency.atomic_mutation_not_supported' });
+    await expect(
+      runTransactionMutation(plain as never, claimTx, H, 'income', expenseInput),
+    ).rejects.toMatchObject({ code: 'idempotency.atomic_mutation_not_supported' });
+    await expect(
+      runTransactionMutation(plain as never, claimTx, H, 'transfer', expenseInput),
+    ).rejects.toMatchObject({ code: 'idempotency.atomic_mutation_not_supported' });
+    await expect(
+      runTransactionMutation(plain as never, claimTx, H, 'update', { id: 'tx-1', patch: {} }),
+    ).rejects.toMatchObject({ code: 'idempotency.atomic_mutation_not_supported' });
+    await expect(
+      runTransactionMutation(plain as never, claimTx, H, 'softDelete', { id: 'tx-1' }),
+    ).rejects.toMatchObject({ code: 'idempotency.atomic_mutation_not_supported' });
+    for (const fn of Object.values(plain)) {
+      expect(fn).not.toHaveBeenCalled();
+    }
+  });
+});
+
 describe('V4.1 Phase 3 — in-memory keeps one-phase semantics', () => {
   it('runs the mutation synchronously through the plain method (no tx client)', async () => {
     const { state, writes } = createInMemoryStores();

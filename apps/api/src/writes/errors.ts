@@ -14,6 +14,7 @@ export type DomainErrorCode =
   | "conflict"
   | "idempotency.conflict"
   | "idempotency.in_progress"
+  | "idempotency.atomic_mutation_not_supported"
   | "unsupported"
   | "approval.not_found"
   | "approval.requester_only"
@@ -77,6 +78,18 @@ export const domainErrors = {
       "idempotency.in_progress",
       "Operação idêntica ainda em processamento; repita com a mesma chave.",
       409,
+    ),
+  // V4.1 Phase 4 (fail-closed atomicity): a keyed mutation arrived with an
+  // open claim transaction, but the backing store exposes no `*InTx`
+  // extension for the required operation — running the plain method would
+  // commit the effect OUTSIDE the claim transaction and silently lose
+  // atomicity. 500 (server-side invariant, never a client conflict);
+  // message is generic so no internals leak to clients.
+  atomicMutationNotSupported: (): DomainError =>
+    new DomainError(
+      "idempotency.atomic_mutation_not_supported",
+      "Operação não pôde ser executada com atomicidade garantida; tente novamente sem chave de idempotência.",
+      500,
     ),
   unsupported: (what: string): DomainError =>
     new DomainError("unsupported", messages.unsupported(what), 400),
