@@ -20,6 +20,25 @@ jobs:
       contents: read
       actions: read
     steps:
+      # V4.1 closure (SPEC CI-03): explicit same-repository origin check.
+      # Fork-originated workflow_run events must never satisfy the deploy
+      # gate, even if every other check below passes.
+      - name: Require same-repository origin (fork fail-closed)
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          EXPECTED_REPO: ${{ github.repository }}
+        with:
+          script: |
+            const headRepo = process.env.HEAD_REPO;
+            const expected = process.env.EXPECTED_REPO;
+            core.info(`head_repository=${headRepo} repository=${expected}`);
+            if (headRepo !== expected) {
+              core.setFailed(`Deploy blocked: workflow_run head_repository '${headRepo}' does not match '${expected}'. Fork-originated runs cannot deploy.`);
+              return;
+            }
+            core.info(`Repository-origin gate passed for ${headRepo}.`);
+
       - name: Require CI and PWA CI success for the deployed SHA
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
@@ -134,7 +153,9 @@ jobs:
           const fs = require('fs');
           const m = JSON.parse(fs.readFileSync('/tmp/agent-manifest/manifest.json', 'utf8'));
           if (m.sha !== process.env.HEAD_SHA) { console.error('manifest sha mismatch: ' + m.sha); process.exit(1); }
-          console.log('manifest verified for ' + m.sha);
+          if (!m.lockfileHash || typeof m.lockfileHash !== 'string') { console.error('manifest missing lockfileHash — refusing to deploy'); process.exit(1); }
+          if (!m.wranglerVersion || typeof m.wranglerVersion !== 'string' || m.wranglerVersion.trim() === '') { console.error('manifest missing wranglerVersion — refusing to deploy'); process.exit(1); }
+          console.log('manifest verified for ' + m.sha + ' lockfileHash=' + m.lockfileHash + ' wrangler=' + m.wranglerVersion);
           "
       # DEBT2-CODER-ALLOWLISTS-FIX (shell-injection hardening): the repo
       # variable enters ONLY via step `env:` below — never interpolated into

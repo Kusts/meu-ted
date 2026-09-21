@@ -64,10 +64,29 @@ jobs:
       # no compiled output (tsc --noEmit; wrangler bundles deterministically
       # at deploy), so CI publishes a manifest proving THIS exact source tree
       # passed CI; agent-deploy.yml refuses to deploy without it.
+      # V4.1 closure (SPEC REL-03): manifest carries source SHA, workflow,
+      # run id, lockfile hash and wrangler version. agent-deploy.yml
+      # verifies every field fail-closed before deploying.
       - name: Write agent deploy manifest (SHA-pinned provenance)
+        env:
+          GIT_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           mkdir -p /tmp/agent-manifest
-          node -e "require('fs').writeFileSync('/tmp/agent-manifest/manifest.json', JSON.stringify({ sha: '${{ github.sha }}', workflow: 'CI', runId: '${{ github.run_id }}' }, null, 2) + '\n')"
+          LOCKFILE_HASH="$(sha256sum pnpm-lock.yaml | cut -d' ' -f1)"
+          WRANGLER_VERSION="$(pnpm --filter pi-finance-agent --fail-if-no-match exec wrangler --version)"
+          GIT_SHA="$GIT_SHA" RUN_ID="$RUN_ID" LOCKFILE_HASH="$LOCKFILE_HASH" WRANGLER_VERSION="$WRANGLER_VERSION" node -e "
+          const fs = require('fs');
+          const manifest = {
+            sha: process.env.GIT_SHA,
+            workflow: 'CI',
+            runId: process.env.RUN_ID,
+            lockfileHash: process.env.LOCKFILE_HASH,
+            wranglerVersion: (process.env.WRANGLER_VERSION || '').trim(),
+          };
+          if (!manifest.lockfileHash || !manifest.wranglerVersion) { console.error('refusing to write incomplete manifest'); process.exit(1); }
+          fs.writeFileSync('/tmp/agent-manifest/manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+          "
           cat /tmp/agent-manifest/manifest.json
       - name: Upload agent deploy manifest
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -264,6 +283,132 @@ jobs:
       - name: Smoke API and Codex Broker containers
         run: pnpm container:smoke
 
+  # ─── API image provenance (V4.1 closure SPEC REL-02) ──────────────────
+  # Main pushes only: publishes the API image to GHCR tagged by git SHA
+  # and records the immutable digest as a job output + JSON artifact.
+  # No VPS deploy automation here — the runbook documents manual
+  # digest-based deploy. Least privilege: packages:write on this job only.
+  api-image:
+    name: API — image digest to GHCR (main only)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.record.outputs.image }}
+      digest: ${{ steps.record.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Log in to GHCR (built-in GITHUB_TOKEN)
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+      # Same Dockerfile + release-identity build-args as the `docker` job.
+      - name: Build API image
+        env:
+          BUILD_SHA: ${{ github.sha }}
+          BUILD_ID: ${{ github.run_id }}
+          BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+        run: |
+          docker build -f apps/api/Dockerfile \
+            --build-arg BUILD_SHA="$BUILD_SHA" \
+            --build-arg BUILD_ID="$BUILD_ID" \
+            --build-arg BUILD_TIME="$BUILD_TIME" \
+            -t ghcr.io/kusts/meu-ted-api:sha-"$BUILD_SHA" .
+      - name: Push by SHA tag and record digest
+        id: record
+        env:
+          BUILD_SHA: ${{ github.sha }}
+          BUILD_ID: ${{ github.run_id }}
+          BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+        run: |
+          IMAGE="ghcr.io/kusts/meu-ted-api"
+          TAG="sha-$BUILD_SHA"
+          docker push "$IMAGE:$TAG"
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:$TAG")"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          mkdir -p /tmp/api-provenance
+          IMAGE="$IMAGE" TAG="$TAG" DIGEST="$DIGEST" GIT_SHA="$BUILD_SHA" BUILD_ID="$BUILD_ID" BUILD_TIME="$BUILD_TIME" node -e "
+          const fs = require('fs');
+          const provenance = {
+            image: process.env.IMAGE,
+            tag: process.env.TAG,
+            digest: process.env.DIGEST,
+            gitSha: process.env.GIT_SHA,
+            buildId: process.env.BUILD_ID,
+            builtAt: process.env.BUILD_TIME,
+          };
+          if (!provenance.digest) { console.error('refusing to record empty digest'); process.exit(1); }
+          fs.writeFileSync('/tmp/api-provenance/api-image-provenance.json', JSON.stringify(provenance, null, 2) + '\n');
+          "
+          cat /tmp/api-provenance/api-image-provenance.json
+      - name: Upload API image provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: api-image-provenance-${{ github.sha }}
+          path: /tmp/api-provenance/api-image-provenance.json
+          retention-days: 14
+
+  # ─── Consolidated release manifest (V4.1 closure SPEC REL-04) ────────
+  # Main pushes only, simple version: assembles one release-manifest
+  # JSON from the per-app provenance artifacts of this same run.
+  # Same-run artifact access uses the job runtime token; no extra
+  # permissions beyond the workflow default.
+  release-manifest:
+    name: Release — consolidated manifest (main only)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [api-image, agent, pwa-cloudflare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Download API image provenance
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: api-image-provenance-${{ github.sha }}
+          path: /tmp/release/api
+      - name: Download Agent deploy manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-deploy-manifest-${{ github.sha }}
+          path: /tmp/release/agent
+      - name: Assemble consolidated release manifest
+        env:
+          GIT_SHA: ${{ github.sha }}
+          BUILD_ID: ${{ github.run_id }}
+          BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+        run: |
+          mkdir -p /tmp/release
+          GIT_SHA="$GIT_SHA" BUILD_ID="$BUILD_ID" BUILD_TIME="$BUILD_TIME" node -e "
+          const fs = require('fs');
+          const api = JSON.parse(fs.readFileSync('/tmp/release/api/api-image-provenance.json', 'utf8'));
+          const agent = JSON.parse(fs.readFileSync('/tmp/release/agent/manifest.json', 'utf8'));
+          const manifest = {
+            gitSha: process.env.GIT_SHA,
+            buildId: process.env.BUILD_ID,
+            builtAt: process.env.BUILD_TIME,
+            components: {
+              api: { image: api.image, tag: api.tag, digest: api.digest },
+              pwa: { artifact: 'pwa-cloudflare-build-ci-' + process.env.GIT_SHA },
+              agent: { sha: agent.sha, lockfileHash: agent.lockfileHash, wranglerVersion: agent.wranglerVersion, runId: agent.runId },
+            },
+          };
+          fs.writeFileSync('/tmp/release/release-manifest-' + process.env.GIT_SHA + '.json', JSON.stringify(manifest, null, 2) + '\n');
+          "
+          cat /tmp/release/release-manifest-*.json
+      - name: Upload consolidated release manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-manifest-${{ github.sha }}
+          path: /tmp/release/release-manifest-*.json
+          retention-days: 14
+
   # ─── Capability inventory gate ────────────────────────────────────────
   capabilities:
     name: Capability inventory — 72 registered tools classified
@@ -373,9 +518,12 @@ jobs:
       - run: pnpm test:skip-gate
       - run: pnpm action-pins:check
 
-  # ─── Public-safety gate (V4.1 Phase 6 prep — SPEC §13.9) ──────────────
+  # ─── Public-safety gate (V4.1 closure SPEC §13 / CI-02) ───────────────
+  # Authoritative required check: --strict fails on warnings, and the
+  # aggregator `gate` job depends on this job. Default (warning-tolerant)
+  # mode is no longer sufficient for a green CI.
   public-safety:
-    name: Public safety — secrets + prohibited metadata
+    name: Public safety — secrets + prohibited metadata (strict)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -386,7 +534,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
-      - run: pnpm public-safety
+      - run: pnpm public-safety --strict
 
   # ─── Global gate ──────────────────────────────────────────────────────
   gate:
