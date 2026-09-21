@@ -37,6 +37,7 @@ import {
   getToken as getStoredDeviceToken,
 } from "@/lib/auth/token-store";
 import { clearOfflineSubjectId, setOfflineSubjectId } from "@/lib/auth/offline-subject";
+import { setOfflineWorkspaceId } from "@/lib/auth/offline-identity";
 import { isMembershipRevocation } from "@/lib/auth/auth-state-machine";
 import { noteLegacyAuthUsage } from "@/lib/auth/legacy-usage";
 
@@ -62,13 +63,25 @@ export function setActiveWorkspaceId(workspaceId: string | undefined): void {
   // persistido como offlineSubjectId no momento em que é definido após auth
   // válida — todo set passa por este choke point (workspace-context). Chave
   // dedicada, nunca IndexedDB de credencial. Best-effort, nunca quebra o fluxo.
+  // Phase 3 (AUTH-02): o mesmo choke point alimenta o offlineWorkspaceId da
+  // identidade V3 (somente UUID; recusado de forma silenciosa caso contrário).
   if (workspaceId !== undefined) {
     try {
       setOfflineSubjectId(workspaceId);
     } catch {
       /* noop */
     }
+    try {
+      setOfflineWorkspaceId(workspaceId);
+    } catch {
+      /* noop */
+    }
   }
+}
+
+/** In-memory active workspace id (the persisted V3 binding lives in offline-identity). */
+export function getActiveWorkspaceId(): string | undefined {
+  return activeWorkspaceId;
 }
 
 export function clearActiveWorkspaceId(): void {

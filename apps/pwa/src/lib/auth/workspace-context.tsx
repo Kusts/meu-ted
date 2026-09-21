@@ -304,7 +304,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (current) {
       closeAllSockets("workspace access revoked");
       clearActiveWorkspaceId();
-      await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true });
+      // Phase 3 (AUTH-T07): switching workspaces purges the snapshot slots
+      // (V1/V2/V3) + profile AND clears the workspace-side offline binding
+      // (workspace id, subject partition, age stamp) — workspace X data can
+      // never appear as workspace Y. The user principal survives for
+      // rebinding on the next online sync; tokens are untouched (no logout).
+      await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true, clearWorkspaceBinding: true });
     }
     activeWorkspaceIdRef.current = workspaceId;
     setActiveWorkspaceIdState(workspaceId);

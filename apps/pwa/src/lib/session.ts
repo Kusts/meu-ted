@@ -18,7 +18,11 @@
 
 import { clearToken, clearSessionToken } from "@/lib/auth/token-store";
 import { clearOfflineSubjectId } from "@/lib/auth/offline-subject";
-import { deleteV2Snapshot } from "@/lib/state/snapshot-db";
+import {
+  clearOfflineIdentity,
+  clearOfflineWorkspaceBinding,
+} from "@/lib/auth/offline-identity";
+import { deleteV2Snapshot, deleteV3Snapshot } from "@/lib/state/snapshot-db";
 import { clearActiveWorkspaceId } from "@/lib/api/client";
 import { clearAgentSession } from "@/lib/api/agent-auth";
 
@@ -71,6 +75,19 @@ export interface ClearSessionOptions {
   clearToken?: boolean;
   clearV1Snapshot?: boolean;
   clearProfile?: boolean;
+  /**
+   * Full offline-identity teardown (logout / 401 / 403 revocation —
+   * AUTH-T04/05/06): principal + workspace binding + subject partition.
+   * Pair with clearToken + clearV1Snapshot for a complete logout purge.
+   */
+  clearOfflineIdentity?: boolean;
+  /**
+   * Workspace-side teardown (workspace switch — AUTH-T07): workspace
+   * binding + subject partition + age stamp are cleared while the user
+   * principal survives for rebinding. Pair with clearV1Snapshot (which
+   * also deletes V3) so workspace X data can never appear as workspace Y.
+   */
+  clearWorkspaceBinding?: boolean;
   /** Callback to reset in-memory state (e.g. set states to initial values). */
   clearMemory?: () => void;
 }
@@ -87,6 +104,8 @@ export async function clearSensitiveSession(
     clearToken: doToken = false,
     clearV1Snapshot: doSnapshot = false,
     clearProfile: doProfile = false,
+    clearOfflineIdentity: doOfflineIdentity = false,
+    clearWorkspaceBinding: doWorkspaceBinding = false,
     clearMemory,
   } = options;
 
@@ -134,6 +153,26 @@ export async function clearSensitiveSession(
       }),
     );
   }
+  // Phase 3 (AUTH-T06/T07): explicit offline-identity teardown per case.
+  // Logout/revocation clears principal + workspace + subject; workspace
+  // switch clears the workspace side (binding + subject + stamp) while the
+  // user principal survives for rebinding.
+  if (doOfflineIdentity) {
+    tasks.push(
+      Promise.resolve().then(() => { try { clearOfflineIdentity(); } catch { /* noop */ } }),
+    );
+    tasks.push(
+      Promise.resolve().then(() => { try { clearLastOnlineAuthenticatedAt(); } catch { /* noop */ } }),
+    );
+  }
+  if (doWorkspaceBinding) {
+    tasks.push(
+      Promise.resolve().then(() => { try { clearOfflineWorkspaceBinding(); } catch { /* noop */ } }),
+    );
+    tasks.push(
+      Promise.resolve().then(() => { try { clearLastOnlineAuthenticatedAt(); } catch { /* noop */ } }),
+    );
+  }
   if (clearMemory) {
     tasks.push(
       Promise.resolve().then(() => { try { clearMemory(); } catch { /* noop */ } }),
@@ -142,6 +181,9 @@ export async function clearSensitiveSession(
   if (doSnapshot) {
     // v2 IndexedDB snapshot — independent of the v1 localStorage delete above.
     tasks.push(deleteV2Snapshot().catch(() => { /* noop */ }));
+    // Phase 3: the snapshot purge always includes the V3 slot, so a
+    // workspace switch or logout can never leave identity-keyed data behind.
+    tasks.push(deleteV3Snapshot().catch(() => { /* noop */ }));
   }
 
   // H-13: THE central agent cleanup — cache + every in-flight agent

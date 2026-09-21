@@ -45,7 +45,14 @@ import { runBootstrap, type SnapshotPreload } from "./sync-engine";
 import type { AppStateAction } from "./state-reducer";
 import { migrateV1toV2, loadSnapshotDomain } from "./snapshot-store";
 import {
+  getOfflinePrincipalId,
+  getOfflineWorkspaceId,
+} from "@/lib/auth/offline-identity";
+import { loadV3SnapshotDomain, migrateV2toV3Snapshot } from "./snapshot-store";
+import type { V3SnapshotIdentity } from "./sync-engine";
+import {
   getOfflineSnapshotLockState,
+  getV3OfflineLockState,
   refreshOfflineAuthAge,
 } from "./snapshot-db";
 import { stampLastOnlineAuthenticatedAt } from "@/lib/session";
@@ -641,6 +648,23 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return preload;
   }, []);
 
+  // Preload v3 (identity-keyed) snapshot data for the offline boot
+  // (AUTH-T03): no token involved — ownership comes from the validated
+  // offline identity bound after the last online authentication.
+  const preloadV3Snapshot = useCallback(async (identity: V3SnapshotIdentity): Promise<SnapshotPreload> => {
+    const domains: DomainKey[] = [...ALL_DOMAINS];
+    const entries = await Promise.all(
+      domains.map((d) =>
+        loadV3SnapshotDomain(identity.principalId, identity.workspaceId, d).then((v) => [d, v] as const),
+      ),
+    );
+    const preload: SnapshotPreload = {};
+    for (const [domain, value] of entries) {
+      if (value) preload[domain] = { data: value.data, syncedAt: value.syncedAt };
+    }
+    return preload;
+  }, []);
+
   // ── Offline session lock (V4 T2.6, SPEC §10 D2-D3) ──────────────
   // Locked UI must not render financial data. The envelope age is
   // refreshed automatically by every live snapshot write (writeV2Snapshot);
@@ -727,11 +751,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     const load = async () => {
       // Session-first: online auth rides the cookie (+ compat bearer) in
-      // apiFetch — no storage token required. Snapshot migration/preload
-      // still need a token-derived key, so they are skipped cookie-only
-      // (offline snapshot V3 keyed by identity lands in Phase 3); the
-      // online bootstrap itself MUST run (AUTH-T02).
+      // apiFetch — no storage token required. Phase 3 (AUTH-02): the V3
+      // identity comes from the validated session authority (principal) +
+      // the persisted workspace binding — never from a token — so
+      // cookie-only boots persist identity-keyed offline snapshots.
       const token = effectiveOnlineToken();
+      const authority = getSessionStatus();
+      const boundWorkspace = getOfflineWorkspaceId();
+      const v3Identity: V3SnapshotIdentity | undefined =
+        authority.status === "authenticated" && authority.user && boundWorkspace
+          ? { principalId: authority.user.userId, workspaceId: boundWorkspace }
+          : undefined;
 
       try {
         // 1. Migrate v1 → v2 (reads v1 localStorage, writes v2 IndexedDB, deletes v1)
@@ -758,6 +788,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           bootstrapDispatch,
           () => expireSessionRef.current(),
           snapshotPreload,
+          v3Identity,
         );
 
         if (cancelled) return;
@@ -770,6 +801,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             stampLastOnlineAuthenticatedAt();
           } catch {
             /* noop */
+          }
+          // Phase 3 (AUTH-03): fold the legacy V2 slot into V3 now that the
+          // session is proven online with a known owner. Migration backfills
+          // only domains V3 lacks and invalidates untrustworthy V2 sources;
+          // failures never block the boot (V3 keeps the live-written data).
+          if (token !== undefined && v3Identity !== undefined) {
+            await migrateV2toV3Snapshot({ token, ...v3Identity }).catch(() => {});
           }
           if (!cancelled) setOfflineLocked(false);
         } else {
@@ -803,6 +841,65 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bootstrapDispatch]);
+
+  // ── Offline V3 boot (Phase 3, AUTH-T03/AUTH-04) ─────────────────────
+  // Runs ONLY when the online gate stays closed AND the session probe said
+  // "unreachable" (never on 401/403 — those purge + login via expireSession,
+  // and this effect returns early for any non-unreachable authority). A
+  // valid, within-TTL V3 envelope for the bound identity hydrates the
+  // domains as snapshot sources (read-only derives from that: INV-06, no
+  // write queue exists). Anything else leaves the provider empty — never a
+  // false logout, never another owner's data.
+  useEffect(() => {
+    if (apiUsable() || loadedRef.current) return;
+    if (getSessionStatus().status !== "unreachable") return;
+    const principalId = getOfflinePrincipalId();
+    const workspaceId = getOfflineWorkspaceId();
+    if (!principalId || !workspaceId) return;
+    loadedRef.current = true;
+
+    let cancelled = false;
+
+    const loadOffline = async () => {
+      bootstrapDispatch({ type: "BOOTSTRAP_START" });
+      try {
+        const preload = await preloadV3Snapshot({ principalId, workspaceId }).catch((): SnapshotPreload => ({}));
+        if (cancelled) return;
+        const served = ALL_DOMAINS.filter((d) => preload[d] !== undefined);
+        if (served.length === 0) {
+          // Valid route but no domains (or lock raced): no data to gate —
+          // leave the lock flag untouched, stop loading.
+          const lock = await getV3OfflineLockState(principalId, workspaceId).catch(() => null);
+          if (!cancelled) {
+            if (lock?.state === "locked") setOfflineLocked(true);
+            setLoading(false);
+          }
+          return;
+        }
+        for (const domain of ALL_DOMAINS) {
+          const value = preload[domain];
+          if (cancelled) return;
+          if (value) {
+            bootstrapDispatch({ type: "DOMAIN_SNAPSHOT", domain, data: value.data, syncedAt: value.syncedAt });
+          } else {
+            bootstrapDispatch({ type: "DOMAIN_UNAVAILABLE", domain });
+          }
+        }
+        if (!cancelled) {
+          setOfflineLocked(false);
+          bootstrapDispatch({ type: "BOOTSTRAP_COMPLETE" });
+        }
+      } catch {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void loadOffline();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bootstrapDispatch, preloadV3Snapshot]);
 
   // ── Write actions ─────────────────────────────────────────────────
 

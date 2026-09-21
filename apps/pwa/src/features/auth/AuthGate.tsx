@@ -8,6 +8,12 @@ import { signInWithEmail, registerDeviceToken, verifyDeviceToken, fetchSession, 
 import { clearSensitiveSession } from "@/lib/session";
 import { SessionProvider, type SessionSnapshot } from "@/lib/auth/session-context";
 import { setSessionStatus } from "@/lib/auth/session-authority";
+import {
+  setOfflinePrincipalId,
+  getOfflinePrincipalId,
+  getOfflineWorkspaceId,
+} from "@/lib/auth/offline-identity";
+import { resolveUnreachableOfflineRoute } from "@/lib/state/snapshot-db";
 import { Lock, Mail, ArrowRight } from "lucide-react";
 import { Splash } from "@/components/Splash";
 
@@ -27,6 +33,16 @@ export function AuthGate({ children }: Props) {
   const publishSession = useCallback((next: SessionSnapshot) => {
     setSessionStatus(next);
     setSessionValue(next);
+  }, []);
+  // Phase 3 (AUTH-02): persist the server-confirmed user identity for
+  // offline partitioning. Non-secret, non-authenticator — never a bearer,
+  // device secret, or cookie value. Best-effort, never blocks the boot.
+  const bindPrincipal = useCallback((user: { id: string }) => {
+    try {
+      setOfflinePrincipalId(user.id);
+    } catch {
+      /* noop */
+    }
   }, []);
 
   useEffect(() => {
@@ -63,14 +79,38 @@ export function AuthGate({ children }: Props) {
         // routing lands (Phase 3, AUTH-T03); the distinction survives in
         // the session authority instead of collapsing into login-state.
         if (probeStatus === "authenticated" && sessionUser) {
+          bindPrincipal(sessionUser);
           publishSession({
             status: "authenticated",
             user: { userId: sessionUser.id, email: sessionUser.email, name: sessionUser.name },
           });
           if (!cancelled) setState("unlocked");
         } else if (probeStatus === "unreachable") {
-          publishSession({ status: "unreachable" });
-          if (!cancelled) setState("login");
+          // Phase 3 (AUTH-03/AUTH-04): unreachability is not a rejection —
+          // never purge here. Consult the V3 snapshot: a valid,
+          // within-TTL envelope for the last bound identity unlocks offline
+          // read-only; otherwise the login screen (no false logout).
+          let offline = false;
+          try {
+            const route = await resolveUnreachableOfflineRoute(
+              getOfflinePrincipalId(),
+              getOfflineWorkspaceId(),
+            );
+            offline = route === "offline-read-only";
+          } catch {
+            offline = false;
+          }
+          if (cancelled) return;
+          if (offline) {
+            publishSession({
+              status: "unreachable",
+              offlinePrincipalId: getOfflinePrincipalId() ?? undefined,
+            });
+            setState("unlocked");
+          } else {
+            publishSession({ status: "unreachable" });
+            setState("login");
+          }
         } else {
           publishSession({ status: "unauthenticated" });
           if (!cancelled) setState("login");
@@ -85,6 +125,7 @@ export function AuthGate({ children }: Props) {
         // otherwise keep unknown so the legacy bearer fallback still
         // applies (compat ON behaviour untouched).
         if (sessionUser) {
+          bindPrincipal(sessionUser);
           publishSession({
             status: "authenticated",
             user: { userId: sessionUser.id, email: sessionUser.email, name: sessionUser.name },
@@ -105,6 +146,7 @@ export function AuthGate({ children }: Props) {
             /* noop */
           }
           if (sessionUser) {
+            bindPrincipal(sessionUser);
             publishSession({
               status: "authenticated",
               user: { userId: sessionUser.id, email: sessionUser.email, name: sessionUser.name },
@@ -116,6 +158,7 @@ export function AuthGate({ children }: Props) {
             clearToken: true,
             clearV1Snapshot: true,
             clearProfile: true,
+            clearOfflineIdentity: true,
           }).catch(() => {});
           publishSession({ status: "unauthenticated" });
           if (!cancelled) {
@@ -134,7 +177,7 @@ export function AuthGate({ children }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [publishSession]);
+  }, [publishSession, bindPrincipal]);
 
   const handleLogin = useCallback(async (credentials: { email: string; password: string }) => {
     setError("");
@@ -164,17 +207,20 @@ export function AuthGate({ children }: Props) {
       try {
         const probe = await fetchSession();
         if (probe.user) {
+          bindPrincipal(probe.user);
           publishSession({
             status: "authenticated",
             user: { userId: probe.user.id, email: probe.user.email, name: probe.user.name },
           });
         } else {
+          bindPrincipal({ id: credentials.email });
           publishSession({
             status: "authenticated",
             user: { userId: credentials.email, email: credentials.email },
           });
         }
       } catch {
+        bindPrincipal({ id: credentials.email });
         publishSession({
           status: "authenticated",
           user: { userId: credentials.email, email: credentials.email },
@@ -196,13 +242,17 @@ export function AuthGate({ children }: Props) {
       }
       throw e;
     }
-  }, []);
+  }, [bindPrincipal]);
 
   const expireSession = useCallback(async (message?: string) => {
+    // 401/403: explicit server rejection → purge everything offline (V1/V2/V3
+    // snapshots, tokens, profile, offline identity + stamp) + login. Never
+    // offline mode on this path (AUTH-T04/T05, INV-05).
     await clearSensitiveSession({
       clearToken: true,
       clearV1Snapshot: true,
       clearProfile: true,
+      clearOfflineIdentity: true,
     });
     // 401/403: explicit server rejection → unauthenticated (purge + login).
     publishSession({ status: "unauthenticated" });
