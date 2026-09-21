@@ -75,9 +75,10 @@ export function AuthGate({ children }: Props) {
         // operate — GET /auth/session is the scoped session check.
         // Fail-closed: unauthenticated means login. Unreachable means the
         // server never answered: record it as unreachable (NOT a logout —
-        // nothing is purged) and keep the login screen until V3 offline
-        // routing lands (Phase 3, AUTH-T03); the distinction survives in
-        // the session authority instead of collapsing into login-state.
+        // nothing is purged). Phase 3 (AUTH-T03) routes it through the V3
+        // snapshot below — valid + within TTL unlocks offline read-only,
+        // otherwise the login screen. The distinction survives in the
+        // session authority instead of collapsing into login-state.
         if (probeStatus === "authenticated" && sessionUser) {
           bindPrincipal(sessionUser);
           publishSession({
