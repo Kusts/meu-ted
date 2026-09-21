@@ -13,7 +13,10 @@ concurrency:
 jobs:
   gate:
     name: Gate â€” CI + PWA CI green for SHA
-    if: github.event.workflow_run.conclusion == 'success'
+    # SPEC CI-03 (§14): deploys may only follow push-originated CI/PWA CI
+    # runs on main. workflow_run events from other triggers (e.g. another
+    # workflow_run chain) must never satisfy the deploy gate.
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
