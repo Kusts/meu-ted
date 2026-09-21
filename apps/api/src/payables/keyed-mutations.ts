@@ -20,6 +20,7 @@ import type { PoolClient } from 'pg';
 import type { Payable, PayableTemplate } from '../types/domain.js';
 import type { PayableStore } from './store.js';
 import { isTxClient } from '../writes/keyed-mutations.js';
+import { domainErrors } from '../writes/errors.js';
 
 export type { Payable, PayableTemplate };
 
@@ -135,39 +136,41 @@ export async function runPayableMutation(
 ): Promise<Payable | PayableTemplate> {
   if (isTxClient(claimTx)) {
     const ext = txExtensions(store);
+    // V4.1 Phase 4 (fail-closed): missing `*InTx` with an open claim tx is
+    // an invariant error — never a plain fallback.
     switch (op) {
       case 'create':
         if (typeof ext.createPayableInTx === 'function') {
           return ext.createPayableInTx(claimTx, householdId, input as CreatePayableInput);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
       case 'createWithTemplate':
         if (typeof ext.createPayableWithTemplateInTx === 'function') {
           return ext.createPayableWithTemplateInTx(claimTx, householdId, input as CreatePayableWithTemplateInput);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
       case 'pay':
         if (typeof ext.markPayablePaidInTx === 'function') {
           const { id, input: payInput } = input as { id: string; input: PayInput };
           return ext.markPayablePaidInTx(claimTx, householdId, id, payInput);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
       case 'update':
         if (typeof ext.updatePayableInTx === 'function') {
           const { id, patch } = input as { id: string; patch: UpdatePayableInput };
           return ext.updatePayableInTx(claimTx, householdId, id, patch);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
       case 'createTemplate':
         if (typeof ext.createTemplateInTx === 'function') {
           return ext.createTemplateInTx(claimTx, householdId, input as CreatePayableTemplateInput);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
       case 'fromTemplate':
         if (typeof ext.createPayableFromTemplateInTx === 'function') {
           return ext.createPayableFromTemplateInTx(claimTx, householdId, input as PayableFromTemplateInput);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
     }
   }
   switch (op) {
@@ -220,15 +223,22 @@ export async function runPayableBulkMutation(
 ): Promise<Payable[]> {
   if (isTxClient(claimTx)) {
     const ext = txExtensions(store);
-    if (op === 'autoCreate' && typeof ext.autoCreateFromTemplatesInTx === 'function') {
-      return ext.autoCreateFromTemplatesInTx(
-        claimTx,
-        householdId,
-        (input as { daysAhead?: number }).daysAhead,
-      );
+    // V4.1 Phase 4 (fail-closed): bulk effects join the claim tx or throw.
+    if (op === 'autoCreate') {
+      if (typeof ext.autoCreateFromTemplatesInTx === 'function') {
+        return ext.autoCreateFromTemplatesInTx(
+          claimTx,
+          householdId,
+          (input as { daysAhead?: number }).daysAhead,
+        );
+      }
+      throw domainErrors.atomicMutationNotSupported();
     }
-    if (op === 'refresh' && typeof ext.refreshPayableStatusInTx === 'function') {
-      return ext.refreshPayableStatusInTx(claimTx, householdId);
+    if (op === 'refresh') {
+      if (typeof ext.refreshPayableStatusInTx === 'function') {
+        return ext.refreshPayableStatusInTx(claimTx, householdId);
+      }
+      throw domainErrors.atomicMutationNotSupported();
     }
   }
   if (op === 'autoCreate') {

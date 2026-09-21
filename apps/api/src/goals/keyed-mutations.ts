@@ -12,6 +12,7 @@ import type { PoolClient } from 'pg';
 import type { Goal, GoalContribution } from '../types/domain.js';
 import type { GoalStore } from './store.js';
 import { isTxClient } from '../writes/keyed-mutations.js';
+import { domainErrors } from '../writes/errors.js';
 
 export type CreateGoalInput = Parameters<GoalStore['createGoal']>[1];
 export type ContributeGoalInput = Parameters<GoalStore['contributeToGoal']>[2];
@@ -66,24 +67,26 @@ export async function runGoalMutation(
 ): Promise<Goal | GoalContribution> {
   if (isTxClient(claimTx)) {
     const ext = txExtensions(store);
+    // V4.1 Phase 4 (fail-closed): missing `*InTx` with an open claim tx is
+    // an invariant error — never a plain fallback.
     switch (op) {
       case 'create':
         if (typeof ext.createGoalInTx === 'function') {
           return ext.createGoalInTx(claimTx, householdId, input as CreateGoalInput);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
       case 'contribute':
         if (typeof ext.contributeToGoalInTx === 'function') {
           const { id, input: contrib } = input as { id: string; input: ContributeGoalInput };
           return ext.contributeToGoalInTx(claimTx, householdId, id, contrib);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
       case 'update':
         if (typeof ext.updateGoalInTx === 'function') {
           const { id, patch } = input as { id: string; patch: UpdateGoalInput };
           return ext.updateGoalInTx(claimTx, householdId, id, patch);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
     }
   }
   switch (op) {

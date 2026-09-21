@@ -202,4 +202,31 @@ describeIfDb('V4.1 Phase 3 (UOW2) — Postgres single-tx domain mutations', () =
     expect(replay.replayed).toBe(true);
     expect((replay.response as { id: string }).id).toBe((retry.response as { id: string }).id);
   }, 60_000);
+
+  it('Phase 4 fail-closed: real PG claim client + store without InTx → invariant error, zero effects', async () => {
+    const household = track(randomUUID());
+    const { acc } = await seedBankAndCategory(household);
+    const full = createPostgresPayableStore(pool);
+    const payable = await full.createPayable(household, {
+      accountId: acc.id, description: 'PG fail-closed', amountCents: 900, dueDate: '2026-08-10',
+    });
+    // Strip the client-bound extension the way a store without atomic
+    // support would look — the dispatcher must throw, never fall back.
+    const { markPayablePaidInTx: _dropped, ...stripped } = full as unknown as Record<string, unknown>;
+    expect(_dropped).toBeTypeOf('function');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await expect(
+        runPayableMutation(stripped as never, client, household, 'pay', { id: payable.id, input: {} }),
+      ).rejects.toMatchObject({ code: 'idempotency.atomic_mutation_not_supported' });
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+    const status = await pool.query('SELECT status FROM accounts_payable WHERE id = $1', [payable.id]);
+    expect(status.rows[0]!.status).toBe('pending');
+    const txCount = await pool.query('SELECT COUNT(*)::int AS n FROM transactions WHERE household_id = $1', [household]);
+    expect(txCount.rows[0]!.n).toBe(0);
+  }, 60_000);
 });

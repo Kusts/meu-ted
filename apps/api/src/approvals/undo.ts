@@ -93,8 +93,12 @@ export const createUndoService = (deps: {
     // reversal on the SAME client so claim + effect + completion commit
     // atomically — a crash anywhere rolls everything back and the replay
     // re-executes claim + producer from zero and converges (F4). Any other
-    // combination (in-memory idempotency, foreign write store) falls back
-    // to the plain transactional methods with the previous semantics.
+    // combination (in-memory idempotency, foreign write store) runs the
+    // plain transactional methods with the previous semantics.
+    // V4.1 Phase 4 (fail-closed): with an open claim tx the reversal MUST
+    // run on that client. A missing `*InTx` extension is an invariant error
+    // — never a plain fallback (the effect would commit outside the claim
+    // tx and silently lose atomicity).
     const extensions = deps.writes as Partial<PostgresReversalTxExtensions>;
     const inTx =
       typeof claimTx === 'object' &&
@@ -106,21 +110,30 @@ export const createUndoService = (deps: {
       case 'transactions.expense.create':
       case 'transactions.income.create':
       case 'transactions.transfer.create':
-        if (inTx && typeof extensions.softDeleteTransactionInTx === 'function') {
+        if (inTx) {
+          if (typeof extensions.softDeleteTransactionInTx !== 'function') {
+            throw domainErrors.atomicMutationNotSupported();
+          }
           await extensions.softDeleteTransactionInTx(inTx, householdId, entityId);
         } else {
           await deps.writes.softDeleteTransaction(householdId, entityId);
         }
         return 'soft_delete';
       case 'accounts.create':
-        if (inTx && typeof extensions.deactivateAccountInTx === 'function') {
+        if (inTx) {
+          if (typeof extensions.deactivateAccountInTx !== 'function') {
+            throw domainErrors.atomicMutationNotSupported();
+          }
           await extensions.deactivateAccountInTx(inTx, householdId, entityId);
         } else {
           await deps.writes.deactivateAccount(householdId, entityId);
         }
         return 'deactivate';
       case 'categories.create':
-        if (inTx && typeof extensions.deactivateCategoryInTx === 'function') {
+        if (inTx) {
+          if (typeof extensions.deactivateCategoryInTx !== 'function') {
+            throw domainErrors.atomicMutationNotSupported();
+          }
           await extensions.deactivateCategoryInTx(inTx, householdId, entityId);
         } else {
           await deps.writes.deactivateCategory(householdId, entityId);

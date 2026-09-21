@@ -13,6 +13,7 @@ import type { PoolClient } from 'pg';
 import type { Budget } from '../types/domain.js';
 import type { BudgetStore } from './store.js';
 import { isTxClient } from '../writes/keyed-mutations.js';
+import { domainErrors } from '../writes/errors.js';
 
 export type CreateBudgetInput = Parameters<BudgetStore['createBudget']>[1];
 export type UpdateBudgetInput = Parameters<BudgetStore['updateBudget']>[2];
@@ -52,18 +53,20 @@ export async function runBudgetMutation(
 ): Promise<Budget> {
   if (isTxClient(claimTx)) {
     const ext = txExtensions(store);
+    // V4.1 Phase 4 (fail-closed): missing `*InTx` with an open claim tx is
+    // an invariant error — never a plain fallback.
     switch (op) {
       case 'create':
         if (typeof ext.createBudgetInTx === 'function') {
           return ext.createBudgetInTx(claimTx, householdId, input as CreateBudgetInput);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
       case 'update':
         if (typeof ext.updateBudgetInTx === 'function') {
           const { id, patch } = input as { id: string; patch: UpdateBudgetInput };
           return ext.updateBudgetInTx(claimTx, householdId, id, patch);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
     }
   }
   switch (op) {

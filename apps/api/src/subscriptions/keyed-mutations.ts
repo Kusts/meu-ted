@@ -13,6 +13,7 @@ import type { PoolClient } from 'pg';
 import type { Subscription } from '../types/domain.js';
 import type { CreateSubscriptionInput, SubscriptionStore } from './store.js';
 import { isTxClient } from '../writes/keyed-mutations.js';
+import { domainErrors } from '../writes/errors.js';
 
 /**
  * V4.1 Phase 3 (UOW2) — non-contractual client-bound subscription creation
@@ -39,9 +40,12 @@ export async function runSubscriptionMutation(
 ): Promise<Subscription> {
   if (isTxClient(claimTx)) {
     const ext = txExtensions(store);
+    // V4.1 Phase 4 (fail-closed): missing `createSubscriptionInTx` with an
+    // open claim tx is an invariant error — never a plain fallback.
     if (typeof ext.createSubscriptionInTx === 'function') {
       return ext.createSubscriptionInTx(claimTx, householdId, input);
     }
+    throw domainErrors.atomicMutationNotSupported();
   }
   return store.createSubscription(householdId, input);
 }

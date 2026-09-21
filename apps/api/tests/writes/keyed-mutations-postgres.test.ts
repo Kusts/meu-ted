@@ -223,4 +223,47 @@ describeIfDb('V4.1 Phase 3 — Postgres single-tx keyed mutations', () => {
     });
     expect(keyed.id).toBe('old-keyed-tx');
   }, 60_000);
+
+  it('Phase 4 (V2 fail-closed by construction): mutate throw rolls back claim + effect together', async () => {
+    const household = track(randomUUID());
+    const { acc, cat } = await seedAccountAndCategory(household);
+    const payload = { description: 'PG v2 atomic', amountCents: 800, date: '2026-06-10', accountId: acc.id, categoryId: cat.id };
+    await expect(
+      runKeyedMutation({
+        pool,
+        householdId: household,
+        idempotencyKey: 'pg-v2-atomic-1',
+        payload,
+        mutate: async (client) => {
+          await client.query(
+            `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id)
+             VALUES (gen_random_uuid(), $1, 'expense', $2, $3, $4, $5, $6)`,
+            [household, 'PG v2 atomic', 800, '2026-06-10', acc.id, cat.id],
+          );
+          throw new Error('simulated crash after the effect, before completion');
+        },
+      }),
+    ).rejects.toThrow('simulated crash');
+    // Claim + effect + completion are one tx: nothing survived.
+    const txCount = await pool.query('SELECT COUNT(*)::int AS n FROM transactions WHERE household_id = $1', [household]);
+    expect(txCount.rows[0]!.n).toBe(0);
+    const retry = await runKeyedMutation({
+      pool,
+      householdId: household,
+      idempotencyKey: 'pg-v2-atomic-1',
+      payload,
+      mutate: async (client) => {
+        const res = await client.query(
+          `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, category_id)
+           VALUES (gen_random_uuid(), $1, 'expense', $2, $3, $4, $5, $6)
+           RETURNING id`,
+          [household, 'PG v2 atomic', 800, '2026-06-10', acc.id, cat.id],
+        );
+        return { id: res.rows[0]!.id } as never;
+      },
+    });
+    expect(retry.id).toBeDefined();
+    const final = await pool.query('SELECT COUNT(*)::int AS n FROM transactions WHERE household_id = $1', [household]);
+    expect(final.rows[0]!.n).toBe(1);
+  }, 60_000);
 });

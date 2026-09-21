@@ -14,11 +14,11 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { Subscription } from '../types/domain.js';
 import { withTransaction } from '../db/pool.js';
 import { domainErrors } from '../writes/errors.js';
-import type { SubscriptionStore, } from './store.js';
+import type { CreateSubscriptionInput, SubscriptionStore, } from './store.js';
 
 type Row = Record<string, unknown>;
 
@@ -45,7 +45,7 @@ export const createLegacyPostgresSubscriptionStore = (pool: Pool): SubscriptionS
     return res.rows;
   };
 
-  return {
+  const store: SubscriptionStore = {
     async listSubscriptions(householdId, status) {
       const values: unknown[] = [householdId];
       const statusClause = status ? ` AND status = $2` : '';
@@ -63,20 +63,7 @@ export const createLegacyPostgresSubscriptionStore = (pool: Pool): SubscriptionS
     },
 
     async createSubscription(householdId, input) {
-      return withTransaction(pool, async (client) => {
-        const id = randomUUID();
-        await client.query(
-          `INSERT INTO subscriptions (id, household_id, name, amount_cents, cycle, day, payment_method, status, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NOW(), NOW())`,
-          [id, householdId, input.name, input.amountCents, input.cycle, input.day, input.paymentMethod],
-        );
-        const res = await client.query<Row>(
-          `SELECT id, household_id, name, amount_cents, cycle, day, payment_method, status, created_at, cancelled_at
-             FROM subscriptions WHERE id = $1 AND household_id = $2`,
-          [id, householdId],
-        );
-        return mapSubscription(res.rows[0]!);
-      });
+      return withTransaction(pool, (client) => createLegacySubscriptionInTx(client, householdId, input));
     },
 
     async cancelSubscription(householdId, id) {
@@ -143,4 +130,35 @@ export const createLegacyPostgresSubscriptionStore = (pool: Pool): SubscriptionS
       return mapSubscription(res[0]!);
     },
   };
+  // V4.1 Phase 4: expose the client-bound core as a non-contractual
+  // extension (see SubscriptionStoreTxExtensions in
+  // subscriptions/keyed-mutations.ts) so keyed legacy creates join the
+  // idempotency claim transaction instead of failing closed. The declared
+  // factory return type stays SubscriptionStore.
+  return Object.assign(store, {
+    createSubscriptionInTx: createLegacySubscriptionInTx,
+  });
+};
+
+/**
+ * V4.1 Phase 4 — client-bound legacy subscription-creation core (no
+ * transaction handling). Mirrors the canonical `createSubscriptionInTx`
+ * (`subscriptions/postgres.ts`) on the legacy V009 column shape. The plain
+ * method runs it in its own transaction; the keyed route producer (see
+ * subscriptions/keyed-mutations.ts) runs it on the open idempotency claim
+ * client, so claim + effect + completion commit atomically in ONE
+ * transaction.
+ */
+export const createLegacySubscriptionInTx = async (
+  client: PoolClient,
+  householdId: string,
+  input: CreateSubscriptionInput,
+): Promise<Subscription> => {
+  const res = await client.query<Row>(
+    `INSERT INTO subscriptions (id, household_id, name, amount_cents, cycle, day, payment_method, status, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NOW(), NOW())
+     RETURNING id, household_id, name, amount_cents, cycle, day, payment_method, status, created_at, cancelled_at`,
+    [randomUUID(), householdId, input.name, input.amountCents, input.cycle, input.day, input.paymentMethod],
+  );
+  return mapSubscription(res.rows[0]!);
 };
