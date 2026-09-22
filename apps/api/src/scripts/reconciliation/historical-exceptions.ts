@@ -91,12 +91,47 @@ export const STATEMENT_TOTAL_FINGERPRINTS: readonly string[] = [
   "08e241cbc5686a2c15d32409ba6a8d39fd254caa090f873f01e8760c4b80079a",
 ];
 
+/**
+ * Allowlist v2 — conscious `negative_credit_balance` exception (ADR-018 §17,
+ * recorded 2026-09-22, dossier
+ * `docs/reports/v4.1-finding-814332c4-dossier.md`).
+ *
+ * Justificativa (pt-BR, concisa): recompra real reclassificada em 2026-09-22
+ * para o fluxo de cartão; dívida de cartão não paga representada fielmente no
+ * ledger legacy; exceção consciente (ADR-018/§17).
+ *
+ * Hash-only, como a v1: nenhum production id, amount, date, description ou
+ * household id vive aqui — apenas o fingerprint opaco abaixo, derivado do
+ * formato exato
+ * `negative_credit_balance:<accountId>:<householdId>:<storedCents>:<accountKind>`
+ * via {@link fingerprintNegativeCreditBalance}. A v1 (47 orphans + 8
+ * statements, ADR-017) segue congelada e intocada.
+ */
+export const HISTORICAL_EXCEPTION_VERSION_V2 =
+  "adr-018-conscious-negative-credit-v2";
+
+export const NEGATIVE_CREDIT_BALANCE_RECORDED_AT = "2026-09-22";
+
+/** v1 scope never accepted negatives: expected count is zero. */
+export const EXPECTED_NEGATIVE_CREDIT_BALANCES_V1 = 0;
+
+/** v2 extends v1 with exactly one conscious negative_credit_balance entry. */
+export const EXPECTED_NEGATIVE_CREDIT_BALANCES = 1;
+
+export const NEGATIVE_CREDIT_BALANCE_FINGERPRINTS: readonly string[] = [
+  "8bb7f9776e6fe931e76e80d55f5b72f0e60712567775d1643ad54273ad2674be",
+];
+
 export type HistoricalAllowlist = {
   version: string;
   orphanCardPurchaseFingerprints: ReadonlySet<string>;
   statementTotalFingerprints: ReadonlySet<string>;
   expectedOrphanCardPurchases: number;
   expectedStatementTotals: number;
+  /** v2 negative_credit_balance fingerprints; v1 scope carries an empty set. */
+  negativeCreditBalanceFingerprints: ReadonlySet<string>;
+  /** v2 expects 1; v1 scope expects 0 (negatives never belonged to ADR-017). */
+  expectedNegativeCreditBalances: number;
   /** Opaque hash of the approved historical household; defaults to the ADR-017 hash. */
   approvedHouseholdScopeHash?: string;
 };
@@ -107,6 +142,26 @@ export const APPROVED_HISTORICAL_ALLOWLIST: HistoricalAllowlist = {
   statementTotalFingerprints: new Set(STATEMENT_TOTAL_FINGERPRINTS),
   expectedOrphanCardPurchases: EXPECTED_ORPHAN_CARD_PURCHASES,
   expectedStatementTotals: EXPECTED_STATEMENT_TOTALS,
+  negativeCreditBalanceFingerprints: new Set(),
+  expectedNegativeCreditBalances: EXPECTED_NEGATIVE_CREDIT_BALANCES_V1,
+  approvedHouseholdScopeHash: APPROVED_HISTORICAL_HOUSEHOLD_HASH,
+};
+
+/**
+ * Approved v2 allowlist: v1 scope (47 orphans + 8 statements, ADR-017,
+ * frozen) plus exactly one conscious `negative_credit_balance` entry
+ * (ADR-018 §17, recorded 2026-09-22).
+ */
+export const APPROVED_HISTORICAL_ALLOWLIST_V2: HistoricalAllowlist = {
+  version: HISTORICAL_EXCEPTION_VERSION_V2,
+  orphanCardPurchaseFingerprints: new Set(ORPHAN_CARD_PURCHASE_FINGERPRINTS),
+  statementTotalFingerprints: new Set(STATEMENT_TOTAL_FINGERPRINTS),
+  expectedOrphanCardPurchases: EXPECTED_ORPHAN_CARD_PURCHASES,
+  expectedStatementTotals: EXPECTED_STATEMENT_TOTALS,
+  negativeCreditBalanceFingerprints: new Set(
+    NEGATIVE_CREDIT_BALANCE_FINGERPRINTS,
+  ),
+  expectedNegativeCreditBalances: EXPECTED_NEGATIVE_CREDIT_BALANCES,
   approvedHouseholdScopeHash: APPROVED_HISTORICAL_HOUSEHOLD_HASH,
 };
 
@@ -169,6 +224,27 @@ export const fingerprintStatementTotal = (
     ].join(":"),
   );
 
+export type NegativeCreditBalanceSource = {
+  accountId: string;
+  householdId: string;
+  storedCents: number;
+  accountKind: string | null;
+};
+
+/** Exact ordered format: negative_credit_balance:account:household:stored:kind-or-empty */
+export const fingerprintNegativeCreditBalance = (
+  source: NegativeCreditBalanceSource,
+): string =>
+  sha256Hex(
+    [
+      "negative_credit_balance",
+      source.accountId,
+      source.householdId,
+      String(source.storedCents),
+      source.accountKind ?? "",
+    ].join(":"),
+  );
+
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
@@ -225,9 +301,32 @@ const toStatementSource = (value: unknown): StatementExceptionSource | null => {
   };
 };
 
+const toNegativeCreditSource = (
+  value: unknown,
+): NegativeCreditBalanceSource | null => {
+  if (typeof value !== "object" || value === null) return null;
+  const row = value as Record<string, unknown>;
+  if (
+    typeof row["accountId"] !== "string" ||
+    typeof row["householdId"] !== "string" ||
+    !isFiniteNumber(row["storedCents"]) ||
+    (typeof row["accountKind"] !== "string" &&
+      row["accountKind"] !== null &&
+      row["accountKind"] !== undefined)
+  ) {
+    return null;
+  }
+  return {
+    accountId: row["accountId"] as string,
+    householdId: row["householdId"] as string,
+    storedCents: row["storedCents"] as number,
+    accountKind: (row["accountKind"] as string | null | undefined) ?? null,
+  };
+};
+
 const pushGate = (
   check: CheckResult,
-  kind: "orphan_card_purchase" | "statement_total",
+  kind: "orphan_card_purchase" | "statement_total" | "negative_credit_balance",
   expected: number,
   matched: number,
   version: string,
@@ -250,14 +349,19 @@ const pushGate = (
  * Suppress exact allowlisted findings after the normal detectors ran.
  * Returns cloned checks (checked accounting preserved) plus the summary.
  * The count gate applies to global runs and to every household-scoped run:
- * the approved historical household must present the full 47+8 closed set,
- * while any unrelated household expects zero known exceptions (the
- * historical set lives elsewhere, so its absence is not a failure).
+ * the approved historical household must present the full 47+8 closed set
+ * (v1, ADR-017) plus the v2 conscious negative_credit_balance entry
+ * (ADR-018 §17), while any unrelated household expects zero known exceptions
+ * (the historical set lives elsewhere, so its absence is not a failure).
  * Active drift still fails in every scope.
  */
 export const applyHistoricalExceptions = (
   checks: CheckResult[],
-  sources: { orphans: unknown[]; statements: unknown[] },
+  sources: {
+    orphans: unknown[];
+    statements: unknown[];
+    negativeCreditBalances?: unknown[];
+  },
   allowlist: HistoricalAllowlist = APPROVED_HISTORICAL_ALLOWLIST,
   householdScope?: string,
 ): { checks: CheckResult[]; summary: HistoricalExceptionSummary } => {
@@ -282,6 +386,16 @@ export const applyHistoricalExceptions = (
       statementById.set(source.statementId, source);
     }
   }
+  const negativeCreditByAccountId = new Map<
+    string,
+    NegativeCreditBalanceSource
+  >();
+  for (const raw of sources.negativeCreditBalances ?? []) {
+    const source = toNegativeCreditSource(raw);
+    if (source !== null && !negativeCreditByAccountId.has(source.accountId)) {
+      negativeCreditByAccountId.set(source.accountId, source);
+    }
+  }
 
   const approvedScopeHash =
     allowlist.approvedHouseholdScopeHash ?? APPROVED_HISTORICAL_HOUSEHOLD_HASH;
@@ -296,6 +410,10 @@ export const applyHistoricalExceptions = (
     householdScope === undefined || isApprovedHouseholdScope
       ? allowlist.expectedStatementTotals
       : 0;
+  const expectedNegativeCreditBalances =
+    householdScope === undefined || isApprovedHouseholdScope
+      ? allowlist.expectedNegativeCreditBalances
+      : 0;
 
   const summary: HistoricalExceptionSummary = {
     version: allowlist.version,
@@ -306,6 +424,11 @@ export const applyHistoricalExceptions = (
     },
     statementTotals: {
       expected: expectedStatements,
+      matched: 0,
+      recognized: [],
+    },
+    negativeCreditBalances: {
+      expected: expectedNegativeCreditBalances,
       matched: 0,
       recognized: [],
     },
@@ -397,6 +520,53 @@ export const applyHistoricalExceptions = (
       "statement_total",
       expectedStatements,
       summary.statementTotals.matched,
+      allowlist.version,
+    );
+  }
+
+  const accountsBalance = byCheck.get("accounts_balance");
+  if (accountsBalance !== undefined) {
+    const remaining: Finding[] = [];
+    for (const finding of accountsBalance.findings) {
+      if (
+        finding.severity !== "drift" ||
+        finding.kind !== "negative_credit_balance"
+      ) {
+        remaining.push(finding);
+        continue;
+      }
+      const source = negativeCreditByAccountId.get(finding.entityId);
+      if (
+        source !== undefined &&
+        allowlist.negativeCreditBalanceFingerprints.has(
+          fingerprintNegativeCreditBalance(source),
+        )
+      ) {
+        summary.negativeCreditBalances.matched += 1;
+        summary.negativeCreditBalances.recognized.push({
+          entity: finding.entity,
+          kind: finding.kind,
+          entityId: finding.entityId,
+        });
+        continue;
+      }
+      remaining.push(finding);
+    }
+    accountsBalance.findings = remaining;
+    accountsBalance.counts.drifted = remaining.filter(
+      (finding) => finding.severity !== "info",
+    ).length;
+  }
+
+  if (
+    accountsBalance !== undefined &&
+    summary.negativeCreditBalances.matched !== expectedNegativeCreditBalances
+  ) {
+    pushGate(
+      accountsBalance,
+      "negative_credit_balance",
+      expectedNegativeCreditBalances,
+      summary.negativeCreditBalances.matched,
       allowlist.version,
     );
   }
