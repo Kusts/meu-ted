@@ -16,10 +16,14 @@ Migrar a produção do schema `legacy` para o `canonical` (DB_SCHEMA=canonical),
 
 ## Fases (cada uma com gate explícito)
 
-**F0 — Decisões do owner (bloqueante)**
-- Decidir o finding `814332c4` (dossier pronto) — a conversão não deve herdar finding ambíguo.
-- Aprovar janela de manutenção (o cutover tem downtime curto do write-path).
-- Autorizar execução por escrito (este plano é só o contrato).
+> **Atualização 2026-09-22 (pós-autorização):** a investigação de execução revelou dois fatos que redesenham o plano.
+>
+> 1. **F1 é impossível por design**: V055–V057 são **canonical-only** (`apps/api/src/read-models/sql/migrate.ts` — entradas no manifesto legacy fariam o `verifySchema` falhar fechado e recusar o boot). As migrations aplicam-se apenas no momento da conversão → F1 dobra para dentro da F3.
+> 2. **O conversor legacy→canonical não existe no repositório** — só o `canonical-conversion-preflight.ts` (queries de prontidão) e o rehearse de migrations. A F2 (conversão em cópia) e a F3 (conversão em produção) dependem de **construir e ensaiar o conversor** — projeto próprio, com provas de paridade linha a linha.
+>
+> **Status real: BLOQUEADO na construção do conversor.** Próximo passo executável: projeto "conversor canonical" (spec → implementação → rehearsal em cópia → paridade → então F3/F4 abaixo).
+
+**F0 — Decisões do owner (bloqueante)** — ✅ concedidas em 2026-09-22 (execução do cutover autorizada; finding `814332c4` resolvido por reclassificação + exceção v2).
 
 **F1 — Pendências de schema em produção (sem troca de modo)**
 - Aplicar V055–V057 via `migrate-job.js` (hoje pendentes; o binário atual já as contém).
