@@ -183,6 +183,7 @@ export type HistoricalExceptionSummary = {
   version: string;
   orphanCardPurchases: HistoricalExceptionClassSummary;
   statementTotals: HistoricalExceptionClassSummary;
+  negativeCreditBalances: HistoricalExceptionClassSummary;
 };
 
 const emptyResult = (

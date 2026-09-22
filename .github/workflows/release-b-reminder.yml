@@ -1,0 +1,104 @@
+name: Release B Gate Reminder
+
+# V4.1 closure follow-up: reminds the owner to verify the Release B (D11)
+# bearer-removal gate once the 14-day legacy_bearer_used window closes on
+# 2026-10-02. This workflow NEVER touches production (no SSH, no secrets);
+# it only opens a single idempotent reminder issue.
+on:
+  schedule:
+    - cron: '17 12 * * *'
+  workflow_dispatch:
+
+# Least privilege: read the repo (checkout) + manage the reminder issue.
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  reminder:
+    name: Open Release B gate reminder issue (D11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Open reminder issue once the D11 window closes
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const GATE_DATE = '2026-10-02';
+            const LABEL = 'release-b-gate';
+            const TITLE = 'Release B gate — conferir janela D11 (legacy_bearer_used)';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const today = new Date().toISOString().slice(0, 10);
+            core.info(`today=${today} gate=${GATE_DATE}`);
+            if (today < GATE_DATE) {
+              core.info('D11 window still open — exiting silently, no issue.');
+              return;
+            }
+
+            // Idempotency: an open issue with the label (or the exact title
+            // prefix) means the reminder already exists — update nothing.
+            const { data: found } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${owner}/${repo} is:issue is:open label:"${LABEL}"`,
+              per_page: 10,
+            });
+            const alreadyOpen = found.items.some(
+              (issue) => issue.title === TITLE || issue.title.startsWith('Release B gate'),
+            );
+            if (alreadyOpen) {
+              core.info('Reminder issue already open — idempotent no-op.');
+              return;
+            }
+
+            // Ensure the label exists (create it when missing).
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: LABEL });
+            } catch (error) {
+              if (error && error.status === 404) {
+                await github.rest.issues.createLabel({
+                  owner,
+                  repo,
+                  name: LABEL,
+                  color: 'B60205',
+                  description: 'Release B bearer-removal gate (D11 window)',
+                });
+                core.info(`Created missing label '${LABEL}'.`);
+              } else {
+                throw error;
+              }
+            }
+
+            const body = [
+              'A janela D11 do gate Release B fechou em **2026-10-02** (14 dias desde 2026-09-18).',
+              '',
+              '## Consulta read-only na VPS (somente SELECT)',
+              '',
+              '```sh',
+              'docker exec -i evolution-postgres psql -U postgres -d pi_financeiro \\',
+              '  -c "SELECT COUNT(*), MIN(created_at), MAX(created_at) FROM audit_logs WHERE action = \'auth.request.legacy_bearer_used\';"',
+              '```',
+              '',
+              '## Critério',
+              '',
+              '- **0 eventos** desde 2026-09-18 → gate PASS, Release B liberada.',
+              '- Qualquer evento reinicia a contagem de 14 dias a partir dele.',
+              '',
+              '## Referências',
+              '',
+              '- `docs/reports/v4.1-decision-gates.md` (D11)',
+              '- `docs/reports/v4.1-closure-production-rollout.md` §3',
+              '',
+              '> Aberta automaticamente por `.github/workflows/release-b-reminder.yml` (somente leitura + issue; nenhum acesso à produção).',
+            ].join('\n');
+
+            const { data: issue } = await github.rest.issues.create({
+              owner,
+              repo,
+              title: TITLE,
+              body,
+              labels: [LABEL],
+            });
+            core.info(`Created reminder issue #${issue.number}.`);

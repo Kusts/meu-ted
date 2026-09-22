@@ -22,7 +22,7 @@ import type {
   StatementTotalRow,
 } from "./detectors.js";
 import {
-  APPROVED_HISTORICAL_ALLOWLIST,
+  APPROVED_HISTORICAL_ALLOWLIST_V2,
   applyHistoricalExceptions,
 } from "./historical-exceptions.js";
 import {
@@ -249,14 +249,12 @@ export const runReconciliation = async (
   const payableRows = mapRows.payable_payment(rowsOf("payable_payment"));
   const statementRows = mapRows.statement_total(rowsOf("statement_total"));
   const cardRows = mapRows.card_purchase(rowsOf("card_purchase"));
+  const balanceRows = mapRows.accounts_balance(rowsOf("accounts_balance"));
   const coverageRows = mapRows.statement_payment_coverage(
     rowsOf("statement_payment_coverage"),
   );
   const checks: CheckResult[] = [
-    detectAccountsBalanceDrift(
-      mapRows.accounts_balance(rowsOf("accounts_balance")),
-      householdId,
-    ),
+    detectAccountsBalanceDrift(balanceRows, householdId),
     detectStatementTotalDrift(statementRows, householdId),
     detectStatementPaymentDrift(
       mapRows.statement_payment(rowsOf("statement_payment")),
@@ -297,8 +295,14 @@ export const runReconciliation = async (
           purchaseSumCents: row.purchaseSumCents,
           purchaseCount: row.purchaseCount,
         })),
+        negativeCreditBalances: balanceRows.map((row) => ({
+          accountId: row.accountId,
+          householdId: row.householdId,
+          storedCents: row.storedCents,
+          accountKind: row.accountKind ?? null,
+        })),
       },
-      APPROVED_HISTORICAL_ALLOWLIST,
+      APPROVED_HISTORICAL_ALLOWLIST_V2,
       householdId,
     );
   // ADR-019 closed exception (legacy layout only): exact fingerprint matches
@@ -403,7 +407,7 @@ export const formatTextReport = (report: ReconReport): string => {
   if (report.historicalExceptions !== undefined) {
     const historical = report.historicalExceptions;
     lines.push(
-      `historical-exceptions version=${historical.version} orphans=${historical.orphanCardPurchases.matched}/${historical.orphanCardPurchases.expected} statements=${historical.statementTotals.matched}/${historical.statementTotals.expected}`,
+      `historical-exceptions version=${historical.version} orphans=${historical.orphanCardPurchases.matched}/${historical.orphanCardPurchases.expected} statements=${historical.statementTotals.matched}/${historical.statementTotals.expected} negatives=${historical.negativeCreditBalances.matched}/${historical.negativeCreditBalances.expected}`,
     );
   }
   if (report.testFixtures !== undefined) {
