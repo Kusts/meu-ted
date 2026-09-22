@@ -15,13 +15,13 @@ const setupAccountAndCategory = async (): Promise<Setup> => {
   const acc = await app.inject({
     method: 'POST',
     url: '/accounts',
-    headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+    headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
     payload: { name: 'A', kind: 'bank', initialBalanceCents: 5_000 },
   });
   const cat = await app.inject({
     method: 'POST',
     url: '/categories',
-    headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+    headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
     payload: { name: 'Food', kind: 'expense' },
   });
   return { app, accountId: acc.json().id, categoryId: cat.json().id };
@@ -37,7 +37,7 @@ describe('POST /transactions/expense', () => {
     const res = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Lunch',
         amountCents: 1500,
@@ -54,7 +54,7 @@ describe('POST /transactions/expense', () => {
     const res = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X',
         amountCents: 0,
@@ -66,11 +66,30 @@ describe('POST /transactions/expense', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('books an over-balance expense with the exact negative delta (negative-balance rule)', async () => {
+    const res = await s.app.inject({
+      method: 'POST',
+      url: '/transactions/expense',
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
+      payload: {
+        description: 'Too big',
+        amountCents: 10_000,
+        date: isoDate,
+        accountId: s.accountId,
+        categoryId: s.categoryId,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const list = await s.app.inject({ method: 'GET', url: '/accounts', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
+    const acc = list.json().items.find((a: { id: string }) => a.id === s.accountId);
+    expect(acc.balanceCents).toBe(5_000 - 10_000);
+  });
+
   it('rejects invalid account', async () => {
     const res = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X',
         amountCents: 100,
@@ -87,7 +106,7 @@ describe('POST /transactions/expense', () => {
     const res = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X',
         amountCents: 100,
@@ -103,7 +122,7 @@ describe('POST /transactions/expense', () => {
     const res = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X',
         amountCents: 100,
@@ -121,7 +140,7 @@ describe('POST /transactions/expense', () => {
     const res = await s.app.inject({
       method: 'POST',
       url: '/transactions/income',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X',
         amountCents: 100,
@@ -137,7 +156,7 @@ describe('POST /transactions/expense', () => {
     const card = await s.app.inject({
       method: 'POST',
       url: '/cards',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Nubank', creditLimitCents: 500_000, closingDay: 15, dueDay: 25 },
     });
     expect(card.statusCode).toBe(201);
@@ -145,7 +164,7 @@ describe('POST /transactions/expense', () => {
     const res = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Card lunch',
         amountCents: 1500,
@@ -161,14 +180,14 @@ describe('POST /transactions/expense', () => {
     const stmts = await s.app.inject({
       method: 'GET',
       url: `/cards/statements?accountId=${cardId}`,
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(stmts.statusCode).toBe(200);
     expect(stmts.json().items).toHaveLength(1);
     const detail = await s.app.inject({
       method: 'GET',
       url: `/cards/statements/${stmts.json().items[0].id}`,
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(detail.json().purchases.map((p: { description: string }) => p.description)).toContain('Card lunch');
   });
@@ -177,13 +196,13 @@ describe('POST /transactions/expense', () => {
     const card = await s.app.inject({
       method: 'POST',
       url: '/cards',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Nubank', creditLimitCents: 500_000, closingDay: 15, dueDay: 25 },
     });
     const res = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X',
         amountCents: 100,
@@ -200,7 +219,7 @@ describe('POST /transactions/expense', () => {
     const res = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Lunch',
         amountCents: 1500,
@@ -221,19 +240,19 @@ describe('POST /transactions/income', () => {
     const acc = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'A', kind: 'bank', initialBalanceCents: 0 },
     });
     const cat = await app.inject({
       method: 'POST',
       url: '/categories',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Salary', kind: 'income' },
     });
     const res = await app.inject({
       method: 'POST',
       url: '/transactions/income',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Paycheck',
         amountCents: 12_000_00,
@@ -251,19 +270,19 @@ describe('POST /transactions/income', () => {
     const card = await app.inject({
       method: 'POST',
       url: '/cards',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Nubank', creditLimitCents: 500_000, closingDay: 15, dueDay: 25 },
     });
     const cat = await app.inject({
       method: 'POST',
       url: '/categories',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Salary', kind: 'income' },
     });
     const res = await app.inject({
       method: 'POST',
       url: '/transactions/income',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Refund?',
         amountCents: 100,
@@ -281,19 +300,19 @@ describe('POST /transactions/income', () => {
     const card = await app.inject({
       method: 'POST',
       url: '/cards',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Nubank', creditLimitCents: 500_000, closingDay: 15, dueDay: 25 },
     });
     const cat = await app.inject({
       method: 'POST',
       url: '/categories',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Salary', kind: 'income' },
     });
     const res = await app.inject({
       method: 'POST',
       url: '/transactions/income',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Refund?',
         amountCents: 100,
@@ -313,20 +332,20 @@ describe('POST /transfers', () => {
     const a = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       // V4.1 Phase 4 (D1): the source must cover the transfer.
       payload: { name: 'A', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const b = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'B', kind: 'cash', initialBalanceCents: 0 },
     });
     const res = await app.inject({
       method: 'POST',
       url: '/transfers',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Move',
         amountCents: 500,
@@ -345,19 +364,19 @@ describe('POST /transfers', () => {
     const a = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'A', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const card = await app.inject({
       method: 'POST',
       url: '/cards',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Nubank', creditLimitCents: 500_000, closingDay: 15, dueDay: 25 },
     });
     const fromCard = await app.inject({
       method: 'POST',
       url: '/transfers',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X',
         amountCents: 500,
@@ -370,7 +389,7 @@ describe('POST /transfers', () => {
     const toCard = await app.inject({
       method: 'POST',
       url: '/transfers',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X',
         amountCents: 500,
@@ -387,13 +406,13 @@ describe('POST /transfers', () => {
     const a = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'A', kind: 'bank', initialBalanceCents: 0 },
     });
     const res = await app.inject({
       method: 'POST',
       url: '/transfers',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X',
         amountCents: 100,
@@ -412,7 +431,7 @@ describe('PATCH /transactions/:id', () => {
     const tx = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Old',
         amountCents: 1000,
@@ -424,7 +443,7 @@ describe('PATCH /transactions/:id', () => {
     const res = await s.app.inject({
       method: 'PATCH',
       url: `/transactions/${tx.json().id}`,
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { description: 'New' },
     });
     expect(res.statusCode).toBe(200);
@@ -436,7 +455,7 @@ describe('PATCH /transactions/:id', () => {
     const tx = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Old',
         amountCents: 1000,
@@ -448,7 +467,7 @@ describe('PATCH /transactions/:id', () => {
     const res = await s.app.inject({
       method: 'PATCH',
       url: `/transactions/${tx.json().id}`,
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { notes: 'Nota adicionada depois' },
     });
     expect(res.statusCode).toBe(200);
@@ -460,20 +479,20 @@ describe('PATCH /transactions/:id', () => {
     const a = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       // V4.1 Phase 4 (D1): the source must cover the transfer.
       payload: { name: 'A', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const b = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'B', kind: 'cash', initialBalanceCents: 0 },
     });
     const tx = await app.inject({
       method: 'POST',
       url: '/transfers',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X',
         amountCents: 100,
@@ -485,7 +504,7 @@ describe('PATCH /transactions/:id', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/transactions/${tx.json().id}`,
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { amountCents: 200 },
     });
     expect(res.statusCode).toBe(422);
@@ -499,7 +518,7 @@ describe('DELETE /transactions/:id (soft)', () => {
     const tx = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X',
         amountCents: 100,
@@ -512,7 +531,7 @@ describe('DELETE /transactions/:id (soft)', () => {
     const del = await s.app.inject({
       method: 'DELETE',
       url: `/transactions/${id}`,
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(del.statusCode).toBe(200);
     expect(del.json().id).toBe(id);
@@ -520,7 +539,7 @@ describe('DELETE /transactions/:id (soft)', () => {
     const list = await s.app.inject({
       method: 'GET',
       url: '/transactions',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(list.json().items.find((t: { id: string }) => t.id === id)).toBeUndefined();
   });
@@ -530,7 +549,7 @@ describe('DELETE /transactions/:id (soft)', () => {
     const tx = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X',
         amountCents: 100,
@@ -540,8 +559,8 @@ describe('DELETE /transactions/:id (soft)', () => {
       },
     });
     const id = tx.json().id;
-    await s.app.inject({ method: 'DELETE', url: `/transactions/${id}`, headers: { 'x-device-token': TOKEN_A } });
-    const res = await s.app.inject({ method: 'DELETE', url: `/transactions/${id}`, headers: { 'x-device-token': TOKEN_A } });
+    await s.app.inject({ method: 'DELETE', url: `/transactions/${id}`, headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
+    const res = await s.app.inject({ method: 'DELETE', url: `/transactions/${id}`, headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     expect(res.statusCode).toBe(404);
   });
 });

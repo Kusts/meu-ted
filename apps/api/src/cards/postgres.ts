@@ -400,21 +400,26 @@ const payStatementInTx = async (
   if (fromRows.rowCount === 0) throw domainErrors.notFound('Conta de origem');
   if (fromRows.rows[0]!['kind'] === 'credit_card') throw domainErrors.invalid('fromAccountId', 'não pode pagar fatura com cartão de crédito');
 
-  // D1: pre-debit validation under lock — never clamp, reject instead.
-  const balance = Number(fromRows.rows[0]!['balance_cents']);
-  if (balance < input.amountCents) throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
+  // Negative-balance rule (user-approved): a bank/cash payer may cross
+  // below zero — no insufficient-balance rejection. The row lock above
+  // stays so concurrent payments from the same account serialize.
   await client.query(
     `UPDATE accounts SET balance_cents = balance_cents - $1, updated_at = NOW() WHERE id = $2 AND household_id = $3`,
     [input.amountCents, input.fromAccountId, householdId],
   );
 
   // D3-pattern: the payment creates its own expense transaction
-  // (previously missing — the debit had no ledger record).
+  // (previously missing — the debit had no ledger record). V056: the
+  // canonical structured origin (transactions.statement_payment_id →
+  // statements.id) is written here; canonical reconciliation joins on it
+  // and never on the free-text description. `statement_id` (purchase
+  // link feeding statement_total) stays NULL so the payment does not
+  // inflate invoice totals. Description kept for display/back-compat.
   const today = todayISO();
   await client.query(
-    `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id)
-     VALUES ($1, $2, 'expense', $3, $4, $5, $6)`,
-    [randomUUID(), householdId, `Pagamento fatura ${s.cycleYearMonth}`, input.amountCents, today, input.fromAccountId],
+    `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, statement_payment_id)
+     VALUES ($1, $2, 'expense', $3, $4, $5, $6, $7)`,
+    [randomUUID(), householdId, `Pagamento fatura ${s.cycleYearMonth}`, input.amountCents, today, input.fromAccountId, statementId],
   );
 
   // Apply to statement (locked — no lost update on paid_cents).

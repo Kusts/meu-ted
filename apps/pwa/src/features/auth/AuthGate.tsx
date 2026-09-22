@@ -4,9 +4,16 @@ import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
 import { getToken, clearToken, setToken, setSessionToken } from "@/lib/auth/token-store";
 import { ApiError, clearActiveWorkspaceId } from "@/lib/api/client";
-import { signInWithEmail, registerDeviceToken, verifyDeviceToken, fetchSession } from "@/lib/api/auth";
+import { signInWithEmail, registerDeviceToken, verifyDeviceToken, fetchSession, type SessionUser, type SessionProbeStatus } from "@/lib/api/auth";
 import { clearSensitiveSession } from "@/lib/session";
-import { SessionProvider } from "@/lib/auth/session-context";
+import { SessionProvider, type SessionSnapshot } from "@/lib/auth/session-context";
+import { setSessionStatus } from "@/lib/auth/session-authority";
+import {
+  setOfflinePrincipalId,
+  getOfflinePrincipalId,
+  getOfflineWorkspaceId,
+} from "@/lib/auth/offline-identity";
+import { resolveUnreachableOfflineRoute } from "@/lib/state/snapshot-db";
 import { Lock, Mail, ArrowRight } from "lucide-react";
 import { Splash } from "@/components/Splash";
 
@@ -19,37 +26,145 @@ interface Props {
 export function AuthGate({ children }: Props) {
   const [state, setState] = useState<AuthState>("loading");
   const [error, setError] = useState("");
+  // V4.1 Closure AUTH-01: explicit session authority mirrored from the
+  // probe. Written to the module store synchronously BEFORE unlocking so
+  // AppStateProvider (mounted as a child) boots with the right authority.
+  const [session, setSessionValue] = useState<SessionSnapshot>({ status: "unknown" });
+  const publishSession = useCallback((next: SessionSnapshot) => {
+    setSessionStatus(next);
+    setSessionValue(next);
+  }, []);
+  // Phase 3 (AUTH-02): persist the server-confirmed user identity for
+  // offline partitioning. Non-secret, non-authenticator — never a bearer,
+  // device secret, or cookie value. Best-effort, never blocks the boot.
+  const bindPrincipal = useCallback((user: { id: string }) => {
+    try {
+      setOfflinePrincipalId(user.id);
+    } catch {
+      /* noop */
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     const init = async () => {
-      // FIX-FINAL-2 FINDING 1 (ADR-015 cookie-first): the boot ALWAYS probes
-      // the cookie session first (GET /auth/session). A stored device token
-      // is scoped (registration/verification/rotation) and never decides the
-      // session alone — an invalid device token (401) drops ONLY the device
-      // token; the cookie session is never cleared on this path.
-      let sessionUser: { id: string; email: string; name: string } | null = null;
+      // FIX-FINAL-2 FINDING 1 (ADR-015 cookie-first) + V4.1 Closure AUTH-04:
+      // the boot ALWAYS probes the cookie session first (GET /auth/session).
+      // The probe distinguishes authenticated / unauthenticated (401/403,
+      // 2xx-without-user) / unreachable (network — NEVER logout). A stored
+      // device token is scoped (registration/verification/rotation) and
+      // never decides the session alone — an invalid device token (401)
+      // drops ONLY the device token; the cookie session is never cleared
+      // on this path.
+      let sessionUser: SessionUser | null = null;
+      let probeStatus: SessionProbeStatus = "unreachable";
       try {
         const session = await fetchSession();
         sessionUser = session?.user ?? null;
+        probeStatus = session?.status ?? (sessionUser ? "authenticated" : "unauthenticated");
       } catch {
         sessionUser = null;
+        probeStatus = "unreachable";
       }
 
       const token = getToken();
+      // V41C FIX 2: the single unreachable decider — shared by the
+      // tokenless and token paths below. A probe that never reached the
+      // server must NEVER unlock live I/O: only a valid, within-TTL V3
+      // envelope for the bound identity unlocks (offline read-only, INV-06
+      // — no write queue exists); anything else stays on the offline/login
+      // screen. Never purges here — unreachability is not a rejection.
+      const unlockOrLoginForUnreachable = async (): Promise<void> => {
+        let offline = false;
+        try {
+          const route = await resolveUnreachableOfflineRoute(
+            getOfflinePrincipalId(),
+            getOfflineWorkspaceId(),
+          );
+          offline = route === "offline-read-only";
+        } catch {
+          offline = false;
+        }
+        if (cancelled) return;
+        if (offline) {
+          publishSession({
+            status: "unreachable",
+            offlinePrincipalId: getOfflinePrincipalId() ?? undefined,
+          });
+          setState("unlocked");
+        } else {
+          publishSession({ status: "unreachable" });
+          setState("login");
+        }
+      };
       if (!token) {
         // T2.5 (ADR-015 Opção C, session-first): the boot MUST NOT depend on
         // the device token. Without one, a valid cookie session is enough to
-        // operate — GET /auth/session is the scoped session check. Fail-closed:
-        // no session means login; transport errors also mean login (unlike the
-        // stored-token path, there is nothing offline-capable to unlock with).
-        if (!cancelled) setState(sessionUser ? "unlocked" : "login");
+        // operate — GET /auth/session is the scoped session check.
+        // Fail-closed: unauthenticated means login. Unreachable means the
+        // server never answered: record it as unreachable (NOT a logout —
+        // nothing is purged). Phase 3 (AUTH-T03) routes it through the V3
+        // snapshot below — valid + within TTL unlocks offline read-only,
+        // otherwise the login screen. The distinction survives in the
+        // session authority instead of collapsing into login-state.
+        if (probeStatus === "authenticated" && sessionUser) {
+          bindPrincipal(sessionUser);
+          publishSession({
+            status: "authenticated",
+            user: { userId: sessionUser.id, email: sessionUser.email, name: sessionUser.name },
+          });
+          if (!cancelled) setState("unlocked");
+        } else if (probeStatus === "unreachable") {
+          // Phase 3 (AUTH-03/AUTH-04): unreachability is not a rejection —
+          // never purge here. Consult the V3 snapshot: a valid,
+          // within-TTL envelope for the last bound identity unlocks offline
+          // read-only; otherwise the login screen (no false logout).
+          await unlockOrLoginForUnreachable();
+        } else {
+          // V41C FIX 4 (INV-05/AUTH-T04): explicit server rejection with no
+          // device token — purge offline identity + snapshots BEFORE
+          // publishing login, so a later unavailability cannot reopen
+          // financial data from the snapshot. Same purge contract as
+          // expireSession below.
+          await clearSensitiveSession({
+            clearToken: true,
+            clearV1Snapshot: true,
+            clearProfile: true,
+            clearOfflineIdentity: true,
+          }).catch(() => {});
+          if (cancelled) return;
+          publishSession({ status: "unauthenticated" });
+          if (!cancelled) setState("login");
+        }
         return;
       }
 
       try {
         await verifyDeviceToken(token);
+        // Compat path: a verified device token unlocks as before. It only
+        // proves the session authority when the cookie probe agrees
+        // (authenticated → live). Otherwise the V41C FIX 1 gate keeps live
+        // bootstrap closed for non-authenticated authority.
+        if (sessionUser) {
+          bindPrincipal(sessionUser);
+          publishSession({
+            status: "authenticated",
+            user: { userId: sessionUser.id, email: sessionUser.email, name: sessionUser.name },
+          });
+          if (!cancelled) setState("unlocked");
+          return;
+        }
+        if (probeStatus === "unreachable") {
+          // V41C FIX 2: the probe never reached the server — a verified
+          // device token alone must not unlock. Same V3 route as tokenless.
+          await unlockOrLoginForUnreachable();
+          return;
+        }
+        // Probe explicitly answered "no session" but the scoped device check
+        // passed: preserve today's compat unlock (unknown, no live I/O —
+        // the FIX 1 gate stays closed without `authenticated`).
+        publishSession({ status: "unknown" });
         if (!cancelled) setState("unlocked");
       } catch (e) {
         if (cancelled) return;
@@ -63,6 +178,11 @@ export function AuthGate({ children }: Props) {
             /* noop */
           }
           if (sessionUser) {
+            bindPrincipal(sessionUser);
+            publishSession({
+              status: "authenticated",
+              user: { userId: sessionUser.id, email: sessionUser.email, name: sessionUser.name },
+            });
             if (!cancelled) setState("unlocked");
             return;
           }
@@ -70,15 +190,29 @@ export function AuthGate({ children }: Props) {
             clearToken: true,
             clearV1Snapshot: true,
             clearProfile: true,
+            clearOfflineIdentity: true,
           }).catch(() => {});
+          publishSession({ status: "unauthenticated" });
           if (!cancelled) {
             setError("Sessão antiga expirada. Faça login novamente.");
             setState("login");
           }
           return;
         }
-        // If network error during verification but token is stored, unlock to allow offline capabilities
-        if (!cancelled) setState("unlocked");
+        // V41C FIX 2: a non-401 verification failure proves nothing. When
+        // the cookie probe confirmed a session, that confirmation stands
+        // (device-endpoint flakiness must not kill it); otherwise no unlock
+        // without a validated V3 route — offline read-only only, never live.
+        if (sessionUser) {
+          bindPrincipal(sessionUser);
+          publishSession({
+            status: "authenticated",
+            user: { userId: sessionUser.id, email: sessionUser.email, name: sessionUser.name },
+          });
+          if (!cancelled) setState("unlocked");
+          return;
+        }
+        await unlockOrLoginForUnreachable();
       }
     };
     init();
@@ -86,7 +220,7 @@ export function AuthGate({ children }: Props) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [publishSession, bindPrincipal]);
 
   const handleLogin = useCallback(async (credentials: { email: string; password: string }) => {
     setError("");
@@ -110,6 +244,32 @@ export function AuthGate({ children }: Props) {
 
       setToken(res.token);
 
+      // Login succeeded server-side (sign-in + device register both 2xx):
+      // that IS proof of authentication. Confirm identity via the probe;
+      // fall back to the just-authenticated email (non-secret identity).
+      try {
+        const probe = await fetchSession();
+        if (probe.user) {
+          bindPrincipal(probe.user);
+          publishSession({
+            status: "authenticated",
+            user: { userId: probe.user.id, email: probe.user.email, name: probe.user.name },
+          });
+        } else {
+          bindPrincipal({ id: credentials.email });
+          publishSession({
+            status: "authenticated",
+            user: { userId: credentials.email, email: credentials.email },
+          });
+        }
+      } catch {
+        bindPrincipal({ id: credentials.email });
+        publishSession({
+          status: "authenticated",
+          user: { userId: credentials.email, email: credentials.email },
+        });
+      }
+
       setState("unlocked");
     } catch (e: unknown) {
       if (e instanceof ApiError) {
@@ -125,20 +285,26 @@ export function AuthGate({ children }: Props) {
       }
       throw e;
     }
-  }, []);
+  }, [bindPrincipal]);
 
   const expireSession = useCallback(async (message?: string) => {
+    // 401/403: explicit server rejection → purge everything offline (V1/V2/V3
+    // snapshots, tokens, profile, offline identity + stamp) + login. Never
+    // offline mode on this path (AUTH-T04/T05, INV-05).
     await clearSensitiveSession({
       clearToken: true,
       clearV1Snapshot: true,
       clearProfile: true,
+      clearOfflineIdentity: true,
     });
+    // 401/403: explicit server rejection → unauthenticated (purge + login).
+    publishSession({ status: "unauthenticated" });
     setError(message ?? "Sessão expirada. Faça login novamente.");
     setState("login");
-  }, []);
+  }, [publishSession]);
 
   if (state === "unlocked")
-    return <SessionProvider value={{ expireSession }}>{children}</SessionProvider>;
+    return <SessionProvider value={{ expireSession, session }}>{children}</SessionProvider>;
   if (state === "loading") return <Splash />;
 
   return (

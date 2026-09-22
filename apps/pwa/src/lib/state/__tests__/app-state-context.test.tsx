@@ -4,6 +4,10 @@ import { AppStateProvider, useAppState } from "../app-state-context";
 import * as endpoints from "@/lib/api/endpoints";
 import { ApiError, apiFetch } from "@/lib/api/client";
 import { setOfflineSubjectId } from "@/lib/auth/offline-subject";
+import {
+  resetSessionStatus,
+  setSessionStatus,
+} from "@/lib/auth/session-authority";
 import { SessionProvider } from "@/lib/auth/session-context";
 import type { Account, Category, Transaction, Payable } from "@/lib/state/types";
 import type { MutationReceipt } from "@pi-finance/llm-contracts/types";
@@ -27,6 +31,10 @@ beforeEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   apiConfigState.forceUnconfigured = false;
+  // V41C FIX 1: the online gate reads the probe-confirmed session authority
+  // (module state persists across tests in this file) — every test starts
+  // pre-probe; apiReady() below confirms a session where live I/O is wanted.
+  resetSessionStatus();
   localStorage.clear();
   // v2 snapshot lives in IndexedDB — clear it between tests so a prior test's
   // persisted snapshot can't leak in as a "snapshot" source.
@@ -120,6 +128,9 @@ function apiReady() {
   apiConfigState.forceUnconfigured = false;
   vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "http://localhost:3001");
   localStorage.setItem("pi-finance:token", "test-token-abc");
+  // V41C FIX 1: bearer alone never unlocks live I/O — tests exercising the
+  // online path simulate the probe-confirmed session AuthGate publishes.
+  setSessionStatus({ status: "authenticated", user: { userId: "test-user" } });
   // T2.6 contract: v2 reads verify the subject partition — an
   // authenticated session always carries one (set at login).
   setOfflineSubjectId("66666666-7777-4888-8999-aaaaaaaaaaaa");
@@ -333,12 +344,15 @@ describe("AppStateProvider — API read path", () => {
     expect(result.current.readOnly).toBe(true);
   });
 
-  it("initializes empty (not mock) and not loading when configured without token", () => {
+  it("initializes empty (not mock) and not loading when the session is not confirmed", () => {
+    // V41C FIX 1: without a probe-confirmed session the online gate stays
+    // closed — bearer or not — so no bootstrap starts (waits for the probe).
+    resetSessionStatus();
     localStorage.removeItem("pi-finance:token");
     const { result } = renderHook(() => useAppState(), {
       wrapper: AppStateProvider,
     });
-    // configured -> no mock leak; no token -> no fetch -> not stuck loading
+    // configured -> no mock leak; unconfirmed session -> no fetch -> not stuck loading
     expect(result.current.loading).toBe(false);
     expect(result.current.accounts).toHaveLength(0);
     expect(result.current.debts).toHaveLength(0);
@@ -1726,7 +1740,7 @@ describe("AppStateProvider — runtime 401", () => {
       new ApiError(401, "auth.error", "Token inválido"),
     );
     const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <SessionProvider value={{ expireSession }}>
+      <SessionProvider value={{ expireSession, session: { status: "unknown" } }}>
         <AppStateProvider>{children}</AppStateProvider>
       </SessionProvider>
     );
@@ -1744,7 +1758,7 @@ describe("AppStateProvider — runtime 401", () => {
       new ApiError(401, "auth.error", "Token inválido"),
     );
     const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <SessionProvider value={{ expireSession }}>
+      <SessionProvider value={{ expireSession, session: { status: "unknown" } }}>
         <AppStateProvider>{children}</AppStateProvider>
       </SessionProvider>
     );
@@ -2198,7 +2212,7 @@ describe("AppStateProvider � boot dedupe, value stability and central 401", ()
   it("expires the session for a 401 that never passes through AppState handlers", async () => {
     const expireSession = vi.fn();
     const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <SessionProvider value={{ expireSession }}>
+      <SessionProvider value={{ expireSession, session: { status: "unknown" } }}>
         <AppStateProvider>{children}</AppStateProvider>
       </SessionProvider>
     );

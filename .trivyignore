@@ -1,9 +1,12 @@
-﻿# VAL.12 base-image exceptions (node:22-alpine bundled npm CLI).
-# The packages below live ONLY under /usr/local/lib/node_modules/npm (verified
-# by image inspection; absent from pnpm-lock.yaml and from /monorepo app trees)
-# and are not fixable from the app: npm is bundled with the node 22 line and
-# the fixed npm ships with node >= 24 base images. Revisit when the base image
-# is updated. Expiry for all entries below: 2026-12-31.
+﻿# VAL.12 base-image exceptions (origin: node:22-alpine bundled npm CLI).
+# Live Dockerfiles now use node:24-alpine (Phase A expiry remediation), whose
+# bundled npm is EXPECTED to carry the fixed copies — but no trivy scan of the
+# rebuilt node:24 images has been produced yet, so every entry below is
+# RETAINED pending CI `security:containers` evidence on the new images. Do not
+# delete entries until a HIGH/CRITICAL-clean scan proves them gone. The packages
+# below live ONLY under /usr/local/lib/node_modules/npm (verified by image
+# inspection on the node:22 line; absent from pnpm-lock.yaml and from /monorepo
+# app trees) and are not fixable from the app. Expiry: 2026-12-31.
 
 # pacote 19.0.2 bundled in npm CLI (fixed in npm bundled with node >= 24). Expiry: 2026-12-31.
 CVE-2026-9496
@@ -19,7 +22,9 @@ CVE-2026-73566
 # via pnpm.overrides (1.1.18/2.1.4/3.0.6/5.0.9); this entry covers only the
 # base-image remnant until the node >= 24 migration. Expiry: 2026-12-31.
 CVE-2026-13149
+# brace-expansion 2.0.2 base-image remnant (same npm CLI copy as above). Expiry: 2026-12-31.
 CVE-2026-14257
+# brace-expansion 2.0.2 base-image remnant (same npm CLI copy as above). Expiry: 2026-12-31.
 CVE-2026-69152
 # ip-address 10.1.0 bundled in npm CLI (no copy exists in the deployed app tree:
 # the lockfile line 10.7.0 belongs to the dev toolchain excluded from prod

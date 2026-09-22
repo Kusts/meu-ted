@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildTestApp, TOKEN_A } from '../test-app.js';
 
-const auth = () => ({ 'x-device-token': TOKEN_A, 'content-type': 'application/json' });
+const auth = () => ({ 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() });
 
 const seedPayable = async (
   app: ReturnType<typeof buildTestApp>['app'],
@@ -72,18 +72,18 @@ describe('V4.1 Task 2.x — payable double-pay is a single financial effect', ()
     expect(pay.statusCode).toBe(400);
   });
 
-  it('rejects payment with insufficient balance instead of clamping (D1)', async () => {
+  it('pays with amount above the balance and records the exact negative delta (negative-balance rule)', async () => {
     const { app, state } = buildTestApp();
     const { payableId, accountId } = await seedPayable(app, { balance: 5_000, amount: 10_000 });
     const pay = await app.inject({
       method: 'POST', url: `/payables/${payableId}/pay`, headers: auth(), payload: { paidDate: '2026-06-14' },
     });
-    expect(pay.statusCode).toBe(400);
-    expect(pay.json().code).toBe('validation.invalid');
+    expect(pay.statusCode).toBe(200);
+    expect(typeof pay.json().paidTransactionId).toBe('string');
     const listed = await app.inject({ method: 'GET', url: '/payables?status=paid', headers: auth() });
-    expect(listed.json().items).toHaveLength(0);
-    expect(state.transactions.filter((t) => t.amountCents === 10_000)).toHaveLength(0);
-    expect(state.accounts.find((x) => x.id === accountId)?.balanceCents).toBe(5_000);
+    expect(listed.json().items).toHaveLength(1);
+    expect(state.transactions.filter((t) => t.amountCents === 10_000)).toHaveLength(1);
+    expect(state.accounts.find((x) => x.id === accountId)?.balanceCents).toBe(5_000 - 10_000);
   });
 
   it('unpay keeps the recurring successor, reverses the debit and requires the linked paidTransactionId (D4)', async () => {

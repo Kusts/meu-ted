@@ -134,11 +134,14 @@ export const resolveSubcategory = (
 };
 
 /**
- * V4.1 Phase 4 (D1 option B): insufficient-funds guard shared by the
- * debit paths. Same 400 `validation.invalid` shape the payables and card
- * stores use — never a silent clamp.
+ * Negative-balance rule (user-approved): `bank`/`cash` accounts may go
+ * negative — debits on them are never rejected for insufficient funds.
+ * `credit_card` keeps non-negative outstanding-balance semantics, so a
+ * debit leg that would drive a card below zero still fails with 400
+ * `validation.invalid` — never a silent clamp.
  */
-const assertSufficientFunds = (balanceCents: number, amountCents: number): void => {
+const assertDebitAllowed = (kind: string, balanceCents: number, amountCents: number): void => {
+  if (kind !== 'credit_card') return;
   if (balanceCents < amountCents) {
     throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
   }
@@ -165,10 +168,10 @@ const softDeleteTxInState = (state: InMemoryState, tx: Transaction): void => {
     if (acc) acc.balanceCents = Math.min(acc.balanceCents + tx.amountCents, Number.MAX_SAFE_INTEGER);
   } else if (tx.kind === 'income') {
     const acc = state.accounts.find((a) => a.id === tx.accountId && a.householdId === tx.householdId);
-    // V4.1 Phase 4 (D1): reversing an income is a debit — it must not
-    // drive the balance negative silently (was: Math.max(0, …) clamp).
+    // Negative-balance rule: reversing an income is a debit — allowed to
+    // drive bank/cash negative, still floored at zero for credit cards.
     if (acc) {
-      assertSufficientFunds(acc.balanceCents, tx.amountCents);
+      assertDebitAllowed(acc.kind, acc.balanceCents, tx.amountCents);
       acc.balanceCents -= tx.amountCents;
     }
   } else if (tx.kind === 'transfer') {
@@ -178,7 +181,7 @@ const softDeleteTxInState = (state: InMemoryState, tx: Transaction): void => {
     if (tx.transferToAccountId) {
       const to = state.accounts.find((a) => a.id === tx.transferToAccountId && a.householdId === tx.householdId);
       if (to) {
-        assertSufficientFunds(to.balanceCents, tx.amountCents);
+        assertDebitAllowed(to.kind, to.balanceCents, tx.amountCents);
         to.balanceCents -= tx.amountCents;
       }
     }
@@ -273,9 +276,10 @@ export const createInMemoryWriteStore = (state: InMemoryState): WriteStore => {
       resolveSubcategory(state, householdId, input.subcategoryId, 'expense', input.categoryId);
     }
     if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
-    // V4.1 Phase 4 (D1 option B): no silent clamp — an expense that
-    // exceeds the balance fails instead of recording a partial debit.
-    assertSufficientFunds(acc.balanceCents, input.amountCents);
+    // Negative-balance rule (user-approved): bank/cash expenses may cross
+    // below zero — the guard below is a no-op for them and stays as the
+    // zero floor for credit cards (already 422-rejected above).
+    assertDebitAllowed(acc.kind, acc.balanceCents, input.amountCents);
     const tx: Transaction = {
       id: randomUUID(),
       householdId,
@@ -336,6 +340,12 @@ async createAccount(householdId, input) {
           existing.name.toLowerCase() === input.name.toLowerCase(),
       );
       if (duplicate) throw domainErrors.inUse('Conta', 'nome duplicado');
+      // Negative-balance rule: only bank/cash may start negative. The
+      // route schema already limits kind to bank|cash; this guards direct
+      // store callers presenting any account kind.
+      if ((input.kind as string) === 'credit_card' && input.initialBalanceCents < 0) {
+        throw domainErrors.invalid('initialBalanceCents', 'cartão de crédito não pode iniciar com saldo negativo');
+      }
       const acc: Account = {
 
         id: randomUUID(),
@@ -513,10 +523,10 @@ async createAccount(householdId, input) {
         throw new DomainError('validation.invalid', 'transferência não pode usar cartão de crédito.', 422);
       }
       if (input.amountCents <= 0) throw domainErrors.invalid('amountCents', 'deve ser maior que zero');
-      // V4.1 Phase 4 (D1 option B): a transfer that exceeds the source
-      // balance fails BEFORE any leg moves (was: debit clamped, full
-      // credit — money creation).
-      assertSufficientFunds(from.balanceCents, input.amountCents);
+      // Negative-balance rule (user-approved): bank/cash sources may cross
+      // below zero — the guard below is a no-op for them and stays as the
+      // zero floor for credit cards (already 422-rejected above).
+      assertDebitAllowed(from.kind, from.balanceCents, input.amountCents);
       const tx: Transaction = {
         id: randomUUID(),
         householdId,
@@ -562,10 +572,10 @@ async createAccount(householdId, input) {
       if (patch.description !== undefined) tx.description = patch.description;
       if (patch.date !== undefined) tx.date = patch.date;
       // V4.1 Phase 4 (Tasks 4.4–4.5): delta engine — compute the effective
-      // after-state, validate it (D1: no account may end negative; H-01:
-      // no credit-card leg), then reverse(before) + apply(after) exactly
-      // once. Validation runs BEFORE any mutation so a rejection leaves
-      // every balance untouched.
+      // after-state, validate it (negative-balance rule: only credit-card
+      // legs keep the zero floor; H-01: no credit-card leg), then
+      // reverse(before) + apply(after) exactly once. Validation runs
+      // BEFORE any mutation so a rejection leaves every balance untouched.
       const balanceTouched =
         patch.amountCents !== undefined ||
         (patch.accountId !== undefined && patch.accountId !== tx.accountId);
@@ -584,7 +594,9 @@ async createAccount(householdId, input) {
         const applyDelta = tx.kind === 'expense' ? -newAmount : newAmount;
         if (newAccountId === tx.accountId) {
           const final = oldAcc.balanceCents + reverseDelta + applyDelta;
-          if (final < 0) {
+          // Negative-balance rule: bank/cash may end negative; only a
+          // credit-card leg keeps the zero floor.
+          if (final < 0 && oldAcc.kind === 'credit_card') {
             throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
           }
           oldAcc.balanceCents = final;
@@ -592,8 +604,12 @@ async createAccount(householdId, input) {
           const oldFinal = oldAcc.balanceCents + reverseDelta;
           const newFinal = newAcc.balanceCents + applyDelta;
           // reverseDelta on an expense is a credit (never negative);
-          // on income it is a debit that must not go negative either.
-          if (oldFinal < 0 || newFinal < 0) {
+          // on income it is a debit. Only credit-card legs keep the
+          // zero floor (a card target is already 422-rejected above).
+          if (
+            (oldFinal < 0 && oldAcc.kind === 'credit_card') ||
+            (newFinal < 0 && newAcc.kind === 'credit_card')
+          ) {
             throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
           }
           oldAcc.balanceCents = oldFinal;
@@ -645,20 +661,21 @@ async createAccount(householdId, input) {
       if (state.deletedTransactions.has(tx.id)) {
         throw domainErrors.notFound('Lançamento');
       }
-      // Restore balance effect (D1: debit legs validate, never clamp).
+      // Restore balance effect (negative-balance rule: only credit-card
+      // debit legs keep the zero floor, never a clamp).
       if (tx.kind === 'expense') {
         const acc = findAccount(tx.accountId, householdId);
         acc.balanceCents = Math.min(acc.balanceCents + tx.amountCents, Number.MAX_SAFE_INTEGER);
       } else if (tx.kind === 'income') {
         const acc = findAccount(tx.accountId, householdId);
-        assertSufficientFunds(acc.balanceCents, tx.amountCents);
+        assertDebitAllowed(acc.kind, acc.balanceCents, tx.amountCents);
         acc.balanceCents -= tx.amountCents;
       } else if (tx.kind === 'transfer') {
         const from = findAccount(tx.accountId, householdId);
         const to = tx.transferToAccountId
           ? findAccount(tx.transferToAccountId, householdId)
           : null;
-        if (to) assertSufficientFunds(to.balanceCents, tx.amountCents);
+        if (to) assertDebitAllowed(to.kind, to.balanceCents, tx.amountCents);
         from.balanceCents = Math.min(from.balanceCents + tx.amountCents, Number.MAX_SAFE_INTEGER);
         if (to) to.balanceCents -= tx.amountCents;
       }

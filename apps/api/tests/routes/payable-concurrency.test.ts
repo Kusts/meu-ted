@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildTestApp, TOKEN_A } from '../test-app.js';
 
-const auth = () => ({ 'x-device-token': TOKEN_A, 'content-type': 'application/json' });
+const auth = () => ({ 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() });
 
 const seedPayable = async (app: ReturnType<typeof buildTestApp>['app']) => {
   const account = await app.inject({ method: 'POST', url: '/accounts', headers: auth(), payload: { name: 'Pay A', kind: 'bank', initialBalanceCents: 50_000 } });

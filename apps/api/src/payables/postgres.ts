@@ -69,8 +69,10 @@ const markPayablePaidInTx = async (
     );
   }
   // V4.1 Task 2.3 (D1/D3): the payment always creates the expense
-  // transaction AND debits the paying account in the same tx. No
-  // silent clamp: insufficient balance rejects like payStatement.
+  // transaction AND debits the paying account in the same tx.
+  // Negative-balance rule (user-approved): bank/cash payers may cross
+  // below zero — no insufficient-balance rejection. The row lock above
+  // stays so concurrent payments still serialize on the account.
   const accRows = await client.query<Row>(
     `SELECT id, kind, balance_cents, status FROM accounts WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
     [p.accountId, householdId],
@@ -80,9 +82,6 @@ const markPayablePaidInTx = async (
   if (acc["status"] !== "active") throw domainErrors.notFound("Conta");
   if (acc["kind"] === "credit_card") {
     throw new DomainError("validation.invalid", "compra no cartão deve usar /cards/purchases.", 422);
-  }
-  if (Number(acc["balance_cents"]) < p.amountCents) {
-    throw domainErrors.invalid("amountCents", "saldo insuficiente na conta de origem");
   }
   const paidDate = input.paidDate ?? todayISO();
   const paidTxId = randomUUID();

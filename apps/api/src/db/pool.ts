@@ -91,9 +91,11 @@ export const resolvePoolTimeouts = (
 
 /**
  * Session-level `SET` statements applied on every new connection (pg does
- * not forward these knobs as startup parameters, so `pool.on('connect')`
- * is the enforcement point). Values are integers validated above — safe
- * to interpolate.
+ * not forward these knobs as startup parameters, so `onConnect` is the
+ * enforcement point). pg-pool awaits `options.onConnect` before handing the
+ * client out, which avoids the deprecated concurrent `client.query()` path
+ * hit by the `pool.on('connect')` event listener. Values are integers
+ * validated above — safe to interpolate.
  */
 export const sessionTimeoutStatements = (timeouts: PoolTimeouts): string[] => [
   `SET statement_timeout = ${timeouts.statementTimeoutMillis}`,
@@ -176,13 +178,14 @@ export const createPool = (config: DbConfig): DbPool => {
     max: config.max ?? 4,
     idleTimeoutMillis: config.idleTimeoutMillis ?? 10_000,
     connectionTimeoutMillis: timeouts.connectionTimeoutMillis,
-  });
-  pool.on('connect', (client: pg.PoolClient) => {
-    const statements = sessionTimeoutStatements(timeouts);
-    client.query(statements.join('; ')).catch(() => {
-      // A failed SET must not take the connection down; the query will
-      // surface the underlying problem on first use.
-    });
+    onConnect: async (client) => {
+      try {
+        await client.query(sessionTimeoutStatements(timeouts).join('; '));
+      } catch {
+        // A failed SET must not take the connection down; the query will
+        // surface the underlying problem on first use.
+      }
+    },
   });
   return pool;
 };

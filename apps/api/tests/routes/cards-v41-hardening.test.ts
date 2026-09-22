@@ -54,7 +54,7 @@ function freshSeed() {
 }
 
 function auth(token: string = TOKEN_A) {
-  return { 'x-device-token': token, 'content-type': 'application/json' };
+  return { 'x-device-token': token, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() };
 }
 
 const recurring = (overrides: Record<string, unknown> = {}) => ({
@@ -278,6 +278,70 @@ describe('2.9 statement payment guards (single-node semantics)', () => {
     expect(p2.statusCode).toBe(200);
     expect(p2.json().paidCents).toBe(500_00);
     expect(p2.json().status).toBe('paid');
+  });
+});
+
+describe('DEBT1 full statement payment persists paidCents === total + payment expense', () => {
+  it('quitar integralmente nunca resulta em paid com paidCents=0', async () => {
+    const { app, state } = buildTestApp(freshSeed());
+    const create = await app.inject({
+      method: 'POST', url: '/cards/purchases', headers: auth(),
+      payload: {
+        accountId: CARD_A1.id, description: 'Compra DEBT1', amountCents: 500_00,
+        date: '2026-06-10', categoryId: CATEGORY_FOOD_A.id,
+      },
+    });
+    expect(create.statusCode).toBe(201);
+    const stmtId = (await app.inject({
+      method: 'GET', url: `/cards/statements?accountId=${CARD_A1.id}`, headers: auth(),
+    })).json().items[0].id as string;
+    const before = await app.inject({ method: 'GET', url: `/cards/statements/${stmtId}`, headers: auth() });
+    expect(before.statusCode).toBe(200);
+    const total = before.json().totalCents as number;
+    // Valor fixo da compra DEBT1 (500_00), não apenas "maior que zero".
+    expect(total).toBe(500_00);
+    expect(before.json().paidCents).toBe(0);
+
+    const balanceOfPayer = () =>
+      state.accounts.find((a) => a.id === ACCOUNT_A1.id)!.balanceCents;
+    const balanceBefore = balanceOfPayer();
+    const txCountBefore = state.transactions.length;
+    const pay = await app.inject({
+      method: 'POST', url: `/cards/statements/${stmtId}/pay`,
+      headers: { ...auth(), 'idempotency-key': 'debt1-full-pay-001' },
+      payload: { amountCents: total, fromAccountId: ACCOUNT_A1.id },
+    });
+    expect(pay.statusCode).toBe(200);
+    const paid = pay.json();
+    expect(paid.status).toBe('paid');
+    expect(paid.totalCents).toBe(total);
+    expect(paid.paidCents).toBe(total);
+    // Anti-regressão explícita: paid jamais com zero.
+    expect(paid.paidCents).toBeGreaterThan(0);
+    expect(paid.paidCents).not.toBe(0);
+
+    // Estado persistido (não só a resposta do POST): reler o detalhe.
+    const detail = await app.inject({ method: 'GET', url: `/cards/statements/${stmtId}`, headers: auth() });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json().status).toBe('paid');
+    expect(detail.json().totalCents).toBe(total);
+    expect(detail.json().paidCents).toBe(total);
+    expect(detail.json().paidCents).not.toBe(0);
+
+    // Débito exato da conta pagadora.
+    const balanceAfter = balanceOfPayer();
+    expect(balanceAfter - balanceBefore).toBe(-total);
+    expect(balanceAfter).toBe(balanceBefore - 500_00);
+
+    // Exatamente uma nova transação: a despesa de pagamento.
+    expect(state.transactions.length).toBe(txCountBefore + 1);
+    const newTx = state.transactions.slice(txCountBefore);
+    expect(newTx).toHaveLength(1);
+    expect(newTx[0].accountId).toBe(ACCOUNT_A1.id);
+    expect(newTx[0].kind).toBe('expense');
+    expect(newTx[0].amountCents).toBe(total);
+    expect(newTx[0].amountCents).toBe(500_00);
+    expect(newTx[0].description.startsWith('Pagamento fatura')).toBe(true);
   });
 });
 

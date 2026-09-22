@@ -139,7 +139,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (current && selected !== current) {
         setLoading(true);
         closeAllSockets("workspace access revoked");
-        await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true });
+        // V41C FIX 3 (AUTH-T07): the revocation-triggered auto-switch purges
+        // the workspace-side offline binding (workspace id, subject
+        // partition, age stamp) — binding X must never survive as Y. The
+        // user principal survives for rebinding; tokens are untouched.
+        await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true, clearWorkspaceBinding: true });
       }
       activeWorkspaceIdRef.current = selected;
       setActiveWorkspaceIdState(selected);
@@ -173,7 +177,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         if (current && selected !== current) {
           setLoading(true);
           closeAllSockets("workspace access revoked");
-          await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true });
+          // V41C FIX 3 (AUTH-T07): same binding purge as refreshWorkspaces —
+          // see the note above.
+          await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true, clearWorkspaceBinding: true });
         }
         activeWorkspaceIdRef.current = selected;
         setActiveWorkspaceIdState(selected);
@@ -304,7 +310,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (current) {
       closeAllSockets("workspace access revoked");
       clearActiveWorkspaceId();
-      await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true });
+      // Phase 3 (AUTH-T07): switching workspaces purges the snapshot slots
+      // (V1/V2/V3) + profile AND clears the workspace-side offline binding
+      // (workspace id, subject partition, age stamp) — workspace X data can
+      // never appear as workspace Y. The user principal survives for
+      // rebinding on the next online sync; tokens are untouched (no logout).
+      await clearSensitiveSession({ clearV1Snapshot: true, clearProfile: true, clearWorkspaceBinding: true });
     }
     activeWorkspaceIdRef.current = workspaceId;
     setActiveWorkspaceIdState(workspaceId);

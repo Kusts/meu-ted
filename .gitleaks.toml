@@ -8,7 +8,6 @@ paths = [
   '''^packages/idempotency/src/idempotency\.test\.ts$''',
   '''^node_modules/''',
   '''^apps/[^/]+/(node_modules|dist|\.next|\.open-next)/''',
-  '''^\.github/workflows/''',
   '''^docs/superpowers/goal-runs/''',
   '''^\.tmp.*''',
   '''^\.pi/extensions/financial-tools/.*test.*''',

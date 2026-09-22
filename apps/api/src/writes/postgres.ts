@@ -175,10 +175,14 @@ const lockAccountsOrdered = async (
 };
 
 /**
- * V4.1 Phase 4 (D1 option B): insufficient-funds rejection. Same 400
- * `validation.invalid` shape the payables and card stores use.
+ * Negative-balance rule (user-approved): `bank`/`cash` accounts may go
+ * negative — debits on them are never rejected for insufficient funds.
+ * `credit_card` keeps non-negative outstanding-balance semantics, so a
+ * debit leg that would drive a card below zero still fails with 400
+ * `validation.invalid`. Same shape the payables and card stores use.
  */
-const assertSufficientFunds = (balanceCents: number, amountCents: number): void => {
+const assertDebitAllowed = (kind: string, balanceCents: number, amountCents: number): void => {
+  if (kind !== 'credit_card') return;
   if (balanceCents < amountCents) {
     throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
   }
@@ -291,9 +295,10 @@ const findActiveTransaction = async (
  * balances consistent inside the same database transaction.
  *
  * V4.1 Phase 4 (D1 option B, Tasks 4.6–4.7): every leg locks its account
- * row (deterministic order) and debit legs validate instead of clamping —
- * reversing an income (or the destination leg of a transfer) that was
- * already spent fails with 400 instead of flooring the balance at zero.
+ * row (deterministic order) and debit legs validate instead of clamping.
+ * Negative-balance rule (user-approved): reversing an income (or the
+ * destination leg of a transfer) that was already spent may drive
+ * bank/cash negative — only credit-card legs keep the zero floor.
  */
 const reverseBalanceForDelete = async (
   client: import('pg').PoolClient,
@@ -308,7 +313,9 @@ const reverseBalanceForDelete = async (
     );
   } else if (tx.kind === 'income') {
     const locked = await lockAccountRow(client, tx.accountId, householdId);
-    assertSufficientFunds(locked.balanceCents, tx.amountCents);
+    // Negative-balance rule: reversing an income is a debit — allowed to
+    // drive bank/cash negative, still floored at zero for credit cards.
+    assertDebitAllowed(locked.kind, locked.balanceCents, tx.amountCents);
     await client.query(
       `UPDATE accounts SET balance_cents = $2 WHERE id = $1 AND household_id = $3`,
       [tx.accountId, locked.balanceCents - tx.amountCents, householdId],
@@ -322,8 +329,9 @@ const reverseBalanceForDelete = async (
     const from = locked.get(tx.accountId)!;
     const dest = tx.transferToAccountId ? locked.get(tx.transferToAccountId)! : null;
     // Validate the debit leg BEFORE any mutation so a rejection leaves
-    // both sides untouched.
-    if (dest) assertSufficientFunds(dest.balanceCents, tx.amountCents);
+    // both sides untouched. Bank/cash may go negative; a credit-card
+    // destination leg keeps the zero floor.
+    if (dest) assertDebitAllowed(dest.kind, dest.balanceCents, tx.amountCents);
     await client.query(
       `UPDATE accounts SET balance_cents = $2 WHERE id = $1 AND household_id = $3`,
       [tx.accountId, from.balanceCents + tx.amountCents, householdId],
@@ -416,7 +424,10 @@ const createExpenseInTx = async (
   }
   // V4.1 Phase 4 (D1 option B): no silent partial debit — an expense that
   // exceeds the balance fails with 400 like payables/cards.
-  assertSufficientFunds(acc.balanceCents, input.amountCents);
+  // Negative-balance rule (user-approved): bank/cash expenses may cross
+  // below zero — the guard below is a no-op for them and stays as the
+  // zero floor for credit cards (already 422-rejected above).
+  assertDebitAllowed(acc.kind, acc.balanceCents, input.amountCents);
   const cat = await findCategoryInHousehold(client, input.categoryId, householdId);
   if (cat.status !== 'active') throw domainErrors.notFound('Categoria');
   // V4.1 Task 2.15: plain expenses require an expense-kind category —
@@ -520,7 +531,10 @@ const createTransferInTx = async (
   // V4.1 Phase 4 (D1 option B): the debit is validated BEFORE either leg
   // moves — an over-balance transfer fails with 400 and changes NEITHER
   // side (was: GREATEST(0, …) debit + full credit = money creation).
-  assertSufficientFunds(from.balanceCents, input.amountCents);
+  // Negative-balance rule (user-approved): bank/cash sources may cross
+  // below zero — the guard below is a no-op for them and stays as the
+  // zero floor for credit cards (already 422-rejected above).
+  assertDebitAllowed(from.kind, from.balanceCents, input.amountCents);
   const txRes = await client.query<Row>(
     `INSERT INTO transactions (id, household_id, kind, description, amount_cents, date, account_id, transfer_to_account_id)
      VALUES (gen_random_uuid(), $1, 'transfer', $2, $3, $4, $5, $6)
@@ -553,6 +567,13 @@ export const createAccountInTx = async (
   householdId: string,
   input: CreateAccountInput,
 ): Promise<Account> => {
+  // Negative-balance rule: only bank/cash may start negative. The route
+  // schema already limits kind to bank|cash; this guards direct store
+  // callers presenting any account kind — a negative initial balance for
+  // a credit card is rejected (cards are created via /cards at zero).
+  if ((input.kind as string) === 'credit_card' && input.initialBalanceCents < 0) {
+    throw domainErrors.invalid('initialBalanceCents', 'cartão de crédito não pode iniciar com saldo negativo');
+  }
   const res = await client.query<Row>(
     `INSERT INTO accounts (id, household_id, name, kind, balance_cents, status)
       VALUES (gen_random_uuid(), $1, $2, $3, $4, 'active')
@@ -742,9 +763,10 @@ const updateTransactionInTx = async (
   }
   // V4.1 Phase 4 (Tasks 4.4–4.7): delta engine — compute the effective
   // after-state, lock the affected accounts in deterministic order,
-  // validate (D1: no account may end negative; H-01: no credit-card leg),
-  // then reverse(before) + apply(after) exactly once. Validation runs
-  // before any balance UPDATE; a rejection rolls the tx back untouched.
+  // validate (negative-balance rule: only credit-card legs keep the zero
+  // floor; H-01: no credit-card leg), then reverse(before) + apply(after)
+  // exactly once. Validation runs before any balance UPDATE; a rejection
+  // rolls the tx back untouched.
   const balanceTouched =
     patch.amountCents !== undefined ||
     (patch.accountId !== undefined && patch.accountId !== tx.accountId);
@@ -768,7 +790,9 @@ const updateTransactionInTx = async (
     const applyDelta = tx.kind === 'expense' ? -newAmount : newAmount;
     if (newAccountId === tx.accountId) {
       const final = oldAcc.balanceCents + reverseDelta + applyDelta;
-      if (final < 0) {
+      // Negative-balance rule: bank/cash may end negative; only a
+      // credit-card leg keeps the zero floor.
+      if (final < 0 && oldAcc.kind === 'credit_card') {
         throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
       }
       await client.query(
@@ -778,7 +802,13 @@ const updateTransactionInTx = async (
     } else {
       const oldFinal = oldAcc.balanceCents + reverseDelta;
       const newFinal = newAcc.balanceCents + applyDelta;
-      if (oldFinal < 0 || newFinal < 0) {
+      // Negative-balance rule: only credit-card legs keep the zero floor
+      // (newAcc on a card is already 422-rejected above; the old-leg check
+      // covers rows that predate the restriction).
+      if (
+        (oldFinal < 0 && oldAcc.kind === 'credit_card') ||
+        (newFinal < 0 && newAcc.kind === 'credit_card')
+      ) {
         throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
       }
       await client.query(

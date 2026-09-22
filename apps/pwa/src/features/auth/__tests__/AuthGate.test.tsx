@@ -396,4 +396,32 @@ describe("AuthGate session-first boot (T2.5-client, ADR-015 Opção C)", () => {
     expect(store["pi-finance:token"]).toBeUndefined();
     expect(screen.queryByText(/Sessão antiga expirada/)).not.toBeInTheDocument();
   });
+
+  it("unlocks via cookie session with compat OFF and zero storage bearers", async () => {
+    // V4.1 Closure AUTH-T01 (metade AuthGate): com
+    // NEXT_PUBLIC_LEGACY_BEARER_COMPAT=off a leitura de bearer é removida e
+    // nenhum token é persistido — só a sessão cookie destrava o gate.
+    vi.stubEnv("NEXT_PUBLIC_LEGACY_BEARER_COMPAT", "off");
+    try {
+      expect(store["pi-finance:token"] ?? null).toBeNull();
+      expect(store["pi-finance:session-token"] ?? null).toBeNull();
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: "u1", email: "walis@example.com", name: "W" } }),
+      } as Response);
+
+      render(
+        <AuthGate>
+          <div data-testid="app">App Content</div>
+        </AuthGate>,
+      );
+
+      expect(await screen.findByTestId("app", {}, { timeout: 3000 })).toBeInTheDocument();
+      expect(store["pi-finance:token"] ?? null).toBeNull();
+      expect(store["pi-finance:session-token"] ?? null).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });

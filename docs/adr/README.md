@@ -22,6 +22,14 @@ Este diretório contém o registro imutável de decisões de arquitetura do proj
 | [ADR-014](ADR-014-mutation-draft-multi-turno.md) | MutationDraft multi-turno e handoff recuperável | accepted | 2026-09-14 | — |
 | [ADR-015](ADR-015-session-hardening.md) | Hardening de sessão e convergência session-first do device token | accepted | 2026-09-16 | D-V4-05, D-V4-06, D-V4-11 |
 | [ADR-016](ADR-016-workspace-agent-decommissioning.md) | Descomissionamento do WorkspaceAgent | accepted | 2026-09-16 | D-V4-04 |
+| [ADR-017](ADR-017-pre-v033-historical-exception.md) | Exceção histórica pré-V033 fechada (47 órfãs + 8 drifts) | accepted | 2026-09-18 | — |
+| [ADR-018](ADR-018-negative-balance-bank-cash.md) | Saldo negativo em banco/dinheiro; cartão não-negativo (supersede D1=B) | accepted | 2026-09-18 | D-V4-D1 (supersede) |
+| [ADR-019](ADR-019-test-fixture-reconciliation-exceptions.md) | Fixtures de teste como exceções fechadas (3 coverage + 2 payables) | accepted | 2026-09-18 | — |
+| [ADR-020](ADR-020-statement-status-mismatch-repair.md) | Reparo guardado para statements `paid` sem valor pago | accepted | 2026-09-19 | — |
+| [ADR-021](ADR-021-pending-v2-transactions-scope-undo-separate.md) | Pending V2 só para transações; undo separado | accepted | 2026-09-19 | — |
+| [ADR-022](ADR-022-pi-rewind-store-preservation.md) | Preservação de `refs/pi-rewind/store` | accepted | 2026-09-19 | — |
+| [ADR-023](ADR-023-agent-sdk-security-migration-plan.md) | Migração controlada do Agents SDK e AI SDK | accepted | 2026-09-19 | — |
+| [ADR-024](ADR-024-legacy-canonical-conversion-policy.md) | Política de conversão Legacy para Canonical | accepted | 2026-09-19 | — |
 
 ## Template para Novos ADRs
 

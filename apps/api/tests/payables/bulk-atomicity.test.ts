@@ -55,7 +55,7 @@ describe('bulk payable atomicity (in-memory twin)', () => {
     const account = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Bulk A', kind: 'bank', initialBalanceCents: 50_000 },
     });
     expect(account.statusCode).toBe(201);
@@ -64,7 +64,7 @@ describe('bulk payable atomicity (in-memory twin)', () => {
     const tpl = await app.inject({
       method: 'POST',
       url: '/payables/templates',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId,
         name: `${tag}-tpl`,
@@ -95,7 +95,7 @@ describe('bulk payable atomicity (in-memory twin)', () => {
     const listed = await app.inject({
       method: 'GET',
       url: '/payables?status=pending',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(
       listed.json().items.filter((item: { description: string }) => item.description === `${tag}-desc`),

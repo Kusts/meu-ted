@@ -176,7 +176,7 @@ describe('Postgres payable double-pay serialization (V4.1 Tasks 2.1–2.3)', () 
     }
   }, 30_000);
 
-  itIfDatabase('canonical: insufficient balance rejects without clamping', async () => {
+  itIfDatabase('canonical: over-balance payment succeeds with the exact negative delta', async () => {
     const db = pool!;
     const writes = createPostgresWriteStore({ pool: db });
     const payables = createPostgresPayableStore(db);
@@ -189,15 +189,15 @@ describe('Postgres payable double-pay serialization (V4.1 Tasks 2.1–2.3)', () 
         accountId: account.id, description: `Big bill ${randomUUID()}`,
         amountCents: 10_000, dueDate: '2026-08-01',
       });
-      await expect(
-        payables.markPayablePaid(householdId, payable.id, { paidDate: '2026-08-01' }),
-      ).rejects.toMatchObject({ code: 'validation.invalid' });
+      const paid = await payables.markPayablePaid(householdId, payable.id, { paidDate: '2026-08-01' });
+      expect(paid.status).toBe('paid');
+      expect(typeof paid.paidTransactionId).toBe('string');
       const state = await db.query(`SELECT status FROM accounts_payable WHERE id = $1`, [payable.id]);
-      expect(state.rows[0]!['status']).toBe('pending');
+      expect(state.rows[0]!['status']).toBe('paid');
       const txs = await db.query(`SELECT id FROM transactions WHERE household_id = $1`, [householdId]);
-      expect(txs.rowCount).toBe(0);
+      expect(txs.rowCount).toBe(1);
       const balance = await db.query(`SELECT balance_cents FROM accounts WHERE id = $1`, [account.id]);
-      expect(Number(balance.rows[0]!['balance_cents'])).toBe(5_000);
+      expect(Number(balance.rows[0]!['balance_cents'])).toBe(5_000 - 10_000);
     } finally {
       await cleanupHousehold(db, householdId);
     }
@@ -365,18 +365,18 @@ describe('Postgres payable double-pay serialization (V4.1 Tasks 2.1–2.3)', () 
       }
     });
 
-    itIfDatabase('legacy: insufficient computed balance → 400 validation.invalid, nothing written', async () => {
+    itIfDatabase('legacy: over-balance computed balance pays with the exact negative delta', async () => {
       const db = legacyPool!;
       const payables = createLegacyPostgresPayableStore(db);
       const { householdId, payableId } = await seedLegacyPayable(db, { initialBalance: 100, amount: 9_000 });
       try {
-        await expect(
-          payables.markPayablePaid(householdId, payableId, { paidDate: '2026-08-06' }),
-        ).rejects.toMatchObject({ code: 'validation.invalid', statusCode: 400 });
+        const paid = await payables.markPayablePaid(householdId, payableId, { paidDate: '2026-08-06' });
+        expect(paid.status).toBe('paid');
+        expect(typeof paid.paidTransactionId).toBe('string');
         const state = await db.query(`SELECT status FROM accounts_payable WHERE id = $1`, [payableId]);
-        expect(state.rows[0]!['status']).toBe('pending');
+        expect(state.rows[0]!['status']).toBe('paid');
         const txs = await db.query(`SELECT id FROM transactions WHERE household_id = $1`, [householdId]);
-        expect(txs.rowCount).toBe(0);
+        expect(txs.rowCount).toBe(1);
       } finally {
         await cleanupLegacy(db, householdId);
       }

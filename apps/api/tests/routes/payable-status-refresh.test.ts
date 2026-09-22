@@ -8,7 +8,7 @@ describe('POST /payables/refresh-status', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/payables',
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
       payload: { accountId: ACCOUNT_A1.id, description: 'Vencida', amountCents: 1000, dueDate: '2020-01-01' },
     });
     expect(created.statusCode).toBe(201);

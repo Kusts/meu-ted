@@ -297,7 +297,7 @@
                   },
                   "initialBalanceCents": {
                     "type": "integer",
-                    "minimum": 0,
+                    "minimum": -1000000000000,
                     "maximum": 1000000000000
                   }
                 },

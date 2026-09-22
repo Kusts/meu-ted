@@ -3,6 +3,10 @@ import { renderHook, waitFor } from "@/lib/test-utils";
 import { AppStateProvider, useAppState } from "../app-state-context";
 import * as endpoints from "@/lib/api/endpoints";
 import { setOfflineSubjectId } from "@/lib/auth/offline-subject";
+import {
+  resetSessionStatus,
+  setSessionStatus,
+} from "@/lib/auth/session-authority";
 import type { Account } from "@/lib/state/types";
 
 /**
@@ -54,6 +58,7 @@ function mockApiReads() {
 
 beforeEach(async () => {
   vi.restoreAllMocks();
+  resetSessionStatus();
   localStorage.clear();
   const dbs = await indexedDB.databases();
   for (const db of dbs) {
@@ -67,6 +72,12 @@ describe("AppStateProvider — session-first boot (FIX-AUTH-BOOT FINDING 2)", ()
   it("sem device token + sessão válida → bootstrap dispara e dados carregam", async () => {
     localStorage.removeItem("pi-finance:token");
     localStorage.setItem("pi-finance:session-token", "sess-valid-abc");
+    // V41C FIX 1: o bearer de sessão sozinho não destrava o bootstrap — a
+    // autoridade precisa confirmar a sessão (sonda com probe succeeds).
+    setSessionStatus({
+      status: "authenticated",
+      user: { userId: "u1", email: "walis@example.com" },
+    });
     mockApiReads();
 
     const { result } = renderHook(() => useAppState(), {

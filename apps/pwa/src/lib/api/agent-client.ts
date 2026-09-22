@@ -158,6 +158,16 @@ export type AgentTurn = {
      */
     receipt?: PendingOperationReceipt;
   }>;
+  /**
+   * debt-undo-confirmation-protocol: separate undo proposal (requestId for
+   * the authenticated decision RPC). Display-only; the fixed target stays
+   * server-side in the Agent DO.
+   */
+  undoProposal?: Readonly<{
+    requestId: string;
+    status: 'proposed';
+    expiresAt: string;
+  }>;
 };
 
 /**
@@ -316,13 +326,20 @@ export type PendingOperationDecision = Omit<z.infer<typeof pendingDecisionSchema
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let errorMsg = "Operação do agente falhou.";
+    let errorCode: string | undefined;
     try {
-      const body = await response.json() as { message?: string };
+      const body = await response.json() as { message?: string; code?: string };
       if (body?.message) errorMsg = body.message;
+      if (typeof body?.code === "string" && body.code) errorCode = body.code;
     } catch {
       // fallback
     }
-    throw new Error(errorMsg);
+    // debt-undo-confirmation-race-fix: the machine-readable code crosses so
+    // the UI can tell pending (`undo.executing`) from terminal outcomes.
+    // Additive only — callers that read just `message` are unaffected.
+    const err = new Error(errorMsg) as Error & { code?: string };
+    if (errorCode) err.code = errorCode;
+    throw err;
   }
   return await response.json() as T;
 }
@@ -422,7 +439,7 @@ export async function sendAgentMessage(
     else if (response.status === 403) err.code = "auth.workspace_forbidden";
     throw err;
   }
-  const data = await response.json() as { turnId?: string; intentionId?: string; status?: string; output?: string; memorized?: string[]; pendingOperation?: AgentTurn["pendingOperation"] };
+  const data = await response.json() as { turnId?: string; intentionId?: string; status?: string; output?: string; memorized?: string[]; pendingOperation?: AgentTurn["pendingOperation"]; undoProposal?: AgentTurn["undoProposal"] };
   // The turn landed: the in-flight record is no longer needed. On failure
   // (throw above) it stays, so retry reuses the same messageId.
   clearPendingChatSend(workspaceId);
@@ -432,6 +449,7 @@ export async function sendAgentMessage(
     output: data.output,
     ...(Array.isArray(data.memorized) ? { memorized: data.memorized.filter((m): m is string => typeof m === "string") } : {}),
     ...(sanitizePendingOperation(data.pendingOperation) ? { pendingOperation: sanitizePendingOperation(data.pendingOperation) } : {}),
+    ...(sanitizeUndoProposal(data.undoProposal) ? { undoProposal: sanitizeUndoProposal(data.undoProposal) } : {}),
   };
 }
 
@@ -460,6 +478,104 @@ export async function decidePendingOperation(
   const receipt = sanitizeMutationReceipt(parsed.receipt);
   const { receipt: _rawReceipt, ...safe } = parsed;
   return { ...safe, ...(receipt ? { receipt } : {}) };
+}
+
+/**
+ * debt-undo-confirmation-protocol: browser-safe undo proposal DTO. Strict
+ * allowlist — anything else collapses to `undefined` (no card).
+ */
+const undoProposalSchema = z
+  .object({ requestId: z.string().min(1).max(128), status: z.literal('proposed'), expiresAt: z.string().min(1) });
+
+function sanitizeUndoProposal(value: AgentTurn['undoProposal']): AgentTurn['undoProposal'] {
+  if (!value || typeof value !== 'object') return undefined;
+  const parsed = undoProposalSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+const undoDecisionSchema = z
+  .object({ requestId: z.string().min(1), status: z.enum(['confirmed', 'cancelled']), result: z.unknown().optional() })
+  .strict();
+
+export type UndoDecision = z.infer<typeof undoDecisionSchema>;
+
+/**
+ * Sends the undo confirm/cancel to the authenticated Agent. The Agent owns
+ * the binding check, the fixed target, and the narrow undo credential —
+ * the browser only names the proposal (requestId) and the decision.
+ */
+export async function decideUndoProposal(
+  workspaceId: string,
+  requestId: string,
+  decision: 'confirm' | 'cancel',
+): Promise<UndoDecision> {
+  const baseUrl = agentBaseUrl();
+  const response = await fetchWithAgentAuth(
+    workspaceId,
+    `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/undo/decision`,
+    {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json', 'X-Workspace-Id': workspaceId },
+      body: JSON.stringify({ decision, requestId }),
+    },
+  );
+  return undoDecisionSchema.parse(await parseJson<unknown>(response));
+}
+
+/**
+ * debt-undo-proposal-rehydration: browser-safe active undo summary. Strict
+ * allowlist — the server projection is {requestId,status,expiresAt} only;
+ * ANY unknown key (in particular target ids / idempotency keys / raw
+ * operation data) fails the parse and the WHOLE payload is discarded.
+ */
+const undoProposalSummarySchema = z
+  .object({
+    requestId: z.string().min(1).max(128),
+    status: z.enum(["proposed", "executing"]),
+    expiresAt: z.string().min(1),
+  })
+  .strict();
+
+export type ActiveUndoProposal = z.infer<typeof undoProposalSummarySchema>;
+
+const undoActiveListSchema = z
+  .object({
+    items: z.array(undoProposalSummarySchema),
+    total: z.number(),
+  })
+  .strict();
+
+/**
+ * Lists the workspace's live undo proposals for chat rehydration (reload /
+ * remount / workspace change). Read-only GET: it never decides anything.
+ * Client-side safety net over the authoritative server filter — summaries
+ * already expired by the local clock are omitted (unparseable dates are
+ * kept: only the server can prove expiry).
+ */
+export async function fetchActiveUndoProposals(workspaceId: string): Promise<ActiveUndoProposal[]> {
+  const baseUrl = agentBaseUrl();
+  const response = await fetchWithAgentAuth(
+    workspaceId,
+    `${baseUrl}/agents/finance-chat-agent/${encodeURIComponent(workspaceId)}/rpc/undo/active`,
+    {
+      method: "GET",
+      credentials: "include",
+      headers: { "X-Workspace-Id": workspaceId },
+    },
+  );
+  if (!response.ok) {
+    throw new Error("Não foi possível carregar as propostas de desfazer agora.");
+  }
+  const parsed = undoActiveListSchema.safeParse(await response.json());
+  if (!parsed.success) {
+    throw new Error("Não foi possível carregar as propostas de desfazer agora.");
+  }
+  const now = Date.now();
+  return parsed.data.items.filter((item) => {
+    const time = Date.parse(item.expiresAt);
+    return Number.isNaN(time) || time > now;
+  });
 }
 
 export type AgentSessionRenewal = {

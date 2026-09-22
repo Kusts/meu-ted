@@ -42,7 +42,7 @@ const seedPayable = async (
   const created = await app.inject({
     method: 'POST',
     url: '/payables',
-    headers: auth(),
+    headers: auth(`seed-payable-${crypto.randomUUID()}`),
     payload: {
       accountId: ACCOUNT_A1.id,
       description,
@@ -97,7 +97,7 @@ describe('Finding 1 — keyed payload embeds the route resource id', () => {
     const { app } = buildTestApp(freshSeed());
     const mkGoal = async (name: string) => {
       const res = await app.inject({
-        method: 'POST', url: '/goals', headers: auth(),
+        method: 'POST', url: '/goals', headers: auth(`seed-goal-${crypto.randomUUID()}`),
         payload: { name, goalType: 'savings', targetAmountCents: 100_000, startDate: '2026-06-01' },
       });
       expect(res.statusCode).toBe(201);
@@ -124,7 +124,7 @@ describe('Finding 1 — keyed payload embeds the route resource id', () => {
     const { app } = buildTestApp(freshSeed());
     const mkTx = async (description: string) => {
       const res = await app.inject({
-        method: 'POST', url: '/transactions/expense', headers: auth(),
+        method: 'POST', url: '/transactions/expense', headers: auth(`seed-tx-${crypto.randomUUID()}`),
         payload: {
           description, amountCents: 1_500, date: '2026-06-10',
           accountId: ACCOUNT_A1.id, categoryId: CATEGORY_FOOD_A.id,
@@ -155,7 +155,7 @@ describe('Finding 1 — keyed payload embeds the route resource id', () => {
     // Two purchases in different billing months → two open statements.
     const mkPurchase = async (date: string) => {
       const res = await app.inject({
-        method: 'POST', url: '/cards/purchases', headers: auth(),
+        method: 'POST', url: '/cards/purchases', headers: auth(`seed-purchase-${crypto.randomUUID()}`),
         payload: {
           accountId: CARD_A1.id, description: 'Mercado', amountCents: 150_00,
           date, categoryId: CATEGORY_FOOD_A.id,

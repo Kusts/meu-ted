@@ -13,6 +13,10 @@ import {
 } from "../snapshot-db";
 import type { Account } from "@/lib/state/types";
 import { setOfflineSubjectId } from "@/lib/auth/offline-subject";
+import {
+  resetSessionStatus,
+  setSessionStatus,
+} from "@/lib/auth/session-authority";
 
 const TOKEN = "test-token-v2";
 // T2.6: v2 reads require the subject partition (an authenticated session
@@ -42,6 +46,8 @@ async function readRawEnvelope(): Promise<unknown> {
 function stubEnvAndToken(): void {
   vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "http://localhost:3001");
   localStorage.setItem("pi-finance:token", TOKEN);
+  // V41C FIX 1: live bootstrap requires a probe-confirmed session.
+  setSessionStatus({ status: "authenticated", user: { userId: "test-user" } });
   setOfflineSubjectId(TEST_SUBJECT);
 }
 
@@ -55,6 +61,7 @@ function seedV1(domain: string, data: unknown[]): void {
 describe("v2 snapshot production integration", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    resetSessionStatus();
     localStorage.clear();
     stubEnvAndToken();
   });

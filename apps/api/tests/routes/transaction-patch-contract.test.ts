@@ -10,7 +10,7 @@ const setupExpense = async () => {
   const { app } = buildTestApp(seed());
   const s = await app.inject({
     method: 'POST', url: '/transactions/expense',
-    headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+    headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
     payload: {
       description: 'Base', amountCents: 1000, date: isoDate,
       accountId: ACCOUNT_A1.id, categoryId: CATEGORY_FOOD_A.id,
@@ -35,12 +35,12 @@ describe('V4.1 transaction PATCH contract (SPEC §9.7)', () => {
     const { app, id } = await setupExpense();
     const res = await app.inject({
       method: 'PATCH', url: `/transactions/${id}`,
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { description: 'Tentativa', hackerField: 'ignored' },
     });
     expect(res.statusCode).toBe(422);
     expect(res.json().code).toBe('validation.unknown_fields');
-    const list = await app.inject({ method: 'GET', url: '/transactions', headers: { 'x-device-token': TOKEN_A } });
+    const list = await app.inject({ method: 'GET', url: '/transactions', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     expect(list.json().items.find((t: { id: string }) => t.id === id).description).toBe('Base');
   });
 
@@ -48,18 +48,18 @@ describe('V4.1 transaction PATCH contract (SPEC §9.7)', () => {
     const { app } = buildTestApp(seed());
     const a = await app.inject({
       method: 'POST', url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       // V4.1 Phase 4 (D1): the source must cover the transfer.
       payload: { name: 'A', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const b = await app.inject({
       method: 'POST', url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'B', kind: 'cash', initialBalanceCents: 0 },
     });
     const tx = await app.inject({
       method: 'POST', url: '/transfers',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X', amountCents: 100, date: isoDate,
         fromAccountId: a.json().id, toAccountId: b.json().id,
@@ -67,7 +67,7 @@ describe('V4.1 transaction PATCH contract (SPEC §9.7)', () => {
     });
     const res = await app.inject({
       method: 'PATCH', url: `/transactions/${tx.json().id}`,
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { description: 'Y', unknownField: true },
     });
     expect(res.statusCode).toBe(422);
@@ -78,18 +78,18 @@ describe('V4.1 transaction PATCH contract (SPEC §9.7)', () => {
     const { app } = buildTestApp(seed());
     const a = await app.inject({
       method: 'POST', url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       // V4.1 Phase 4 (D1): the source must cover the transfer.
       payload: { name: 'A', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const b = await app.inject({
       method: 'POST', url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'B', kind: 'cash', initialBalanceCents: 0 },
     });
     const tx = await app.inject({
       method: 'POST', url: '/transfers',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'X', amountCents: 100, date: isoDate,
         fromAccountId: a.json().id, toAccountId: b.json().id,
@@ -97,7 +97,7 @@ describe('V4.1 transaction PATCH contract (SPEC §9.7)', () => {
     });
     const res = await app.inject({
       method: 'PATCH', url: `/transactions/${tx.json().id}`,
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { amountCents: 200 },
     });
     expect(res.statusCode).toBe(422);
@@ -114,7 +114,7 @@ describe('V4.1 transaction PATCH contract (SPEC §9.7)', () => {
     const { app, id } = await setupExpense();
     const res = await app.inject({
       method: 'PATCH', url: `/transactions/${id}`,
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload,
     });
     expect(res.statusCode).toBe(200);
@@ -125,18 +125,18 @@ describe('V4.1 transaction PATCH contract (SPEC §9.7)', () => {
     const { app, id } = await setupExpense();
     const acc = await app.inject({
       method: 'POST', url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       // V4.1 Phase 4 (D1): the destination must cover the moved expense.
       payload: { name: 'Nova conta', kind: 'cash', initialBalanceCents: 10_000 },
     });
     const cat = await app.inject({
       method: 'POST', url: '/categories',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Nova cat', kind: 'expense' },
     });
     const res = await app.inject({
       method: 'PATCH', url: `/transactions/${id}`,
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { accountId: acc.json().id, categoryId: cat.json().id },
     });
     expect(res.statusCode).toBe(200);

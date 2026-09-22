@@ -333,7 +333,11 @@ export default function NewTransactionSheet({
 
   function handleSaveAccount() {
     if (!newName.trim() || !onAddAccount) return;
-    const balance = parseInt(newInitialBalance.replace(/\D/g, "") || "0", 10);
+    // ADR-018: bank accounts may open with a negative initial balance — a
+    // leading "-" survives parsing instead of being stripped as non-digit.
+    const trimmedBalance = newInitialBalance.trim();
+    const magnitude = parseInt(trimmedBalance.replace(/\D/g, "") || "0", 10);
+    const balance = trimmedBalance.startsWith("-") && magnitude !== 0 ? -magnitude : magnitude;
     onAddAccount({
       name: newName.trim(),
       kind: "bank",

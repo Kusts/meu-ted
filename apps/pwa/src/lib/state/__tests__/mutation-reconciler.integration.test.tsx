@@ -9,6 +9,10 @@ import "fake-indexeddb/auto";
 import { renderHook, act, waitFor, screen } from "@/lib/test-utils";
 import { AppStateProvider, useAppState } from "../app-state-context";
 import * as endpoints from "@/lib/api/endpoints";
+import {
+  resetSessionStatus,
+  setSessionStatus,
+} from "@/lib/auth/session-authority";
 import type { MutationReceipt } from "@pi-finance/llm-contracts/types";
 
 function mockTx(id: string) {
@@ -41,6 +45,7 @@ function tedReceipt(mutationId: string): MutationReceipt {
 
 beforeEach(async () => {
   vi.restoreAllMocks();
+  resetSessionStatus();
   localStorage.clear();
   const dbs = await indexedDB.databases();
   for (const db of dbs) {
@@ -48,6 +53,8 @@ beforeEach(async () => {
   }
   vi.stubEnv("NEXT_PUBLIC_PI_FINANCE_API_BASE_URL", "http://localhost:3001");
   localStorage.setItem("pi-finance:token", "test-token-abc");
+  // V41C FIX 1: live bootstrap requires a probe-confirmed session.
+  setSessionStatus({ status: "authenticated", user: { userId: "test-user" } });
 });
 
 function mockReads() {

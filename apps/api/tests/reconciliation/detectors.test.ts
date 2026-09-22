@@ -66,7 +66,7 @@ describe("detectAccountsBalanceDrift", () => {
     expect(result.findings[0]?.severity).toBe("info");
   });
 
-  it("flags a negative stored balance even without an anchor", () => {
+  it("treats an unanchored negative stored balance as info, not drift (negative-balance rule)", () => {
     const result = detectAccountsBalanceDrift([
       {
         accountId: "a1",
@@ -79,8 +79,105 @@ describe("detectAccountsBalanceDrift", () => {
         transferOutCents: 0,
       },
     ]);
+    expect(result.counts).toEqual({ checked: 1, drifted: 0 });
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]?.severity).toBe("info");
+  });
+
+  it("reports zero findings for an anchored negative balance that matches the ledger", () => {
+    const result = detectAccountsBalanceDrift([
+      {
+        accountId: "a1",
+        householdId: "h1",
+        storedCents: -8000,
+        initialCents: 2000,
+        incomeCents: 0,
+        expenseCents: 10000,
+        transferInCents: 0,
+        transferOutCents: 0,
+      },
+    ]);
+    expect(result.findings).toHaveLength(0);
+    expect(result.counts).toEqual({ checked: 1, drifted: 0 });
+  });
+
+  it("flags a ledger-coherent negative credit-card balance as drift", () => {
+    const result = detectAccountsBalanceDrift([
+      {
+        accountId: "card-1",
+        householdId: "h1",
+        storedCents: -8000,
+        initialCents: 2000,
+        incomeCents: 0,
+        expenseCents: 10000,
+        transferInCents: 0,
+        transferOutCents: 0,
+        accountKind: "credit_card",
+      },
+    ]);
+    expect(result.counts).toEqual({ checked: 1, drifted: 1 });
+    expect(result.findings.map((f) => f.kind)).toEqual([
+      "negative_credit_balance",
+    ]);
+    expect(result.findings[0]?.actual).toBe(-8000);
+  });
+
+  it("allows ledger-coherent negatives for bank, cash and unknown kinds", () => {
+    const coherent = {
+      householdId: "h1",
+      storedCents: -8000,
+      initialCents: 2000,
+      incomeCents: 0,
+      expenseCents: 10000,
+      transferInCents: 0,
+      transferOutCents: 0,
+    };
+    const result = detectAccountsBalanceDrift([
+      { ...coherent, accountId: "bank-1", accountKind: "bank" },
+      { ...coherent, accountId: "cash-1", accountKind: "cash" },
+      { ...coherent, accountId: "unknown-1", accountKind: null },
+    ]);
+    expect(result.findings).toHaveLength(0);
+    expect(result.counts).toEqual({ checked: 3, drifted: 0 });
+  });
+
+  it("flags a negative credit-card stored balance without an anchor as drift", () => {
+    const result = detectAccountsBalanceDrift([
+      {
+        accountId: "card-1",
+        householdId: "h1",
+        storedCents: -5,
+        initialCents: null,
+        incomeCents: 0,
+        expenseCents: 5,
+        transferInCents: 0,
+        transferOutCents: 0,
+        accountKind: "credit_card",
+      },
+    ]);
     expect(result.counts.drifted).toBe(1);
-    expect(result.findings[0]?.kind).toBe("negative_stored_balance");
+    expect(result.findings.map((f) => f.kind)).toContain(
+      "negative_credit_balance",
+    );
+  });
+
+  it("keeps balance-delta mismatch detection for incoherent rows", () => {
+    const result = detectAccountsBalanceDrift([
+      {
+        accountId: "card-1",
+        householdId: "h1",
+        storedCents: -8000,
+        initialCents: 10000,
+        incomeCents: 500,
+        expenseCents: 1000,
+        transferInCents: 0,
+        transferOutCents: 0,
+        accountKind: "credit_card",
+      },
+    ]);
+    expect(result.findings.map((f) => f.kind)).toContain("balance_drift");
+    expect(result.findings[0]?.expected).toBe(9500);
+    expect(result.findings[0]?.actual).toBe(-8000);
   });
 });
 
@@ -160,6 +257,47 @@ describe("detectStatementPaymentDrift", () => {
     ]);
     const kinds = result.findings.map((f) => f.kind).sort();
     expect(kinds).toEqual(["overpaid", "status_mismatch"]);
+    expect(result.counts.drifted).toBe(2);
+  });
+
+  it("does not flag an empty paid statement (total 0, paid 0, status paid)", () => {
+    const result = detectStatementPaymentDrift([
+      {
+        statementId: "s-empty",
+        householdId: "h1",
+        cycle: "2026-09",
+        totalCents: 0,
+        paidCents: 0,
+        status: "paid",
+      },
+    ]);
+    expect(result.findings).toHaveLength(0);
+    expect(result.counts).toEqual({ checked: 1, drifted: 0 });
+  });
+
+  it("still flags paid/partial with zero payment when total is positive", () => {
+    const result = detectStatementPaymentDrift([
+      {
+        statementId: "s-paid-zero",
+        householdId: "h1",
+        cycle: "2026-08",
+        totalCents: 1000,
+        paidCents: 0,
+        status: "paid",
+      },
+      {
+        statementId: "s-partial-zero",
+        householdId: "h1",
+        cycle: "2026-09",
+        totalCents: 1000,
+        paidCents: 0,
+        status: "partial",
+      },
+    ]);
+    expect(result.findings).toHaveLength(2);
+    expect(result.findings.every((f) => f.kind === "status_mismatch")).toBe(
+      true,
+    );
     expect(result.counts.drifted).toBe(2);
   });
 

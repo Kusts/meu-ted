@@ -1,5 +1,11 @@
 # Estado do projeto e próximos passos
 
+> **SNAPSHOT HISTÓRICO — não usar como estado atual.**
+>
+> - **status:** `historical`
+> - **verifiedAt:** `2026-08-26` (data de congelamento deste documento, pré-V4.1)
+> - **supersededBy:** `docs/ARCHITECTURE-CURRENT.md` e `AGENTS.md` (estado canônico atual)
+
 **Data:** 2026-08-26T19:30Z
 **Branch:** `main@98cfc99` (P0-P5 + Fase 1 8 features mergeados, `pi-finance-api:main` em VPS `<VPS_SSH_USER>@<VPS_IP>`, PWA `<PWA_HOST>` pronto para uso)
 **Propósito:** documento único e estável. Atualizado com deploy produção 2026-08-26T19:30Z e Fase 1 concluída — projeto pronto para uso.

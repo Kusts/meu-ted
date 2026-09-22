@@ -9,6 +9,10 @@ import { AppStateProvider, useAppState } from "@/lib/state/app-state-context";
 import * as endpoints from "@/lib/api/endpoints";
 import { saveSnapshotDomain, loadSnapshotDomain } from "@/lib/state/snapshot-store";
 import { ApiError } from "@/lib/api/client";
+import {
+  resetSessionStatus,
+  setSessionStatus,
+} from "./session-authority";
 
 const api = vi.hoisted(() => ({
   fetchWorkspaces: vi.fn(),
@@ -292,6 +296,10 @@ describe("WorkspaceProvider + AppStateProvider — workspace switch remount (P1-
   beforeEach(async () => {
     const dbs = await indexedDB.databases();
     for (const db of dbs) if (db.name) indexedDB.deleteDatabase(db.name);
+    // V41C FIX 1: AppStateProvider bootstraps only for a probe-confirmed
+    // session — simulate the authority AuthGate publishes on a valid probe.
+    resetSessionStatus();
+    setSessionStatus({ status: "authenticated", user: { userId: "user-1" } });
     api.fetchWorkspaces.mockResolvedValue([
       { id: "workspace-1", name: "Casa", kind: "personal", role: "owner" },
       { id: "workspace-2", name: "Equipe", kind: "shared", role: "owner" },

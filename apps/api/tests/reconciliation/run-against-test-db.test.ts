@@ -40,6 +40,25 @@ describe("reconciliation SQL safety (no database needed)", () => {
     }
   });
 
+  it("projects account kind on accounts_balance for both layouts", () => {
+    for (const layout of LAYOUTS) {
+      for (const scoped of [false, true]) {
+        const queries = buildReconciliationQueries(
+          layout,
+          scoped ? { householdId: randomUUID() } : {},
+        );
+        expect(
+          queries.accounts_balance.text,
+          `${layout} accounts_balance must project account kind`,
+        ).toMatch(/account_kind/);
+        expect(
+          isSelectOnly(queries.accounts_balance.text),
+          `${layout} accounts_balance must stay SELECT-only`,
+        ).toBe(true);
+      }
+    }
+  });
+
   it("rejects multi-statement and write payloads", () => {
     expect(isSelectOnly("SELECT 1; SELECT 2")).toBe(false);
     expect(isSelectOnly("SELECT 1; DROP TABLE accounts")).toBe(false);

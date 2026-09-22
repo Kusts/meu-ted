@@ -58,7 +58,7 @@ const createPurchase = async (app: ReturnType<typeof buildTestApp>['app'], overr
   const res = await app.inject({
     method: 'POST',
     url: '/cards/purchases',
-    headers: json,
+    headers: { ...json, 'idempotency-key': crypto.randomUUID() },
     payload: {
       accountId: CARD_A1.id,
       description: 'Mercado',
@@ -109,7 +109,7 @@ describe('card/statement write receipts', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards/installments',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId: CARD_A1.id,
         description: 'Notebook 12x',
@@ -131,7 +131,7 @@ describe('card/statement write receipts', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards/recurring',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId: CARD_A1.id,
         description: 'Netflix',
@@ -153,7 +153,7 @@ describe('card/statement write receipts', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Novo Cartão', creditLimitCents: 10_000_00, closingDay: 10, dueDay: 20 },
     });
     expect(res.statusCode).toBe(201);
@@ -168,7 +168,7 @@ describe('card/statement write receipts', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/cards/${CARD_A1.id}`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Renomeado' },
     });
     expect(res.statusCode).toBe(200);
@@ -186,7 +186,7 @@ describe('card/statement write receipts', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/cards/purchases/${purchaseId}`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { description: 'Mercado editado' },
     });
     expect(res.statusCode).toBe(200);
@@ -202,7 +202,7 @@ describe('card/statement write receipts', () => {
     const res = await app.inject({
       method: 'DELETE',
       url: `/cards/purchases/${purchaseId}`,
-      headers: auth(TOKEN_A),
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID() },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json();
@@ -226,7 +226,7 @@ describe('card/statement write receipts', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/cards/statements/${statementId}/pay`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { amountCents: 500_00, fromAccountId: ACCOUNT_A1.id },
     });
     expect(res.statusCode).toBe(200);

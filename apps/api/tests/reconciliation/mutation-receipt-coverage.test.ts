@@ -38,13 +38,13 @@ const setupAccountAndCategory = async () => {
   const acc = await app.inject({
     method: 'POST',
     url: '/accounts',
-    headers: json,
+    headers: { ...json, 'idempotency-key': crypto.randomUUID() },
     payload: { name: 'A', kind: 'bank', initialBalanceCents: 50_000 },
   });
   const cat = await app.inject({
     method: 'POST',
     url: '/categories',
-    headers: json,
+    headers: { ...json, 'idempotency-key': crypto.randomUUID() },
     payload: { name: 'Food', kind: 'expense' },
   });
   return { app, accountId: acc.json().id as string, categoryId: cat.json().id as string };
@@ -141,7 +141,7 @@ describe('DELETE /transactions/:id carries a MutationReceipt', () => {
     const created = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'bye',
         amountCents: 100,
@@ -161,9 +161,9 @@ describe('DELETE /transactions/:id carries a MutationReceipt', () => {
     expect(body.id).toBe(id);
     expectValidNormalReceipt(body, 'transaction.delete');
     // Soft-delete semantics preserved: excluded from listing, second delete 404s.
-    const list = await s.app.inject({ method: 'GET', url: '/transactions', headers: auth });
+    const list = await s.app.inject({ method: 'GET', url: '/transactions', headers: { ...auth, 'idempotency-key': crypto.randomUUID() } });
     expect(list.json().items.find((t: { id: string }) => t.id === id)).toBeUndefined();
-    const again = await s.app.inject({ method: 'DELETE', url: `/transactions/${id}`, headers: auth });
+    const again = await s.app.inject({ method: 'DELETE', url: `/transactions/${id}`, headers: { ...auth, 'idempotency-key': crypto.randomUUID() } });
     expect(again.statusCode).toBe(404);
   });
 
@@ -172,7 +172,7 @@ describe('DELETE /transactions/:id carries a MutationReceipt', () => {
     const created = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'idem-del',
         amountCents: 100,
@@ -246,7 +246,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const created = await s.app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Lunch',
         amountCents: 1500,
@@ -261,7 +261,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const patched = await s.app.inject({
       method: 'PATCH',
       url: `/transactions/${created.json().id}`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { description: 'Lunch!' },
     });
     expect(patched.statusCode).toBe(200);
@@ -270,13 +270,13 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const accB = await s.app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'B', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const transfer = await s.app.inject({
       method: 'POST',
       url: '/transfers',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'hop',
         amountCents: 100,
@@ -294,7 +294,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const patchedAcc = await s.app.inject({
       method: 'PATCH',
       url: `/accounts/${s.accountId}`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'A2' },
     });
     expect(patchedAcc.statusCode).toBe(200);
@@ -303,7 +303,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const patchedCat = await s.app.inject({
       method: 'PATCH',
       url: `/categories/${s.categoryId}`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Food2' },
     });
     expect(patchedCat.statusCode).toBe(200);
@@ -312,7 +312,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const deactCat = await s.app.inject({
       method: 'POST',
       url: `/categories/${s.categoryId}/deactivate`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {},
     });
     expect(deactCat.statusCode).toBe(200);
@@ -321,7 +321,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const deactAcc = await s.app.inject({
       method: 'POST',
       url: `/accounts/${s.accountId}/deactivate`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {},
     });
     expect(deactAcc.statusCode).toBe(200);
@@ -333,7 +333,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const budget = await s.app.inject({
       method: 'POST',
       url: '/budgets',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         categoryId: s.categoryId,
         name: 'Food budget',
@@ -348,7 +348,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const budgetUpd = await s.app.inject({
       method: 'PATCH',
       url: `/budgets/${budget.json().id}`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { amountCents: 12_000 },
     });
     expect(budgetUpd.statusCode).toBe(200);
@@ -357,7 +357,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const goal = await s.app.inject({
       method: 'POST',
       url: '/goals',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         name: 'Trip',
         goalType: 'savings',
@@ -371,7 +371,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const contrib = await s.app.inject({
       method: 'POST',
       url: `/goals/${goal.json().id}/contribute`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { amountCents: 5_000 },
     });
     expect(contrib.statusCode).toBe(201);
@@ -380,7 +380,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const cancelGoal = await s.app.inject({
       method: 'POST',
       url: `/goals/${goal.json().id}/cancel`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {},
     });
     expect(cancelGoal.statusCode).toBe(200);
@@ -389,7 +389,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const sub = await s.app.inject({
       method: 'POST',
       url: '/subscriptions',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         name: 'Stream',
         amountCents: 3_000,
@@ -404,7 +404,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const subUpd = await s.app.inject({
       method: 'PATCH',
       url: `/subscriptions/${sub.json().id}`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { amountCents: 3_500 },
     });
     expect(subUpd.statusCode).toBe(200);
@@ -413,7 +413,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const subCancel = await s.app.inject({
       method: 'POST',
       url: `/subscriptions/${sub.json().id}/cancel`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {},
     });
     expect(subCancel.statusCode).toBe(200);
@@ -425,7 +425,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const created = await s.app.inject({
       method: 'POST',
       url: '/payables',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId: s.accountId,
         description: 'Rent',
@@ -440,7 +440,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const upd = await s.app.inject({
       method: 'PATCH',
       url: `/payables/${id}`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { description: 'Rent!' },
     });
     expect(upd.statusCode).toBe(200);
@@ -449,7 +449,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const pay = await s.app.inject({
       method: 'POST',
       url: `/payables/${id}/pay`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {},
     });
     expect(pay.statusCode).toBe(200);
@@ -458,7 +458,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const unpay = await s.app.inject({
       method: 'POST',
       url: `/payables/${id}/unpay`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { paidTransactionId: pay.json().paidTransactionId },
     });
     expect(unpay.statusCode).toBe(200);
@@ -467,7 +467,7 @@ describe('supported normal-write routes all carry registry receipts (inventory)'
     const cancel = await s.app.inject({
       method: 'POST',
       url: `/payables/${id}/cancel`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {},
     });
     expect(cancel.statusCode).toBe(200);
@@ -494,7 +494,7 @@ describe('card + statement writes (FIX-P1 inventory)', () => {
     const purchase = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId: CARD_A1.id,
         description: 'Mercado',
@@ -510,7 +510,7 @@ describe('card + statement writes (FIX-P1 inventory)', () => {
     const installments = await app.inject({
       method: 'POST',
       url: '/cards/installments',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId: CARD_A1.id,
         description: 'Notebook 3x',
@@ -530,7 +530,7 @@ describe('card + statement writes (FIX-P1 inventory)', () => {
     const recurring = await app.inject({
       method: 'POST',
       url: '/cards/recurring',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId: CARD_A1.id,
         description: 'Stream',
@@ -546,7 +546,7 @@ describe('card + statement writes (FIX-P1 inventory)', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/cards',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Extra', creditLimitCents: 5_000_00, closingDay: 5, dueDay: 15 },
     });
     expect(created.statusCode).toBe(201);
@@ -556,7 +556,7 @@ describe('card + statement writes (FIX-P1 inventory)', () => {
     const patched = await app.inject({
       method: 'PATCH',
       url: `/cards/${CARD_A1.id}`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Renomeado' },
     });
     expect(patched.statusCode).toBe(200);
@@ -572,7 +572,7 @@ describe('card + statement writes (FIX-P1 inventory)', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId: CARD_A1.id,
         description: 'Editável',
@@ -586,7 +586,7 @@ describe('card + statement writes (FIX-P1 inventory)', () => {
     const upd = await app.inject({
       method: 'PATCH',
       url: `/cards/purchases/${purchaseId}`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { description: 'Editado' },
     });
     expect(upd.statusCode).toBe(200);
@@ -596,7 +596,7 @@ describe('card + statement writes (FIX-P1 inventory)', () => {
     const del = await app.inject({
       method: 'DELETE',
       url: `/cards/purchases/${purchaseId}`,
-      headers: auth,
+      headers: { ...auth, 'idempotency-key': crypto.randomUUID() },
     });
     expect(del.statusCode).toBe(200);
     expectValidNormalReceipt(del.json(), 'transaction.delete');
@@ -608,7 +608,7 @@ describe('card + statement writes (FIX-P1 inventory)', () => {
     await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId: CARD_A1.id,
         description: 'Fatura',
@@ -618,12 +618,12 @@ describe('card + statement writes (FIX-P1 inventory)', () => {
       },
     });
     const statementId = (
-      await app.inject({ method: 'GET', url: `/cards/statements?accountId=${CARD_A1.id}`, headers: auth })
+      await app.inject({ method: 'GET', url: `/cards/statements?accountId=${CARD_A1.id}`, headers: { ...auth, 'idempotency-key': crypto.randomUUID() } })
     ).json().items[0].id as string;
     const pay = await app.inject({
       method: 'POST',
       url: `/cards/statements/${statementId}/pay`,
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { amountCents: 500_00, fromAccountId: ACCOUNT_A1.id },
     });
     expect(pay.statusCode).toBe(200);
@@ -754,7 +754,7 @@ describe('mutation coverage completeness (FIX-P1 inventory)', () => {
       const res = await s.app.inject({
         method: 'POST',
         url: '/payables/templates',
-        headers: json,
+        headers: { ...json, 'idempotency-key': crypto.randomUUID() },
         payload: {
           accountId: s.accountId,
           name: 'Aluguel template',
@@ -779,13 +779,13 @@ describe('mutation coverage completeness (FIX-P1 inventory)', () => {
       const res = await s.app.inject({
         method: 'POST',
         url: '/notifications',
-        headers: json,
+        headers: { ...json, 'idempotency-key': crypto.randomUUID() },
         payload: { chatId: 'chat-1', notificationType: 'daily_summary', enabled: true },
       });
       return { status: res.statusCode, body: res.json() };
     });
     await probe('POST /categories/apply-defaults', 'category.create', async () => {
-      const res = await s.app.inject({ method: 'POST', url: '/categories/apply-defaults', headers: json, payload: {} });
+      const res = await s.app.inject({ method: 'POST', url: '/categories/apply-defaults', headers: { ...json, 'idempotency-key': crypto.randomUUID() }, payload: {} });
       return { status: res.statusCode, body: res.json() };
     });
 

@@ -280,6 +280,19 @@ describe("NewTransactionSheet", () => {
     expect(onAddAcc).toHaveBeenCalledWith({ name: "Caixa", kind: "bank", initialBalanceCents: 0 });
   });
 
+  it("creates an account inline with a negative initial balance (ADR-018)", async () => {
+    const user = userEvent.setup();
+    const onAddAcc = vi.fn();
+    render(<NewTransactionSheet accounts={accounts} categories={categories} onSave={vi.fn()} onAddAccount={onAddAcc} />);
+    await user.click(screen.getByRole("button", { name: "Selecionar conta ou cartão" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Nova conta" }));
+    await user.type(within(dialog).getByPlaceholderText("Nome da conta"), "Caixa Negativa");
+    await user.type(within(dialog).getByPlaceholderText("Saldo inicial (R$)"), "-250,00");
+    await user.click(within(dialog).getByRole("button", { name: "Salvar conta" }));
+    expect(onAddAcc).toHaveBeenCalledWith({ name: "Caixa Negativa", kind: "bank", initialBalanceCents: -25000 });
+  });
+
   it("creates a card inline from the origin sheet", async () => {
     const user = userEvent.setup();
     const onAddCrd = vi.fn();

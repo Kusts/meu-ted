@@ -1,6 +1,6 @@
 # Schema Fingerprint — pi-financeiro
 
-> **Source of truth:** migrations in `apps/api/src/read-models/sql/` (V001–V016), including the checksum-verified `_migrations` ledger.
+> **Source of truth:** migrations in `apps/api/src/read-models/sql/` (V001–V057), including the checksum-verified `_migrations` ledger.
 > **Production baseline:** legacy path (`DB_SCHEMA=legacy`) skips V001/V002/V004–V007;
 > additive-only migrations (V003, V008–V016) run on the live database.
 > See [ADR-001](../adr/001-legacy-schema-baseline.md).
@@ -42,7 +42,7 @@ operation_records ──→ audit_logs (1:N)
 | household_id | UUID | NOT NULL |
 | name | TEXT | NOT NULL, CHECK(length BETWEEN 1 AND 120) |
 | kind | TEXT | NOT NULL, CHECK(kind IN ('bank','cash','credit_card')) |
-| balance_cents | BIGINT | NOT NULL, CHECK(>= 0) |
+| balance_cents | BIGINT | NOT NULL, CHECK por kind (ADR-018: `bank`/`cash` podem ser negativos; `credit_card` CHECK(>= 0)) |
 | credit_limit_cents | BIGINT | nullable (V004) |
 | closing_day | INTEGER | nullable, CHECK(1..31) (V004) |
 | due_day | INTEGER | nullable, CHECK(1..31) (V004) |
@@ -94,6 +94,7 @@ operation_records ──→ audit_logs (1:N)
 | category_id | UUID | nullable (transfers have NULL — see CHECK) |
 | transfer_to_account_id | UUID | nullable |
 | statement_id | UUID | FK(statements.id) nullable (V004) |
+| statement_payment_id | UUID | FK composta `(statement_payment_id, household_id) → statements(id, household_id)` nullable (estado final V057; base V056 como FK simples; link canônico de pagamento de fatura; legacy untouched) |
 | installments_total | INTEGER | nullable, CHECK(1..48) (V004) |
 | installment_number | INTEGER | nullable, CHECK(1..48) (V004) |
 | created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
@@ -104,12 +105,17 @@ operation_records ──→ audit_logs (1:N)
 - `transactions_category_consistency_chk`: `(kind='transfer' AND category_id IS NULL) OR (kind<>'transfer')`
 - `transactions_transfer_to_account_chk`: `(kind='transfer' AND transfer_to_account_id IS NOT NULL AND transfer_to_account_id<>account_id) OR (kind<>'transfer' AND transfer_to_account_id IS NULL)`
 
+**FK constraints:**
+- `transactions_statement_payment_household_fkey`: FOREIGN KEY (statement_payment_id, household_id) REFERENCES statements (id, household_id) — estado final (V057). NULL em `statement_payment_id` continua permitido (MATCH SIMPLE, fail-closed: sem backfill).
+- Histórico da migração: V056 criou a base (`statement_payment_id` nullable + FK simples `transactions_statement_payment_id_fkey` → `statements(id)` + índice parcial); V057 remove toda FK simples remanescente sobre `statement_payment_id` e impõe a FK composta, com `UNIQUE (id, household_id)` de suporte em `statements`. Ponteiro cross-household permitido na base simples aborta a V057 em vez de ser mantido silenciosamente.
+
 **Indexes** (all WHERE deleted_at IS NULL):
 - `transactions_household_date_idx` ON (household_id, date DESC, id DESC)
 - `transactions_household_account_idx` ON (household_id, account_id)
 - `transactions_household_category_idx` ON (household_id, category_id)
 - `transactions_household_kind_idx` ON (household_id, kind)
 - `transactions_statement_idx` ON (statement_id) WHERE statement_id IS NOT NULL AND deleted_at IS NULL
+- `transactions_statement_payment_idx` ON (statement_payment_id) WHERE statement_payment_id IS NOT NULL AND deleted_at IS NULL (criado em V056, preservado em V057)
 
 **Triggers:** `transactions_set_updated_at` BEFORE UPDATE
 
@@ -316,6 +322,9 @@ operation_records ──→ audit_logs (1:N)
 - `statements_account_cycle_idx` ON (account_id, cycle_year_month)
 - `statements_household_status_idx` ON (household_id, status)
 
+**UNIQUE de suporte (V057):**
+- `statements_id_household_uidx` UNIQUE (id, household_id) — alvo da FK composta `transactions(statement_payment_id, household_id)`; `statements.id` já é PK, mas o PostgreSQL exige UNIQUE explícito sobre as colunas exatas referenciadas.
+
 **Triggers:** `statements_set_updated_at` BEFORE UPDATE
 
 ---
@@ -463,6 +472,10 @@ Managed by `apps/api/src/read-models/sql/migrate.ts`. Migrations are forward-onl
 | V014 | Operation lifecycle columns | `V014__operation_lifecycle_columns.sql` — both paths |
 | V015 | Scoped device tokens | `V015__scope_device_tokens.sql` — canonical only |
 | V016 | Canonical actor provenance | `V016__canonical_actor_provenance.sql` — both paths |
+| V056 | Statement payment link (base) | `V056__statement_payment_link.sql` — canonical only; coluna nullable + FK simples + índice parcial |
+| V057 | Statement payment household FK (estado final) | `V057__statement_payment_household_fk.sql` — canonical only; remove FK simples, impõe FK composta por household |
+
+> Nota: a tabela acima detalha V001–V016 e o par V056/V057 relevante para este fingerprint; V017–V055 existem no diretório de migrations mas não estão enumeradas aqui.
 
 ## Balance Semantics
 
@@ -474,11 +487,11 @@ Balance is computed by application code in `apps/api/src/writes/postgres.ts` (th
 
 | Operation | Balance Effect | SQL |
 |-----------|---------------|-----|
-| `createExpense` | `balance_cents -= amount_cents`, floored at 0 | `SET balance_cents = GREATEST(0, balance_cents - $2)` |
+| `createExpense` | `balance_cents -= amount_cents` (delta exato, sem clamp; `bank`/`cash` podem negativar; `credit_card` que negativaria é rejeitado antes da escrita — ADR-018) | `SET balance_cents = balance_cents - $2` |
 | `createIncome` | `balance_cents += amount_cents` | `SET balance_cents = balance_cents + $2` |
-| `createTransfer` | From-account: `-=` (floored at 0); To-account: `+=` | Same as expense + income |
+| `createTransfer` | From-account: `-=` (delta exato, sem clamp); To-account: `+=` | Same as expense + income |
 | `softDeleteTransaction` | Reverse: income → subtract, expense → add, transfer → reverse both ends | Reverse SQL of the original operation |
-| `updateTransaction` (expense/income) | When `amountCents` changes: restores old balance effect, applies new. When `accountId` changes: reverts old account, applies to new. Expense decrement uses `GREATEST(0)`. | Revert-then-apply |
+| `updateTransaction` (expense/income) | When `amountCents` changes: restores old balance effect, applies new. When `accountId` changes: reverts old account, applies to new. No clamping — exact revert-then-apply. | Revert-then-apply |
 | `updateTransaction` (transfer) | No balance adjustment. Only `description`/`date` are mutable. | — |
 | `deactivateAccount` | No balance change | — |
 
@@ -488,13 +501,14 @@ Balance is computed by application code in `apps/api/src/writes/postgres.ts` (th
    - `expense`: decreases balance
    - `income`: increases balance
    - `transfer`: decreases from-account, increases to-account
-2. **balance_cents is bounded at 0** via `GREATEST(0, ...)`. A `CASH` or `BANK` account can never go negative. The constraint `CHECK(balance_cents >= 0)` in DDL is the database-level guarantee.
-3. **Accounts with `credit_card` kind** also have a non-negative balance constraint — the card's available credit is `credit_limit_cents - balance_cents`. A credit card's balance represents total outstanding (purchases minus payments).
+2. **balance_cents por kind (ADR-018, supersedes D1=B).** Contas `bank`/`cash` representam saldo em conta e **podem ser negativas** (cheque especial/overdraft real), incluindo `initial_balance` negativo na criação. Todo débito aplica o delta integral ou falha antes de qualquer crédito — sem clamp parcial silencioso (`GREATEST(0, …)` removido).
+3. **Accounts with `credit_card` kind** permanecem não-negativas: `credit_card` representa saldo devedor em aberto (compras menos pagamentos) e qualquer escrita que o negativaria é erro/gate. O crédito disponível é `credit_limit_cents - balance_cents`; available acima do limite é erro, não crédito extra. Desenho autorizado: `CHECK` condicional por kind (V055, ainda não aplicada em produção — topo aplicado segue com o `CHECK` global + validação em aplicação; ver ADR-018).
 4. **`deleted_at IS NULL`** is the soft-delete convention. Active indexes filter on it; the balance is NOT reversed when a transaction is soft-deleted — reversal is a separate operation.
 5. **All mutations use `withTransaction`** (via `PoolClient`), ensuring the transaction INSERT/UPDATE/DELETE and balance UPDATE commit atomically.
 
 ### Notes
 
+- **Semântica de saldo autorizada (ADR-018):** este documento descreve a semântica autorizada — `bank`/`cash` podem negativar com deltas exatos, `credit_card` permanece não-negativo. O DDL fingerprinted acima reflete o shape pré-V055; a troca do `CHECK` global pelo `CHECK` condicional por kind (V055) está autorizada como desenho e implementada em fonte não implantada, sem DDL aplicada em produção.
 - The **read model** (`ReadModelStore` in `apps/api/src/read-models/`) reads `balance_cents` directly from `accounts` without recalculating — it trusts the write model's transactional updates.
 - The legacy schema does NOT have the `set_updated_at()` trigger function. Application code must set `updated_at` explicitly when needed.
 - Card statements (`statements`) track `total_cents` and `paid_cents` independently from `accounts.balance_cents`.

@@ -17,6 +17,7 @@ import type { PoolClient } from 'pg';
 import type { RecurringPurchase, Statement, Transaction } from '../types/domain.js';
 import type { CardStore } from './store.js';
 import { isTxClient } from '../writes/keyed-mutations.js';
+import { domainErrors } from '../writes/errors.js';
 
 export type CreateCardPurchaseInput = Parameters<CardStore['createCardPurchase']>[1];
 export type CreateCardInstallmentsInput = Parameters<CardStore['createCardInstallments']>[1];
@@ -107,33 +108,35 @@ export async function runCardMutation(
 ): Promise<Transaction[] | RecurringPurchase | Statement | void> {
   if (isTxClient(claimTx)) {
     const ext = txExtensions(store);
+    // V4.1 Phase 4 (fail-closed): missing `*InTx` with an open claim tx is
+    // an invariant error — never a plain fallback.
     switch (op) {
       case 'purchase':
         if (typeof ext.createCardPurchaseInTx === 'function') {
           return ext.createCardPurchaseInTx(claimTx, householdId, input as CreateCardPurchaseInput);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
       case 'installments':
         if (typeof ext.createCardInstallmentsInTx === 'function') {
           return ext.createCardInstallmentsInTx(claimTx, householdId, input as CreateCardInstallmentsInput);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
       case 'recurring':
         if (typeof ext.createRecurringPurchaseInTx === 'function') {
           return ext.createRecurringPurchaseInTx(claimTx, householdId, input as CreateRecurringPurchaseInput);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
       case 'payStatement':
         if (typeof ext.payStatementInTx === 'function') {
           const { statementId, input: payInput } = input as { statementId: string; input: PayStatementInput };
           return ext.payStatementInTx(claimTx, householdId, statementId, payInput);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
       case 'cancelPurchase':
         if (typeof ext.cancelPurchaseInTx === 'function') {
           return ext.cancelPurchaseInTx(claimTx, householdId, (input as { purchaseId: string }).purchaseId);
         }
-        break;
+        throw domainErrors.atomicMutationNotSupported();
     }
   }
   switch (op) {

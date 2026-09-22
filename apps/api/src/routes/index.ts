@@ -405,8 +405,23 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
 
       const isRead = request.method === "GET" || request.method === "HEAD";
       const isV2Approval = request.url.startsWith("/pending-operations/v2");
-      const mutationCapability = ['financial', 'write'].join('.');
-      const requiredCapability = isRead ? "financial.read" : mutationCapability;
+      // debt-undo-confirmation-protocol: the conversational-undo confirm call
+      // uses the NARROW `financial.undo.execute` capability — never the
+      // generic `financial.write`. Device-token (non-delegated) callers
+      // bypass this preHandler entirely (no pi-agent bearer), so their path
+      // is unchanged; the route handler re-checks the narrow capability
+      // for delegated callers as defense in depth.
+      const isUndo = !isRead && request.url.startsWith("/pending-operations/undo");
+      if (isUndo && !claims.capabilities.includes("financial.undo.execute")) {
+        return reply.code(403).send({ code: "auth.delegation_scope_forbidden", message: "Permissão insuficiente no token delegado." });
+      }
+      // A4 (architecture:check): the delegated write scope is enforced here
+      // with the OPEN capability literal — never obfuscated (no join/concat
+      // tricks). This preHandler is the API-side VERIFIER (fail-closed scope
+      // check); it never mints or grants capabilities. Issuance stays
+      // forbidden outside MutationExecutor (Agent) by the A4 gate.
+      const mutationCapability = 'financial.write';
+      const requiredCapability = isRead ? 'financial.read' : mutationCapability;
       const hasScopedApprovalCapability = claims.capabilities.some((capability) => capability.startsWith("financial.approval."));
       if (isV2Approval ? !hasScopedApprovalCapability : !claims.capabilities.includes(requiredCapability)) {
         return reply.code(403).send({ code: "auth.delegation_scope_forbidden", message: "Permissão insuficiente no token delegado." });
@@ -458,9 +473,25 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
     });
   }
 
-  // G2.2.4 — centralized idempotency-key validation for mutating methods.
-  // Validates the header when present (legacy clients without it keep working).
-  app.addHook("preHandler", async (req) => {
+  // G2.2.4 — centralized idempotency-key enforcement.
+  // Financial mutations REQUIRE the header (400 before any producer);
+  // every other mutation keeps the legacy validate-if-present behavior so
+  // auth and explicitly non-financial endpoints are untouched. Per-route
+  // lookupOrRecord (claim → effect → receipt in one tx) is preserved.
+  const FINANCIAL_MUTATION_PREFIXES = [
+    '/transactions',
+    '/transfers',
+    '/accounts',
+    '/cards',
+    '/payables',
+    '/budgets',
+    '/goals',
+    '/subscriptions',
+    '/categories',
+  ];
+  // Read-only helpers under a financial prefix are NOT mutations.
+  const FINANCIAL_MUTATION_EXCEPTIONS = ['/transactions/detect-duplicate'];
+  app.addHook("preHandler", async (req, reply) => {
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       if (
         req.url.startsWith('/auth/') ||
@@ -468,6 +499,54 @@ export const registerRoutes = (app: FastifyInstance, deps: RouteDeps): void => {
         req.url.startsWith('/bridge/') ||
         req.url === '/health'
       ) {
+        return;
+      }
+      const path = req.url.split('?')[0] ?? req.url;
+      const isFinancial =
+        FINANCIAL_MUTATION_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`)) &&
+        !FINANCIAL_MUTATION_EXCEPTIONS.some((exception) => path === exception || path.startsWith(`${exception}/`));
+      if (isFinancial) {
+        // Auth wins over idempotency: a present-but-invalid credential must
+        // surface 401 from auth, never 400 validation.required. Prior hooks
+        // (session/workspace, delegated) already authenticated into
+        // req.authenticatedContext or rejected — enforce the key only for
+        // authenticated callers. Handler-level device auth (the default test
+        // and device-only composition) resolves AFTER this hook, so validate
+        // the device token here: invalid → 401, valid → 400 when the key is
+        // missing. Bearer/cookie material without a device token and without
+        // prior authentication is left to downstream auth (401/403).
+        if (req.authenticatedContext) {
+          try {
+            requireIdempotencyKey(req.headers);
+          } catch (err) {
+            const statusCode = (err as { statusCode?: number }).statusCode ?? 400;
+            const code = (err as { code?: string }).code ?? 'validation.required';
+            const message = (err as Error).message ?? 'Idempotency-Key é obrigatório.';
+            return reply.code(statusCode).send({ code, message });
+          }
+          return;
+        }
+        const deviceHeader = req.headers[DEVICE_TOKEN_HEADER];
+        if (deviceHeader !== undefined) {
+          const deviceToken = Array.isArray(deviceHeader) ? deviceHeader[0] : deviceHeader;
+          try {
+            await resolveToken(deviceToken);
+          } catch (err) {
+            const statusCode = (err as { statusCode?: number }).statusCode ?? 401;
+            const code = (err as { code?: string }).code ?? 'auth.session_required';
+            const message = (err as Error).message ?? 'Token de autenticação inválido ou expirado.';
+            return reply.code(statusCode).send({ code, message });
+          }
+          try {
+            requireIdempotencyKey(req.headers);
+          } catch (err) {
+            const statusCode = (err as { statusCode?: number }).statusCode ?? 400;
+            const code = (err as { code?: string }).code ?? 'validation.required';
+            const message = (err as Error).message ?? 'Idempotency-Key é obrigatório.';
+            return reply.code(statusCode).send({ code, message });
+          }
+          return;
+        }
         return;
       }
       if (req.headers['idempotency-key'] !== undefined || req.headers['Idempotency-Key'] !== undefined) {

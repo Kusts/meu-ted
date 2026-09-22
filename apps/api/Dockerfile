@@ -1,8 +1,8 @@
 # Monorepo Dockerfile for meu-ted-api
-# Baseline: Node 22 Alpine, pnpm 10 (matching VPS production)
+# Baseline: Node 24 Alpine, pnpm 10 (matching VPS production)
 # Build from repo root: docker build -f apps/api/Dockerfile .
 
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 # CVE-2026-14456 libcrypto3/libssl3 3.5.7-r0 -> 3.5.8-r0: force upgrade on alpine 3.24
 RUN apk update && apk upgrade --no-cache libcrypto3 libssl3
 RUN npm install -g pnpm@10.34.1
@@ -24,7 +24,7 @@ RUN pnpm build
 # pulled in via better-auth's optional framework peers at monorepo install time).
 RUN pnpm deploy --legacy --filter meu-ted-api --prod /runtime
 
-FROM node:22-alpine AS runner
+FROM node:24-alpine AS runner
 
 RUN apk update && apk upgrade --no-cache libcrypto3 libssl3
 RUN addgroup -g 10001 -S appgroup && adduser -u 10001 -S appuser -G appgroup

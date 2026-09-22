@@ -288,9 +288,10 @@ const markPayablePaidInTxLegacy = async (
   // V4.1 REVIEWFIX F4 [major]: legacy validated neither account nor
   // type nor balance. Mirror the canonical gates: the paying account
   // is locked and must exist, be active and not be a credit card
-  // (same messages/codes), and the computed legacy balance
-  // (initial_balance + ledger, same formula as the legacy read model)
-  // must cover the amount — 400 validation.invalid like canonical.
+  // (same messages/codes). Negative-balance rule (user-approved): the
+  // computed legacy balance (initial_balance + ledger, same formula as
+  // the legacy read model) may cross below zero — no insufficient-balance
+  // rejection, in parity with canonical/in-memory.
   const accRows = await client.query<Row>(
     `SELECT id, is_credit_card, active, initial_balance_cents FROM accounts WHERE id = $1 AND household_id = $2 AND deleted_at IS NULL FOR UPDATE`,
     [p.accountId, householdId],
@@ -300,16 +301,6 @@ const markPayablePaidInTxLegacy = async (
   if (acc['active'] !== true) throw domainErrors.notFound('Conta');
   if (acc['is_credit_card'] === true) {
     throw new DomainError('validation.invalid', 'compra no cartão deve usar /cards/purchases.', 422);
-  }
-  const balanceRows = await client.query<Row>(
-    `SELECT COALESCE((SELECT initial_balance_cents FROM accounts WHERE id = $1 AND household_id = $2), 0)
-       + COALESCE((SELECT SUM(amount_cents) FROM transactions WHERE household_id = $2 AND to_account_id = $1 AND kind IN ('income', 'transfer') AND deleted_at IS NULL), 0)
-       - COALESCE((SELECT SUM(amount_cents) FROM transactions WHERE household_id = $2 AND from_account_id = $1 AND kind IN ('expense', 'transfer') AND deleted_at IS NULL), 0)
-       AS balance`,
-    [p.accountId, householdId],
-  );
-  if (Number(balanceRows.rows[0]!['balance']) < p.amountCents) {
-    throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
   }
   const paidDate = input.paidDate ?? todayISO();
 

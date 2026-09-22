@@ -23,7 +23,7 @@ const setup = async () => {
   const acc = await app.inject({
     method: 'POST',
     url: '/accounts',
-    headers: json,
+    headers: { ...json, 'idempotency-key': crypto.randomUUID() },
     payload: { name: 'A', kind: 'bank', initialBalanceCents: 50_000 },
   });
   return { app, accountId: acc.json().id as string };
@@ -62,7 +62,7 @@ describe('remaining write receipts (FIX-P1)', () => {
     const res = await s.app.inject({
       method: 'POST',
       url: '/payables/templates',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId: s.accountId,
         name: 'Aluguel template',
@@ -81,7 +81,7 @@ describe('remaining write receipts (FIX-P1)', () => {
     await s.app.inject({
       method: 'POST',
       url: '/payables/templates',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId: s.accountId,
         name: 'Aluguel template',
@@ -118,7 +118,7 @@ describe('remaining write receipts (FIX-P1)', () => {
     const res = await s.app.inject({
       method: 'POST',
       url: '/notifications',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: { chatId: 'chat-1', notificationType: 'daily_summary', enabled: true },
     });
     expect(res.statusCode).toBe(201);
@@ -130,7 +130,7 @@ describe('remaining write receipts (FIX-P1)', () => {
     const res = await s.app.inject({
       method: 'POST',
       url: '/categories/apply-defaults',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {},
     });
     expect(res.statusCode).toBe(200);
@@ -164,7 +164,7 @@ describe('payables bulk/template writes require Idempotency-Key (TEDV3)', () => 
     app.inject({
       method: 'POST',
       url: '/payables/templates',
-      headers: json,
+      headers: { ...json, 'idempotency-key': crypto.randomUUID() },
       payload: {
         accountId,
         name,

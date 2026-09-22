@@ -36,6 +36,7 @@ import {
   mockDashboardSummary,
 } from "./mock-data";
 import { isApiConfigured, getAuthToken, getSessionToken } from "@/lib/api/client";
+import { getSessionStatus } from "@/lib/auth/session-authority";
 import { type DomainKey } from "./snapshot-store";
 import { useSession } from "@/lib/auth/session-context";
 import { ApiError } from "@/lib/api/client";
@@ -44,7 +45,14 @@ import { runBootstrap, type SnapshotPreload } from "./sync-engine";
 import type { AppStateAction } from "./state-reducer";
 import { migrateV1toV2, loadSnapshotDomain } from "./snapshot-store";
 import {
+  getOfflinePrincipalId,
+  getOfflineWorkspaceId,
+} from "@/lib/auth/offline-identity";
+import { loadV3SnapshotDomain, migrateV2toV3Snapshot } from "./snapshot-store";
+import type { V3SnapshotIdentity } from "./sync-engine";
+import {
   getOfflineSnapshotLockState,
+  getV3OfflineLockState,
   refreshOfflineAuthAge,
 } from "./snapshot-db";
 import { stampLastOnlineAuthenticatedAt } from "@/lib/session";
@@ -365,18 +373,23 @@ function initialSync(source: DataSource): Record<DomainKey, DomainSync> {
 }
 
 /**
- * True when API base URL is configured AND a session can authenticate.
- * FIX-AUTH-BOOT FINDING 2 (session-first, ADR-015 Opção C): the online-use
- * gate no longer requires a device token — a valid session (compat session
- * bearer; cookie via `credentials: "include"` in apiFetch) boots normally
- * without one. No credential at all → gate stays closed (no bootstrap).
- * Device-scoped flows and the offline snapshot keying still use the device
- * token where present (snapshot partition key untouched).
+ * True when API base URL is configured AND the session authority allows
+ * online use (V4.1 Closure AUTH-01, session-first, SPEC §4/INV-02).
+ *
+ * Online use requires a server-confirmed `authenticated` session (cookie via
+ * `credentials: "include"` in apiFetch) — a legacy bearer in storage NEVER
+ * unlocks live I/O by itself (V41C FIX 1). `unauthenticated` stays closed;
+ * `unreachable` routes exclusively through the V3 offline path
+ * (`resolveUnreachableOfflineRoute`, never live bootstrap); `unknown`
+ * (pre-probe boot) waits for probe resolution instead of bootstrapping on
+ * bearer presence. Compat ON keeps the normal legacy boot working (bearer
+ * present + probe succeeds → `authenticated`); compat OFF is cookie session
+ * authority only. Device-scoped flows and the offline snapshot keying still
+ * use the device token where present (snapshot partition key untouched).
  */
 function apiUsable(): boolean {
   if (!isApiConfigured()) return false;
-  if (getAuthToken() !== undefined) return true;
-  return getSessionToken() !== undefined;
+  return getSessionStatus().status === "authenticated";
 }
 
 /**
@@ -632,6 +645,23 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return preload;
   }, []);
 
+  // Preload v3 (identity-keyed) snapshot data for the offline boot
+  // (AUTH-T03): no token involved — ownership comes from the validated
+  // offline identity bound after the last online authentication.
+  const preloadV3Snapshot = useCallback(async (identity: V3SnapshotIdentity): Promise<SnapshotPreload> => {
+    const domains: DomainKey[] = [...ALL_DOMAINS];
+    const entries = await Promise.all(
+      domains.map((d) =>
+        loadV3SnapshotDomain(identity.principalId, identity.workspaceId, d).then((v) => [d, v] as const),
+      ),
+    );
+    const preload: SnapshotPreload = {};
+    for (const [domain, value] of entries) {
+      if (value) preload[domain] = { data: value.data, syncedAt: value.syncedAt };
+    }
+    return preload;
+  }, []);
+
   // ── Offline session lock (V4 T2.6, SPEC §10 D2-D3) ──────────────
   // Locked UI must not render financial data. The envelope age is
   // refreshed automatically by every live snapshot write (writeV2Snapshot);
@@ -717,17 +747,27 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     const load = async () => {
-      // Session-first: device token wins (snapshot key), session bearer falls
-      // back. Online auth itself rides cookie + compat bearer in apiFetch.
+      // Session-first: online auth rides the cookie (+ compat bearer) in
+      // apiFetch — no storage token required. Phase 3 (AUTH-02): the V3
+      // identity comes from the validated session authority (principal) +
+      // the persisted workspace binding — never from a token — so
+      // cookie-only boots persist identity-keyed offline snapshots.
       const token = effectiveOnlineToken();
-      if (!token) return;
+      const authority = getSessionStatus();
+      const boundWorkspace = getOfflineWorkspaceId();
+      const v3Identity: V3SnapshotIdentity | undefined =
+        authority.status === "authenticated" && authority.user && boundWorkspace
+          ? { principalId: authority.user.userId, workspaceId: boundWorkspace }
+          : undefined;
 
       try {
         // 1. Migrate v1 → v2 (reads v1 localStorage, writes v2 IndexedDB, deletes v1)
-        await migrateV1toV2(token).catch(() => {});
+        if (token) {
+          await migrateV1toV2(token).catch(() => {});
+        }
 
         // 2. Preload existing v2 snapshot for offline fallback
-        const snapshotPreload = await preloadSnapshot(token).catch(() => ({}));
+        const snapshotPreload = token ? await preloadSnapshot(token).catch(() => ({})) : {};
 
         // 2b. T2.6: reflect a locked snapshot in UI state before bootstrapping
         // (offline boot with an expired/unverifiable snapshot shows the lock,
@@ -745,6 +785,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           bootstrapDispatch,
           () => expireSessionRef.current(),
           snapshotPreload,
+          v3Identity,
         );
 
         if (cancelled) return;
@@ -757,6 +798,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             stampLastOnlineAuthenticatedAt();
           } catch {
             /* noop */
+          }
+          // Phase 3 (AUTH-03): fold the legacy V2 slot into V3 now that the
+          // session is proven online with a known owner. Migration backfills
+          // only domains V3 lacks and invalidates untrustworthy V2 sources;
+          // failures never block the boot (V3 keeps the live-written data).
+          if (token !== undefined && v3Identity !== undefined) {
+            await migrateV2toV3Snapshot({ token, ...v3Identity }).catch(() => {});
           }
           if (!cancelled) setOfflineLocked(false);
         } else {
@@ -790,6 +838,65 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bootstrapDispatch]);
+
+  // ── Offline V3 boot (Phase 3, AUTH-T03/AUTH-04) ─────────────────────
+  // Runs ONLY when the online gate stays closed AND the session probe said
+  // "unreachable" (never on 401/403 — those purge + login via expireSession,
+  // and this effect returns early for any non-unreachable authority). A
+  // valid, within-TTL V3 envelope for the bound identity hydrates the
+  // domains as snapshot sources (read-only derives from that: INV-06, no
+  // write queue exists). Anything else leaves the provider empty — never a
+  // false logout, never another owner's data.
+  useEffect(() => {
+    if (apiUsable() || loadedRef.current) return;
+    if (getSessionStatus().status !== "unreachable") return;
+    const principalId = getOfflinePrincipalId();
+    const workspaceId = getOfflineWorkspaceId();
+    if (!principalId || !workspaceId) return;
+    loadedRef.current = true;
+
+    let cancelled = false;
+
+    const loadOffline = async () => {
+      bootstrapDispatch({ type: "BOOTSTRAP_START" });
+      try {
+        const preload = await preloadV3Snapshot({ principalId, workspaceId }).catch((): SnapshotPreload => ({}));
+        if (cancelled) return;
+        const served = ALL_DOMAINS.filter((d) => preload[d] !== undefined);
+        if (served.length === 0) {
+          // Valid route but no domains (or lock raced): no data to gate —
+          // leave the lock flag untouched, stop loading.
+          const lock = await getV3OfflineLockState(principalId, workspaceId).catch(() => null);
+          if (!cancelled) {
+            if (lock?.state === "locked") setOfflineLocked(true);
+            setLoading(false);
+          }
+          return;
+        }
+        for (const domain of ALL_DOMAINS) {
+          const value = preload[domain];
+          if (cancelled) return;
+          if (value) {
+            bootstrapDispatch({ type: "DOMAIN_SNAPSHOT", domain, data: value.data, syncedAt: value.syncedAt });
+          } else {
+            bootstrapDispatch({ type: "DOMAIN_UNAVAILABLE", domain });
+          }
+        }
+        if (!cancelled) {
+          setOfflineLocked(false);
+          bootstrapDispatch({ type: "BOOTSTRAP_COMPLETE" });
+        }
+      } catch {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void loadOffline();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bootstrapDispatch, preloadV3Snapshot]);
 
   // ── Write actions ─────────────────────────────────────────────────
 
@@ -1413,8 +1520,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // ── Lazy load subscriptions (not fetched during bootstrap) ────
 
   const refreshSubscriptions = useCallback(async () => {
+    // Session-first: subscriptions lazy-load whenever the session authority
+    // allows online use — no storage token required (cookie-only boots too).
+    // Snapshot persistence inside the adapter is best-effort and skipped
+    // without a token-derived key until offline V3 (Phase 3).
+    if (!apiUsable()) return;
     const token = effectiveOnlineToken();
-    if (!token) return;
 
     const adapter = createSubscriptionsAdapter({ token, online: apiUsable() });
     const result = await adapter.refresh();
@@ -1465,7 +1576,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           if (a.id === input.fromAccountId) {
             return {
               ...a,
-              balanceCents: Math.max(0, a.balanceCents - input.amountCents),
+              // ADR-018: bank/cash may go negative (exact delta, no zero floor).
+              balanceCents: a.balanceCents - input.amountCents,
             };
           }
           if (a.id === input.toAccountId) {
@@ -1878,10 +1990,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           a.id === input.fromAccountId
             ? {
                 ...a,
-                balanceCents: Math.max(
-                  0,
-                  a.balanceCents - input.amountCents,
-                ),
+                // ADR-018: bank/cash may go negative (exact delta, no zero floor).
+                balanceCents: a.balanceCents - input.amountCents,
               }
             : a,
         ),

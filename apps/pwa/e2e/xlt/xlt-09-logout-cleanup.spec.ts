@@ -1,10 +1,12 @@
 /**
- * XLT-09 — Logout cleanup (V4 T2.6 accept, SPEC §10; XLT-09).
+ * XLT-09 — Logout cleanup (V4 T2.6 accept, SPEC §10; XLT-09;
+ * V4.1 Closure Phase 3: V3 snapshot + offline identity).
  *
  * Invariant: logout (and 401-triggered session expiry, which funnels
  * through the same `clearSensitiveSession`) removes the token, the v1
- * snapshot, the v2 IndexedDB snapshot, the profile, the offline subject
- * partition AND the last-online-auth stamp — so neither the app nor the
+ * snapshot, the v2 AND v3 IndexedDB snapshots, the profile, the offline
+ * subject partition, the V3 offline identity (principal + workspace
+ * binding) AND the last-online-auth stamp — so neither the app nor the
  * offline shell can render residual financial data afterwards.
  *
  * Real layers crossed (≥2):
@@ -15,11 +17,12 @@
  *
  * The exact deletion contract (which keys, all flags, failure isolation)
  * is pinned by units importing the real `clearSensitiveSession`
- * (`src/lib/session.test.ts`, `src/lib/session-offline-age.t2-6.test.ts`),
- * which the bundler-less XLT env cannot load in-browser (same rationale
- * as XLT-02). This XLT proves the crossing those units cannot: after the
- * app's logout-equivalent clearing runs against real browser stores, the
- * shell serves nothing and a stale subject cannot reopen the snapshot.
+ * (`src/lib/session.test.ts`, `src/lib/session-offline-age.t2-6.test.ts`,
+ * `src/lib/state/__tests__/offline-cleanup-v3.test.ts`), which the
+ * bundler-less XLT env cannot load in-browser (same rationale as XLT-02).
+ * This XLT proves the crossing those units cannot: after the app's
+ * logout-equivalent clearing runs against real browser stores, the shell
+ * serves nothing and a stale subject cannot reopen the snapshot.
  */
 import { test, expect } from "@playwright/test";
 import http from "node:http";
@@ -29,6 +32,9 @@ import type { AddressInfo } from "node:net";
 
 const SUBJECT_A = "11111111-2222-4333-8444-555555555555";
 const SUBJECT_KEY = "pi-finance:offline-subject";
+const PRINCIPAL_KEY = "pi-finance:offline-principal";
+const WORKSPACE_KEY = "pi-finance:offline-workspace";
+const PRINCIPAL_A = "user-a-001";
 const STAMP_KEY = "pi-finance:last-online-authenticated-at";
 const FINANCIAL_LABEL = "Padaria Pão Dourado";
 
@@ -70,8 +76,12 @@ test.afterAll(async () => {
 /** Seed a live session: envelope + subject + stamp + tokens + v1 + profile. */
 async function seedLiveSession(page: import("@playwright/test").Page): Promise<void> {
   await page.evaluate(
-    ({ subj, subjKey, stampKey, label }) => {
+    ({ subj, subjKey, principalKey, workspaceKey, principal, stampKey, label }) => {
       localStorage.setItem(subjKey, subj);
+      // Phase 3 (AUTH-02): non-authenticator offline identity bound after
+      // the last valid online auth — the V3 ownerKey input.
+      localStorage.setItem(principalKey, principal);
+      localStorage.setItem(workspaceKey, subj);
       localStorage.setItem(stampKey, new Date().toISOString());
       localStorage.setItem("pi-finance:token", "dev-secret");
       localStorage.setItem("pi-finance:session-token", "sess-secret");
@@ -88,6 +98,18 @@ async function seedLiveSession(page: import("@playwright/test").Page): Promise<v
         },
         syncedAt: { transactions: stamped },
       };
+      // Phase 3 (AUTH-03): identity-keyed V3 slot alongside the legacy V2.
+      const v3 = {
+        schema: 3,
+        ownerKey: `v3:${principal}:${subj}`,
+        offlinePrincipalId: principal,
+        offlineWorkspaceId: subj,
+        lastOnlineAuthenticatedAt: stamped,
+        domains: {
+          transactions: [{ id: "tx-1", description: label, amountCents: -1250 }],
+        },
+        syncedAt: { transactions: stamped },
+      };
       return new Promise<void>((resolve, reject) => {
         const open = indexedDB.open("pi-finance-snapshot", 1);
         open.onupgradeneeded = () => {
@@ -97,6 +119,7 @@ async function seedLiveSession(page: import("@playwright/test").Page): Promise<v
           const db = open.result;
           const tx = db.transaction("snapshots", "readwrite");
           tx.objectStore("snapshots").put(envelope, "v2");
+          tx.objectStore("snapshots").put(v3, "v3");
           tx.oncomplete = () => {
             db.close();
             resolve();
@@ -109,24 +132,27 @@ async function seedLiveSession(page: import("@playwright/test").Page): Promise<v
         open.onerror = () => reject(open.error);
       });
     },
-    { subj: SUBJECT_A, subjKey: SUBJECT_KEY, stampKey: STAMP_KEY, label: FINANCIAL_LABEL },
+    { subj: SUBJECT_A, subjKey: SUBJECT_KEY, principalKey: PRINCIPAL_KEY, workspaceKey: WORKSPACE_KEY, principal: PRINCIPAL_A, stampKey: STAMP_KEY, label: FINANCIAL_LABEL },
   );
 }
 
 /**
  * The app's logout-equivalent clearing (same stores/keys
- * `clearSensitiveSession({clearToken, clearV1Snapshot, clearProfile})`
- * removes: token-store keys, v1 snapshot, profile, subject, age stamp,
- * plus the v2 IndexedDB snapshot).
+ * `clearSensitiveSession({clearToken, clearV1Snapshot, clearProfile,
+ * clearOfflineIdentity})` removes: token-store keys, v1 snapshot, profile,
+ * subject, age stamp, offline principal + workspace binding, plus the v2
+ * AND v3 IndexedDB snapshots).
  */
 async function appLogout(page: import("@playwright/test").Page): Promise<void> {
   await page.evaluate(
-    ({ subjKey, stampKey }) => {
+    ({ subjKey, principalKey, workspaceKey, stampKey }) => {
       localStorage.removeItem("pi-finance:token");
       localStorage.removeItem("pi-finance:session-token");
       localStorage.removeItem("pi-finance:snapshot:v1");
       localStorage.removeItem("pi-finance:profile");
       localStorage.removeItem(subjKey);
+      localStorage.removeItem(principalKey);
+      localStorage.removeItem(workspaceKey);
       localStorage.removeItem(stampKey);
       return new Promise<void>((resolve, reject) => {
         const req = indexedDB.deleteDatabase("pi-finance-snapshot");
@@ -135,7 +161,7 @@ async function appLogout(page: import("@playwright/test").Page): Promise<void> {
         req.onblocked = () => resolve();
       });
     },
-    { subjKey: SUBJECT_KEY, stampKey: STAMP_KEY },
+    { subjKey: SUBJECT_KEY, principalKey: PRINCIPAL_KEY, workspaceKey: WORKSPACE_KEY, stampKey: STAMP_KEY },
   );
 }
 
@@ -150,17 +176,19 @@ test("[XLT-09] logout clears every session store: shell serves no data", async (
   await appLogout(page);
 
   const stores = await page.evaluate(
-    ({ subjKey, stampKey }) => ({
+    ({ subjKey, principalKey, workspaceKey, stampKey }) => ({
       subject: localStorage.getItem(subjKey),
+      principal: localStorage.getItem(principalKey),
+      workspace: localStorage.getItem(workspaceKey),
       stamp: localStorage.getItem(stampKey),
       token: localStorage.getItem("pi-finance:token"),
       session: localStorage.getItem("pi-finance:session-token"),
       v1: localStorage.getItem("pi-finance:snapshot:v1"),
       profile: localStorage.getItem("pi-finance:profile"),
     }),
-    { subjKey: SUBJECT_KEY, stampKey: STAMP_KEY },
+    { subjKey: SUBJECT_KEY, principalKey: PRINCIPAL_KEY, workspaceKey: WORKSPACE_KEY, stampKey: STAMP_KEY },
   );
-  expect(Object.values(stores)).toEqual([null, null, null, null, null, null]);
+  expect(Object.values(stores)).toEqual([null, null, null, null, null, null, null, null]);
 
   await page.reload();
   await expect(page.getByText(FINANCIAL_LABEL)).toHaveCount(0);
@@ -174,11 +202,16 @@ test("[XLT-09] a stale subject cannot reopen the cleared snapshot", async ({
   await seedLiveSession(page);
   await appLogout(page);
 
-  // Attacker restores the old subject value — the envelope is gone, so the
-  // shell must still serve nothing (deletion, not just lock).
+  // Attacker restores the old subject AND the old V3 identity — both
+  // envelopes are gone, so the shell must still serve nothing (deletion,
+  // not just lock).
   await page.evaluate(
-    ({ subjKey, subj }) => localStorage.setItem(subjKey, subj),
-    { subjKey: SUBJECT_KEY, subj: SUBJECT_A },
+    ({ subjKey, principalKey, workspaceKey, subj, principal }) => {
+      localStorage.setItem(subjKey, subj);
+      localStorage.setItem(principalKey, principal);
+      localStorage.setItem(workspaceKey, subj);
+    },
+    { subjKey: SUBJECT_KEY, principalKey: PRINCIPAL_KEY, workspaceKey: WORKSPACE_KEY, subj: SUBJECT_A, principal: PRINCIPAL_A },
   );
   await page.reload();
   await expect(page.getByText(FINANCIAL_LABEL)).toHaveCount(0);

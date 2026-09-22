@@ -8,12 +8,10 @@
  *   a balance == ledger-derived invariant recomputed from the ledger.
  * - Part B (PG-gated): canonical Postgres stores vs legacy Postgres stores
  *   on isolated schemas — happy-path equivalence on every command.
- * - Part C (PG-gated): the ONE documented D1 divergence — an over-balance
- *   plain expense is rejected 400 by canonical (D1 option B) while legacy
- *   (computed balances, production behavior) books it and goes negative.
- *   Changing legacy production validation is OUT of scope for Phase 4, so
- *   the divergence is asserted explicitly as expected-difference, not as
- *   a failure. Canonical stays OFF.
+ * - Part C (PG-gated): former D1 divergence, now convergence — an
+ *   over-balance plain expense is booked with the exact negative delta by
+ *   BOTH canonical (materialized balance) and legacy (computed balances).
+ *   The negative-balance rule closed the migration-blocker input.
  */
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -144,11 +142,12 @@ const createCanonicalTables = async (pool: Pool): Promise<void> => {
   await pool.query(`
     CREATE TABLE accounts (
       id UUID PRIMARY KEY, household_id UUID NOT NULL, name TEXT NOT NULL,
-      kind TEXT NOT NULL, balance_cents BIGINT NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
+      kind TEXT NOT NULL, balance_cents BIGINT NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active',
       credit_limit_cents BIGINT, closing_day INTEGER, due_day INTEGER,
       deleted_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT accounts_balance_nonnegative_card_chk CHECK (kind <> 'credit_card' OR balance_cents >= 0)
     );
     CREATE TABLE categories (
       id UUID PRIMARY KEY, household_id UUID NOT NULL, name TEXT NOT NULL,
@@ -453,7 +452,7 @@ describeIfDb('Legacy × Canonical parity — Parts B/C (PG-gated)', () => {
     expect(cTotal).toBe(11000);
   });
 
-  it('Part C: D1 divergence — over-balance expense is 400 on canonical, booked-negative on legacy (expected difference)', async () => {
+  it('Part C: over-balance expense converges — booked-negative on canonical AND legacy', async () => {
     const cw = createPostgresWriteStore({ pool: canonPool! });
     const lw = createLegacyPostgresWriteStore({ pool: legPool! });
     const chh = randomUUID();
@@ -473,15 +472,14 @@ describeIfDb('Legacy × Canonical parity — Parts B/C (PG-gated)', () => {
       )
     ).rows[0]!['id'] as string;
 
-    // Canonical (D1 option B): rejects, balance and ledger untouched.
-    await expect(
-      cw.createExpense(chh, { description: 'Too big', amountCents: 10000, date: '2026-09-01', accountId: ca.id, categoryId: cExp }),
-    ).rejects.toMatchObject({ code: 'validation.invalid', statusCode: 400 });
-    expect(Number((await canonPool!.query(`SELECT balance_cents FROM accounts WHERE id = $1`, [ca.id])).rows[0]!['balance_cents'])).toBe(2000);
+    // Canonical (negative-balance rule): books with the exact negative
+    // delta, balance == ledger-derived afterwards.
+    const ctx = await cw.createExpense(chh, { description: 'Too big', amountCents: 10000, date: '2026-09-01', accountId: ca.id, categoryId: cExp });
+    expect(ctx.amountCents).toBe(10000);
+    expect(Number((await canonPool!.query(`SELECT balance_cents FROM accounts WHERE id = $1`, [ca.id])).rows[0]!['balance_cents'])).toBe(2000 - 10000);
 
     // Legacy (production behavior, computed balances): books the expense
-    // and the computed balance goes negative. Documented migration-blocker
-    // input for the Phase 10 parity report — NOT a parity failure.
+    // and the computed balance goes negative — same outcome.
     await lw.createExpense(lhh, { description: 'Too big', amountCents: 10000, date: '2026-09-01', accountId: la.id, categoryId: lExp });
     expect(await legacyComputedBalance(legPool!, lhh, la.id)).toBe(2000 - 10000);
   });

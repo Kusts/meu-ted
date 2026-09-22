@@ -23,7 +23,7 @@ function freshSeed() {
 }
 
 function auth(token: string) {
-  return { 'x-device-token': token };
+  return { 'x-device-token': token, 'idempotency-key': crypto.randomUUID() };
 }
 
 /**
@@ -142,7 +142,7 @@ describe('POST /cards/purchases', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         accountId: CARD_A1.id,
         description: 'Supermercado',
@@ -164,7 +164,7 @@ describe('POST /cards/purchases', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         accountId: ACCOUNT_A1.id, // bank account
         description: 'Teste',
@@ -182,7 +182,7 @@ describe('POST /cards/purchases', () => {
     await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         accountId: CARD_A1.id,
         description: 'Mercado',
@@ -252,7 +252,7 @@ describe('POST /cards/purchases', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: CARD_A1.id }, // missing fields
     });
     expect(res.statusCode).toBe(400);
@@ -265,7 +265,7 @@ describe('POST /cards/installments', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards/installments',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         accountId: CARD_A1.id,
         description: 'Notebook 12x',
@@ -288,7 +288,7 @@ describe('POST /cards/installments', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards/installments',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         accountId: ACCOUNT_A1.id,
         description: 'Teste',
@@ -307,7 +307,7 @@ describe('POST /cards/recurring', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards/recurring',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         accountId: CARD_A1.id,
         description: 'Netflix',
@@ -329,7 +329,7 @@ describe('POST /cards/recurring', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards/recurring',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         accountId: CARD_A1.id,
         description: 'Seguro',
@@ -348,7 +348,7 @@ describe('POST /cards/recurring', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards/recurring',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         accountId: CARD_A1.id,
         description: 'Teste',
@@ -369,7 +369,7 @@ describe('POST /cards/statements/:id/pay', () => {
     const purchaseRes = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         accountId: CARD_A1.id,
         description: 'Compra para pagar',
@@ -392,7 +392,7 @@ describe('POST /cards/statements/:id/pay', () => {
     const payRes = await app.inject({
       method: 'POST',
       url: `/cards/statements/${statementId}/pay`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         amountCents: 500_00,
         fromAccountId: ACCOUNT_A1.id,
@@ -411,7 +411,7 @@ describe('POST /cards/statements/:id/pay', () => {
     const _purchaseRes = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         accountId: CARD_A1.id,
         description: 'Compra',
@@ -430,7 +430,7 @@ describe('POST /cards/statements/:id/pay', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/cards/statements/${statementId}/pay`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         amountCents: 200_00,
         fromAccountId: CARD_A1.id, // paying from credit card — invalid
@@ -444,7 +444,7 @@ describe('POST /cards/statements/:id/pay', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards/statements/00000000-0000-0000-0000-000000000000/pay',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         amountCents: 100_00,
         fromAccountId: ACCOUNT_A1.id,
@@ -460,7 +460,7 @@ describe('POST /cards', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         name: 'Novo Cartão',
         creditLimitCents: 10_000_00,
@@ -487,7 +487,7 @@ describe('POST /cards', () => {
     await app.inject({
       method: 'POST',
       url: '/cards',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { name: 'Novo', creditLimitCents: 5_000_00, closingDay: 10, dueDay: 20 },
     });
 
@@ -502,7 +502,7 @@ describe('POST /cards', () => {
     await app.inject({
       method: 'POST',
       url: '/cards',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { name: 'Cartão A', creditLimitCents: 3_000_00, closingDay: 5, dueDay: 15 },
     });
     const bList = await app.inject({
@@ -527,7 +527,7 @@ describe('POST /cards', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/cards',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { name: 'X' },
     });
     expect(res.statusCode).toBe(400);
@@ -540,7 +540,7 @@ describe('PATCH /cards/:id', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/cards/${CARD_A1.id}`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { name: 'Novo Nome' },
     });
     expect(res.statusCode).toBe(200);
@@ -553,7 +553,7 @@ describe('PATCH /cards/:id', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/cards/${CARD_A1.id}`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { creditLimitCents: 8_000_00 },
     });
     expect(res.statusCode).toBe(200);
@@ -565,7 +565,7 @@ describe('PATCH /cards/:id', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/cards/${CARD_A1.id}`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { closingDay: 1, dueDay: 10 },
     });
     expect(res.statusCode).toBe(200);
@@ -578,7 +578,7 @@ describe('PATCH /cards/:id', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/cards/${CARD_A1.id}`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { name: 'Updated', creditLimitCents: 12_000_00, closingDay: 5, dueDay: 15 },
     });
     expect(res.statusCode).toBe(200);
@@ -593,7 +593,7 @@ describe('PATCH /cards/:id', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: '/cards/00000000-0000-4000-8000-000000000000',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { name: 'X' },
     });
     expect(res.statusCode).toBe(404);
@@ -604,7 +604,7 @@ describe('PATCH /cards/:id', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/cards/${CARD_A1.id}`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {},
     });
     expect(res.statusCode).toBe(400);
@@ -615,7 +615,7 @@ describe('PATCH /cards/:id', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/cards/${CARD_A1.id}`,
-      headers: { ...auth(TOKEN_B), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_B), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { name: 'Hacked' },
     });
     expect(res.statusCode).toBe(404);
@@ -641,7 +641,7 @@ describe('GET /cards/statements/:id (detail)', () => {
     await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         accountId: CARD_A1.id,
         description: 'Mercado',
@@ -793,7 +793,7 @@ describe('GET /cards/statements/:id (detail)', () => {
     await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: {
         accountId: CARD_A1.id,
         description: 'Compra com statement_id',
@@ -830,7 +830,7 @@ describe('DELETE /cards/purchases/:id', () => {
     const create = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: CARD_A1.id, description: 'Compra cancelável', amountCents: 123_45, date: openPurchaseDate(), categoryId: CATEGORY_FOOD_A.id },
     });
     expect(create.statusCode).toBe(201);
@@ -854,7 +854,7 @@ describe('DELETE /cards/purchases/:id', () => {
     const create = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: CARD_A1.id, description: 'Compra A', amountCents: 50_00, date: '2026-06-10', categoryId: CATEGORY_FOOD_A.id },
     });
     const purchaseId = create.json().items[0].id;
@@ -867,7 +867,7 @@ describe('DELETE /cards/purchases/:id', () => {
     const create = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: CARD_A1.id, description: 'Compra paga', amountCents: 100_00, date: openPurchaseDate(), categoryId: CATEGORY_FOOD_A.id },
     });
     const purchaseId = create.json().items[0].id;
@@ -876,7 +876,7 @@ describe('DELETE /cards/purchases/:id', () => {
     const pay = await app.inject({
       method: 'POST',
       url: `/cards/statements/${stmtId}/pay`,
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { amountCents: 100_00, fromAccountId: ACCOUNT_A1.id },
     });
     expect(pay.statusCode).toBe(200);
@@ -889,13 +889,13 @@ describe('DELETE /cards/purchases/:id', () => {
     const _c1 = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: CARD_A1.id, description: 'Manter', amountCents: 70_00, date: openPurchaseDate(), categoryId: CATEGORY_FOOD_A.id },
     });
     const c2 = await app.inject({
       method: 'POST',
       url: '/cards/purchases',
-      headers: { ...auth(TOKEN_A), 'Content-Type': 'application/json' },
+      headers: { ...auth(TOKEN_A), 'idempotency-key': crypto.randomUUID(), 'Content-Type': 'application/json' },
       payload: { accountId: CARD_A1.id, description: 'Cancelar', amountCents: 30_00, date: openPurchaseDate(), categoryId: CATEGORY_FOOD_A.id },
     });
     const cancelId = c2.json().items[0].id;

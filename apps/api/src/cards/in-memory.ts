@@ -395,16 +395,20 @@ export const createInMemoryCardStore = (state: InMemoryState): CardStore => {
       if (!from) throw domainErrors.notFound('Conta de origem');
       if (from.kind === 'credit_card') throw domainErrors.invalid('fromAccountId', 'não pode pagar fatura com cartão de crédito');
 
-      // Deduct from source account
-      if (from.balanceCents < input.amountCents) throw domainErrors.invalid('amountCents', 'saldo insuficiente na conta de origem');
+      // Deduct from source account. Negative-balance rule
+      // (user-approved): a bank/cash payer may cross below zero.
       from.balanceCents -= input.amountCents;
 
       // D3-pattern: the payment creates its own expense record (parity with
       // the Postgres stores, which INSERT `Pagamento fatura {cycle}`).
+      // V056 structured origin: the canonical payment links to the paid
+      // statement (statementPaymentId). Manual expenses sharing the display
+      // text carry no link and never satisfy canonical coverage.
       state.transactions.push({
         id: randomUUID(), householdId, kind: 'expense',
         description: `Pagamento fatura ${s.cycleYearMonth}`,
         amountCents: input.amountCents, date: todayISO(), accountId: from.id,
+        ...{ statementPaymentId: s.id } as unknown as Partial<Transaction>,
       });
 
       // Apply to statement

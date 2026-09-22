@@ -1,5 +1,10 @@
 import { render, screen, fireEvent, within, waitFor } from "@/lib/test-utils";
-import AccountsPage from "../AccountsPage";
+import AccountsPage, {
+  formatInputBRL,
+  parseBRLToCents,
+  toApiAccountKind,
+  isNegativeInitialBalanceAllowed,
+} from "../AccountsPage";
 import * as appStateModule from "@/lib/state/app-state-context";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
 import type { AppState } from "@/lib/state/app-state-context";
@@ -371,5 +376,68 @@ describe("AccountsPage — P2-1/P2-3 (payload bankColor + failure UX)", () => {
     await waitFor(() => expect(updateSpy).toHaveBeenCalled());
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect((screen.getByDisplayValue("Nubank Editado") as HTMLInputElement)).toBeInTheDocument();
+  });
+});
+
+describe("AccountsPage — ADR-018 (negative initial balance for bank/cash)", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("accepts and submits a negative initial balance for a bank account", () => {
+    const addSpy = vi.fn();
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addAccount: addSpy }));
+    render(<AccountsPage />);
+    fireEvent.click(screen.getByText("Nova"));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByPlaceholderText(/Nubank, Itaú/i), { target: { value: "Banco Devedor" } });
+    const balanceInput = within(dialog).getByPlaceholderText("0,00") as HTMLInputElement;
+    fireEvent.change(balanceInput, { target: { value: "-100000" } });
+    // The minus sign survives masking (valid signed pt-BR formatting).
+    expect(balanceInput.value).toBe("-1.000,00");
+    fireEvent.click(within(dialog).getByText("Salvar conta"));
+    expect(addSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Banco Devedor", kind: "bank", initialBalanceCents: -100000 }),
+    );
+  });
+
+  it("submits zero when the balance is left empty (positive/zero unchanged)", () => {
+    const addSpy = vi.fn();
+    vi.spyOn(appStateModule, "useAppState").mockReturnValue(mockState({ addAccount: addSpy }));
+    render(<AccountsPage />);
+    fireEvent.click(screen.getByText("Nova"));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByPlaceholderText(/Nubank, Itaú/i), { target: { value: "Banco Zerado" } });
+    fireEvent.click(within(dialog).getByText("Salvar conta"));
+    expect(addSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Banco Zerado", kind: "bank", initialBalanceCents: 0 }),
+    );
+  });
+
+  it("formats signed input preserving the minus sign", () => {
+    expect(formatInputBRL("-100000")).toBe("-1.000,00");
+    expect(formatInputBRL("-500")).toBe("-5,00");
+    expect(formatInputBRL("-")).toBe("-");
+    expect(formatInputBRL("")).toBe("");
+    // Positive formatting is unchanged.
+    expect(formatInputBRL("100000")).toBe("1.000,00");
+    expect(formatInputBRL("500")).toBe("5,00");
+  });
+
+  it("parses signed display values to cents", () => {
+    expect(parseBRLToCents("-1.000,00")).toBe(-100000);
+    expect(parseBRLToCents("-5,00")).toBe(-500);
+    expect(parseBRLToCents("1.000,00")).toBe(100000);
+    expect(parseBRLToCents("0,00")).toBe(0);
+    expect(parseBRLToCents("")).toBe(0);
+    expect(parseBRLToCents("-")).toBe(0);
+  });
+
+  it("allows a negative initial balance for bank/cash but never for credit_card", () => {
+    expect(isNegativeInitialBalanceAllowed("bank")).toBe(true);
+    expect(isNegativeInitialBalanceAllowed("cash")).toBe(true);
+    expect(isNegativeInitialBalanceAllowed("credit_card")).toBe(false);
+    // The UI subkinds keep mapping to the API bank kind.
+    expect(toApiAccountKind("checking")).toBe("bank");
+    expect(toApiAccountKind("cash")).toBe("cash");
+    expect(toApiAccountKind("credit_card")).toBe("credit_card");
   });
 });

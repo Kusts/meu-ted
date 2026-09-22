@@ -314,7 +314,7 @@ const specs = [
         "context": false,
         "schema": {
           "type": "integer",
-          "minimum": 0,
+          "minimum": -1000000000000,
           "maximum": 1000000000000
         }
       }
@@ -3502,7 +3502,7 @@ function createTool(spec: ToolSpec) {
     "idempotencyKey": Type.Optional(Type.String({})),
     "name": Type.String({"minLength":1,"maxLength":120}),
     "kind": Type.Union([Type.Literal("bank"), Type.Literal("cash")]),
-    "initialBalanceCents": Type.Integer({"minimum":0,"maximum":1000000000000}),
+    "initialBalanceCents": Type.Integer({"minimum":-1000000000000,"maximum":1000000000000}),
   }),
   "list_categories": Type.Object({
     "householdId": Type.String({"format":"uuid"}),

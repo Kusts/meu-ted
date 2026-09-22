@@ -18,7 +18,7 @@ describe('POST /accounts', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Itaú', kind: 'bank', initialBalanceCents: 100_000 },
     });
     expect(res.statusCode).toBe(201);
@@ -33,20 +33,23 @@ describe('POST /accounts', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'X', kind: 'crypto', initialBalanceCents: 0 },
     });
     expect(res.statusCode).toBe(400);
   });
 
-  it('rejects with 400 on negative balance', async () => {
-    const res = await app.inject({
-      method: 'POST',
-      url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
-      payload: { name: 'X', kind: 'bank', initialBalanceCents: -1 },
-    });
-    expect(res.statusCode).toBe(400);
+  it('accepts a negative initial balance for bank/cash (negative-balance rule)', async () => {
+    for (const kind of ['bank', 'cash'] as const) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/accounts',
+        headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
+        payload: { name: `Neg ${kind}`, kind, initialBalanceCents: -5000 },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(res.json().balanceCents).toBe(-5000);
+    }
   });
 
   it('requires auth', async () => {
@@ -63,10 +66,10 @@ describe('POST /accounts', () => {
     await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'New', kind: 'cash', initialBalanceCents: 0 },
     });
-    const list = await app.inject({ method: 'GET', url: '/accounts', headers: { 'x-device-token': TOKEN_A } });
+    const list = await app.inject({ method: 'GET', url: '/accounts', headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() } });
     expect(list.json().items.find((a: { name: string }) => a.name === 'New')).toBeDefined();
   });
 });
@@ -77,14 +80,14 @@ describe('PATCH /accounts/:id', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Old', kind: 'bank', initialBalanceCents: 0 },
     });
     const id = created.json().id;
     const res = await app.inject({
       method: 'PATCH',
       url: `/accounts/${id}`,
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'New' },
     });
     expect(res.statusCode).toBe(200);
@@ -96,7 +99,7 @@ describe('PATCH /accounts/:id', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/accounts/${randomUUID()}`,
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'X' },
     });
     expect(res.statusCode).toBe(404);
@@ -109,14 +112,14 @@ describe('POST /accounts/:id/deactivate', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'X', kind: 'bank', initialBalanceCents: 0 },
     });
     const id = created.json().id;
     const res = await app.inject({
       method: 'POST',
       url: `/accounts/${id}/deactivate`,
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().status).toBe('inactive');
@@ -127,20 +130,20 @@ describe('POST /accounts/:id/deactivate', () => {
     const acc = await app.inject({
       method: 'POST',
       url: '/accounts',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       // V4.1 Phase 4 (D1): funded so the setup expense books successfully.
       payload: { name: 'X', kind: 'bank', initialBalanceCents: 10_000 },
     });
     const cat = await app.inject({
       method: 'POST',
       url: '/categories',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: { name: 'Food', kind: 'expense' },
     });
     await app.inject({
       method: 'POST',
       url: '/transactions/expense',
-      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json' },
+      headers: { 'x-device-token': TOKEN_A, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
       payload: {
         description: 'Lunch',
         amountCents: 1000,
@@ -152,7 +155,7 @@ describe('POST /accounts/:id/deactivate', () => {
     const res = await app.inject({
       method: 'POST',
       url: `/accounts/${acc.json().id}/deactivate`,
-      headers: { 'x-device-token': TOKEN_A },
+      headers: { 'x-device-token': TOKEN_A, 'idempotency-key': crypto.randomUUID() },
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().code).toBe('in_use');

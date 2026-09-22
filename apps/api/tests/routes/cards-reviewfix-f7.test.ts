@@ -20,7 +20,7 @@ function freshSeed() {
 }
 
 function auth(token: string = TOKEN_A) {
-  return { 'x-device-token': token, 'content-type': 'application/json' };
+  return { 'x-device-token': token, 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() };
 }
 
 /**
