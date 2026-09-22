@@ -12,6 +12,10 @@ on:
       # Kept literal: the audit contract test asserts this exact entry.
       - ".github/workflows/pwa-ci.yml"
       - "apps/pwa/**"
+      # Docs/notes changes must also run PWA CI: the required check
+      # "quality (22, 10)" would otherwise be missing and block the merge.
+      - "docs/**"
+      - "AGENTS.md"
       - "scripts/pwa-audit*"
       - "scripts/__fixtures__/pwa-audit-current.json"
       - "docs/security/pwa-audit-risk-acceptance.md"
