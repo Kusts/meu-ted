@@ -115,6 +115,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # wrangler bundles @pi-finance/llm-contracts from its `dist` exports —
+      # build the shared contracts exactly like the CI agent job does, or the
+      # bundler fails with "Could not resolve @pi-finance/llm-contracts".
+      - name: Build shared contracts (workspace exports resolve dist)
+        run: pnpm --filter @pi-finance/llm-contracts build
       # V4.1 Phase 9 (Task 9.6): same-source proof. The Agent has no compiled
       # output (tsc --noEmit; wrangler bundles deterministically from pinned
       # deps at deploy), so CI publishes a SHA-pinned manifest proving THIS
