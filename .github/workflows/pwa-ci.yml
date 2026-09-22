@@ -9,6 +9,8 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/**"
+      # Kept literal: the audit contract test asserts this exact entry.
+      - ".github/workflows/pwa-ci.yml"
       - "apps/pwa/**"
       - "scripts/pwa-audit*"
       - "scripts/__fixtures__/pwa-audit-current.json"
