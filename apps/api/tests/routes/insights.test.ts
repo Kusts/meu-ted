@@ -78,3 +78,33 @@ describe('GET /insights/quick with unified authenticatedContext (session-first)'
     expect(Array.isArray(res.json().items)).toBe(true);
   });
 });
+
+describe('GET /insights/spending with unified authenticatedContext (session-first)', () => {
+  it('resolves the household from the unified preHandler context without a device token', async () => {
+    const Fastify = (await import('fastify')).default;
+    const { registerInsightRoutes } = await import('../../src/routes/insights.js');
+    const app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      (request as unknown as { authenticatedContext: { householdId: string } }).authenticatedContext = {
+        householdId: 'household-session',
+      };
+    });
+    registerInsightRoutes(app, {
+      store: {
+        listAccounts: async () => [],
+        listCategories: async () => [],
+        listAllTransactions: async () => [],
+      },
+      // Legacy fallback must NOT be reachable in this path.
+      resolveToken: async () => {
+        throw new Error('device resolver must not be called when authenticatedContext exists');
+      },
+    } as never);
+
+    const res = await app.inject({ method: 'GET', url: '/insights/spending' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.success).toBe(true);
+    expect(body.transactionCount).toBe(0);
+  });
+});
