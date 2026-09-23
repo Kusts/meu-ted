@@ -83,17 +83,23 @@ describe('T2.5 RED — postgres rotation store (SPEC §9 C4/C5)', () => {
   });
 
   it('rotate without a predecessor (session path) only inserts, never windows', async () => {
-    const query = vi.fn().mockResolvedValue({ rowCount: 1, rows: [] });
+    const query = vi.fn((text: string) => {
+      // Session lineage resolves to the application users.id before the INSERT.
+      if (text.includes('auth_user_id')) {
+        return Promise.resolve({ rowCount: 1, rows: [{ id: 'user-1' }] });
+      }
+      return Promise.resolve({ rowCount: 1, rows: [] });
+    });
     const store = createPostgresDeviceTokenStore({ query } as never);
 
     const created = await store.rotate(undefined, 'session phone', HOUSEHOLD_ID, { userId: 'user-1' });
 
     expect(typeof created.token).toBe('string');
-    expect(query).toHaveBeenCalledOnce();
-    const [sql, args] = query.mock.calls[0] as [string, unknown[]];
-    expect(sql).toMatch(/INSERT INTO device_tokens/);
-    expect(args).not.toContain(created.token);
-    expect(args).toContain('user-1');
+    expect(query).toHaveBeenCalledTimes(2);
+    const insertCall = query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO device_tokens')) as [string, unknown[]];
+    expect(insertCall[0]).toMatch(/INSERT INTO device_tokens/);
+    expect(insertCall[1]).not.toContain(created.token);
+    expect(insertCall[1]).toContain('user-1');
   });
 
   it('honors DEVICE_ROTATION_WINDOW_HOURS for the predecessor deadline', async () => {
@@ -339,6 +345,10 @@ describe('FIX-USERID-LINEAGE — rotation inherits predecessor user_id (security
 
   it('postgres: mismatched session userId rejects 403 and never INSERTs (fail-closed)', async () => {
     const { pool, txCalls } = mockTxPool(async (sql) => {
+      // Session identity resolves in the application users space first.
+      if (sql.includes('auth_user_id')) {
+        return { rowCount: 1, rows: [{ id: SESSION_USER_ID }] };
+      }
       if (sql.startsWith('SELECT')) {
         return {
           rowCount: 1,
@@ -358,6 +368,9 @@ describe('FIX-USERID-LINEAGE — rotation inherits predecessor user_id (security
 
   it('postgres: null predecessor user_id + session opts adopts the session user', async () => {
     const { pool, txCalls } = mockTxPool(async (sql) => {
+      if (sql.includes('auth_user_id')) {
+        return { rowCount: 1, rows: [{ id: SESSION_USER_ID }] };
+      }
       if (sql.startsWith('SELECT')) {
         return {
           rowCount: 1,
