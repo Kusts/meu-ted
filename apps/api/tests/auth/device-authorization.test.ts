@@ -328,6 +328,21 @@ describeIfDb('V4.1 Task 1.1 — authorized device resolution against real Postgr
       const tokenStore = createPostgresDeviceTokenStore(pool);
       const workspaceId = '00000000-0000-4000-8000-0000000000a1';
       const ownerId = '00000000-0000-4000-8000-00000000b001';
+      // Production invariant: a session only exists for a real user, so the
+      // users row exists before register resolves the lineage to users.id.
+      // users.auth_user_id FKs to "user"(id), so seed both identities.
+      await pool.query(`DELETE FROM users WHERE id = $1 OR auth_user_id = $2`, [ownerId, ownerId]);
+      await pool.query(`DELETE FROM "user" WHERE id = $1 OR email = $2`, [ownerId, 'it-owner@example.test']);
+      await pool.query(
+        `INSERT INTO "user" (id, name, email, "emailVerified", "createdAt", "updatedAt")
+         VALUES ($1::uuid, 'it-owner', 'it-owner@example.test', TRUE, NOW(), NOW())`,
+        [ownerId],
+      );
+      await pool.query(
+        `INSERT INTO users (id, auth_user_id, email, name, status)
+         VALUES ($1, $2, 'it-owner@example.test', 'it-owner', 'active')`,
+        [ownerId, ownerId],
+      );
       const created = await tokenStore.register('pg-auth-device', workspaceId, { userId: ownerId });
       const seen: Array<{ authUserId: string; householdId: string }> = [];
       const workspaceAccess: WorkspaceAccessStore = {
@@ -341,6 +356,8 @@ describeIfDb('V4.1 Task 1.1 — authorized device resolution against real Postgr
       expect(authorized.access.role).toBe('member');
       expect(authorized.userId).toBe(ownerId);
       await pool.query('DELETE FROM device_tokens WHERE device_id = $1', [created.deviceId]).catch(() => undefined);
+      await pool.query('DELETE FROM users WHERE id = $1', [ownerId]).catch(() => undefined);
+      await pool.query('DELETE FROM "user" WHERE id = $1', [ownerId]).catch(() => undefined);
     } finally {
       await pool.end();
     }

@@ -22,18 +22,25 @@ describe('T2.4 RED — device token hardening (SPEC §9 C1/C2/C3/C6)', () => {
   });
 
   it('register stores only the SHA-256 hash, never the raw secret (C2)', async () => {
-    const query = vi.fn().mockResolvedValue({ rowCount: 1, rows: [] });
+    const query = vi.fn((text: string) => {
+      // Lineage resolution runs before the INSERT (uuid column vs TEXT id).
+      if (text.includes('auth_user_id')) {
+        return Promise.resolve({ rowCount: 1, rows: [{ id: 'user-1' }] });
+      }
+      return Promise.resolve({ rowCount: 1, rows: [] });
+    });
     const store = createPostgresDeviceTokenStore({ query } as never);
 
     const created = await store.register('laptop', HOUSEHOLD_ID, { userId: 'user-1' });
 
-    expect(query).toHaveBeenCalledOnce();
-    const [sql, args] = query.mock.calls[0] as [string, unknown[]];
-    expect(sql).toMatch(/INSERT INTO device_tokens/);
+    expect(query).toHaveBeenCalledTimes(2);
+    const insertCall = query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO device_tokens')) as [string, unknown[]];
+    const [sql, args] = insertCall;
     expect(sql).toMatch(/token_hash/);
     // The raw secret must not be persisted in any argument.
     expect(args).not.toContain(created.token);
     expect(args).toContain(sha256hex(created.token));
+    // Lineage persists the application users.id (resolved), not the raw session id.
     expect(args).toContain('user-1');
     expect(hashDeviceToken(created.token)).toBe(sha256hex(created.token));
   });

@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DEMO_HOUSEHOLD_ID } from '../read-models/demo-data.js';
 import { withTransaction } from '../db/pool.js';
+import { resolveApplicationUserId } from './resolve-user-id.js';
 import type { Pool } from 'pg';
 
 export type DeviceContext = { deviceId: string; householdId: string; userId?: string | null };
@@ -294,10 +295,17 @@ export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => 
       const tok = generateDeviceToken();
       const tokenHash = hashDeviceToken(tok);
       const devId = randomUUID();
+      // device_tokens.user_id is a UUID column (V053) while a session carries
+      // the Better-Auth TEXT id. Store lineage in the application identity
+      // space: resolve via users (auth_user_id OR id::text), NULL when
+      // unresolvable — mirrors writes/postgres.ts audit lineage.
+      const lineageUserId = opts?.userId
+        ? await resolveApplicationUserId(pool, opts.userId)
+        : null;
       await pool.query(
         `INSERT INTO device_tokens (token, device_id, household_id, token_hash, name, user_id, legacy)
          VALUES ($1, $2, $3, $4, $5, $6, FALSE)`,
-        [hashedTokenPlaceholder(tokenHash), devId, householdId, tokenHash, deviceName, opts?.userId ?? null],
+        [hashedTokenPlaceholder(tokenHash), devId, householdId, tokenHash, deviceName, lineageUserId],
       );
       return { token: tok, deviceId: devId, householdId };
   };
@@ -399,11 +407,22 @@ export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => 
       // policy: opaque random secret, hash at rest, no forced expires_at).
       // FIX-USERID-LINEAGE: the successor inherits the predecessor's owner
       // read above under FOR UPDATE; a session user only verifies.
+      // Identity space: the session carries the Better-Auth TEXT id while the
+      // row stores the application users.id (UUID). Resolve the session user
+      // into the application space BEFORE the mismatch check and the successor
+      // insert — otherwise TEXT-vs-UUID always mismatches (403) or the raw
+      // TEXT id crashes the UUID insert (22P02).
+      const sessionAppUserId = opts?.userId
+        ? await resolveApplicationUserId(client, opts.userId)
+        : null;
+      const successorUserId = resolveRotationSuccessorUserId(
+        sessionAppUserId ?? undefined,
+        row.user_id ?? null,
+      );
       const tok = generateDeviceToken();
       const tokenHash = hashDeviceToken(tok);
       const devId = randomUUID();
       const deadline = new Date(deadlineMs).toISOString();
-      const successorUserId = resolveRotationSuccessorUserId(opts?.userId, row.user_id ?? null);
       await client.query(
         `INSERT INTO device_tokens (token, device_id, household_id, token_hash, name, user_id, legacy)
          VALUES ($1, $2, $3, $4, $5, $6, FALSE)`,
