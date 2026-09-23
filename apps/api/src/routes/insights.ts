@@ -22,12 +22,17 @@ export const registerInsightRoutes = (
   opts: { store: ReadModelStore; resolveToken: AuthResolver; payableStore?: PayableStore; cardStore?: CardStore; clock?: () => Date },
 ): void => {
   app.get('/insights/quick', async (req, reply) => {
-    const token = req.headers[DEVICE_TOKEN_HEADER];
-    let ctx;
-    try { ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token); }
-    catch (e) {
-      const err = e as { statusCode?: number; code?: string; message?: string };
-      return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.error', message: err.message ?? 'unauthorized' });
+    // auth: prefer already-resolved context (better-auth / delegation), fallback to device token
+    let ctx: Awaited<ReturnType<AuthResolver>>;
+    if ((req as any).authenticatedContext) {
+      ctx = (req as any).authenticatedContext;
+    } else {
+      const token = req.headers[DEVICE_TOKEN_HEADER];
+      try { ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token); }
+      catch (e) {
+        const err = e as { statusCode?: number; code?: string; message?: string };
+        return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.error', message: err.message ?? 'unauthorized' });
+      }
     }
     const [accounts, categories, transactions] = await Promise.all([
       opts.store.listAccounts(ctx.householdId),
@@ -38,12 +43,17 @@ export const registerInsightRoutes = (
   });
 
   app.get('/insights/spending', async (req, reply) => {
-    const token = req.headers[DEVICE_TOKEN_HEADER];
-    let ctx;
-    try { ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token); }
-    catch (e) {
-      const err = e as { statusCode?: number; code?: string; message?: string };
-      return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.error', message: err.message ?? 'unauthorized' });
+    // auth: prefer already-resolved context, fallback to device token
+    let ctx: Awaited<ReturnType<AuthResolver>>;
+    if ((req as any).authenticatedContext) {
+      ctx = (req as any).authenticatedContext;
+    } else {
+      const token = req.headers[DEVICE_TOKEN_HEADER];
+      try { ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token); }
+      catch (e) {
+        const err = e as { statusCode?: number; code?: string; message?: string };
+        return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.error', message: err.message ?? 'unauthorized' });
+      }
     }
     const parsed = spendingInsightQuerySchema.safeParse(req.query ?? {});
     if (!parsed.success) {
