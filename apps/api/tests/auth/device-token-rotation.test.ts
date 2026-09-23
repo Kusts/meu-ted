@@ -437,6 +437,19 @@ describeIfPg('FIX-USERID-LINEAGE — real Postgres: successor inherits predecess
   it('rotate by device token of a token with user_id → successor inherits user_id', async () => {
     const store = createPostgresDeviceTokenStore(pool);
     const userId = randomUUID();
+    // Production invariant: the session user always has a users row, which the
+    // register path resolves before persisting the lineage (uuid column).
+    // users.auth_user_id FKs to "user"(id), so seed both identities.
+    await pool.query(
+      `INSERT INTO "user" (id, name, email, "emailVerified", "createdAt", "updatedAt")
+       VALUES ($1::uuid, 'it-lineage', $2, TRUE, NOW(), NOW())`,
+      [userId, `it-lineage-${userId}@example.test`],
+    );
+    await pool.query(
+      `INSERT INTO users (id, auth_user_id, email, name, status)
+       VALUES ($1, $2, $3, 'it-lineage', 'active')`,
+      [userId, userId, `it-lineage-${userId}@example.test`],
+    );
     const prev = await store.register('lineage phone', householdId, { userId });
     deviceIds.push(prev.deviceId);
 
@@ -455,5 +468,7 @@ describeIfPg('FIX-USERID-LINEAGE — real Postgres: successor inherits predecess
       deviceId: next.deviceId,
       householdId,
     });
+    await pool.query('DELETE FROM users WHERE id = $1', [userId]).catch(() => undefined);
+    await pool.query('DELETE FROM "user" WHERE id = $1', [userId]).catch(() => undefined);
   });
 });
