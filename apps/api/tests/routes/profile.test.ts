@@ -391,3 +391,47 @@ describe('Error handling in /profile', () => {
     });
   });
 });
+
+describe('GET/PATCH /profile with unified authenticatedContext (session-first)', () => {
+  const buildUnifiedApp = () => {
+    const app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      (request as unknown as { authenticatedContext: { householdId: string } }).authenticatedContext = {
+        householdId: 'household-session',
+      };
+    });
+    registerProfileRoutes(app, {
+      // Legacy fallback must NOT be reachable in this path.
+      resolveToken: async () => {
+        throw new AuthError('missing device token', 401, 'auth.missing_token');
+      },
+      profileStore: createInMemoryProfileStore(),
+    });
+    return app;
+  };
+
+  it('PATCH resolves the household from the unified context without a device token', async () => {
+    const app = buildUnifiedApp();
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/profile',
+      headers: { 'content-type': 'application/json' },
+      payload: { name: 'Sessão' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().profile).toMatchObject({ householdId: 'household-session', name: 'Sessão' });
+  });
+
+  it('GET resolves the household from the unified context without a device token', async () => {
+    const app = buildUnifiedApp();
+    await app.inject({
+      method: 'PATCH',
+      url: '/profile',
+      headers: { 'content-type': 'application/json' },
+      payload: { name: 'Sessão' },
+    });
+    const res = await app.inject({ method: 'GET', url: '/profile' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().profile).toMatchObject({ householdId: 'household-session', name: 'Sessão' });
+  });
+});

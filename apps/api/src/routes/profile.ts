@@ -36,19 +36,34 @@ export const registerProfileRoutes = (
     return Boolean(opts.adminEmails?.some((admin) => admin.toLowerCase() === (email ?? '').toLowerCase()));
   };
 
-  app.get('/profile', async (req, reply) => {
+  // Session-first context resolution (unified preHandler), device-token fallback.
+  // The unified preHandler sets authenticatedContext for session/delegation
+  // requests; legacy device-token clients resolve through the store below.
+  const resolveRouteContext = async (
+    req: { headers: Record<string, unknown>; authenticatedContext?: { householdId: string } },
+  ): Promise<{ householdId: string } | { error: { statusCode?: number; code?: string; message?: string } }> => {
+    if (req.authenticatedContext) {
+      return { householdId: req.authenticatedContext.householdId };
+    }
     const token = req.headers[DEVICE_TOKEN_HEADER];
-    let ctx;
     try {
-      ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token);
+      return await opts.resolveToken(Array.isArray(token) ? token[0] : token);
     } catch (e) {
-      const err = e as { statusCode?: number; code?: string; message?: string };
+      return { error: e as { statusCode?: number; code?: string; message?: string } };
+    }
+  };
+
+  app.get('/profile', async (req, reply) => {
+    const resolved = await resolveRouteContext(req);
+    if ('error' in resolved) {
+      const err = resolved.error;
       const status = err.statusCode ?? 500;
       return reply.code(status).send({
         code: err.code ?? (status >= 500 ? 'server.error' : 'auth.error'),
         message: err.message ?? (status >= 500 ? 'server error' : 'unauthorized'),
       });
     }
+    const ctx = resolved;
     let existing = await opts.profileStore.get(ctx.householdId);
     // Auto-provision: a household whose device token is valid but has no profile
     // row yet (e.g. second device/personal household) would otherwise get
@@ -71,18 +86,16 @@ export const registerProfileRoutes = (
   });
 
   app.patch('/profile', async (req, reply) => {
-    const token = req.headers[DEVICE_TOKEN_HEADER];
-    let ctx;
-    try {
-      ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token);
-    } catch (e) {
-      const err = e as { statusCode?: number; code?: string; message?: string };
+    const resolved = await resolveRouteContext(req);
+    if ('error' in resolved) {
+      const err = resolved.error;
       const status = err.statusCode ?? 500;
       return reply.code(status).send({
         code: err.code ?? (status >= 500 ? 'server.error' : 'auth.error'),
         message: err.message ?? (status >= 500 ? 'server error' : 'unauthorized'),
       });
     }
+    const ctx = resolved;
 
     const parsed = patchInput.safeParse(req.body ?? {});
     if (!parsed.success) {
