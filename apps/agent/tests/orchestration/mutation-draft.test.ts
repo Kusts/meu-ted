@@ -270,8 +270,61 @@ describe('SPEC §25.3.1 — MutationDraft multi-turno', () => {
   it('two concurrent continuations: exactly one proposal (CAS)', async () => {
     const fake = makeFakeApi();
     const store = new InMemoryMutationDraftStore();
-    const orchestrator = setup(fake, store, { entityReader: reader([NUBANK, ITAU], [MERCADO], 10) });
-    await turn(orchestrator, 'Gastei R$ 85 no mercado', 'msg-cas-1');
+    // Seed the draft with a plain reader: the assertions below must start
+    // from exactly one active draft.
+    const seedOrchestrator = setup(fake, store);
+    await turn(seedOrchestrator, 'Gastei R$ 85 no mercado', 'msg-cas-1');
+    // Deterministic rendezvous barriers (flake fix): the old 10ms-delay +
+    // Promise.all did NOT guarantee both continuations reached the CAS
+    // (mutation-draft.ts:266-282, synchronous in-memory) before the winner
+    // consumed the proposal — on CI the winner could consume first and the
+    // loser would then reuse the SAME proposal via handleCasLoss
+    // (conversation-orchestrator.ts:579-590), yielding 2 mutations.
+    // Barrier 1 (pre-CAS): each continuation issues exactly 2 reader calls
+    // (listAccounts + listCategories via Promise.allSettled in
+    // resolveMutationEntities). Hold every reader call until all 4 have been
+    // entered, so both continuations provably reach the CAS together.
+    let readerEntries = 0;
+    let releaseReads: () => void = () => {};
+    const readsReleased = new Promise<void>((resolve) => {
+      releaseReads = resolve;
+    });
+    const gateReads = async <T>(value: T): Promise<T> => {
+      readerEntries += 1;
+      if (readerEntries >= 4) releaseReads();
+      await readsReleased;
+      return value;
+    };
+    const gatedReader: EntityReader = {
+      listAccounts: async () => gateReads([NUBANK, ITAU]),
+      listCategories: async () => gateReads([MERCADO]),
+    };
+    // Barrier 2 (propose): hold the winner's propose resolution until the
+    // loser has also concluded its CAS attempt (2 CAS calls observed). The
+    // loser then deterministically sees status 'proposing' → inconclusive,
+    // never reusing a consumed proposal.
+    let casCalls = 0;
+    let releasePropose: () => void = () => {};
+    const loserSettled = new Promise<void>((resolve) => {
+      releasePropose = resolve;
+    });
+    const rawCas = store.cas.bind(store);
+    vi.spyOn(store, 'cas').mockImplementation((...args: Parameters<typeof store.cas>) => {
+      const result = rawCas(...args);
+      casCalls += 1;
+      if (casCalls >= 2) releasePropose();
+      return result;
+    });
+    const rawRequest = fake.request.getMockImplementation() as
+      ((...args: unknown[]) => Promise<unknown>) | undefined;
+    fake.request.mockImplementation(async (...args: unknown[]) => {
+      const [method, path] = args as [string, string];
+      if (method === 'POST' && path === '/pending-operations/v2/propose') {
+        await loserSettled;
+      }
+      return rawRequest?.(...args);
+    });
+    const orchestrator = setup(fake, store, { entityReader: gatedReader });
     const [a, b] = await Promise.all([
       turn(orchestrator, 'Nubank', 'msg-cas-2a'),
       turn(orchestrator, 'Nubank', 'msg-cas-2b'),
