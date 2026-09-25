@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const workflow = fs.readFileSync('.github/workflows/production-smoke.yml', 'utf8');
 const config = fs.readFileSync('apps/pwa/e2e/playwright.config.ts', 'utf8');
+const localE2eRunner = fs.readFileSync('apps/pwa/e2e/run-ci.sh', 'utf8');
 const smoke = fs.readFileSync('apps/pwa/e2e/specs/production-smoke.spec.ts', 'utf8');
 const runbook = fs.readFileSync('docs/runbooks/pwa-cloudflare-release.md', 'utf8');
 const buildInfoRoute = fs.readFileSync('apps/pwa/src/app/api/build-info/route.ts', 'utf8');
@@ -23,6 +24,22 @@ test('production smoke does not start local fixture servers', () => {
   assert.match(smoke, /gotoReadOnly/);
   assert.match(smoke, /production smoke emitted writes/);
   assert.match(smoke, /\["GET", "HEAD", "OPTIONS"\]/);
+});
+
+test('local PWA E2E runner pins both API paths to local fixtures and clears live opt-ins', () => {
+  assert.match(localE2eRunner, /export NEXT_PUBLIC_PI_FINANCE_API_BASE_URL="http:\/\/127\.0\.0\.1:4010"/);
+  assert.match(localE2eRunner, /export NEXT_PUBLIC_LEGACY_BEARER_COMPAT="off"/);
+  assert.match(localE2eRunner, /export PWA_BACKEND_PROXY_ORIGIN="http:\/\/127\.0\.0\.1:4010"/);
+  assert.match(localE2eRunner, /standalone-server\.mjs/);
+  assert.doesNotMatch(localE2eRunner, /next start --port/);
+  assert.match(localE2eRunner, /--project=functional-mobile \\\n\s+--workers=1 --retries=1/);
+  assert.match(localE2eRunner, /export PWA_LIVE_E2E="0"/);
+  assert.match(localE2eRunner, /export PWA_LIVE_BASE_URL="http:\/\/127\.0\.0\.1:3000"/);
+  assert.match(localE2eRunner, /export E2E_PRODUCTION_SMOKE="0"/);
+  assert.match(localE2eRunner, /export E2E_PRODUCTION_URL=""/);
+  assert.match(localE2eRunner, /export PWA_AGENT_PROXY_ORIGIN=""/);
+  assert.match(localE2eRunner, /export AGENT_ORIGIN=""/);
+  assert.match(localE2eRunner, /export NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL=""/);
 });
 
 test('runbook documents smoke before and rollback after a release', () => {
