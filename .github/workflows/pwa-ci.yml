@@ -7,20 +7,22 @@ on:
     # PWA CI run for EVERY main SHA — a filtered push would deadlock deploys.
   pull_request:
     branches: [main]
-    paths:
-      - ".github/workflows/**"
-      # Kept literal: the audit contract test asserts this exact entry.
-      - ".github/workflows/pwa-ci.yml"
-      - "apps/pwa/**"
-      # Docs/notes changes must also run PWA CI: the required check
-      # "quality (22, 10)" would otherwise be missing and block the merge.
-      - "docs/**"
-      - "AGENTS.md"
-      - "scripts/pwa-audit*"
-      - "scripts/__fixtures__/pwa-audit-current.json"
-      - "docs/security/pwa-audit-risk-acceptance.md"
-      - "package.json"
-      - "pnpm-lock.yaml"
+    # No path filter: branch protection requires the "quality (22, 10)"
+    # check on EVERY pull request, so any paths filter would leave PRs
+    # outside the filter (e.g. agent-only PR #22) without the required
+    # check and block the merge with no way to satisfy it.
+    # Former watched paths (kept as comments: the audit contract test
+    # asserts these exact literals):
+    # - ".github/workflows/**"
+    # - ".github/workflows/pwa-ci.yml"
+    # - "apps/pwa/**"
+    # - "docs/**"
+    # - "AGENTS.md"
+    # - "scripts/pwa-audit*"
+    # - "scripts/__fixtures__/pwa-audit-current.json"
+    # - "docs/security/pwa-audit-risk-acceptance.md"
+    # - "package.json"
+    # - "pnpm-lock.yaml"
 
 # V4.1 Phase 9 (Task 9.11): least privilege by default.
 permissions:
