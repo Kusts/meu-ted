@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { allowFailure, assertNoUndeclaredFailures } from "../support/failure-guard";
 import { initSpec } from "../support/harness";
+import { openNewTransaction } from "../support/new-transaction";
 
 // NOAPI-* — privacy boundary: when the backend is unreachable, a write must
 // never be rendered optimistically and must never persist.
@@ -38,9 +39,7 @@ test("[NOAPI-01] no API rejects write before optimistic success", async ({ page 
   allowFailure(guard, { message: "Failed to load resource", reason: "intentional no-API abort" });
   allowFailure(guard, { url: "transactions/expense", reason: "intentional no-API abort" });
 
-  await page.getByLabel("Nova transação").click();
-  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
-  const dialog = page.getByRole("dialog");
+  const dialog = await openNewTransaction(page, "expense");
   await expect(dialog).toBeVisible();
 
   // Amount needs sequential digit input to satisfy validation (same pattern

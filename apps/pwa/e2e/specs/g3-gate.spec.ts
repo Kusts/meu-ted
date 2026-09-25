@@ -13,6 +13,7 @@ import {
   initSpec,
   prepareSpec,
 } from "../support/harness";
+import { openNewTransaction } from "../support/new-transaction";
 import { FIXTURE_URL } from "../support/reset";
 
 let sequence = 0;
@@ -31,7 +32,7 @@ async function setScenario(testId: string, scenario: Record<string, unknown>): P
 }
 
 async function fillExpense(page: import("@playwright/test").Page, description: string): Promise<void> {
-  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
+  // Assumes the expense sheet is already open (see openNewTransaction).
   const dialog = page.getByRole("dialog");
   // Amount needs sequential digit input to satisfy validation (plain fill()
   // leaves Salvar disabled — same pattern as TX typeAmount).
@@ -73,7 +74,7 @@ test("[G3-01] create succeeds only after the expense response", async ({ page })
     await route.fulfill({ response });
   });
 
-  await page.getByLabel("Nova transação").click();
+  await openNewTransaction(page, "expense");
   await fillExpense(page, "G3 create");
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: /^Salvar$/ }).click();
@@ -92,7 +93,7 @@ test("[G3-02] failed save keeps draft and retry succeeds", async ({ page }) => {
   allowFailure(guard, { message: "422", reason: "expected first-attempt validation failure" });
   await setScenario(id, { method: "POST", pathname: "/transactions/expense", status: 422, once: true });
 
-  await page.getByLabel("Nova transação").click();
+  await openNewTransaction(page, "expense");
   await fillExpense(page, "G3 retry");
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: /^Salvar$/ }).click();
@@ -166,9 +167,7 @@ test("[G3-05] offline snapshot is read-only", async ({ page }) => {
   await page.reload({ waitUntil: "networkidle" });
   await page.goto("/registros");
   await expect(page.getByTestId("stale-banner")).toBeVisible();
-  await page.getByLabel("Nova transação").click();
-  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
-  const dialog = page.getByRole("dialog");
+  const dialog = await openNewTransaction(page, "expense");
   await dialog.getByPlaceholder("0,00").fill("5000");
   await dialog.getByPlaceholder("Ex: Aluguel, mercado...").fill("G3 offline");
   await dialog.getByRole("button", { name: "Selecionar categoria" }).click();

@@ -78,7 +78,12 @@ export async function authenticate(
   // render after AuthGate accepts the session — a rejected login still shows
   // the "Entrar" form and neither signal, so the final wait still fails).
   const mobileFab = page.getByLabel("Nova transação");
-  const desktopCta = page.getByRole("button", { name: "Novo lançamento" });
+  // Scoped to the rail: some pages (e.g. /registros) render their own
+  // "Novo lançamento" button in the main content, and an unscoped lookup
+  // trips strict mode there (probe would read "no shell" forever).
+  const desktopCta = page
+    .getByRole("complementary")
+    .getByRole("button", { name: "Novo lançamento" });
   // NOTE: do NOT join these with locator.or() — both nodes stay mounted in
   // the DOM at every viewport (one is CSS-hidden), so .or() resolves to 2
   // elements and trips strict mode. Visibility is probed per-locator below.
@@ -137,6 +142,8 @@ export type JournalEntry = {
   status: number;
   /** Request payload, when the fixture recorded one. Asserted by profile specs. */
   body?: unknown;
+  /** Value of the `idempotency-key` request header when the fixture captured one. */
+  idempotencyKey?: string | null;
 };
 
 /** Read the fixture request journal for a test id. */

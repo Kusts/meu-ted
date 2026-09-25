@@ -19,6 +19,7 @@ import { test, expect } from "@playwright/test";
 import { allowFailure, assertNoUndeclaredFailures } from "../support/failure-guard";
 import { FIXTURE_URL } from "../support/reset";
 import { prepareSpec, authenticate, getJournal } from "../support/harness";
+import { openNewTransaction } from "../support/new-transaction";
 
 let counter = 0;
 function tid(): string {
@@ -68,10 +69,7 @@ async function init(
 }
 
 async function dirtifyTxSheet(page: import("@playwright/test").Page) {
-  await page.getByLabel("Nova transação").click();
-  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
+  const dialog = await openNewTransaction(page, "expense");
   const amount = dialog.getByPlaceholder("0,00");
   await amount.click();
   await amount.pressSequentially("1234", { delay: 15 });
@@ -122,8 +120,10 @@ test("[UI-02] close dirty form shows confirm prompt", async ({ page }) => {
   const confirm = discardDialog(page);
   await expect(confirm).toBeVisible();
   await expect(confirm.getByText(/alterações não salvas/i)).toBeVisible();
-  // Sheet still open underneath (its title is "Nova despesa", not the menu name).
-  await expect(page.getByRole("dialog").filter({ hasText: "Nova despesa" })).toBeVisible();
+  // Sheet still open underneath. The sheet title is viewport-dependent
+  // ("Nova despesa" preselected on mobile, "Novo lançamento" on desktop),
+  // so pin the expense form itself instead of the title.
+  await expect(sheet.getByPlaceholder("0,00")).toBeVisible();
   assertNoUndeclaredFailures(guard);
 });
 
@@ -141,7 +141,16 @@ test("[UI-03] confirm discard on dirty form → navigates away", async ({ page }
   await confirm.getByRole("button", { name: "Descartar" }).click();
   await expect(confirm).toBeHidden();
   await expect(page.getByRole("dialog").filter({ hasText: "Novo lançamento" })).toHaveCount(0);
-  await expect(page.getByLabel("Nova transação")).toBeVisible();
+  // Shell signal is viewport-dependent (FAB mobile / CTA desktop).
+  const ui03Fab = page.getByLabel("Nova transação");
+  const ui03Cta = page.getByRole("button", { name: "Novo lançamento" });
+  await expect
+    .poll(
+      async () =>
+        (await ui03Fab.isVisible().catch(() => false)) ||
+        (await ui03Cta.isVisible().catch(() => false)),
+    )
+    .toBe(true);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -260,10 +269,7 @@ test("[UI-07] write-error retry button → retry journal", async ({ page }) => {
     once: false,
   });
 
-  await page.getByLabel("Nova transação").click();
-  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
-  const sheet = page.getByRole("dialog");
-  await expect(sheet).toBeVisible();
+  const sheet = await openNewTransaction(page, "expense");
   const amount = sheet.getByPlaceholder("0,00");
   await amount.click();
   await amount.pressSequentially("5000", { delay: 10 });
@@ -284,7 +290,14 @@ test("[UI-07] write-error retry button → retry journal", async ({ page }) => {
   await confirmClose.getByRole("button", { name: "Descartar" }).click();
 
   // BottomNav label is "Extrato" (navigates to /registros).
-  await page.getByRole("button", { name: "Extrato" }).click();
+  // Desktop hides the BottomNav: the SidebarRail exposes the same
+  // destination as a link.
+  const extratoMobile = page.getByRole("button", { name: "Extrato" });
+  if (await extratoMobile.isVisible().catch(() => false)) {
+    await extratoMobile.click();
+  } else {
+    await page.getByRole("link", { name: "Extrato" }).click();
+  }
   await expect(page).toHaveURL(/\/registros/);
 
   const banner = page.getByTestId("write-error-banner");
@@ -292,16 +305,28 @@ test("[UI-07] write-error retry button → retry journal", async ({ page }) => {
   const retry = banner.getByRole("button", { name: "Tentar de novo" });
   await expect(retry).toBeVisible();
 
-  const getsBefore = (await getJournal(id)).filter((e) => e.method === "GET").length;
-  await Promise.all([
-    page.waitForLoadState("networkidle"),
-    retry.click(),
-  ]);
+  // "Tentar de novo" replays the failed mutation with the SAME commandId
+  // (retryWriteError → same Idempotency-Key header), so the journal must
+  // gain a NEW POST /transactions/expense carrying the same key — not a GET.
+  const expensePosts = (j: Awaited<ReturnType<typeof getJournal>>) =>
+    j.filter((e) => e.method === "POST" && e.path === "/transactions/expense");
+  const before = expensePosts(await getJournal(id));
+  expect(before.length).toBeGreaterThanOrEqual(1);
+  const firstKey = before[0]?.idempotencyKey;
+  expect(typeof firstKey).toBe("string");
+  expect((firstKey as string).length).toBeGreaterThan(0);
+
+  await retry.click();
   await expect
-    .poll(async () => (await getJournal(id)).filter((e) => e.method === "GET").length, {
+    .poll(async () => expensePosts(await getJournal(id)).length, {
       timeout: 15000,
     })
-    .toBeGreaterThan(getsBefore);
+    .toBeGreaterThan(before.length);
+  const after = expensePosts(await getJournal(id));
+  expect(after.length).toBeGreaterThan(before.length);
+  for (const entry of after) {
+    expect(entry.idempotencyKey).toBe(firstKey);
+  }
   assertNoUndeclaredFailures(guard);
 });
 
@@ -319,9 +344,7 @@ test("[UI-08] write-error dismiss button → no retry", async ({ page }) => {
     once: false,
   });
 
-  await page.getByLabel("Nova transação").click();
-  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
-  const sheet = page.getByRole("dialog");
+  const sheet = await openNewTransaction(page, "expense");
   const amount = sheet.getByPlaceholder("0,00");
   await amount.click();
   await amount.pressSequentially("5000", { delay: 10 });
@@ -340,10 +363,27 @@ test("[UI-08] write-error dismiss button → no retry", async ({ page }) => {
   await expect(confirmClose).toBeVisible();
   await confirmClose.getByRole("button", { name: "Descartar" }).click();
 
-  // BottomNav label is "Extrato" (navigates to /registros).
-  await page.getByRole("button", { name: "Extrato" }).click();
+  // BottomNav label is "Extrato" (navigates to /registros); desktop uses
+  // the SidebarRail link with the same name.
+  const extratoMobileDismiss = page.getByRole("button", { name: "Extrato" });
+  if (await extratoMobileDismiss.isVisible().catch(() => false)) {
+    await extratoMobileDismiss.click();
+  } else {
+    await page.getByRole("link", { name: "Extrato" }).click();
+  }
   await expect(page).toHaveURL(/\/registros/);
-  await expect(page.getByLabel("Nova transação")).toBeVisible({ timeout: 10000 });
+  // Authenticated shell signal is viewport-dependent (FAB on mobile,
+  // SidebarRail CTA on desktop) — reuse the harness probe shape.
+  const shellFab = page.getByLabel("Nova transação");
+  const shellCta = page.getByRole("button", { name: "Novo lançamento" });
+  await expect
+    .poll(
+      async () =>
+        (await shellFab.isVisible().catch(() => false)) ||
+        (await shellCta.isVisible().catch(() => false)),
+      { timeout: 10000 },
+    )
+    .toBe(true);
 
   const banner = page.getByTestId("write-error-banner");
   await expect(banner).toBeVisible({ timeout: 10000 });

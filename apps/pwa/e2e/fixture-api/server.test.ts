@@ -420,6 +420,34 @@ describe("Fixture API protocol", () => {
     expect(journal[2].body).toBeDefined();
   });
 
+  it("journal records the idempotency-key header on scenario and fixture writes", async () => {
+    const testId = "journal-idem";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+    await request(server, "POST", "/__e2e/scenario", {
+      testId, method: "POST", pathname: "/transactions/expense", status: 500,
+    }, { "x-e2e-test-id": testId });
+
+    const forced = await request(server, "POST", "/transactions/expense",
+      { description: "retry", amountCents: 100, date: "2026-07-17", categoryId: "cat-1", accountId: "acc-1" },
+      { "x-e2e-test-id": testId, "idempotency-key": "cmd-123" },
+    );
+    expect(forced.status).toBe(500);
+
+    const ok = await request(server, "POST", "/transactions/income",
+      { description: "ok", amountCents: 100, date: "2026-07-17", categoryId: "cat-3", accountId: "acc-1" },
+      { "x-e2e-test-id": testId, "idempotency-key": "cmd-456" },
+    );
+    expect(ok.status).toBe(200);
+
+    const journal = responseData<Array<{ method: string; path: string; status: number; idempotencyKey?: string | null }>>(
+      await request(server, "GET", "/__e2e/journal?testId=journal-idem", undefined, { "x-e2e-test-id": testId }),
+    );
+    const expense = journal.find((e) => e.method === "POST" && e.path === "/transactions/expense");
+    const income = journal.find((e) => e.method === "POST" && e.path === "/transactions/income");
+    expect(expense).toMatchObject({ status: 500, idempotencyKey: "cmd-123" });
+    expect(income).toMatchObject({ status: 200, idempotencyKey: "cmd-456" });
+  });
+
   it("journal is scoped per testId", async () => {
     await request(server, "POST", "/__e2e/reset", { testId: "j-a", seed: "populated" }, { "x-e2e-test-id": "j-a" });
     await request(server, "POST", "/__e2e/reset", { testId: "j-b", seed: "populated" }, { "x-e2e-test-id": "j-b" });

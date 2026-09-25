@@ -105,10 +105,21 @@ function sendJson(
   res.end(JSON.stringify(body));
 }
 
-function journalPush(testId: string, method: string, path: string, body: unknown, status: number): void {
+function getIdempotencyKey(req: http.IncomingMessage): string | null {
+  const header = req.headers["idempotency-key"];
+  if (Array.isArray(header)) return header[0] ?? null;
+  if (typeof header === "string" && header.trim() !== "") return header;
+  return null;
+}
+
+function journalPush(testId: string, method: string, path: string, body: unknown, status: number, idempotencyKey?: string | null): void {
   const store = stores.get(testId);
   if (store) {
-    store.journal.push({ method, path, body, status });
+    store.journal.push(
+      idempotencyKey == null
+        ? { method, path, body, status }
+        : { method, path, body, status, idempotencyKey },
+    );
   }
 }
 
@@ -367,7 +378,7 @@ async function handleFixtureRequest(
       return;
     }
     const scenarioStatus = scenario.status ?? 200;
-    journalPush(testId, method, pathname, body, scenarioStatus);
+    journalPush(testId, method, pathname, body, scenarioStatus, getIdempotencyKey(req));
     if (scenarioStatus >= 400) {
       sendJson(res, scenarioStatus, { error: "Scenario error", code: "scenario.error", message: "Forced error" });
     } else {
@@ -619,7 +630,7 @@ async function handleFixtureRequest(
       kind: "expense" as const,
     };
     store.seed.transactions.push(newTx);
-    journalPush(testId, method, pathname, body, 200);
+    journalPush(testId, method, pathname, body, 200, getIdempotencyKey(req));
     sendJson(res, 200, newTx as unknown as Record<string, unknown>);
     return;
   }
@@ -636,7 +647,7 @@ async function handleFixtureRequest(
       kind: "income" as const,
     };
     store.seed.transactions.push(newTx);
-    journalPush(testId, method, pathname, body, 200);
+    journalPush(testId, method, pathname, body, 200, getIdempotencyKey(req));
     sendJson(res, 200, newTx as unknown as Record<string, unknown>);
     return;
   }
@@ -675,7 +686,7 @@ async function handleFixtureRequest(
     const fromAccountId = (body?.fromAccountId as string) ?? "";
     const toAccountId = (body?.toAccountId as string) ?? "";
     if (!fromAccountId || !toAccountId || fromAccountId === toAccountId) {
-      journalPush(testId, method, pathname, body, 422);
+      journalPush(testId, method, pathname, body, 422, getIdempotencyKey(req));
       sendJson(res, 422, {
         code: "validation_error",
         message: "Contas de origem e destino devem ser distintas",
@@ -692,7 +703,7 @@ async function handleFixtureRequest(
       toAccountId,
     };
     store.seed.transfers.push(newTrf);
-    journalPush(testId, method, pathname, body, 200);
+    journalPush(testId, method, pathname, body, 200, getIdempotencyKey(req));
     sendJson(res, 200, newTrf as unknown as Record<string, unknown>);
     return;
   }
