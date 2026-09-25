@@ -72,11 +72,16 @@ const accountsBalance = (
 ): ReconQuery => {
   const values: unknown[] = [];
   if (layout === "canonical") {
+    // V058 anchor: the canonical derivation is
+    // initial_balance_cents + income − expense − transfer_out + transfer_in
+    // (detectors.ts detectAccountsBalanceDrift). Statement-linked purchase
+    // expenses stay excluded from the expense leg: the card write path
+    // (cards/postgres.ts) never touches accounts.balance_cents on purchase.
     return {
       text: `SELECT a.id AS account_id, a.household_id,
         a.kind AS account_kind,
         a.balance_cents AS stored_cents,
-        NULL::bigint AS initial_cents,
+        a.initial_balance_cents AS initial_cents,
         COALESCE(SUM(t.amount_cents) FILTER (WHERE t.kind = 'income' AND t.account_id = a.id), 0)::bigint AS income_cents,
         COALESCE(SUM(t.amount_cents) FILTER (WHERE t.kind = 'expense' AND t.account_id = a.id AND t.statement_id IS NULL), 0)::bigint AS expense_cents,
         COALESCE(SUM(t.amount_cents) FILTER (WHERE t.kind = 'transfer' AND t.transfer_to_account_id = a.id), 0)::bigint AS transfer_in_cents,
@@ -84,7 +89,7 @@ const accountsBalance = (
       FROM accounts a
       LEFT JOIN transactions t ON t.household_id = a.household_id AND t.deleted_at IS NULL
       WHERE a.deleted_at IS NULL${scoped("a.household_id", scope, values)}
-      GROUP BY a.id, a.household_id, a.kind, a.balance_cents
+      GROUP BY a.id, a.household_id, a.kind, a.balance_cents, a.initial_balance_cents
       ORDER BY a.household_id, a.id`,
       values,
     };

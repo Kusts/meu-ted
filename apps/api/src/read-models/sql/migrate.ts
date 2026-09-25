@@ -99,6 +99,7 @@ export const LEGACY_EXCLUDED_JUSTIFICATIONS: Record<string, string> = {
   V055: 'canonical-only negative bank/cash balance check swap; VPS legacy ledger tops at V054 and verifySchema fails closed on a V055 manifest entry',
   V056: 'canonical-only structured statement-payment link (transactions.statement_payment_id); legacy keeps description-matched coverage untouched',
   V057: 'canonical-only composite household upgrade of the V056 statement-payment link; legacy keeps description-matched coverage untouched',
+  V058: 'canonical-only materialized-balance anchor (accounts.initial_balance_cents); legacy already carries the column but its production ledger tops at V054 and verifySchema fails closed on a V058 manifest entry',
 };
 
 export const migrationChecksum = (sql: string): string =>
