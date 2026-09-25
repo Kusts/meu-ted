@@ -14,9 +14,15 @@
  * - OP-04: failed WITH valid presentation → financial data visible BEFORE
  *   Retry; Retry decides against the agent.
  * - OP-05: failed WITHOUT presentation → no Retry, update/redo instruction.
- * - OP-06: primary unavailable (429/503 operational) → user retry reuses the
- *   SAME intentionId and the fallback reply succeeds; policy denial (403)
- *   never produces a second attempt.
+ * - OP-06a: operational failure (429/503) → explicit user retry re-sends the
+ *   SAME intentionId and the second reply succeeds (PWA client retry
+ *   contract — no automatic retry, user action only).
+ * - OP-06b: policy denial (403) → no automatic retry, only explicit user
+ *   action; the journal holds exactly the single denied call.
+ *
+ * Internal primary→fallback failover within a single agent turn is NOT
+ * exercised here; it is covered by the Agent unit suites
+ * (apps/agent/tests/llm-relay-failover*.test.ts).
  *
  * Transport note: the app calls the same-origin proxy /api/agent (no direct
  * Agent origin is configured in the E2E standalone build). Each test forwards
@@ -554,9 +560,9 @@ test.describe("TED pending operations", () => {
     assertNoUndeclaredFailures(guard);
   });
 
-  // ─── OP-06a: primário indisponível → retry com mesma identidade → fallback ─
+  // ─── OP-06a: client retry contract — same intentionId on user retry ──────
 
-  test("OP-06a: operational failure retries with the same intentionId and the fallback reply succeeds", async ({
+  test("OP-06a: user retry re-sends same intentionId after provider failure", async ({
     page,
   }) => {
     const id = tid();
@@ -612,9 +618,9 @@ test.describe("TED pending operations", () => {
     assertNoUndeclaredFailures(guard);
   });
 
-  // ─── OP-06b: negação de política (403) nunca gera 2ª tentativa ────────────
+  // ─── OP-06b: 403 policy denial → no automatic retry ──────────────────────
 
-  test("OP-06b: policy denial (403) produces exactly one attempt, never a retry", async ({ page }) => {
+  test("OP-06b: 403 policy denial produces no automatic retry, only explicit user action", async ({ page }) => {
     const id = tid();
     const { guard, dialog } = await prepareOpTest(
       page,
