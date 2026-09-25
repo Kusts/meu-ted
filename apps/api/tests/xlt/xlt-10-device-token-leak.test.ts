@@ -38,24 +38,39 @@ const DEVICE_PREFIX = 'xlt10-';
 describeIfDb('XLT-10 — device token leak invariant (real Postgres)', () => {
   let pool: Pool;
   const householdId = randomUUID();
+  const authUserId = randomUUID();
+  const applicationUserId = randomUUID();
+  const userEmail = `xlt10-${authUserId}@example.test`;
   const createdDeviceIds: string[] = [];
 
   beforeAll(async () => {
     pool = createPool({ connectionString: DB_URL!, max: 4 });
     await requireTestDatabase(pool, 'xlt-10-device-token-leak');
     await runMigrations(pool);
+    await pool.query(
+      `INSERT INTO "user" (id, name, email, "createdAt", "updatedAt")
+       VALUES ($1, 'XLT-10 User', $2, NOW(), NOW())`,
+      [authUserId, userEmail],
+    );
+    await pool.query(
+      `INSERT INTO users (id, auth_user_id, email, name, status)
+       VALUES ($1, $2, $3, 'XLT-10 User', 'active')`,
+      [applicationUserId, authUserId, userEmail],
+    );
   }, 60_000);
 
   afterAll(async () => {
     if (pool) {
       await pool.query(`DELETE FROM device_tokens WHERE device_id LIKE '${DEVICE_PREFIX}%'`).catch(() => undefined);
+      await pool.query('DELETE FROM users WHERE id = $1', [applicationUserId]).catch(() => undefined);
+      await pool.query('DELETE FROM "user" WHERE id = $1', [authUserId]).catch(() => undefined);
       await pool.end();
     }
   });
 
   it('(a) a fresh row stores the hash, never the raw secret', async () => {
     const store = createPostgresDeviceTokenStore(pool);
-    const created = await store.register(`${DEVICE_PREFIX}fresh`, householdId, { userId: randomUUID() });
+    const created = await store.register(`${DEVICE_PREFIX}fresh`, householdId, { userId: authUserId });
     createdDeviceIds.push(created.deviceId);
 
     const res = await pool.query<Record<string, unknown>>(

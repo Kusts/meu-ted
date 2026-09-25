@@ -4,7 +4,7 @@ import { DEVICE_TOKEN_HEADER } from '../auth/device-token.js';
 import type { AuthResolver } from './auth.js';
 import { DomainError, domainErrors } from '../writes/errors.js';
 import { requireIdempotencyKey } from '../writes/idempotency.js';
-import { computePendingOperationV2Hash, type PendingOperationV2 } from '@pi-finance/llm-contracts';
+import { computePendingOperationV2Hash, isActionablePendingOperationPresentation, type PendingOperationV2 } from '@pi-finance/llm-contracts';
 import { validateApprovalToolArgs } from '../approvals/tool-registry.js';
 import { buildPendingOperationPresentation } from '../approvals/presentation.js';
 import type { ReadModelStore } from '../read-models/store.js';
@@ -73,6 +73,97 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
     const requireV2Capability = (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply, capability: string): boolean => {
       if (!req.delegatedTurn || !req.delegatedTurn.capabilities.includes(capability)) {
         reply.code(403).send({ code: 'auth.delegation_scope_forbidden', message: 'Capability de approval delegada obrigatória.' });
+        return false;
+      }
+      return true;
+    };
+    // FIX-API-ACTIONABLE-PRESENTATION-GATE (plan item 4, all channels): a
+    // `proposed` Confirm and a `failed` Retry execute only when a
+    // server-derived presentation is actionable. The presentation is rebuilt
+    // here from the STORED hash-bound normalizedArgs (same resolved
+    // workspace+actor/device identity that the store will check) plus the
+    // CURRENT server read-model labels via buildPendingOperationPresentation,
+    // and must satisfy the shared isActionablePendingOperationPresentation
+    // predicate. No client-supplied `presentation` is read — confirm/retry
+    // take no body — and block responses carry no attestation/proposal
+    // authority material. On block: no store call, no attestation, no
+    // status transition (409 approval.not_actionable for an absent/
+    // unactionable projection; 503 approval.presentation_unavailable when
+    // the read model itself fails, never echoing driver text).
+    //
+    // TOCTOU bound: the label lookup runs outside the store's row lock, so
+    // labels may change between this check and the confirm/retry commit.
+    // What stays immutable is what executes: the store still enforces its
+    // atomic status/hash/binding check under lock (FOR UPDATE), and the
+    // financial args are the persisted hash-bound normalizedArgs — the gate
+    // proves the operation WAS displayable with full context at check time,
+    // never that a human actually viewed the card.
+    const requireActionablePresentation = async (
+      id: string,
+      ctx: { householdId: string; actorId: string; deviceId: string },
+      expectedStatus: 'proposed' | 'failed',
+      reply: import('fastify').FastifyReply,
+    ): Promise<boolean> => {
+      let record;
+      try {
+        record = await v2Store.get(id, identity(ctx));
+      } catch (error) {
+        // Same identity/household semantics as the store call itself: a
+        // foreign or unknown id maps to 403 via forbiddenOnMissing (no
+        // existence leak), never to a gate error.
+        handleError(error, reply, true);
+        return false;
+      }
+      // Recovery/idempotent paths bypass the fresh-display gate: an already
+      // `confirmed` confirm re-emits attestation (§9/H-03 recovery even when
+      // the display projection is gone); any other non-expected status
+      // delegates to the store for its authoritative transition error
+      // (expired/not_pending/retry_not_allowed). Only the first
+      // proposed→confirm and failed→retry transitions require actionability.
+      // `executing`/`succeeded`/reconciliation are never gated here.
+      if (record.status !== expectedStatus) return true;
+      if (!opts.readModel) {
+        reply.code(409).send({ code: 'approval.not_actionable', message: 'Operação sem apresentação acionável para confirmação.' });
+        return false;
+      }
+      let accounts: Array<{ id: string; name: string }>;
+      let categories: Array<{ id: string; name: string }>;
+      try {
+        [accounts, categories] = await Promise.all([
+          opts.readModel.listAccounts(ctx.householdId),
+          opts.readModel.listCategories(ctx.householdId),
+        ]);
+      } catch {
+        // Safe retryable server error: no driver text, no transition.
+        reply.code(503).send({ code: 'approval.presentation_unavailable', message: 'Dados de apresentação indisponíveis no momento.' });
+        return false;
+      }
+      const accountLabels = new Map(accounts.map((account) => [account.id, account.name]));
+      const categoryLabels = new Map(categories.map((category) => [category.id, category.name]));
+      const storedArgs = (record.normalizedArgs ?? {}) as Record<string, unknown>;
+      const accountId = typeof storedArgs.accountId === 'string' ? storedArgs.accountId : undefined;
+      const categoryId = typeof storedArgs.categoryId === 'string' ? storedArgs.categoryId : undefined;
+      const accountLabel = accountId !== undefined ? accountLabels.get(accountId) : undefined;
+      const categoryLabel = categoryId !== undefined ? categoryLabels.get(categoryId) : undefined;
+      const labelWarnings: string[] = [];
+      if (accountId !== undefined && accountLabel === undefined) {
+        labelWarnings.push('Dados da conta indisponíveis no momento');
+      }
+      if (categoryId !== undefined && categoryLabel === undefined) {
+        labelWarnings.push('Dados da categoria indisponíveis no momento');
+      }
+      const presentation = buildPendingOperationPresentation({
+        id: record.id,
+        status: record.status,
+        tool: record.tool,
+        normalizedArgs: record.normalizedArgs,
+        expiresAt: record.expiresAt,
+        ...(accountLabel !== undefined ? { accountLabel } : {}),
+        ...(categoryLabel !== undefined ? { categoryLabel } : {}),
+        ...(labelWarnings.length > 0 ? { warnings: labelWarnings } : {}),
+      });
+      if (!presentation || !isActionablePendingOperationPresentation(presentation)) {
+        reply.code(409).send({ code: 'approval.not_actionable', message: 'Operação sem apresentação acionável para confirmação.' });
         return false;
       }
       return true;
@@ -178,7 +269,7 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
         return reply.send({ items, total: items.length });
       } catch (error) { return handleError(error, reply); }
     });
-    const confirm = async (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.confirm)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.confirm(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } };
+    const confirm = async (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.confirm)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { if (!(await requireActionablePresentation(params.data.id, ctx, 'proposed', reply))) return; return reply.send(await v2Store.confirm(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } };
     app.post('/pending-operations/v2/:id/confirm', confirm);
     app.get('/pending-operations/v2/:id', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.read)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.get(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } });
     app.get('/pending-operations/v2/:id/status', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.read)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.get(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } });
@@ -186,7 +277,7 @@ export const registerPendingOperationRoutes = (app: FastifyInstance, opts: { sto
     app.post('/pending-operations/v2/:id/reject', reject);
     app.post('/pending-operations/v2/:id/cancel', reject);
     app.post('/pending-operations/v2/:id/execute', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.execute)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); const body = z.object({ attestation: z.string().min(32) }).strict().safeParse(req.body ?? {}); if (!body.success) return reply.code(400).send({ code: 'validation.error', issues: body.error.issues }); if (!v2Executor) return reply.code(501).send({ code: 'unsupported', message: 'Executor V2 não configurado.' }); try { return reply.send(await v2Store.execute(body.data.attestation, identity(ctx), v2Executor)); } catch (error) { return handleError(error, reply, true); } });
-    app.post('/pending-operations/v2/:id/retry', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.retry)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { return reply.send(await v2Store.retry(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } });
+    app.post('/pending-operations/v2/:id/retry', async (req, reply) => { if (!requireV2Capability(req, reply, V2_APPROVAL_CAPABILITIES.retry)) return; let ctx; try { ctx = await resolve(req); } catch (error) { return handleError(error, reply); } const params = idSchema.safeParse(req.params); if (!params.success) return reply.code(400).send({ code: 'validation.error', issues: params.error.issues }); try { if (!(await requireActionablePresentation(params.data.id, ctx, 'failed', reply))) return; return reply.send(await v2Store.retry(params.data.id, identity(ctx))); } catch (error) { return handleError(error, reply, true); } });
     // T6.1 (audit remediation, SPEC §11): controlled crash-recovery entry
     // point — same Agent-only auth/capability model as the sibling V2 routes.
     // Identity comes exclusively from the authenticated context; a foreign

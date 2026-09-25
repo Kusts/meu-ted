@@ -393,4 +393,426 @@ describe('Fase 2 item 8 — dynamic relay allowlist (RED)', () => {
       ],
     });
   });
+
+  it('upstream 400/403 policy rejection maps to non-eligible agent.provider_rejected with safe message (item5)', async () => {
+    registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY });
+    await app.ready();
+    const rawUpstream = 'rejeitado por policy: eco do prompt secreto PROMPT-SECRETO-XYZ';
+    const payload = { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' };
+    for (const status of [400, 403]) {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: rawUpstream } }), {
+          status, headers: { 'content-type': 'application/json' },
+        }),
+      );
+      const res = await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload });
+      const json = res.json() as { code?: string; message?: string };
+      // RED: current contract returns agent.provider_error here (fallback-eligible).
+      expect(json.code).toBe('agent.provider_rejected');
+      expect(res.statusCode).toBe(502);
+      // Safe boundary: raw upstream text (may echo prompt/system) never relayed.
+      expect(JSON.stringify(json)).not.toContain(rawUpstream);
+      expect(JSON.stringify(json)).not.toContain('PROMPT-SECRETO-XYZ');
+      // Classificador do Agent (relay-failover.ts, read-only): só
+      // rate_limited+429 / provider_timeout / provider_error+5xx são elegíveis.
+      // provider_rejected + 502 deve ser inelegível — demonstra via mismatch.
+      expect(json.code === 'agent.provider_error' && res.statusCode >= 500 && res.statusCode <= 599).toBe(false);
+    }
+  });
+
+  it('upstream 429/5xx keep their eligible typing; other 4xx (422) is rejected non-eligible (item5)', async () => {
+    registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY });
+    await app.ready();
+    const payload = { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' };
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: 'slow down' } }), { status: 429 }),
+    );
+    const limited = await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toMatchObject({ code: 'agent.rate_limited' });
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: 'bad request policy' } }), { status: 422 }),
+    );
+    const rejected = await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload });
+    expect(rejected.json()).toMatchObject({ code: 'agent.provider_rejected' });
+    expect(rejected.statusCode).toBe(502);
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: 'boom' } }), { status: 500 }),
+    );
+    const failed = await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload });
+    expect(failed.statusCode).toBe(502);
+    expect(failed.json()).toMatchObject({ code: 'agent.provider_error' });
+  });
+});
+
+describe('FIX-API-RELAY-MONOTONIC-AND-CANCEL — monotonic deadline + body cancel (RED)', () => {
+  let app: FastifyInstance;
+
+  const SAFE_TIMEOUT = 'Timeout aguardando provider.';
+  const payload = { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' };
+  const validBody = () => ({
+    output: [{ type: 'message', content: [{ type: 'output_text', text: 'hi' }] }],
+  });
+
+  beforeEach(async () => {
+    delete process.env.RELAY_ALLOWED_MODELS;
+    delete process.env.OPENROUTER_API_KEY;
+    app = Fastify({ logger: false });
+  });
+
+  afterEach(async () => {
+    delete process.env.RELAY_ALLOWED_MODELS;
+    delete process.env.OPENROUTER_API_KEY;
+    vi.restoreAllMocks();
+    await app.close();
+  });
+
+  it('injected monotonic clock past deadline forces timeout even when wall clock is within budget', async () => {
+    // The monotonic clock crosses the budget inside the fetch mock; wall-clock
+    // Date.now barely advances. Date.now-based rechecks would accept (200);
+    // monotonic rechecks must fail closed (504).
+    let mono = 1_000;
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, requestTimeoutMs: 100,
+      monotonicNow: () => mono,
+    });
+    await app.ready();
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async () => {
+      mono += 500; // cross the 100ms budget before headers resolve
+      return {
+        ok: true, status: 200,
+        json: async () => validBody(),
+      } as unknown as Response;
+    });
+    const res = await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload });
+    expect(res.statusCode).toBe(504);
+    expect(res.json()).toMatchObject({ code: 'agent.provider_timeout', message: SAFE_TIMEOUT });
+  }, 8000);
+
+  it('wall-clock jump backward does not revive a late body (monotonic wins)', async () => {
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, requestTimeoutMs: 100,
+    });
+    await app.ready();
+    // First Date.now call (start) returns real time; later calls jump 10s
+    // into the past so a Date.now-based elapsed check would go negative and
+    // wrongly accept the late body.
+    const realNow = Date.now.bind(Date);
+    const startReal = realNow();
+    let calls = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+      calls += 1;
+      if (calls <= 1) return startReal;
+      return startReal - 10_000;
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(
+      () => new Promise((resolve) => {
+        setTimeout(() => {
+          resolve({ ok: true, status: 200, json: async () => validBody() } as unknown as Response);
+        }, 150);
+      }),
+    );
+    const res = await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload });
+    expect(res.statusCode).toBe(504);
+    expect(res.json()).toMatchObject({ code: 'agent.provider_timeout' });
+  }, 8000);
+
+  it('timeout best-effort cancels the upstream body when it exists', async () => {
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, requestTimeoutMs: 50,
+    });
+    await app.ready();
+    const cancelSpy = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (_url, init) => {
+      init?.signal?.addEventListener('abort', () => {});
+      return {
+        ok: true, status: 200,
+        body: { cancel: cancelSpy },
+        json: () => new Promise(() => {}),
+      } as unknown as Response;
+    });
+    const res = await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload });
+    expect(res.statusCode).toBe(504);
+    expect(res.json()).toMatchObject({ code: 'agent.provider_timeout', message: SAFE_TIMEOUT });
+    expect(cancelSpy).toHaveBeenCalled();
+  }, 8000);
+
+  it('late response resolving after the deadline is canceled on discard', async () => {
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, requestTimeoutMs: 100,
+    });
+    await app.ready();
+    const cancelSpy = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(
+      () => new Promise((resolve) => {
+        setTimeout(() => {
+          resolve({
+            ok: true, status: 200,
+            body: { cancel: cancelSpy },
+            json: async () => validBody(),
+          } as unknown as Response);
+        }, 150);
+      }),
+    );
+    const res = await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload });
+    expect(res.statusCode).toBe(504);
+    expect(res.json()).toMatchObject({ code: 'agent.provider_timeout' });
+    // The abort-ignoring fetch resolves after the race settled; allow the
+    // background continuation to run its late-discard cancel.
+    await new Promise((r) => setTimeout(r, 250));
+    expect(cancelSpy).toHaveBeenCalled();
+  }, 8000);
+});
+
+describe('FIX-API-RELAY-ALL-ERROR-MESSAGES-SAFE — fixed safe messages on every non-2xx path (RED)', () => {
+  let app: FastifyInstance;
+
+  const SAFE_429 = 'Provider com muitas requisições. Tente novamente em instantes.';
+  const SAFE_401 = 'Falha de autenticação no provider.';
+  const SAFE_5XX = 'Falha no provider. Tente novamente em instantes.';
+  const SAFE_NETWORK = 'Falha de comunicação com o provider.';
+  const SAFE_TIMEOUT = 'Timeout aguardando provider.';
+
+  const PROMPT_MARK = 'PROMPT-SEGREDO-ABC-429';
+  const KEY_MARK = 'sk-secret-XYZ123-EVIL';
+
+  const evilUpstream = (mark: string) =>
+    `Quota exceeded for ${mark} key=${KEY_MARK}\r\nInjected-Log-Line: evil prompt=${PROMPT_MARK}`;
+
+  beforeEach(async () => {
+    delete process.env.RELAY_ALLOWED_MODELS;
+    delete process.env.OPENROUTER_API_KEY;
+    app = Fastify({ logger: false });
+    registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY });
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    delete process.env.RELAY_ALLOWED_MODELS;
+    delete process.env.OPENROUTER_API_KEY;
+    vi.restoreAllMocks();
+    await app.close();
+  });
+
+  it('upstream 429 keeps 429/agent.rate_limited with fixed safe message', async () => {
+    const raw = evilUpstream(PROMPT_MARK);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: raw } }), {
+        status: 429, headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' },
+    });
+    expect(res.statusCode).toBe(429);
+    const json = res.json() as { code?: string; message?: string };
+    expect(json.code).toBe('agent.rate_limited');
+    expect(json.message).toBe(SAFE_429);
+    const raw2 = JSON.stringify(json);
+    expect(raw2).not.toContain(raw);
+    expect(raw2).not.toContain(PROMPT_MARK);
+    expect(raw2).not.toContain(KEY_MARK);
+    expect(raw2).not.toContain('Injected-Log-Line');
+  });
+
+  it('upstream 401 keeps 502/agent.provider_auth with fixed safe message', async () => {
+    const raw = evilUpstream(PROMPT_MARK);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: raw } }), {
+        status: 401, headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' },
+    });
+    expect(res.statusCode).toBe(502);
+    const json = res.json() as { code?: string; message?: string };
+    expect(json.code).toBe('agent.provider_auth');
+    expect(json.message).toBe(SAFE_401);
+    const raw2 = JSON.stringify(json);
+    expect(raw2).not.toContain(PROMPT_MARK);
+    expect(raw2).not.toContain(KEY_MARK);
+    expect(raw2).not.toContain('Injected-Log-Line');
+  });
+
+  it('upstream 500 keeps 502/agent.provider_error with fixed safe message', async () => {
+    const raw = evilUpstream(PROMPT_MARK);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: raw } }), {
+        status: 500, headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' },
+    });
+    expect(res.statusCode).toBe(502);
+    const json = res.json() as { code?: string; message?: string };
+    expect(json.code).toBe('agent.provider_error');
+    expect(json.message).toBe(SAFE_5XX);
+    const raw2 = JSON.stringify(json);
+    expect(raw2).not.toContain(PROMPT_MARK);
+    expect(raw2).not.toContain(KEY_MARK);
+    expect(raw2).not.toContain('Injected-Log-Line');
+  });
+
+  it('network throw keeps 504/agent.provider_timeout with fixed safe message', async () => {
+    const evil = new TypeError(`fetch failed for prompt ${PROMPT_MARK} key=${KEY_MARK}\r\nInjected: evil`);
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(evil);
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' },
+    });
+    expect(res.statusCode).toBe(504);
+    const json = res.json() as { code?: string; message?: string };
+    expect(json.code).toBe('agent.provider_timeout');
+    expect(json.message).toBe(SAFE_NETWORK);
+    const raw2 = JSON.stringify(json);
+    expect(raw2).not.toContain(PROMPT_MARK);
+    expect(raw2).not.toContain(KEY_MARK);
+    expect(raw2).not.toContain('Injected');
+  });
+
+  it('abort/timeout throw keeps 504/agent.provider_timeout with fixed safe message', async () => {
+    const evilAbort = Object.assign(
+      new Error(`aborted with prompt ${PROMPT_MARK} key=${KEY_MARK}\r\nInjected: evil`),
+      { name: 'AbortError' },
+    );
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(evilAbort);
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' },
+    });
+    expect(res.statusCode).toBe(504);
+    const json = res.json() as { code?: string; message?: string };
+    expect(json.code).toBe('agent.provider_timeout');
+    expect(json.message).toBe(SAFE_TIMEOUT);
+    const raw2 = JSON.stringify(json);
+    expect(raw2).not.toContain(PROMPT_MARK);
+    expect(raw2).not.toContain(KEY_MARK);
+    expect(raw2).not.toContain('Injected');
+  });
+});
+
+describe('W2-ITEM6 — absolute transport deadline: fetch/body que ignoram abort terminam em prazo finito (RED)', () => {
+  let app: FastifyInstance;
+
+  const SAFE_TIMEOUT = 'Timeout aguardando provider.';
+  const payload = { provider: 'opencode-zen', model: 'muse-spark-1.2-contributor-free', prompt: 'hi' };
+
+  beforeEach(async () => {
+    delete process.env.RELAY_ALLOWED_MODELS;
+    delete process.env.OPENROUTER_API_KEY;
+    app = Fastify({ logger: false });
+  });
+
+  afterEach(async () => {
+    delete process.env.RELAY_ALLOWED_MODELS;
+    delete process.env.OPENROUTER_API_KEY;
+    vi.restoreAllMocks();
+    await app.close();
+  });
+
+  it('fetch que nunca resolve (ignora abort) termina em 504 finito com mensagem segura', async () => {
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, requestTimeoutMs: 60,
+    });
+    await app.ready();
+    let abortFired = false;
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(
+      (_url, init) =>
+        new Promise<Response>(() => {
+          // Ignora o abort de propósito: nunca resolve nem rejeita.
+          init?.signal?.addEventListener('abort', () => {
+            abortFired = true;
+          });
+        }),
+    );
+    const startedAt = Date.now();
+    const res = await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload });
+    const elapsedMs = Date.now() - startedAt;
+    expect(res.statusCode).toBe(504);
+    const json = res.json() as { code?: string; message?: string };
+    expect(json.code).toBe('agent.provider_timeout');
+    expect(json.message).toBe(SAFE_TIMEOUT);
+    // O sinal de abort foi enviado no deadline, mesmo o upstream ignorando.
+    expect(abortFired).toBe(true);
+    expect(elapsedMs).toBeLessThan(3000);
+  }, 8000);
+
+  it('headers imediatos mas .json() pendente (ignora abort) termina em 504 finito', async () => {
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, requestTimeoutMs: 60,
+    });
+    await app.ready();
+    let abortFired = false;
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (_url, init) => {
+      init?.signal?.addEventListener('abort', () => {
+        abortFired = true;
+      });
+      return {
+        ok: true,
+        status: 200,
+        json: () => new Promise(() => {}),
+      } as unknown as Response;
+    });
+    const startedAt = Date.now();
+    const res = await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload });
+    const elapsedMs = Date.now() - startedAt;
+    expect(res.statusCode).toBe(504);
+    const json = res.json() as { code?: string; message?: string };
+    expect(json.code).toBe('agent.provider_timeout');
+    expect(json.message).toBe(SAFE_TIMEOUT);
+    expect(abortFired).toBe(true);
+    expect(elapsedMs).toBeLessThan(3000);
+  }, 8000);
+
+  it('body válido que chega logo após o deadline é rejeitado (sem sucesso sintetizado)', async () => {
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, requestTimeoutMs: 100,
+    });
+    await app.ready();
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({
+                output: [{ type: 'message', content: [{ type: 'output_text', text: 'late but valid' }] }],
+              }),
+            } as unknown as Response);
+          }, 150);
+        }),
+    );
+    const res = await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload });
+    expect(res.statusCode).toBe(504);
+    const json = res.json() as { code?: string; message?: string };
+    expect(json.code).toBe('agent.provider_timeout');
+    expect(json.message).toBe(SAFE_TIMEOUT);
+    expect(JSON.stringify(json)).not.toContain('late but valid');
+  }, 8000);
+
+  it('resposta rápida antes do deadline segue normal e limpa o timer', async () => {
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, requestTimeoutMs: 1000,
+    });
+    await app.ready();
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    try {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(upstreamOk()));
+      const res = await app.inject({ method: 'POST', url: '/internal/agent/llm-relay', headers, payload });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ text: 'hi' });
+      expect(clearSpy).toHaveBeenCalled();
+    } finally {
+      clearSpy.mockRestore();
+    }
+  });
 });

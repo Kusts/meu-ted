@@ -78,6 +78,28 @@ describe('H-02 — paridade real de OpenAI no relay', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('upstream OpenAI 400 vira agent.provider_rejected inelegível com mensagem segura (item5)', async () => {
+    process.env.RELAY_ALLOWED_MODELS = 'gpt-4o-mini';
+    registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, openaiApiKey: OPENAI_KEY });
+    await app.ready();
+    const rawUpstream = 'policy violation: eco do system SYSTEM-SECRETO-ABC';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: rawUpstream } }), { status: 400 }),
+    );
+    const res = await app.inject({
+      method: 'POST', url: '/internal/agent/llm-relay', headers,
+      payload: { provider: 'openai-api', model: 'gpt-4o-mini', prompt: 'hi', system: 'sys' },
+    });
+    const json = res.json() as { code?: string; message?: string };
+    // RED: contrato atual retorna agent.provider_error (elegível a fallback pago).
+    expect(json.code).toBe('agent.provider_rejected');
+    expect(res.statusCode).toBe(502);
+    expect(JSON.stringify(json)).not.toContain(rawUpstream);
+    expect(JSON.stringify(json)).not.toContain('SYSTEM-SECRETO-ABC');
+    expect(JSON.stringify(json)).not.toContain(OPENAI_KEY);
+    expect(json.code === 'agent.provider_error' && res.statusCode >= 500 && res.statusCode <= 599).toBe(false);
+  });
+
   it('upstream OpenAI 401 vira 502 agent.provider_auth sem vazar a chave', async () => {
     process.env.RELAY_ALLOWED_MODELS = 'gpt-4o-mini';
     registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, openaiApiKey: OPENAI_KEY });

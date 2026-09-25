@@ -4,6 +4,7 @@ import { mutationReceiptSchema } from '@pi-finance/llm-contracts';
 import { createInMemoryPendingOperationV2Store } from '../../src/approvals/pending-v2.js';
 import { registerPendingOperationRoutes } from '../../src/routes/pending-operations.js';
 import type { PendingExecutor } from '../../src/approvals/pending.js';
+import type { ReadModelStore } from '../../src/read-models/store.js';
 
 const legacyStore = {
   async get() { return null; }, async list() { return []; }, async findByChatId() { return null; },
@@ -15,17 +16,28 @@ const expenseArgs = () => ({
   description: 'Mercado semanal',
   amountCents: 8500,
   date: '2026-09-14',
-  accountId: crypto.randomUUID(),
-  categoryId: crypto.randomUUID(),
+  accountId: GATE_ACCOUNT_ID,
+  categoryId: GATE_CATEGORY_ID,
 });
 
 const incomeArgs = () => ({
   description: 'Salário mensal',
   amountCents: 200000,
   date: '2026-09-14',
-  accountId: crypto.randomUUID(),
-  categoryId: crypto.randomUUID(),
+  accountId: GATE_ACCOUNT_ID,
+  categoryId: GATE_CATEGORY_ID,
 });
+
+// FIX-API-ACTIONABLE-PRESENTATION-GATE: confirm/retry now require a
+// server-derived actionable presentation, so route harnesses that confirm
+// must resolve labels from a read model. Deterministic ids keep the
+// canonical-validation assertions intact while the stub resolves them.
+const GATE_ACCOUNT_ID = '11111111-1111-4111-8111-111111111111';
+const GATE_CATEGORY_ID = '22222222-2222-4222-8222-222222222222';
+const gateReadModel = {
+  listAccounts: async () => [{ id: GATE_ACCOUNT_ID, name: 'Conta Teste' }],
+  listCategories: async () => [{ id: GATE_CATEGORY_ID, name: 'Categoria Teste' }],
+} as unknown as Pick<ReadModelStore, 'listAccounts' | 'listCategories'>;
 
 const delegatedProposeApp = () => {
   const app = Fastify();
@@ -34,7 +46,7 @@ const delegatedProposeApp = () => {
     request.authenticatedContext = { householdId: 'w', actorId: 'a', authUserId: 'a', actorType: 'user', deviceId: 'd', role: 'owner' };
   });
   const v2Store = createInMemoryPendingOperationV2Store();
-  registerPendingOperationRoutes(app, { store: legacyStore, resolveToken: async () => ({ householdId: 'w', deviceId: 'd' }), v2Store, v2Only: true });
+  registerPendingOperationRoutes(app, { store: legacyStore, resolveToken: async () => ({ householdId: 'w', deviceId: 'd' }), v2Store, v2Only: true, readModel: gateReadModel });
   return { app, v2Store };
 };
 
@@ -89,7 +101,7 @@ describe('pending operation V2 routes', () => {
       request.authenticatedContext = { householdId: 'w', actorId: 'a', authUserId: 'a', actorType: 'user', deviceId: 'd', role: 'owner' };
     });
     const v2Store = createInMemoryPendingOperationV2Store();
-    registerPendingOperationRoutes(app, { store: legacyStore, resolveToken: async () => ({ householdId: 'w', deviceId: 'd' }), v2Store, v2Executor: async () => ({ status: 'succeeded', operationId: crypto.randomUUID() }), v2Only: true });
+    registerPendingOperationRoutes(app, { store: legacyStore, resolveToken: async () => ({ householdId: 'w', deviceId: 'd' }), v2Store, v2Executor: async () => ({ status: 'succeeded', operationId: crypto.randomUUID() }), v2Only: true, readModel: gateReadModel });
     const proposed = await app.inject({ method: 'POST', url: '/pending-operations/v2/propose', headers: { 'idempotency-key': 'approval-key' }, payload: { tool: 'transactions.expense.create', normalizedArgs: expenseArgs() } });
     expect(proposed.statusCode).toBe(201);
     const id = proposed.json().id;
@@ -114,7 +126,7 @@ describe('pending operation V2 routes', () => {
       request.authenticatedContext = { householdId: 'w', actorId: 'a', authUserId: 'a', actorType: 'user', deviceId: 'd', role: 'owner' };
     });
     const v2Store = createInMemoryPendingOperationV2Store();
-    registerPendingOperationRoutes(app, { store: legacyStore, resolveToken: async () => ({ householdId: 'w', deviceId: 'd' }), v2Store, v2Executor: async () => { throw new Error('controlled-failure'); }, v2Only: true });
+    registerPendingOperationRoutes(app, { store: legacyStore, resolveToken: async () => ({ householdId: 'w', deviceId: 'd' }), v2Store, v2Executor: async () => { throw new Error('controlled-failure'); }, v2Only: true, readModel: gateReadModel });
     const proposed = await app.inject({ method: 'POST', url: '/pending-operations/v2/propose', headers: { 'idempotency-key': 'retry-key' }, payload: { tool: 'transactions.expense.create', normalizedArgs: expenseArgs() } });
     expect(proposed.statusCode).toBe(201);
     const id = proposed.json().id;
@@ -132,7 +144,7 @@ describe('pending operation V2 routes', () => {
         request.delegatedTurn = { iss: 'pi-agent', aud: 'pi-finance-api', sub: 'a', workspace: 'w', role: 'owner', capabilities: ['financial.approval.propose', 'financial.approval.confirm', 'financial.approval.execute', 'financial.approval.reconcile'], jti: crypto.randomUUID(), request: 'r', deviceId: 'd', iat: 1, exp: 301 };
         request.authenticatedContext = { householdId: 'w', actorId: 'a', authUserId: 'a', actorType: 'user', deviceId: 'd', role: 'owner' };
       });
-      registerPendingOperationRoutes(app, { store: legacyStore, resolveToken: async () => ({ householdId: 'w', deviceId: 'd' }), v2Store: createInMemoryPendingOperationV2Store(storeOptions), v2Executor, v2Only: true });
+      registerPendingOperationRoutes(app, { store: legacyStore, resolveToken: async () => ({ householdId: 'w', deviceId: 'd' }), v2Store: createInMemoryPendingOperationV2Store(storeOptions), v2Executor, v2Only: true, readModel: gateReadModel });
       return app;
     };
     const proposeExpense = (app: FastifyInstance, key: string) =>

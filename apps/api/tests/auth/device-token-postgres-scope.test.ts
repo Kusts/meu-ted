@@ -76,16 +76,35 @@ describe('postgres device token user lineage (uuid column vs Better-Auth TEXT id
     expect(insertCall[1][5]).toBe(APP_UUID);
   });
 
-  it('register falls back to NULL lineage when the session id cannot be resolved', async () => {
+  it('register fail-closed: rejects 503 auth.identity_unavailable with no INSERT when the session id has no users row (contract replaces the former NULL fallback)', async () => {
     const query = vi.fn()
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
     const store = createPostgresDeviceTokenStore({ query } as never);
 
-    await store.register('unknown device', HOUSEHOLD_ID, { userId: AUTH_TEXT_ID });
+    await expect(
+      store.register('unknown device', HOUSEHOLD_ID, { userId: AUTH_TEXT_ID }),
+    ).rejects.toMatchObject({ code: 'auth.identity_unavailable', statusCode: 503 });
 
-    const insertCall = query.mock.calls.find((c) => String(c[0]).includes('INSERT INTO device_tokens'))!;
-    expect(insertCall[1][5]).toBeNull();
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('auth_user_id = $1'),
+      [AUTH_TEXT_ID],
+    );
+    const insertCalls = query.mock.calls.filter((c) => String(c?.[0]).includes('INSERT INTO device_tokens'));
+    expect(insertCalls).toHaveLength(0);
+  });
+
+  it('register fail-closed: a rejected users SELECT with opts.userId rejects 503 sanitized with no INSERT and no driver leak', async () => {
+    const driverError = new Error('connect ECONNREFUSED 10.0.0.9:5432');
+    const query = vi.fn().mockRejectedValueOnce(driverError);
+    const store = createPostgresDeviceTokenStore({ query } as never);
+
+    const err = await store.register('unknown device', HOUSEHOLD_ID, { userId: AUTH_TEXT_ID }).catch((e) => e);
+    expect(err).toMatchObject({ code: 'auth.identity_unavailable', statusCode: 503 });
+    expect(String(err.message)).not.toContain('ECONNREFUSED');
+    expect(String(err.message)).not.toContain('10.0.0.9');
+    const rejectedInsertCalls = query.mock.calls.filter((c) => String(c?.[0]).includes('INSERT INTO device_tokens'));
+    expect(rejectedInsertCalls).toHaveLength(0);
   });
 
   it('register keeps NULL lineage when no session user is provided (anonymous bootstrap)', async () => {
