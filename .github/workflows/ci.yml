@@ -313,20 +313,22 @@ jobs:
           BUILD_SHA: ${{ github.sha }}
           BUILD_ID: ${{ github.run_id }}
           BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
         run: |
           docker build -f apps/api/Dockerfile \
             --build-arg BUILD_SHA="$BUILD_SHA" \
             --build-arg BUILD_ID="$BUILD_ID" \
             --build-arg BUILD_TIME="$BUILD_TIME" \
-            -t ghcr.io/kusts/meu-ted-api:sha-"$BUILD_SHA" .
+            -t ghcr.io/$IMAGE_OWNER/meu-ted-api:sha-"$BUILD_SHA" .
       - name: Push by SHA tag and record digest
         id: record
         env:
           BUILD_SHA: ${{ github.sha }}
           BUILD_ID: ${{ github.run_id }}
           BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
         run: |
-          IMAGE="ghcr.io/kusts/meu-ted-api"
+          IMAGE="ghcr.io/$IMAGE_OWNER/meu-ted-api"
           TAG="sha-$BUILD_SHA"
           docker push "$IMAGE:$TAG"
           DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:$TAG")"
