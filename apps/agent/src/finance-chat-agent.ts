@@ -58,7 +58,7 @@ import {
   type TurnInput,
   type TurnPlan,
 } from "./orchestration/conversation-orchestrator.js";
-import { emitSanitizedEvent } from "./observability/events.js";
+import { classifyError, emitSanitizedEvent } from "./observability/events.js";
 import { routeIntent } from "./orchestration/intent-router.js";
 import { createChannelGrounding } from "./orchestration/channel-evidence.js";
 import type { EvidenceEnvelope } from "./evidence/evidence-envelope.js";
@@ -81,6 +81,7 @@ export type Env = {
   AGENT_CONNECTION_TOKEN_SECRET?: string;
   AGENT_CONFIG_TOKEN?: string;
   AGENT_RUNTIME_ADMIN_TOKEN?: string;
+  AGENT_RELAY_TIMEOUT_MS?: string | number;
   OPENCODE_ZEN_API_KEY?: string;
   OPENCODE_GO_API_KEY?: string;
   OPENAI_API_KEY?: string;
@@ -130,6 +131,15 @@ export const INTENTION_SNAPSHOT_FALLBACK_COLUMNS = ['fallback_provider_id', 'fal
 export const INTENTION_SNAPSHOT_MODEL_COLUMNS = ['model_name', 'fallback_model_name'] as const;
 
 import { executeLlmAttempts, isCodexProviderId, resolveBareModelName } from "./llm/attempts.js";
+import {
+  RELAY_ATTEMPT_TIMEOUT_MS,
+  executeRelayAttempts,
+  isRelayableProvider,
+  logRelayDoubleFailure,
+  resolveRelayTargets,
+  sanitizeRelayCode,
+  relayPublicMessage,
+} from "./llm/relay-failover.js";
 import { authorizeTurnExecution } from "./llm/rollout.js";
 // Re-exported so existing import sites (tests, compat) keep working —
 // the canonical definitions live in llm/attempts.ts (H-02 executor).
@@ -254,6 +264,189 @@ export const TED_SYSTEM_PROMPT = TED_SYSTEM_PROMPT_LEGACY;
 export { TED_INSTRUCTIONS_VERSION };
 
 /**
+ * Item 6 (Onda 2): relay fetch with ONE absolute deadline over headers AND
+ * body parsing. Uses the existing per-leg budget (RELAY_ATTEMPT_TIMEOUT_MS,
+ * 60 s — no increase, no timer reset between headers/body). The abort signal
+ * is sent at the deadline, and the outer Promise.race forces finite
+ * termination even when the fetch implementation or `response.json()`
+ * ignores abort. Late headers/body after the deadline can never become
+ * success (the race already settled with the timeout). Timers are cleared in
+ * `finally` so ordinary fast success preserves content with no leak.
+ *
+ * The timeout surfaces as a bare `TimeoutError` (no status/code) so the
+ * existing relay classifier maps it to the coherent `agent.provider_timeout`
+ * + 504 via `toSafeRelayError`, keeping failover eligibility intact.
+ *
+  * FIX-W2-AGENT-LATE-RESPONSE-AND-BROKER-ERROR: a delayed event loop can let
+  * headers/body resolve after the absolute deadline but before the timer
+  * callback fires — the race alone would then accept a late success. The
+  * monotonic `now()` check after each stage fails closed with the same bare
+  * `TimeoutError` even when the timer has not fired yet. Production default
+  * is `performance.now()` (monotonic, bounded); tests may inject a fake
+  * clock via `opts.now`.
+  *
+  * FIX-AGENT-RELAY-DISCARDED-BODY-CANCEL: every timeout/discard branch also
+  * best-effort cancels `response.body` without awaiting (sync throws and
+  * rejected cancels swallowed, so a locked stream never delays the 504), and
+  * a late fetch fulfillment after the race observes the timedOut/expired
+  * clock and cancels its own body. Fast success never cancels.
+ */
+const defaultRelayMonotonicNow = (): number => {
+  try {
+    const perf = (globalThis as { performance?: { now?: () => number } }).performance;
+    if (perf && typeof perf.now === 'function') return perf.now();
+  } catch {
+    // Fall through to the wall clock below.
+  }
+  return Date.now();
+};
+
+const relayTimeoutError = (timeoutMs: number): Error =>
+  Object.assign(new Error(`relay attempt timed out after ${timeoutMs}ms`), { name: 'TimeoutError' });
+
+/**
+ * FIX-AGENT-RELAY-DISCARDED-BODY-CANCEL (item 6 resource cleanup): best-effort
+ * discard of a relay Response body. Never awaited, never blocks the timeout
+ * path: a locked body (cancel throws synchronously) or a rejected cancel
+ * promise is swallowed. Called only on timeout/discard branches — the fast
+ * success path never cancels. Mirrors `cancelBrokerResponseBody`.
+ */
+const cancelRelayResponseBody = (res: Response | undefined): void => {
+  try {
+    const body = (res as { body?: { cancel?: () => unknown } } | undefined)?.body;
+    if (!body || typeof body.cancel !== 'function') return;
+    const result = body.cancel() as unknown;
+    if (result && typeof (result as Promise<void>).catch === 'function') {
+      (result as Promise<void>).catch(() => {});
+    }
+  } catch {
+    // Best effort: a locked body must not block the timeout.
+  }
+};
+
+/**
+ * Test seam for the per-leg relay budget. Production default is
+ * RELAY_ATTEMPT_TIMEOUT_MS (60 s). `AGENT_RELAY_TIMEOUT_MS` (string or
+ * number) may only SHORTEN the budget — values at/above the default clamp
+ * to the default, so the platform budget can never be increased here.
+ */
+export const resolveRelayLegTimeoutMs = (env: Env | undefined): number => {
+  const raw = (env as Record<string, unknown> | undefined)?.['AGENT_RELAY_TIMEOUT_MS'];
+  const n = typeof raw === 'string' ? Number(raw) : typeof raw === 'number' ? raw : NaN;
+  if (Number.isFinite(n) && (n as number) > 0) {
+    return Math.min(Math.trunc(n as number), RELAY_ATTEMPT_TIMEOUT_MS);
+  }
+  return RELAY_ATTEMPT_TIMEOUT_MS;
+};
+
+export const fetchRelayJsonWithDeadline = async (
+  fetchImpl: typeof fetch,
+  url: string,
+  init: Omit<RequestInit, 'signal'>,
+  timeoutMs: number = RELAY_ATTEMPT_TIMEOUT_MS,
+  opts?: { now?: () => number },
+): Promise<{
+  ok: boolean;
+  status: number;
+  body: { text?: unknown; code?: unknown; message?: unknown };
+}> => {
+  const now = opts?.now ?? defaultRelayMonotonicNow;
+  const start = now();
+  const deadlineAt = start + timeoutMs;
+  const isExpired = (): boolean => now() >= deadlineAt;
+  const controller = new AbortController();
+  // FIX-AGENT-RELAY-DISCARDED-BODY-CANCEL: timedOut flag + currently seen
+  // response, so the deadline path can best-effort cancel the body without
+  // awaiting, and a late fetch fulfillment after the race can observe the
+  // timeout/expired monotonic clock and discard its own body.
+  let timedOut = false;
+  let seenResponse: Response | undefined;
+  // The timer callback and the race-settlement branches can both observe the
+  // same timeout (timer fires while .json() is pending): discard the known
+  // body exactly once — cancel itself is idempotent, but one attempt keeps
+  // the timeout path deterministic. The late-fulfillment handler below marks
+  // the same flag after its direct cancel, so the post-race expired branch
+  // for the SAME late response skips its second cancel (mirrors the broker
+  // handler; a timer discard with no body yet still lets the late arrival
+  // cancel exactly once here).
+  let bodyDiscardAttempted = false;
+  const discardBodyOnce = (res: Response | undefined): void => {
+    if (bodyDiscardAttempted) return;
+    bodyDiscardAttempted = true;
+    cancelRelayResponseBody(res);
+  };
+  const abortAndDiscard = (res: Response | undefined): void => {
+    try {
+      controller.abort();
+    } catch {
+      // Best effort: the race below still enforces the deadline.
+    }
+    discardBodyOnce(res);
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      abortAndDiscard(seenResponse);
+      reject(relayTimeoutError(timeoutMs));
+    }, timeoutMs);
+  });
+  try {
+    const fetchPromise = fetchImpl(url, { ...init, signal: controller.signal });
+    // Late headers arriving after the race already settled with the timeout:
+    // observe the timeout/expired clock and cancel the late body. Late data
+    // is never accepted (the race already rejected).
+    void Promise.resolve(fetchPromise).then(
+      (late) => {
+        const lateRes = late as unknown as Response | undefined;
+        if (lateRes && typeof lateRes === 'object') seenResponse ??= lateRes;
+        // Mark the discard so the post-race expired branch for the SAME
+        // late response does not cancel a second time (spy counts); a late
+        // body arriving after the race already timed out is still canceled
+        // exactly once here. Mirrors the broker late-headers handler.
+        if (timedOut || isExpired()) {
+          cancelRelayResponseBody(lateRes);
+          bodyDiscardAttempted = true;
+        }
+      },
+      () => {},
+    );
+    const response = (await Promise.race([
+      fetchPromise,
+      deadline,
+    ])) as unknown as Response;
+    seenResponse = response;
+    if (timedOut || isExpired()) {
+      abortAndDiscard(response);
+      throw relayTimeoutError(timeoutMs);
+    }
+    let body: { text?: unknown; code?: unknown; message?: unknown };
+    try {
+      body = (await Promise.race([
+        Promise.resolve(response.json()).catch(() => ({})),
+        deadline,
+      ])) as { text?: unknown; code?: unknown; message?: unknown };
+    } catch (err) {
+      // The json branch never rejects (errors collapse to {}), so a rejection
+      // here is the deadline: discard the pending body without awaiting (a
+      // locked-stream cancel rejection is swallowed) and fail closed.
+      discardBodyOnce(response);
+      if (timedOut || isExpired() || (err as { name?: unknown } | null)?.name === 'TimeoutError') {
+        throw relayTimeoutError(timeoutMs);
+      }
+      throw err;
+    }
+    if (timedOut || isExpired()) {
+      abortAndDiscard(response);
+      throw relayTimeoutError(timeoutMs);
+    }
+    return { ok: response.ok, status: response.status, body };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};
+
+/**
  * Regra de ouro da camada cognitiva (ver agent-config/instructions.ts):
  * sempre utilize a ferramenta adequada em vez de responder "sem autorização"
  * ou "não tenho acesso" — a partir de dados reais do workspace via tools.
@@ -361,7 +554,22 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         }
       },
       onAuthorityUnreachable: (err) => {
-        console.warn(`llm.rollout authority unreachable intention=${input.intentionId}: ${(err as Error)?.message ?? err}`);
+        // FIX-AGENT-LOG-CORRELATION-AND-ABORT-STATUS (W2): nunca imprime
+        // input.intentionId, err.message, RuntimeSnapshotError.excerpt ou
+        // corpo de resposta — todos podem carregar texto do chamador,
+        // runtime-config ou injeção. Só evento constante + status numérico
+        // seguro + classe de erro allowlistada (sem message/body).
+        const e = err as { status?: unknown; statusCode?: unknown } | null;
+        const rawStatus =
+          typeof e?.status === 'number' ? e.status : typeof e?.statusCode === 'number' ? e.statusCode : 0;
+        const status = Number.isFinite(rawStatus) && rawStatus >= 0 && rawStatus < 600 ? Math.trunc(rawStatus) : 0;
+        let errorClass = 'unknown';
+        try {
+          errorClass = classifyError(err);
+        } catch {
+          errorClass = 'unknown';
+        }
+        console.warn(`llm.rollout authority unreachable status=${status} class=${errorClass}`);
       },
     });
   }
@@ -494,9 +702,13 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
       if (typeof this.persistMessages !== 'function') {
         throw Object.assign(new Error('agent.persistence_unavailable'), { code: 'agent.persistence_unavailable', status: 503 });
       }
-      // Internal grounding retries reuse this provider with a correction
-      // marker: they must not pollute durable history with scaffolding turns.
-      const isCorrectionRetry = input.text.includes('[Correção de grounding:');
+      // Internal grounding retries reuse this provider with the internal-only
+      // flag set by the correction callback: they must not pollute durable
+      // history with scaffolding turns. The flag is the ONLY trusted signal —
+      // user text that literally contains the marker can never confer
+      // internal status (normalize builds it as false), so it persists once
+      // as a normal user turn.
+      const isCorrectionRetry = input.internalCorrection === true;
       if (!isCorrectionRetry) {
         const userMessage: UIMessage = {
           id: `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -511,25 +723,105 @@ export class FinanceChatAgent extends AIChatAgent<Env> {
         await this.persistMessages([userMessage]);
       }
       const relayOrigin = this.env?.API_ORIGIN ?? 'https://api.synkroo.com.br';
-      const response = await fetch(`${relayOrigin.replace(/\/$/, '')}/internal/agent/llm-relay`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-agent-runtime-admin-token': this.env?.AGENT_RUNTIME_ADMIN_TOKEN ?? '',
-        },
-        body: JSON.stringify({
-          provider: activeSnapshot.provider_id,
-          model: activeSnapshot.model_name ?? resolveBareModelName(activeSnapshot.provider_id, activeSnapshot.model_id, null),
-          prompt: input.text.slice(0, 15_000),
-          system: cognition.system.slice(0, 7_900),
-        }),
-        redirect: 'error',
-      });
-      const body = await response.json().catch(() => ({})) as { text?: unknown; message?: unknown };
-      if (!response.ok || typeof body.text !== 'string' || !body.text) {
-        throw Object.assign(new Error(redactTranscript(typeof body.message === 'string' ? body.message : `HTTP ${response.status}`)), { code: 'agent.inference_error', status: 502 });
+      // Item 5 (Onda 2): failover restrito do relay — no máximo 1 primária +
+      // 1 fallback distinto (RELAY_MAX_ATTEMPTS), cada perna com budget
+      // explícito RELAY_ATTEMPT_TIMEOUT_MS (espelha o requestTimeoutMs da API).
+      // A mensagem do usuário persiste exatamente 1x aqui; o texto do relay
+      // nunca é persistido (só a resposta final grounded no /rpc/chat).
+      const { primary: relayPrimary, fallback: relayFallback } = resolveRelayTargets(activeSnapshot);
+      if (!relayPrimary) {
+        throw Object.assign(new Error('agent.provider_not_configured'), { code: 'agent.provider_not_configured', status: 503 });
       }
-      const output = redactTranscript(body.text);
+      const runRelayLeg = async (target: { providerId: string; modelName: string }): Promise<string> => {
+        // Verificação por perna sem segredo: provider relayável + nome
+        // resolvido. Allowlist/key são autoridade da API (403/503 dela nunca
+        // disparam fallback pelo classificador explícito de relay).
+        if (!isRelayableProvider(target.providerId) || !target.modelName) {
+          throw Object.assign(new Error('agent.provider_not_configured'), { code: 'agent.provider_not_configured', status: 503 });
+        }
+        const relayUrl = `${relayOrigin.replace(/\/$/, '')}/internal/agent/llm-relay`;
+        // Item 6 (Onda 2): the per-leg budget (RELAY_ATTEMPT_TIMEOUT_MS) is an
+        // ABSOLUTE deadline over fetch headers AND body parsing — the helper
+        // sends abort at the deadline and forces finite termination even when
+        // fetch or response.json() ignores abort. AGENT_RELAY_TIMEOUT_MS may
+        // only shorten the budget (tests); it can never increase it.
+        const relayTimeoutMs = resolveRelayLegTimeoutMs(this.env);
+        const { ok, status, body } = await fetchRelayJsonWithDeadline(fetch, relayUrl, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-agent-runtime-admin-token': this.env?.AGENT_RUNTIME_ADMIN_TOKEN ?? '',
+          },
+          body: JSON.stringify({
+            provider: target.providerId,
+            model: target.modelName,
+            prompt: input.text.slice(0, 15_000),
+            system: cognition.system.slice(0, 7_900),
+          }),
+          redirect: 'error',
+        }, relayTimeoutMs);
+        if (!ok) {
+          // FIX-AGENT-RELAY-FAILOVER-HARDENING (B): preserva o {code,status}
+          // estruturado do relay em vez de colapsar tudo em 502 — o /rpc/chat
+          // propaga esse status/code — mas com a mensagem pública fixa. O
+          // `body.message` bruto do upstream NUNCA é ecoado (pode conter
+          // system prompt, segredos ou injeção); `body.code` passa pela
+          // allowlist de charset.
+          const code = sanitizeRelayCode(typeof body.code === 'string' ? body.code : '', status);
+          throw Object.assign(
+            new Error(relayPublicMessage(code, status)),
+            { code, status },
+          );
+        }
+        if (typeof body.text !== 'string' || !body.text) {
+          throw Object.assign(new Error('agent.invalid_provider_output'), { code: 'agent.inference_error', status: 502 });
+        }
+        return redactTranscript(body.text);
+      };
+      const relayOutcome = await executeRelayAttempts({
+        primary: relayPrimary,
+        fallback: relayFallback,
+        runLeg: runRelayLeg,
+        // Reautorização imediata entre a primária falha e o fallback: epoch
+        // mudado nega a segunda perna antes de qualquer chamada ao provider.
+        authorizeBetween: () => this.authorizeTurn(activeSnapshot, {
+          workspaceId: input.workspaceId,
+          actorId: input.actorId,
+          intentionId: input.intentionId,
+        }),
+      }).catch((relayError: unknown) => {
+        // FIX-AGENT-RELAY-FAILOVER-HARDENING (C): falha dupla — a primária
+        // era elegível, o fallback foi realmente invocado e ambas as pernas
+        // falharam (erro composto carrega o par de reasons). Emite UM evento
+        // sanitizado com os dois reason codes e correlação opaca, e
+        // re-lança. 1-shot, sem fallback, sucesso da primária e negação de
+        // autoridade entre pernas não emitem este evento.
+        const primaryReason = (relayError as { primaryReason?: unknown })?.primaryReason;
+        const fallbackReason = (relayError as { fallbackReason?: unknown })?.fallbackReason;
+        if (typeof primaryReason === 'string' && primaryReason && typeof fallbackReason === 'string' && fallbackReason) {
+          logRelayDoubleFailure({
+            intentionId: input.intentionId,
+            primaryProviderId: relayPrimary.providerId,
+            primaryModelId: relayPrimary.modelName,
+            fallbackProviderId: relayFallback?.providerId ?? activeSnapshot.fallback_provider_id,
+            fallbackModelId: relayFallback?.modelName ?? activeSnapshot.fallback_model_id,
+            primaryReason,
+            fallbackReason,
+          });
+        }
+        throw relayError;
+      });
+      logFailoverEvent(
+        {
+          intentionId: input.intentionId,
+          primaryProviderId: relayOutcome.primary.providerId,
+          primaryModelId: relayOutcome.primary.modelName,
+          fallbackProviderId: relayOutcome.fallback?.providerId ?? activeSnapshot.fallback_provider_id,
+          fallbackModelId: relayOutcome.fallback?.modelName ?? activeSnapshot.fallback_model_id,
+        },
+        relayOutcome,
+      );
+      const output = relayOutcome.result;
       // The relay response is not publishable until the same authority that
       // admitted the turn is still valid. This makes an epoch/rollout change
       // during inference fail closed before an assistant message is durable.

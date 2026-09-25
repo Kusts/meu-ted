@@ -219,12 +219,16 @@ const errorItem = (kind: ReadKind, ref: string): EvidenceInput => ({
   data: null,
 });
 
+/** Account kinds authored by the API (ADR-018). Anything else stays unknown downstream — never inferred. */
+const KNOWN_ACCOUNT_KINDS: ReadonlySet<string> = new Set(['bank', 'cash', 'credit_card']);
+
 const mapAccounts = (result: unknown): EvidenceInput[] => {
   const rows = pickRows(result, ['accounts', 'items']);
   if (rows.length === 0) {
     return [{ ref: 'accounts', source: READ_SOURCE.accounts, retrievedAt: now(), status: 'empty', data: [] }];
   }
   const items: EvidenceInput[] = [];
+  let omittedCount = 0;
   for (const row of rows) {
     const record = asRecord(row);
     const accountName = record && typeof record.accountName === 'string'
@@ -235,17 +239,38 @@ const mapAccounts = (result: unknown): EvidenceInput[] => {
     const balanceCents = record
       ? (toCents(record.balanceCents) ?? toCents(record.balance_cents) ?? toCents(record.balance))
       : null;
-    if (accountName === null || balanceCents === null) continue;
+    // W1-TED-ACCOUNT-GROUNDING: `kind` travels from its origin (the
+    // `list_accounts` projection) into evidence. Unknown/absent kinds are
+    // preserved as-is for the renderer to treat neutrally — the type is
+    // never inferred from the account name.
+    const kind = record && typeof record.kind === 'string' && KNOWN_ACCOUNT_KINDS.has(record.kind)
+      ? record.kind
+      : undefined;
+    if (accountName === null || balanceCents === null) {
+      // Invalid rows are counted, never presented: the renderer states
+      // partiality explicitly instead of a supposedly-complete total.
+      omittedCount += 1;
+      continue;
+    }
     // Shape matches the orchestrator's deterministic balance renderer exactly.
     items.push({
       ref: `account:${typeof record?.id === 'string' ? record.id : accountName}`,
       source: READ_SOURCE.accounts,
       retrievedAt: now(),
       status: 'ok',
-      data: { accountName, balanceCents },
+      data: { accountName, balanceCents, ...(kind !== undefined ? { kind } : {}) },
     });
   }
   if (items.length === 0) return [errorItem('accounts', 'accounts')];
+  if (omittedCount > 0) {
+    items.push({
+      ref: 'accounts:incomplete',
+      source: READ_SOURCE.accounts,
+      retrievedAt: now(),
+      status: 'ok',
+      data: { incomplete: true, omittedCount },
+    });
+  }
   return items;
 };
 
@@ -369,6 +394,12 @@ export const createChannelGrounding = (deps: ChannelGroundingDeps): ChannelGroun
    * ONE structured correction attempt reusing the unified response
    * mechanism. Returns null when there is nothing to correct or the retry
    * itself fails, letting the grounded path fall back safe.
+   *
+   * FIX-AGENT-RELAY-FAILOVER-HARDENING (A): the retry input carries the
+   * internal-only `internalCorrection: true` flag — the ONLY signal the
+   * response provider trusts to skip user-turn persistence. The marker stays
+   * in the prompt text (the model needs the instruction), but marker text
+   * alone never confers internal status.
    */
   const correctionProvider = async (
     input: TurnInput,
@@ -378,6 +409,7 @@ export const createChannelGrounding = (deps: ChannelGroundingDeps): ChannelGroun
     if (unsupportedClaims.length === 0) return null;
     const correctionInput: TurnInput = {
       ...input,
+      internalCorrection: true,
       text: `${input.text}\n\n[Correção de grounding: os trechos a seguir não têm suporte nos dados apurados e devem ser removidos ou substituídos apenas por dados apurados: ${unsupportedClaims.join('; ')}. Responda usando APENAS os dados apurados.]`,
     };
     try {

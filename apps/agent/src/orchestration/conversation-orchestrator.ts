@@ -23,8 +23,9 @@ import { emitSanitizedEvent } from '../observability/events.js';
 import type { EvidenceEnvelope } from '../evidence/evidence-envelope.js';
 import { createGroundedResponseWithRetry } from '../responses/grounded-response.js';
 import { stripToolCallMarkup } from '../responses/tool-call-sanitizer.js';
-import { renderBalance, renderEmpty, renderInconclusive, renderMutationResult, renderStatement, renderUnavailable, FINANCIAL_EVIDENCE_UNAVAILABLE_TEXT } from '../responses/deterministic-responses.js';
+import { renderEmpty, renderInconclusive, renderMutationResult, renderStatement, renderUnavailable, FINANCIAL_EVIDENCE_UNAVAILABLE_TEXT } from '../responses/deterministic-responses.js';
 import { routeIntent } from './intent-router.js';
+import { extractAccountsEvidence, renderAccountsAnswer, seeksAccountBalance } from './account-grounding.js';
 import { makesUnverifiedFinancialClaim } from './financial-claim-guard.js';
 import {
   NO_FAILED_OPERATION_TEXT,
@@ -55,6 +56,15 @@ export type TurnInput = Readonly<{
   attachments: readonly SafeAttachmentMetadata[];
   channel: ConversationChannel;
   pendingOperationIds?: readonly string[];
+  /**
+   * FIX-AGENT-RELAY-FAILOVER-HARDENING (A): internal-only marker for the
+   * structured grounding-correction retry. Set EXCLUSIVELY by the internal
+   * `correctionProvider` (channel-evidence.ts); `normalize` always builds it
+   * as `false` and ignores any client-supplied same-named field, so user
+   * text that literally contains the correction marker can never confer
+   * internal status (it persists as a normal user turn).
+   */
+  internalCorrection?: boolean;
 }>;
 
 export type PlannedOperation = Readonly<{ name: string; kind: 'read' | 'mutation' }>;
@@ -171,6 +181,11 @@ const normalize = (body: Body, identity: AuthenticatedIdentity, channel: Convers
     deviceId: identity.deviceId ?? null,
     attachments: freeze(attachments),
     channel,
+    // FIX-AGENT-RELAY-FAILOVER-HARDENING (A): the internal correction flag
+    // is constructed here as `false` — any client-supplied `internalCorrection`
+    // / `isInternalCorrectionRetry` field in `body` is deliberately NOT read,
+    // so untrusted text can never mark its own turn as an internal retry.
+    internalCorrection: false,
     ...(pendingOperationIds ? { pendingOperationIds: freeze(pendingOperationIds) } : {}),
   });
 };
@@ -234,17 +249,15 @@ export class ConversationOrchestrator {
     }
   }
 
-  private renderDeterministicFromEvidence(plan: TurnPlan, envelope: EvidenceEnvelope): string | null {
+  private renderDeterministicFromEvidence(input: TurnInput, plan: TurnPlan, envelope: EvidenceEnvelope): string | null {
+    // W1-TED-ACCOUNT-GROUNDING: account balances render through the
+    // kind-aware grounding (nominal selection, no heterogeneous sums, no
+    // name-inferred types, explicit partiality). It returns null for
+    // non-balance queries, which stay with the legacy renderers below.
+    const accountsAnswer = renderAccountsAnswer(input.text, extractAccountsEvidence(envelope));
+    if (accountsAnswer !== null) return accountsAnswer;
     const ok = envelope.items.filter((item) => item.status === 'ok').map((item) => item.data);
     if (ok.length === 0) return null;
-    for (const data of ok) {
-      if (data && typeof data === 'object' && !Array.isArray(data)) {
-        const record = data as Record<string, unknown>;
-        if (typeof record.balanceCents === 'number' && typeof record.accountName === 'string') {
-          return renderBalance({ accountName: record.accountName, balanceCents: record.balanceCents });
-        }
-      }
-    }
     const lists = ok.filter(Array.isArray);
     if (plan.domain === 'transactions' || lists.length > 0) {
       for (const list of lists) {
@@ -253,6 +266,10 @@ export class ConversationOrchestrator {
       }
       if (plan.domain === 'transactions') return renderEmpty('extrato');
     }
+    // A balance-seeking turn with no usable account evidence must never
+    // fall through to the generative provider (which could invent a
+    // figure): fail closed with a figure-free reply.
+    if (seeksAccountBalance(input.text)) return renderUnavailable('os saldos');
     return null;
   }
 
@@ -272,7 +289,7 @@ export class ConversationOrchestrator {
       this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', grounded: false, latencyMs: Date.now() - startedAt });
       return freeze({ ...base, failClosed: true as const, response: freeze({ text: FINANCIAL_EVIDENCE_UNAVAILABLE_TEXT }) });
     }
-    const deterministic = this.renderDeterministicFromEvidence(plan, envelope);
+    const deterministic = this.renderDeterministicFromEvidence(input, plan, envelope);
     if (deterministic !== null) {
       this.emit('turn.completed', { intentionId: input.intentionId, traceId: input.traceId, channel: input.channel, domain: plan.domain, mode: plan.mode, status: 'completed', latencyMs: Date.now() - startedAt });
       return freeze({ ...base, response: freeze({ text: deterministic }) });

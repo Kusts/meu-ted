@@ -221,6 +221,7 @@ const specs = [
       "fields": {
         "id": "id",
         "name": "name",
+        "kind": "kind",
         "balance_cents": "balanceCents",
         "active": {
           "path": "status",

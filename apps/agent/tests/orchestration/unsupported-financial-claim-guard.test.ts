@@ -76,8 +76,8 @@ describe('INV-06 unsupported financial-claim gate (real routing)', () => {
     const envelope: EvidenceEnvelope = {
       version: '1',
       items: [{
-        ref: 'balance',
-        source: 'api.balance',
+        ref: 'account:acc-1',
+        source: 'api.accounts',
         retrievedAt: new Date().toISOString(),
         status: 'ok',
         data: { balanceCents: 12345, accountName: 'Conta principal' },
