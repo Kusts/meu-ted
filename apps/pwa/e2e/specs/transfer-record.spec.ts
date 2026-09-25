@@ -24,6 +24,7 @@
 import { test, expect } from "@playwright/test";
 import { assertNoUndeclaredFailures } from "../support/failure-guard";
 import { initSpec, getJournal, expectJournal } from "../support/harness";
+import { openNewTransaction } from "../support/new-transaction";
 
 let counter = 0;
 function tid(): string {
@@ -37,17 +38,21 @@ test.afterEach(async ({ page }) => {
 
 async function init(page: import("@playwright/test").Page, id: string) {
   const guard = await initSpec(page, id);
-  await page.setViewportSize({ width: 390, height: 844 });
   return guard;
 }
 
-/** Canonical entry: FAB quick menu → Transferência → "Nova transferência". */
+/**
+ * Canonical entry: quick menu / CTA → Transferência.
+ * Mobile opens the preselected "Nova transferência" sheet via the FAB
+ * group BUTTON (the FAB menu is a `group`, not an ARIA menu); desktop
+ * opens the sheet via the SidebarRail CTA and selects the in-sheet
+ * Transferência tab. Both converge on the transfer form (Transferir CTA).
+ */
 async function openTransferSheet(page: import("@playwright/test").Page) {
-  await page.getByLabel("Nova transação").click();
-  await page.getByRole("menuitem", { name: "Transferência" }).click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("Nova transferência")).toBeVisible();
+  const dialog = await openNewTransaction(page, "transfer");
+  await expect(
+    dialog.getByRole("button", { name: /^Transferir$/ }),
+  ).toBeVisible();
   return dialog;
 }
 

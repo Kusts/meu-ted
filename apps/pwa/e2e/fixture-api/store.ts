@@ -9,6 +9,13 @@ export interface JournalEntry {
   path: string;
   body: unknown;
   status: number;
+  /**
+   * Value of the `idempotency-key` request header when present.
+   * Recorded so E2E specs can assert same-intent retries (e.g. the
+   * write-error banner replays the failed mutation with the same
+   * commandId). Absent on reads and on writes without the header.
+   */
+  idempotencyKey?: string | null;
 }
 
 export interface SeedData {

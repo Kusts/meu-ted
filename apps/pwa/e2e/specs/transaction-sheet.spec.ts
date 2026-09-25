@@ -20,6 +20,7 @@ import { test, expect } from "@playwright/test";
 import { allowFailure, assertNoUndeclaredFailures } from "../support/failure-guard";
 import { FIXTURE_URL } from "../support/reset";
 import { initSpec, getJournal, expectJournal } from "../support/harness";
+import { openNewTransaction } from "../support/new-transaction";
 
 
 let counter = 0;
@@ -49,11 +50,9 @@ async function setScenario(testId: string, scenario: Record<string, unknown>) {
 }
 
 async function openTransactionSheet(page: import("@playwright/test").Page) {
-  await page.getByLabel("Nova transação").click();
-  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("Nova despesa")).toBeVisible();
+  const dialog = await openNewTransaction(page, "expense");
+  await expect(dialog.getByPlaceholder("0,00")).toBeVisible();
+  await expect(dialog.getByPlaceholder("Ex: Aluguel, mercado...")).toBeVisible();
   return dialog;
 }
 
@@ -252,14 +251,21 @@ test("[TX-06] add subcategory inline via create endpoint", async ({ page }) => {
 
   const dialog = await openTransactionSheet(page);
   await dialog.getByRole("button", { name: "Selecionar categoria" }).click();
-  const catSheet = page.getByRole("dialog").last();
-  await catSheet.getByRole("button", { name: "Alimentação" }).click();
+  let catSheet = page.getByRole("dialog").last();
+  await catSheet.getByRole("button", { name: "Alimentação", exact: true }).click();
+  // Selecting a category closes the picker (BottomSheet exit animation);
+  // the "Nova subcategoria…" button only exists after reopening with the
+  // parent selected — wait for the picker to detach, reopen, and click the
+  // correct button once the state is stable (no force, no extra timeout).
+  await expect(page.getByRole("dialog", { name: "Categoria" })).toBeHidden();
+  await dialog.getByRole("button", { name: "Selecionar categoria" }).click();
+  catSheet = page.getByRole("dialog").last();
+  await expect(catSheet.getByRole("button", { name: "Alimentação", exact: true })).toBeVisible();
   await catSheet.getByRole("button", { name: /Nova subcategoria em Alimentação/ }).click();
   await expect(catSheet.getByPlaceholder("Nome da subcategoria")).toBeVisible();
 
-  // Negative: blank cancel. The sheet unmounts on cancel (close animation
-  // detaches the button mid-click), so force-dispatch and assert the outcome.
-  await catSheet.getByRole("button", { name: "Cancelar" }).click({ force: true });
+  // Negative: blank cancel closes the inline form without POST /categories.
+  await catSheet.getByRole("button", { name: "Cancelar" }).click();
   await expect(catSheet.getByPlaceholder("Nome da subcategoria")).toHaveCount(0);
 
   await catSheet.getByRole("button", { name: /Nova subcategoria em Alimentação/ }).click();
