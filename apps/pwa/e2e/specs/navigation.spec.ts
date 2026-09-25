@@ -197,6 +197,10 @@ test("[REDIRECT-04] legacy /pending lands on /compromissos?aba=pendencias", asyn
 
 test("[NAV-01] BottomNav Início click navigates to /", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
+  // BottomNav renders only below the `lg` breakpoint (desktop exposes the
+  // same destinations via SidebarRail) — like NAV-05..08, pin a mobile
+  // viewport so the BottomNav buttons under test are actually mounted.
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/registros"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Início" }).click({ timeout: 5000 });
@@ -206,6 +210,7 @@ test("[NAV-01] BottomNav Início click navigates to /", async ({ page }) => {
 
 test("[NAV-02] BottomNav Extrato click navigates to /registros", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Extrato" }).click({ timeout: 5000 });
@@ -215,6 +220,7 @@ test("[NAV-02] BottomNav Extrato click navigates to /registros", async ({ page }
 
 test("[NAV-03] BottomNav Compromissos click navigates to /compromissos", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Compromissos" }).click({ timeout: 5000 });
@@ -224,6 +230,7 @@ test("[NAV-03] BottomNav Compromissos click navigates to /compromissos", async (
 
 test("[NAV-04] BottomNav Mais click navigates to /hub", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Mais" }).click({ timeout: 5000 });

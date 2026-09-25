@@ -71,8 +71,21 @@ export async function authenticate(
   options: { timeout?: number } = {},
 ): Promise<void> {
   const timeout = options.timeout ?? 15000;
-  const fab = page.getByLabel("Nova transação");
-  if (await fab.isVisible().catch(() => false)) return;
+  // Authenticated-shell signal is viewport-dependent: the mobile shell shows
+  // the BottomNav FAB ("Nova transação", hidden at `lg`), while the desktop
+  // shell shows the SidebarRail CTA ("Novo lançamento", `hidden lg:flex`).
+  // Either one proves a signed-in shell; neither is weakened (both only
+  // render after AuthGate accepts the session — a rejected login still shows
+  // the "Entrar" form and neither signal, so the final wait still fails).
+  const mobileFab = page.getByLabel("Nova transação");
+  const desktopCta = page.getByRole("button", { name: "Novo lançamento" });
+  // NOTE: do NOT join these with locator.or() — both nodes stay mounted in
+  // the DOM at every viewport (one is CSS-hidden), so .or() resolves to 2
+  // elements and trips strict mode. Visibility is probed per-locator below.
+  const shellVisible = async (): Promise<boolean> =>
+    (await mobileFab.isVisible().catch(() => false)) ||
+    (await desktopCta.isVisible().catch(() => false));
+  if (await shellVisible()) return;
 
   // Real product flow (AuthGate has only "Entrar"): fill the login form,
   // submit, and the app itself calls POST /auth/sign-in/email followed by
@@ -95,8 +108,12 @@ export async function authenticate(
   }
 
   // After Entrar the fixture signs in and registers a device, storing the
-  // token in localStorage; wait for FAB to appear.
-  await expect(fab).toBeVisible({ timeout });
+  // token in localStorage; wait for the authenticated shell to appear in
+  // whichever viewport this project uses (FAB on mobile, SidebarRail CTA on
+  // desktop). expect.poll on the visibility probe keeps rigor (a rejected
+  // login shows neither) without tripping strict mode on the two mounted
+  // (one CSS-hidden) nodes.
+  await expect.poll(shellVisible, { timeout }).toBe(true);
 }
 
 /**
