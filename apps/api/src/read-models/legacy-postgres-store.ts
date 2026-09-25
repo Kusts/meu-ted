@@ -6,6 +6,9 @@
  *
  * Key differences from the API's own schema:
  * - accounts: uses initial_balance_cents + computed; active boolean; no kind/status
+ *   (credit-card rows flagged by is_credit_card are excluded here — parity
+ *   with the canonical store's `kind <> 'credit_card'`; cards are served by
+ *   the CardStore, never borrowed into generic account surfaces)
  * - categories: active boolean; no status
  * - transactions: uses from_account_id/to_account_id; expense uses from, income uses to, transfer uses both
  * - balances are computed per-query (no stored balance_cents)
@@ -107,7 +110,8 @@ export const createLegacyPostgresReadModelStore = (opts: { pool: Pool }): ReadMo
              WHERE t.household_id = $1 AND t.deleted_at IS NULL
            ) totals ON true
 
-           WHERE a.household_id = $1 AND a.active = true AND a.deleted_at IS NULL`,
+            WHERE a.household_id = $1 AND a.active = true AND a.deleted_at IS NULL
+              AND a.is_credit_card IS NOT TRUE`,
         [householdId],
       );
       return rows.map(mapAccount);

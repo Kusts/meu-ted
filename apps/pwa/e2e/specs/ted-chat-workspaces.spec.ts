@@ -32,13 +32,7 @@ test.afterEach(async ({ page }) => {
 test.describe("TED Chat & Workspaces", () => {
   test("opens TED chat launcher, displays conversation interface and allows sending messages", async ({ page }) => {
     const id = tid();
-    await prepareSpec(page, id, {
-      authenticatedUser: {
-        id: "usr-ted-1",
-        email: "user@pi-finance.test",
-        name: "Test User",
-      },
-    });
+    await prepareSpec(page, id);
 
     await page.route("**/auth/agent-token", async (route) => {
       await route.fulfill({
@@ -102,7 +96,7 @@ test.describe("TED Chat & Workspaces", () => {
 
     // Send a message
     // Placeholder in the product is "Mensagem para o assistente".
-    const input = page.getByPlaceholder("Mensagem para o assistente");
+    const input = page.getByLabel("Mensagem para o assistente");
     await input.fill("Quanto gastei hoje?");
     await page.getByRole("button", { name: /enviar mensagem/i }).click();
 

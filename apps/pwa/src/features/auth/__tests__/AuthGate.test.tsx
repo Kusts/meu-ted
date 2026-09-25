@@ -83,6 +83,19 @@ describe("AuthGate", () => {
 
   it("shows app content when token exists and is valid", async () => {
     store["pi-finance:token"] = "valid-token";
+    vi.mocked(fetch)
+      // 0. Cookie-first session probe: valid cookie session.
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: "u1", email: "walis@example.com", name: "W" } }),
+      } as Response)
+      // 1. Scoped device verification: valid.
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ deviceId: "d1", householdId: "h1" }),
+      } as Response);
 
     render(
       <AuthGate>
@@ -160,6 +173,13 @@ describe("AuthGate login + session flows", () => {
         ok: true,
         status: 201,
         json: async () => ({ token: "new-device-token", deviceId: "d1", householdId: "h1" }),
+      } as Response)
+      // 3. Post-login session probe: server-confirmed identity (W1 item 2 —
+      // o unlock exige usuário validado no probe, nunca fallback por e-mail).
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: "u1", email: "walis@example.com", name: "W" } }),
       } as Response);
 
     render(
@@ -199,6 +219,12 @@ describe("AuthGate login + session flows", () => {
         ok: true,
         status: 201,
         json: async () => ({ token: "enter-key-token-12345", deviceId: "d-enter", householdId: "h-enter" }),
+      } as Response)
+      // 3. Post-login session probe: server-confirmed identity.
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: "u-enter", email: "enter@synkroo.com.br", name: "E" } }),
       } as Response);
 
     render(
@@ -236,6 +262,12 @@ describe("AuthGate login + session flows", () => {
         ok: true,
         status: 201,
         json: async () => ({ token: "550e8400-e29b-41d4-a716-446655440000", deviceId: "d2", householdId: "h2" }),
+      } as Response)
+      // 3. Post-login session probe: server-confirmed identity.
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: "u-admin", email: "admin@synkroo.com.br", name: "A" } }),
       } as Response);
 
     render(
@@ -315,6 +347,19 @@ describe("AuthGate login + session flows", () => {
 
   it("expires session via context and returns to login screen", async () => {
     store["pi-finance:token"] = "valid-token";
+    vi.mocked(fetch)
+      // 0. Cookie-first session probe: valid cookie session.
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ user: { id: "u1", email: "walis@example.com", name: "W" } }),
+      } as Response)
+      // 1. Scoped device verification: valid.
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ deviceId: "d1", householdId: "h1" }),
+      } as Response);
     render(
       <AuthGate>
         <SessionProbe />

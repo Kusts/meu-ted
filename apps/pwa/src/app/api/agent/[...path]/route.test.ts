@@ -268,6 +268,57 @@ describe("resolveAgentOrigin (DEBT2 allowlist migration)", () => {
       ).toThrow();
     }
   });
+
+  it("PWA-LOCAL-AGENT-PROXY-GATE: permits opt-in http loopback upstream in development/test only", () => {
+    expect(
+      resolveAgentOrigin({
+        NODE_ENV: "development",
+        ALLOW_LOCAL_ORIGIN: "1",
+        PWA_AGENT_PROXY_ORIGIN: "http://127.0.0.1:8787",
+      }),
+    ).toBe("http://127.0.0.1:8787");
+    expect(
+      resolveAgentOrigin({
+        NODE_ENV: "test",
+        ALLOW_LOCAL_ORIGIN: "1",
+        PWA_AGENT_PROXY_ORIGIN: "http://localhost:8787",
+      }),
+    ).toBe("http://localhost:8787");
+  });
+
+  it("PWA-LOCAL-AGENT-PROXY-GATE: rejects loopback without opt-in, in production/undefined env, or malformed", () => {
+    // Without the explicit flag → placeholder, never the loopback target.
+    expect(
+      resolveAgentOrigin({ NODE_ENV: "development", PWA_AGENT_PROXY_ORIGIN: "http://127.0.0.1:8787" }),
+    ).toBe("https://agent.example");
+    // Production with the flag still fails closed (throws, never proxies to loopback).
+    expect(() =>
+      resolveAgentOrigin({
+        NODE_ENV: "production",
+        ALLOW_LOCAL_ORIGIN: "1",
+        PWA_AGENT_PROXY_ORIGIN: "http://127.0.0.1:8787",
+      }),
+    ).toThrow();
+    // Undefined NODE_ENV with the flag still fails closed to the placeholder.
+    expect(
+      resolveAgentOrigin({ ALLOW_LOCAL_ORIGIN: "1", PWA_AGENT_PROXY_ORIGIN: "http://127.0.0.1:8787" }),
+    ).toBe("https://agent.example");
+    // Malformed / credentialed / path / query / hash / external targets never pass.
+    const badLoopback = [
+      "http://user:pass@127.0.0.1:8787",
+      "http://127.0.0.1:8787/rpc/chat",
+      "http://127.0.0.1:8787?q=1",
+      "http://127.0.0.1:8787#h",
+      "https://127.0.0.1:8787",
+      "http://127.0.0.1.evil.example:8787",
+      "http://attacker.example:8787",
+    ];
+    for (const value of badLoopback) {
+      expect(
+        resolveAgentOrigin({ NODE_ENV: "development", ALLOW_LOCAL_ORIGIN: "1", PWA_AGENT_PROXY_ORIGIN: value }),
+      ).toBe("https://agent.example");
+    }
+  });
 });
 
 describe("Agent proxy upstream origin (runtime env)", () => {

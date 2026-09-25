@@ -35,7 +35,12 @@ export default defineConfig({
     testTimeout: 10000,
     hookTimeout: 10000,
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: [
+      "src/**/*.test.{ts,tsx}",
+      "e2e/fixture-api/server.test.ts",
+      "e2e/support/failure-guard.test.ts",
+      "e2e/support/harness.test.ts",
+    ],
     coverage: {
       provider: "v8",
       reporter: ["text", "text-summary"],

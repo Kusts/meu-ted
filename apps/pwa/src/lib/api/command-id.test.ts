@@ -55,6 +55,9 @@ describe("command-id — retry preservation policy (Task 3.9)", () => {
   it.each([
     ["network TypeError (connection drop)", new TypeError("fetch failed"), true],
     ["timeout ApiError", new ApiError(408, "network.timeout", "timeout"), true],
+    ["408 with unrelated code stays retryable", new ApiError(408, "other.code", "timeout"), true],
+    ["409 with network.timeout code (definitive, never retry)", new ApiError(409, "network.timeout", "conflict"), false],
+    ["400 with network.timeout code (definitive, never retry)", new ApiError(400, "network.timeout", "bad"), false],
     ["500", new ApiError(500, "server.error", "boom"), true],
     ["502", new ApiError(502, "server.error", "boom"), true],
     ["503", new ApiError(503, "server.error", "boom"), true],
@@ -100,6 +103,14 @@ describe("command-id — retry preservation policy (Task 3.9)", () => {
       throw new ApiError(422, "validation.error", "bad input");
     });
     await expect(retryMutationWithSameCommandId(attempt)).rejects.toMatchObject({ status: 422 });
+    expect(attempt).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT auto-retry a definitive 400 carrying a network.timeout code (definitive status wins)", async () => {
+    const attempt = vi.fn(async (): Promise<string> => {
+      throw new ApiError(400, "network.timeout", "bad request with timeout code");
+    });
+    await expect(retryMutationWithSameCommandId(attempt)).rejects.toMatchObject({ status: 400 });
     expect(attempt).toHaveBeenCalledTimes(1);
   });
 

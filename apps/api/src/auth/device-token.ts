@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DEMO_HOUSEHOLD_ID } from '../read-models/demo-data.js';
 import { withTransaction } from '../db/pool.js';
-import { resolveApplicationUserId } from './resolve-user-id.js';
+import { resolveRequiredApplicationUserId } from './resolve-user-id.js';
 import type { Pool } from 'pg';
 
 export type DeviceContext = { deviceId: string; householdId: string; userId?: string | null };
@@ -295,12 +295,15 @@ export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => 
       const tok = generateDeviceToken();
       const tokenHash = hashDeviceToken(tok);
       const devId = randomUUID();
-      // device_tokens.user_id is a UUID column (V053) while a session carries
-      // the Better-Auth TEXT id. Store lineage in the application identity
-      // space: resolve via users (auth_user_id OR id::text), NULL when
-      // unresolvable — mirrors writes/postgres.ts audit lineage.
+      // Onda 1 item 1 (fail-closed device boundary): a session user id MUST
+      // resolve to the application users.id. A missing users row or a
+      // rejected SELECT throws auth.identity_unavailable (503, sanitized)
+      // BEFORE the INSERT, so no token is minted without lineage.
+      // Anonymous bootstrap (no opts.userId) stays NULL — a separate
+      // contract from authenticated registration. Audit lineage in
+      // writes/postgres.ts keeps its own nullable resolver, untouched here.
       const lineageUserId = opts?.userId
-        ? await resolveApplicationUserId(pool, opts.userId)
+        ? await resolveRequiredApplicationUserId(pool, opts.userId)
         : null;
       await pool.query(
         `INSERT INTO device_tokens (token, device_id, household_id, token_hash, name, user_id, legacy)
@@ -411,9 +414,12 @@ export const createPostgresDeviceTokenStore = (pool: Pool): DeviceTokenStore => 
       // row stores the application users.id (UUID). Resolve the session user
       // into the application space BEFORE the mismatch check and the successor
       // insert — otherwise TEXT-vs-UUID always mismatches (403) or the raw
-      // TEXT id crashes the UUID insert (22P02).
+      // TEXT id crashes the UUID insert (22P02). Fail-closed (Onda 1 item 1):
+      // with opts.userId, a missing users row or a rejected SELECT throws
+      // auth.identity_unavailable (503, sanitized) here, so the transaction
+      // rolls back with no successor INSERT and the predecessor untouched.
       const sessionAppUserId = opts?.userId
-        ? await resolveApplicationUserId(client, opts.userId)
+        ? await resolveRequiredApplicationUserId(client, opts.userId)
         : null;
       const successorUserId = resolveRotationSuccessorUserId(
         sessionAppUserId ?? undefined,

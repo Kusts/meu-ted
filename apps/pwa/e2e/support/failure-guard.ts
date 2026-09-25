@@ -34,6 +34,7 @@ export interface GuardFailureAllowance {
 export interface ConsoleError {
   type: string;
   text: string;
+  url?: string;
 }
 
 export interface ResponseFailure {
@@ -70,13 +71,38 @@ export function allowFailure(guard: GuardState, allowance: GuardFailureAllowance
   guard.allowances.push(allowance);
 }
 
-function isAllowed(guard: GuardState, type: "message" | "url" | "status", value: string): boolean {
-  return guard.allowances.some((a) => {
-    if (type === "message" && a.message !== undefined && value.includes(a.message)) return true;
-    if (type === "url" && a.url !== undefined && value.includes(a.url)) return true;
-    if (type === "status" && a.status !== undefined && value.includes(String(a.status))) return true;
-    return false;
+function isConsoleAllowed(guard: GuardState, error: ConsoleError): boolean {
+  return guard.allowances.some((allowance) => {
+    if (allowance.message === undefined || !error.text.includes(allowance.message)) return false;
+    return allowance.url === undefined || Boolean(error.url?.includes(allowance.url));
   });
+}
+
+function isPageErrorAllowed(guard: GuardState, error: Error): boolean {
+  return guard.allowances.some((allowance) =>
+    allowance.message !== undefined &&
+    allowance.url === undefined &&
+    allowance.status === undefined &&
+    error.message.includes(allowance.message),
+  );
+}
+
+function isResponseAllowed(guard: GuardState, response: ResponseFailure): boolean {
+  return guard.allowances.some((allowance) => {
+    if (allowance.url === undefined && allowance.status === undefined) return false;
+    const urlMatches = allowance.url === undefined || response.url.includes(allowance.url);
+    const statusMatches = allowance.status === undefined || response.status === allowance.status;
+    return urlMatches && statusMatches;
+  });
+}
+
+function isRequestAllowed(guard: GuardState, url: string): boolean {
+  return guard.allowances.some(
+    (allowance) =>
+      allowance.url !== undefined &&
+      allowance.status === undefined &&
+      url.includes(allowance.url),
+  );
 }
 
 // ── Event handlers (collect, never throw) ────────────────────────────────────
@@ -118,25 +144,25 @@ export function onResponse(guard: GuardState, response: { status: () => number; 
 
 export function assertNoUndeclaredFailures(guard: GuardState): void {
   for (const err of guard.consoleErrors) {
-    if (!isAllowed(guard, "message", err.text)) {
-      throw new Error(`Undeclared console error: ${err.text}`);
+    if (!isConsoleAllowed(guard, err)) {
+      throw new Error(`Undeclared console error${err.url ? ` at ${err.url}` : ""}: ${err.text}`);
     }
   }
 
   for (const err of guard.pageErrors) {
-    if (!isAllowed(guard, "message", err.message)) {
+    if (!isPageErrorAllowed(guard, err)) {
       throw new Error(`Undeclared page error: ${err.message}`);
     }
   }
 
   for (const req of guard.requestFailures) {
-    if (!isAllowed(guard, "url", req.url)) {
+    if (!isRequestAllowed(guard, req.url)) {
       throw new Error(`Undeclared request failure: ${req.url} - ${req.errorText}`);
     }
   }
 
   for (const res of guard.responseFailures) {
-    if (!isAllowed(guard, "url", res.url) && !isAllowed(guard, "status", String(res.status))) {
+    if (!isResponseAllowed(guard, res)) {
       throw new Error(`Undeclared HTTP ${res.status} response: ${res.url}`);
     }
   }
@@ -146,7 +172,7 @@ export function assertNoUndeclaredFailures(guard: GuardState): void {
 
 export function attachGuard(page: Page, guard: GuardState): void {
   page.on("console", (msg) => {
-    onConsoleMessage(guard, { type: msg.type(), text: msg.text() });
+    onConsoleMessage(guard, { type: msg.type(), text: msg.text(), url: msg.location().url });
   });
 
   page.on("pageerror", (error) => {

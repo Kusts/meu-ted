@@ -53,7 +53,6 @@ const BASELINE_ALLOWED = [
   { message: "reading 'waiting'", reason: "SW blocked" },
   { url: "/profile", reason: "fixture has no /profile" },
   { url: "/pwa-control", reason: "fixture has no /pwa-control" },
-  { url: "/auth/devices/me", reason: "intermittent cross-test token" },
 ] as const;
 
 /**
@@ -72,8 +71,21 @@ export async function authenticate(
   options: { timeout?: number } = {},
 ): Promise<void> {
   const timeout = options.timeout ?? 15000;
-  const fab = page.getByLabel("Nova transação");
-  if (await fab.isVisible().catch(() => false)) return;
+  // Authenticated-shell signal is viewport-dependent: the mobile shell shows
+  // the BottomNav FAB ("Nova transação", hidden at `lg`), while the desktop
+  // shell shows the SidebarRail CTA ("Novo lançamento", `hidden lg:flex`).
+  // Either one proves a signed-in shell; neither is weakened (both only
+  // render after AuthGate accepts the session — a rejected login still shows
+  // the "Entrar" form and neither signal, so the final wait still fails).
+  const mobileFab = page.getByLabel("Nova transação");
+  const desktopCta = page.getByRole("button", { name: "Novo lançamento" });
+  // NOTE: do NOT join these with locator.or() — both nodes stay mounted in
+  // the DOM at every viewport (one is CSS-hidden), so .or() resolves to 2
+  // elements and trips strict mode. Visibility is probed per-locator below.
+  const shellVisible = async (): Promise<boolean> =>
+    (await mobileFab.isVisible().catch(() => false)) ||
+    (await desktopCta.isVisible().catch(() => false));
+  if (await shellVisible()) return;
 
   // Real product flow (AuthGate has only "Entrar"): fill the login form,
   // submit, and the app itself calls POST /auth/sign-in/email followed by
@@ -83,16 +95,25 @@ export async function authenticate(
   const passwordInput = page.getByLabel("Senha");
   const loginBtn = page.getByRole("button", { name: "Entrar" });
 
-  if (await emailInput.isVisible({ timeout: 4000 }).catch(() => false)) {
+  const loginFormVisible = await emailInput
+    .waitFor({ state: "visible", timeout })
+    .then(() => true)
+    .catch(() => false);
+  if (loginFormVisible) {
     await emailInput.fill("test@example.com");
     await passwordInput.fill("password123");
+    await expect(loginBtn).toBeEnabled({ timeout });
     await loginBtn.click();
     await page.waitForLoadState("networkidle");
   }
 
   // After Entrar the fixture signs in and registers a device, storing the
-  // token in localStorage; wait for FAB to appear.
-  await expect(fab).toBeVisible({ timeout });
+  // token in localStorage; wait for the authenticated shell to appear in
+  // whichever viewport this project uses (FAB on mobile, SidebarRail CTA on
+  // desktop). expect.poll on the visibility probe keeps rigor (a rejected
+  // login shows neither) without tripping strict mode on the two mounted
+  // (one CSS-hidden) nodes.
+  await expect.poll(shellVisible, { timeout }).toBe(true);
 }
 
 /**
@@ -132,10 +153,24 @@ export async function expectJournal(
   method: string,
   path: string | RegExp,
   status: number,
+  timeout = 8000,
 ): Promise<void> {
+  const pathMatches = (entryPath: string): boolean => {
+    if (typeof path === "string") return entryPath === path;
+    // Strip stateful flags so repeated polling cannot alternate matches via
+    // RegExp.lastIndex when callers pass /g or /y expressions.
+    const matcher = new RegExp(path.source, path.flags.replace(/[gy]/g, ""));
+    return matcher.test(entryPath);
+  };
   await expect
-    .poll(() => getJournal(testId), { timeout: 8000 })
-    .toContainEqual(expect.objectContaining({ method, path, status }));
+    .poll(
+      async () =>
+        (await getJournal(testId)).some(
+          (entry) => entry.method === method && entry.status === status && pathMatches(entry.path),
+        ),
+      { timeout },
+    )
+    .toBe(true);
 }
 
 export type InitOptions = {
@@ -215,8 +250,28 @@ export async function prepareSpec(
 ): Promise<GuardState> {
   const guard = createGuard();
   attachGuard(page, guard);
+  // Every fresh browser context makes an anonymous cookie-session probe before
+  // login. Allow only that exact 401 at the console and HTTP layers; all other
+  // 401s remain visible to the failure guard.
+  allowFailure(guard, {
+    url: "/auth/session",
+    status: 401,
+    message: "401 (Unauthorized)",
+    reason: "expected anonymous cookie-session probe before login",
+  });
 
   await applyCspRewrite(page);
+  // Local functional PWA E2E has no Worker/Agent runtime. Keep background
+  // approval-count refreshes inside the browser fixture instead of allowing
+  // the Next proxy to choose an upstream Agent origin.
+  await page.route(
+    /\/api\/agent\/agents\/finance-chat-agent\/[^/]+\/rpc\/pending-operations\/active(?:\?.*)?$/,
+    async (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [], total: 0 }),
+    }),
+  );
   await resetFixture(testId);
   await page.clock.setFixedTime(FIXED_CLOCK);
   await page.context().setExtraHTTPHeaders({ [E2E_TEST_ID_HEADER]: testId });

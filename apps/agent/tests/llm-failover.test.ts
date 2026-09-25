@@ -84,9 +84,54 @@ describe('LLM failover (refactor item 5)', () => {
     expect(event).toMatchObject({ usedFallback: true, failoverReason: 'http_429' });
     const line = String(log.mock.calls[0]?.[0] ?? '');
     expect(line).toContain('llm.failover');
-    expect(line).toContain('intent-1');
+    // W2: raw caller id never appears — opaque per-event correlation only.
+    expect(line).not.toContain('intent-1');
+    expect(line).toMatch(/corr=corr-[0-9a-f]{16}/);
+    expect(event.intentionId).toMatch(/^corr-[0-9a-f]{16}$/);
+    expect(event.intentionId).not.toBe('intent-1');
     expect(line).not.toContain('sk-');
     expect(JSON.stringify(event)).not.toContain('sk-');
+  });
+
+  it('W2: hostile intention on primary success never leaks raw id/control', () => {
+    const hostile = 'account-secret-abc\nforged-second-line';
+    const log = vi.fn();
+    const first = logFailoverEvent(
+      { intentionId: hostile, primaryProviderId: 'opencode-zen', primaryModelId: 'zen-primary' },
+      { usedFallback: false, failoverReason: null },
+      log,
+    );
+    const second = logFailoverEvent(
+      { intentionId: hostile, primaryProviderId: 'opencode-zen', primaryModelId: 'zen-primary' },
+      { usedFallback: false, failoverReason: null },
+      log,
+    );
+    const lines = log.mock.calls.map((c) => String(c[0] ?? '')).join('\n');
+    expect(lines).not.toContain('account-secret-abc');
+    expect(lines).not.toContain('forged-second-line');
+    expect(lines).not.toContain('account-secret-abc\n');
+    expect(JSON.stringify(first)).not.toContain('account-secret-abc');
+    expect(JSON.stringify(second)).not.toContain('account-secret-abc');
+    // Independent random per event, not deterministic.
+    expect(first.intentionId).toMatch(/^corr-[0-9a-f]{16}$/);
+    expect(second.intentionId).toMatch(/^corr-[0-9a-f]{16}$/);
+    expect(first.intentionId).not.toEqual(second.intentionId);
+  });
+
+  it('FIX-AGENT-FAILOVER-LOGGER-BEST-EFFORT: throwing logger still returns safe event', () => {
+    const throwingLog = () => {
+      throw new Error('logger boom');
+    };
+    let event!: ReturnType<typeof logFailoverEvent>;
+    expect(() => {
+      event = logFailoverEvent(
+        { intentionId: 'intent-1', primaryProviderId: 'openai', primaryModelId: 'gpt-4o' },
+        { usedFallback: true, failoverReason: 'http_429' },
+        throwingLog as unknown as typeof console.info,
+      );
+    }).not.toThrow();
+    expect(event).toMatchObject({ usedFallback: true, failoverReason: 'http_429' });
+    expect(event.intentionId).toMatch(/^corr-[0-9a-f]{16}$/);
   });
 
   it('routes codex provider ids to the private broker leg', () => {

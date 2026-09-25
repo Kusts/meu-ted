@@ -62,6 +62,9 @@ describe("TedChat — pending-operations invalidation dispatch (T5.3)", () => {
 
     try {
       vi.spyOn(agentClient, "fetchAgentHistory").mockResolvedValue([]);
+      // FIX-P1 + item 4 (SPEC §16 INV-02): o cartão vivo vem da lista ativa
+      // autoritativa e o Confirm exige a presentation acionável canônica.
+      vi.spyOn(agentClient, "fetchActivePendingOperations").mockResolvedValue([]);
       vi.spyOn(agentClient, "sendAgentMessage").mockResolvedValue({
         turnId: "turn-1",
         status: "completed",
@@ -70,6 +73,19 @@ describe("TedChat — pending-operations invalidation dispatch (T5.3)", () => {
           status: "proposed",
           operation: "transactions.expense.create",
           summary: "Mercado",
+          presentation: {
+            id: "op-1",
+            status: "proposed",
+            tool: "transactions.expense.create",
+            title: "Confirmar despesa",
+            amountCents: 85000,
+            description: "Mercado",
+            date: "2026-09-14",
+            account: { id: "acc-1", label: "Nubank" },
+            category: { id: "cat-1", label: "Alimentação" },
+            expiresAt: "2026-09-14T13:00:00.000Z",
+            warnings: [],
+          },
         },
       });
       vi.spyOn(agentClient, "decidePendingOperation").mockResolvedValue({
@@ -84,7 +100,7 @@ describe("TedChat — pending-operations invalidation dispatch (T5.3)", () => {
         "registre mercado 850",
       );
       await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
-      await user.click(await screen.findByRole("button", { name: "Aprovar" }));
+      await user.click(await screen.findByRole("button", { name: "Confirmar R$ 850,00" }));
 
       await waitFor(() => {
         expect(dispatched.length).toBeGreaterThanOrEqual(1);

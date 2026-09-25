@@ -68,9 +68,8 @@ async function init(
 }
 
 async function dirtifyTxSheet(page: import("@playwright/test").Page) {
-  // Current UX: FAB opens a quick menu — pick Despesa to open the sheet.
   await page.getByLabel("Nova transação").click();
-  await page.getByRole("menuitem", { name: "Despesa" }).click();
+  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   const amount = dialog.getByPlaceholder("0,00");
@@ -262,7 +261,7 @@ test("[UI-07] write-error retry button → retry journal", async ({ page }) => {
   });
 
   await page.getByLabel("Nova transação").click();
-  await page.getByRole("menuitem", { name: "Despesa" }).click();
+  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
   const amount = sheet.getByPlaceholder("0,00");
@@ -321,7 +320,7 @@ test("[UI-08] write-error dismiss button → no retry", async ({ page }) => {
   });
 
   await page.getByLabel("Nova transação").click();
-  await page.getByRole("menuitem", { name: "Despesa" }).click();
+  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
   const sheet = page.getByRole("dialog");
   const amount = sheet.getByPlaceholder("0,00");
   await amount.click();

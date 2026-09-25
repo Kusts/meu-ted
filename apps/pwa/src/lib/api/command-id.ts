@@ -48,13 +48,21 @@ export function ensureCommandId<T extends object>(
  * Whether a failed mutation attempt may be retried with the SAME command id.
  * Retryable = unknown outcome (network drop, timeout, 5xx): replaying the
  * id is safe because the server dedupes by key. Definitive rejections
- * (any 4xx, including the 409 replay signal) and caller-initiated aborts
- * must not be retried.
+ * (any 4xx except 408, including the 409 replay signal) and caller-initiated
+ * aborts must not be retried.
+ *
+ * Status takes precedence over code: an explicit 4xx status is definitive
+ * regardless of its code (a 409/400 carrying `network.timeout` is still a
+ * definitive rejection, never a blind retry). Only a bare 408 status — or a
+ * `network.timeout` code on a response without a definitive 4xx status —
+ * signals an unknown outcome worth replaying.
  */
 export function isRetryableMutationError(err: unknown): boolean {
   if (err instanceof ApiError) {
-    if (err.status === 408 || err.code === "network.timeout") return true;
+    if (err.status === 408) return true;
+    if (err.status >= 400 && err.status <= 499) return false;
     if (err.status >= 500 && err.status <= 599) return true;
+    if (err.code === "network.timeout") return true;
     return false;
   }
   if (err instanceof DOMException && err.name === "AbortError") return false;

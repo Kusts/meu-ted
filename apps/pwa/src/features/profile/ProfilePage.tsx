@@ -10,6 +10,8 @@ import Badge from "@/components/ui/Badge";
 import NotificationsSheet from "./NotificationsSheet";
 import { useAppState } from "@/lib/state/app-state-context";
 import { useSession } from "@/lib/auth/session-context";
+import { signOut } from "@/lib/api/auth";
+import { ApiError } from "@/lib/api/client";
 import { useFormDirtySafe } from "@/lib/unsaved-changes";
 import { useTheme } from "@/lib/theme/use-theme";
 import { useEffectiveProfile } from "./hooks";
@@ -55,6 +57,8 @@ export default function ProfilePage() {
   const { saveProfile } = useAppState();
   const { expireSession } = useSession();
   const { theme, setTheme } = useTheme();
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const isAdminUser = Boolean(
     profile.isAdmin ||
@@ -84,6 +88,30 @@ export default function ProfilePage() {
   }
 
   async function handleLogout() {
+    if (loggingOut) return;
+    setLogoutError(null);
+    setLoggingOut(true);
+    try {
+      // Cookie-first: revoke the server-side session BEFORE dropping local
+      // state — clearing only the client would leave the HttpOnly cookie
+      // session alive (POST /auth/sign-out, credentials: include).
+      await signOut();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        // The server already rejected/ended the session. apiFetch dispatched
+        // UNAUTHORIZED_EVENT on this 401, so the global listener may already
+        // have run cleanup — expireSession is idempotent, complete it here.
+        await expireSession();
+        router.push("/");
+        return;
+      }
+      // Network/timeout/5xx/403: the server never confirmed revocation —
+      // preserve the local session, stay on the page, show a fixed generic
+      // message (never surface raw upstream detail to the UI).
+      setLogoutError("Não foi possível sair. Verifique a conexão e tente novamente.");
+      setLoggingOut(false);
+      return;
+    }
     await expireSession();
     router.push("/");
   }
@@ -186,10 +214,19 @@ export default function ProfilePage() {
           </div>
         </div>
 
+        {logoutError && (
+          <div
+            role="alert"
+            className="w-full rounded-[14px] border border-danger/30 bg-danger-tint px-4 py-3 text-[13px] font-semibold text-danger"
+          >
+            {logoutError}
+          </div>
+        )}
         <button
           type="button"
           onClick={handleLogout}
-          className="flex items-center justify-center gap-2 w-full rounded-[14px] border border-danger/30 bg-danger-tint px-4 py-3.5 text-[14px] font-bold text-danger transition-all hover:bg-danger-tint/80 active:scale-[0.98]"
+          disabled={loggingOut}
+          className="flex items-center justify-center gap-2 w-full rounded-[14px] border border-danger/30 bg-danger-tint px-4 py-3.5 text-[14px] font-bold text-danger transition-all hover:bg-danger-tint/80 active:scale-[0.98] disabled:opacity-50"
         >
           <LogOut size={16} />
           Sair da conta

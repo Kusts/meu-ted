@@ -78,4 +78,44 @@ describe("fetchSession probe (AUTH-04: 2xx vs 401/403 vs unreachable)", () => {
     expect(res.user).toBeNull();
     expect(res.status).toBe("unreachable");
   });
+
+  it("200 com corpo JSON null → unauthenticated (envelope ausente respondido, nunca unreachable)", async () => {
+    mockFetchOnce(new Response("null", { status: 200 }));
+    const res = await fetchSession();
+    expect(res.user).toBeNull();
+    expect(res.status).toBe("unauthenticated");
+  });
+
+  it("204 sem conteúdo → unauthenticated (apiFetch resolve undefined, nunca unreachable)", async () => {
+    mockFetchOnce(new Response(null, { status: 204 }));
+    const res = await fetchSession();
+    expect(res.user).toBeNull();
+    expect(res.status).toBe("unauthenticated");
+  });
+
+  it("FIX-SESSION-RESPONSE-CLASSIFICATION (A): 401 com corpo JSON null → unauthenticated (nunca unreachable)", async () => {
+    mockFetchOnce(new Response("null", { status: 401 }));
+    const res = await fetchSession();
+    expect(res.user).toBeNull();
+    expect(res.status).toBe("unauthenticated");
+  });
+
+  it("FIX-SESSION-RESPONSE-CLASSIFICATION (A): 403 com corpo JSON null → unauthenticated (nunca unreachable)", async () => {
+    mockFetchOnce(new Response("null", { status: 403 }));
+    const res = await fetchSession();
+    expect(res.user).toBeNull();
+    expect(res.status).toBe("unauthenticated");
+  });
+
+  it("FIX-SESSION-RESPONSE-CLASSIFICATION (B): 2xx com JSON inválido → unauthenticated (servidor respondeu sem sessão utilizável, nunca offline)", async () => {
+    mockFetchOnce(
+      new Response("not-json{{{", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const res = await fetchSession();
+    expect(res.user).toBeNull();
+    expect(res.status).toBe("unauthenticated");
+  });
 });

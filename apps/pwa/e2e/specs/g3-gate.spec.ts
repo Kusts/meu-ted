@@ -31,8 +31,7 @@ async function setScenario(testId: string, scenario: Record<string, unknown>): P
 }
 
 async function fillExpense(page: import("@playwright/test").Page, description: string): Promise<void> {
-  // Current UX: FAB opens a quick menu — pick Despesa to open the sheet.
-  await page.getByRole("menuitem", { name: "Despesa" }).click();
+  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
   const dialog = page.getByRole("dialog");
   // Amount needs sequential digit input to satisfy validation (plain fill()
   // leaves Salvar disabled — same pattern as TX typeAmount).
@@ -156,7 +155,10 @@ test("[G3-04] payment closes only after a successful response", async ({ page })
 test("[G3-05] offline snapshot is read-only", async ({ page }) => {
   const id = testId();
   const guard = await initSpec(page, id);
-  for (const pathname of ["/transactions", "/accounts", "/categories", "/payables", "/budgets", "/goals", "/dashboard/summary"]) {
+  // Keep catalog selectors available so the draft is otherwise valid; the
+  // failed transaction/payables/budget/goal reads still put the whole provider
+  // in read-only mode before Save is attempted.
+  for (const pathname of ["/transactions", "/payables", "/budgets", "/goals", "/dashboard/summary"]) {
     await setScenario(id, { method: "GET", pathname, status: 503, once: false });
     allowFailure(guard, { url: pathname, status: 503, reason: "forced offline snapshot" });
   }
@@ -164,17 +166,30 @@ test("[G3-05] offline snapshot is read-only", async ({ page }) => {
   await page.reload({ waitUntil: "networkidle" });
   await page.goto("/registros");
   await expect(page.getByTestId("stale-banner")).toBeVisible();
-  // Current UX: FAB opens a quick menu — pick Despesa to open the sheet.
   await page.getByLabel("Nova transação").click();
-  await page.getByRole("menuitem", { name: "Despesa" }).click();
+  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByPlaceholder("0,00").fill("5000");
   await dialog.getByPlaceholder("Ex: Aluguel, mercado...").fill("G3 offline");
-  const postsBefore = (await getJournal(id)).filter((entry) => entry.method === "POST").length;
+  await dialog.getByRole("button", { name: "Selecionar categoria" }).click();
+  const categoryPicker = page.getByRole("dialog", { name: "Categoria" });
+  await categoryPicker.getByRole("button", { name: "Alimentação" }).click();
+  if (await categoryPicker.isVisible()) {
+    await categoryPicker.getByRole("button", { name: "Fechar" }).click();
+  }
+  await dialog.getByRole("button", { name: "Selecionar conta ou cartão" }).click();
+  await page.getByRole("dialog").last().getByRole("button", { name: /Conta Corrente/ }).click();
+  const expenseWritesBefore = (await getJournal(id)).filter(
+    (entry) => entry.method === "POST" && entry.path === "/transactions/expense",
+  ).length;
   await dialog.getByRole("button", { name: /^Salvar$/ }).click();
   await expect(dialog).toBeVisible();
   await expect(page.getByText("Backend indisponível — modo somente leitura.")).toBeVisible();
   await expect(page.getByText("G3 offline")).toHaveCount(0);
-  expect((await getJournal(id)).filter((entry) => entry.method === "POST").length).toBe(postsBefore);
+  expect(
+    (await getJournal(id)).filter(
+      (entry) => entry.method === "POST" && entry.path === "/transactions/expense",
+    ).length,
+  ).toBe(expenseWritesBefore);
   assertNoUndeclaredFailures(guard);
 });

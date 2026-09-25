@@ -1,0 +1,1027 @@
+import type { EvidenceEnvelope } from '../evidence/evidence-envelope.js';
+import { formatCents } from '../evidence/financial-formatters.js';
+
+/**
+ * W1-TED-ACCOUNT-GROUNDING: deterministic grounding of account balances.
+ *
+ * Rules (plan item 3, Onda 1 + FIX-TED-ACCOUNT-GROUNDING-EDGE-CASES +
+ * FIX-TED-NAME-SPECIFICITY-AND-LIST-LIMIT +
+ * FIX-TED-UNMATCHED-QUALIFIER-AND-AMBIGUOUS-CAP +
+ * FIX-TED-GROUNDING-SEMANTIC-SCOPE + FIX-TED-GROUNDING-SEGMENT-SCOPING +
+ * FIX-TED-ALL-ACCOUNTS-UNKNOWN-TOTAL + FIX-TED-ALL-ACCOUNTS-EXCLUDE-CARD):
+ * - Never attribute one account's balance to another: a unique name match
+ *   selects exactly that account; a missing/duplicated name clarifies with
+ *   NO figures.
+ * - Contained names resolve by specificity: "Nubank PJ" selects only the
+ *   "Nubank PJ" account (never the shorter "Nubank" prefix), using the full
+ *   token set — including short tokens like "PJ" that the lenient matcher
+ *   ignores. A shorter name still wins when the longer one is not fully
+ *   mentioned ("Nubank" selects "Nubank", not "Nubank PJ"). When specificity
+ *   cannot narrow to a single account, the turn clarifies with NO figures.
+ *   The same rule applies to card names. Explicitly mixed conta+cartão
+ *   queries list kind-aware ONLY when they split lexically into a funds
+ *   segment and a card segment with exactly one fully-named account of the
+ *   correct kind per segment and no unmatched qualifier; no global token
+ *   union crosses segments.
+ * - Card questions resolve ONLY against `kind === 'credit_card'` evidence:
+ *   a bank homonym never answers a card question, and a generic card
+ *   question lists only cards. A card question naming a SPECIFIC card that
+ *   is absent clarifies with NO figures (never the other cards' balances);
+ *   only a genuinely generic plural question lists cards. A card question
+ *   naming a SHORTER base ("Nubank?") when the card carries a qualifier
+ *   ("Nubank PJ") clarifies with NO figures — never a prefix answer — and a
+ *   bank homonym NEVER answers a card question: only an explicitly mixed
+ *   query that splits into funds/card segments with one fully-named account
+ *   of the correct kind per segment keeps the kind-aware listing;
+ *   anything less clarifies with NO figures and no substitution.
+ * - Names composed solely of generic balance vocabulary ("Saldo",
+ *   "Cartão", "Conta") never match nominally: a generic question keeps its
+ *   generic listing instead of single-selecting the generic-named account.
+ * - Clarifications cap every name list at 20 with an explicit
+ *   "mostrando X de N" note plus a partiality warning when the read was
+ *   incomplete — never a silent omission.
+ * - Never sum heterogeneous semantics: bank/cash balances are funds,
+ *   credit_card balances are DEBT. A total request over mixed (or unknown)
+ *   kinds lists each account kind-aware, never merges, and asks for scope.
+ * - A homogeneous bank/cash total over a truncated list (>20) OMITS the
+ *   subtotal instead of contradicting the partial scope.
+ * - Invalid rows / partial reads are never presented as a complete total:
+ *   partiality is stated explicitly; long lists are capped with an explicit
+ *   "showing X of N" note instead of silent omission. Notes describe the
+ *   partial list only and never claim anything about a total that is not
+ *   presented.
+ * - Account type comes ONLY from the `kind` origin field (API/projection).
+ *   Never inferred from the name. Absent kind renders neutrally and is
+ *   excluded from any subtotal.
+ * - Card-balance questions resolve ONLY against `kind === 'credit_card'`
+ *   evidence. There is no card-accounts tool with comparable semantics, so
+ *   without such evidence the turn clarifies the limitation instead of
+ *   borrowing another account's balance.
+ */
+
+export type AccountKind = 'bank' | 'cash' | 'credit_card' | 'unknown';
+
+export type GroundedAccount = Readonly<{
+  name: string;
+  kind: AccountKind;
+  balanceCents: number;
+}>;
+
+export type AccountsEvidence = Readonly<{
+  accounts: readonly GroundedAccount[];
+  /** Rows seen but unusable (missing name/balance): the list is partial. */
+  omittedCount: number;
+  /** True when the read itself signaled incompleteness. */
+  partial: boolean;
+}>;
+
+const KNOWN_KINDS: ReadonlySet<string> = new Set(['bank', 'cash', 'credit_card']);
+
+export const normalizeKind = (value: unknown): AccountKind =>
+  typeof value === 'string' && KNOWN_KINDS.has(value) ? (value as AccountKind) : 'unknown';
+
+const ACCOUNTS_SOURCE = 'api.accounts';
+const INCOMPLETE_REF = 'accounts:incomplete';
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  !!value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+
+/**
+ * Extracts kind-carrying account balances from an evidence envelope.
+ * Returns null when the envelope carries NO accounts evidence at all
+ * (neither usable rows nor an incompleteness marker).
+ */
+export const extractAccountsEvidence = (envelope: EvidenceEnvelope): AccountsEvidence | null => {
+  const accounts: GroundedAccount[] = [];
+  let omittedCount = 0;
+  let seen = false;
+  for (const item of envelope.items) {
+    if (item.source !== ACCOUNTS_SOURCE) continue;
+    if (item.ref === INCOMPLETE_REF && item.status === 'ok') {
+      const record = asRecord(item.data);
+      const omitted = record && typeof record.omittedCount === 'number' ? Math.trunc(record.omittedCount) : 0;
+      if (Number.isFinite(omitted) && omitted > 0) omittedCount += omitted;
+      seen = true;
+      continue;
+    }
+    if (item.status !== 'ok') continue;
+    seen = true;
+    const record = asRecord(item.data);
+    if (!record || typeof record.accountName !== 'string' || typeof record.balanceCents !== 'number') {
+      omittedCount += 1;
+      continue;
+    }
+    accounts.push({
+      name: record.accountName,
+      kind: normalizeKind(record.kind),
+      balanceCents: Math.trunc(record.balanceCents),
+    });
+  }
+  if (!seen) return null;
+  return { accounts, omittedCount, partial: omittedCount > 0 };
+};
+
+const fold = (value: string): string =>
+  value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+const tokens = (value: string): string[] =>
+  fold(value)
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 1);
+
+const CARD_WORDS = new Set(['cartao', 'cartoes', 'fatura', 'faturas']);
+
+export const mentionsCard = (text: string): boolean => tokens(text).some((token) => CARD_WORDS.has(token));
+
+export const mentionsBalance = (text: string): boolean =>
+  /\b(saldo|saldos|quanto tenho|quanto eu tenho)\b/.test(fold(text).replace(/\s+/g, ' '));
+
+export const seeksAccountBalance = (text: string): boolean => mentionsBalance(text);
+
+const TOTAL_PATTERN = /\b(total|totais|soma|somando|somado|tudo junto|geral|consolidado|somatorio)\b/;
+
+export const asksForTotal = (text: string): boolean => TOTAL_PATTERN.test(fold(text).replace(/\s+/g, ' '));
+
+/**
+ * Nominal selection WITHOUT fuzzy matching: an account matches when every
+ * significant token of its name appears in the utterance. Names composed
+ * ONLY of short (2-letter) tokens such as "XP" fall back to their full
+ * token set so the exact short name stays selectable; composite names keep
+ * the lenient behavior (short tokens like "PJ" in "Nubank PJ" are ignored
+ * for matching and used only for specificity ranking). Card words
+ * ("cartão") inside an account name do not force a match on their own —
+ * they behave like any other token. Names composed SOLELY of generic
+ * balance vocabulary ("Saldo", "Cartão", "Conta") NEVER match nominally,
+ * so a generic question ("qual meu saldo?", "saldo do cartão?") keeps its
+ * generic listing instead of single-selecting the generic-named account.
+ */
+export const matchAccountsByName = (text: string, accounts: readonly GroundedAccount[]): GroundedAccount[] => {
+  const utterance = new Set(tokens(text));
+  return accounts.filter((account) => {
+    if (isGenericOnlyName(account.name)) return false;
+    const longTokens = tokens(account.name).filter((token) => token.length > 2);
+    const nameTokens = longTokens.length > 0 ? longTokens : tokens(account.name);
+    if (nameTokens.length === 0) return false;
+    return nameTokens.every((token) => utterance.has(token));
+  });
+};
+
+const MAX_LISTED_ACCOUNTS = 20;
+
+const kindLabel = (kind: AccountKind): string =>
+  kind === 'credit_card' ? 'cartão — dívida' : kind === 'bank' ? 'conta' : kind === 'cash' ? 'dinheiro' : 'conta';
+
+const renderAccountLine = (account: GroundedAccount): string => {
+  const value = formatCents(account.balanceCents);
+  if (account.kind === 'credit_card') return `- ${account.name} (${kindLabel(account.kind)}): ${value}.`;
+  if (account.kind === 'unknown') return `- ${account.name} (tipo não confirmado): ${value}.`;
+  return `- ${account.name}: ${value}.`;
+};
+
+/**
+ * Full token set of an account name, INCLUDING short (2-letter) tokens such
+ * as "PJ"/"XP" that the lenient matcher ignores. Used only for specificity
+ * ranking — never to widen matching.
+ */
+const fullNameTokens = (name: string): string[] => tokens(name);
+
+/**
+ * Narrows nominal matches by specificity WITHOUT widening or inventing
+ * matches. First keeps only the matches the utterance fully names (every
+ * full token present); when nothing is fully named, keeps everybody so the
+ * pre-existing lenient behavior applies. Then drops matches strictly less
+ * specific than another survivor (full token set strictly contained).
+ * `narrowed` is true only when a survivor was dropped — i.e. a containment
+ * ambiguity existed and was (perhaps only partially) resolved.
+ */
+const selectMostSpecific = (
+  text: string,
+  matches: readonly GroundedAccount[],
+): { candidates: GroundedAccount[]; narrowed: boolean } => {
+  if (matches.length <= 1) return { candidates: [...matches], narrowed: false };
+  const utterance = new Set(tokens(text));
+  const fullyNamed = matches.filter((account) => fullNameTokens(account.name).every((token) => utterance.has(token)));
+  if (fullyNamed.length === 0) return { candidates: [...matches], narrowed: false };
+  const tokenSets = fullyNamed.map((account) => new Set(fullNameTokens(account.name)));
+  const candidates = fullyNamed.filter((_, index) => {
+    const current = tokenSets[index] ?? new Set<string>();
+    return !tokenSets.some((other, otherIndex) => {
+      if (otherIndex === index) return false;
+      if (current.size >= other.size) return false;
+      return [...current].every((token) => other.has(token));
+    });
+  });
+  return { candidates, narrowed: candidates.length < matches.length };
+};
+
+/**
+ * Generic (non-name) words of a card-balance question: balance, card,
+ * account, total, question and filler vocabulary. Any leftover token means
+ * the utterance names something SPECIFIC (e.g. "XP"), so an empty card
+ * match must clarify instead of listing every card.
+ */
+const GENERIC_CARD_QUERY_WORDS: ReadonlySet<string> = new Set([
+  'saldo',
+  'saldos',
+  'quanto',
+  'tenho',
+  'tem',
+  'tenha',
+  'eu',
+  'meu',
+  'minha',
+  'meus',
+  'minhas',
+  'cartao',
+  'cartoes',
+  'fatura',
+  'faturas',
+  'conta',
+  'contas',
+  'total',
+  'totais',
+  'soma',
+  'somando',
+  'somado',
+  'somatorio',
+  'geral',
+  'consolidado',
+  'junto',
+  'tudo',
+  'qual',
+  'quais',
+  'como',
+  'esta',
+  'estao',
+  'mostre',
+  'mostra',
+  'mostrar',
+  'exiba',
+  'exibir',
+  'liste',
+  'listar',
+  'lista',
+  'ver',
+  'veja',
+  'diga',
+  'diz',
+  'todos',
+  'todas',
+  'todo',
+  'toda',
+  'esse',
+  'essa',
+  'este',
+  'desse',
+  'dessa',
+  'deste',
+  'desta',
+  'isso',
+  'isto',
+  'me',
+  'um',
+  'uma',
+  'uns',
+  'umas',
+  'de',
+  'da',
+  'do',
+  'das',
+  'dos',
+  'as',
+  'os',
+  'em',
+  'no',
+  'na',
+  'nos',
+  'nas',
+  'se',
+  'que',
+  'com',
+  'sem',
+  'para',
+  'por',
+  'sobre',
+  'entre',
+  'seu',
+  'sua',
+  'seus',
+  'suas',
+  'nosso',
+  'nossa',
+  'ele',
+  'ela',
+  'eles',
+  'elas',
+  'voce',
+  'voces',
+  'dele',
+  'dela',
+  'aqui',
+  'agora',
+  'hoje',
+  'ainda',
+  'mais',
+  'favor',
+  'gentileza',
+  'obrigado',
+  'obrigada',
+  'quando',
+  'onde',
+  'foi',
+  'era',
+  'sao',
+  'porque',
+]);
+
+const hasSpecificCardName = (text: string): boolean =>
+  tokens(text).some((token) => !GENERIC_CARD_QUERY_WORDS.has(token));
+
+/**
+ * Extra generic vocabulary for balance questions outside the card scope
+ * (bank/cash markers, conjunctions, polite fillers). Combined with
+ * GENERIC_CARD_QUERY_WORDS to detect an UNMATCHED qualifier: any leftover
+ * specific token means the utterance names something the selected account
+ * does not carry (e.g. "PJ" when only "Nubank" exists).
+ */
+const EXTRA_GENERIC_BALANCE_WORDS: ReadonlySet<string> = new Set([
+  'banco',
+  'bancos',
+  'agencia',
+  'agencias',
+  'cofre',
+  'carteira',
+  'poupanca',
+  'corrente',
+  'ou',
+  'mas',
+  'nem',
+  'ja',
+  'so',
+  'ao',
+  'aos',
+  'pra',
+  'pro',
+  'num',
+  'numa',
+  'ate',
+  'tambem',
+]);
+
+const isGenericBalanceWord = (token: string): boolean =>
+  GENERIC_CARD_QUERY_WORDS.has(token) || EXTRA_GENERIC_BALANCE_WORDS.has(token);
+
+/**
+ * True when every token of the account name is generic balance vocabulary.
+ * Such names ("Saldo", "Cartão", "Conta") can never single-select a turn:
+ * they carry no specific nominal content, so any match through them is
+ * spurious. Declared here (after the generic sets) and consumed by
+ * matchAccountsByName at call time.
+ */
+const isGenericOnlyName = (name: string): boolean => {
+  const nameTokens = fullNameTokens(name);
+  return nameTokens.length > 0 && nameTokens.every((token) => isGenericBalanceWord(token));
+};
+
+/** Explicit funds-side marker: "conta(s)"/"banco(s)". */
+const mentionsFundsMarker = (text: string): boolean =>
+  /\b(conta|contas|banco|bancos)\b/.test(fold(text).replace(/\s+/g, ' '));
+
+/**
+ * FIX-TED-ALL-ACCOUNTS-UNKNOWN-TOTAL + FIX-TED-ALL-ACCOUNTS-EXCLUDE-CARD:
+ * broad all-accounts language ("todas/todos/geral/tudo") scopes to every
+ * account — never to a filtered bank/cash subset — EXCEPT an explicit
+ * `sem cartão` (or exceto/excluindo + cartão) exclusion, which prevails over
+ * broad language and scopes to bank/cash. An explicit bank/cash-only total
+ * is otherwise recognized ONLY by exclusion/kind scoping
+ * ("só/somente/apenas/exceto/sem cartão",
+ * "corrente/poupança/bancária/dinheiro") WITHOUT broad language; anything
+ * ambiguous fails closed so an unknown kind is never silently excluded from
+ * a total presented as complete.
+ */
+const isBroadAllAccountsQuery = (text: string): boolean =>
+  /\b(toda|todas|todo|todos|geral|tudo)\b/.test(fold(text).replace(/\s+/g, ' '));
+
+const isExplicitFundsOnlyTotal = (text: string): boolean => {
+  const folded = fold(text).replace(/\s+/g, ' ').trim();
+  // FIX-TED-ALL-ACCOUNTS-EXCLUDE-CARD: `sem cartão` exclusion prevails over
+  // broad `todas/todos/geral/tudo` — it scopes to bank/cash, never the full
+  // pool. Any other broad query keeps the full pool.
+  if (isBroadAllAccountsQuery(text)) {
+    return (
+      isNegatedCardExclusion(text) ||
+      (/\b(exceto|excluindo)\b/.test(folded) && mentionsCard(text))
+    );
+  }
+  const hasExclusion = /\b(so|somente|apenas|exceto|excluindo|sem cartao|sem cartoes|sem fatura|sem faturas)\b/.test(folded);
+  const hasKindScope =
+    /\b(corrente|poupanca|bancari|dinheiro|especie)\b/.test(folded);
+  return hasExclusion || hasKindScope;
+};
+
+/**
+ * FIX-TED-GROUNDING-BROAD-SCOPE-EDGECASES: a `sem cartão/fatura`
+ * negation is an exclusion — never a card request. It must be recognized
+ * before `cardQuestion` so the turn never enters the card-clarification
+ * branch merely because the word cartão occurs.
+ */
+const isNegatedCardExclusion = (text: string): boolean =>
+  /\bsem\s+(cartao|cartoes|fatura|faturas)\b/.test(fold(text).replace(/\s+/g, ' '));
+
+/**
+ * FIX-TED-GROUNDING-BROAD-SCOPE-EDGECASES: unsupported checking/savings
+ * subtype. The store carries only broad `bank`/`cash` — no
+ * corrente/poupança distinction — so such a query fail-closes before any
+ * numeric answer instead of summing bank+cash as "corrente".
+ */
+const isUnsupportedSubtypeQuery = (text: string): boolean =>
+  /\b(corrente|correntes|poupanca|poupancas)\b/.test(fold(text).replace(/\s+/g, ' '));
+
+/**
+ * True when the utterance carries a specific (non-generic) token absent
+ * from the account's full name. A single lenient match with such a leftover
+ * is an UNMATCHED qualifier ("Nubank PJ?" with only "Nubank" present) and
+ * must clarify with NO figures instead of answering the shorter prefix.
+ */
+const hasUnmatchedQualifier = (text: string, account: GroundedAccount): boolean => {
+  const owned = new Set(fullNameTokens(account.name));
+  return tokens(text).some((token) => !isGenericBalanceWord(token) && !owned.has(token));
+};
+
+const isFullyNamed = (text: string, account: GroundedAccount): boolean => {
+  const utterance = new Set(tokens(text));
+  return fullNameTokens(account.name).every((token) => utterance.has(token));
+};
+
+/**
+ * FIX-TED-GROUNDING-SEGMENT-SCOPING: explicit segment scoping for mixed
+ * conta+cartão queries. A mixed listing is allowed ONLY when the utterance
+ * splits lexically into two segments (`... conta/banco <nome> ... e ...
+ * cartão <nome> ...` or the inverse). Each account is matched against ONLY
+ * its own segment AND its correct kind; no global token union crosses
+ * segments. Ambiguous splits fail closed (clarify with NO figures).
+ */
+type MixedSegments = { fundsText: string; cardText: string };
+
+const FUNDS_MARKER_RE = /\b(conta|contas|banco|bancos)\b/;
+const CARD_MARKER_RE = /\b(cartao|cartoes|fatura|faturas)\b/;
+const SEGMENT_SEPARATOR_RE = /(\s+e\s+|\s+com\s+|,|;|\+|\s+mais\s+)/;
+
+const splitMixedSegments = (text: string): MixedSegments | null => {
+  const folded = fold(text).replace(/\s+/g, ' ').trim();
+  const fundsMatch = FUNDS_MARKER_RE.exec(folded);
+  const cardMatch = CARD_MARKER_RE.exec(folded);
+  if (!fundsMatch || !cardMatch) return null;
+  const fundsIdx = fundsMatch.index;
+  const cardIdx = cardMatch.index;
+  const findLastSeparator = (haystack: string): { index: number; length: number } | null => {
+    const re = new RegExp(SEGMENT_SEPARATOR_RE.source, 'g');
+    let last: { index: number; length: number } | null = null;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(haystack)) !== null) last = { index: m.index, length: m[0].length };
+    return last;
+  };
+  if (fundsIdx < cardIdx) {
+    const between = folded.slice(fundsIdx, cardIdx);
+    const sep = findLastSeparator(between);
+    if (!sep) return null;
+    const cut = fundsIdx + sep.index;
+    const fundsText = folded.slice(0, cut).trim();
+    const cardText = folded.slice(cut + sep.length).trim();
+    if (!fundsText || !cardText) return null;
+    if (!FUNDS_MARKER_RE.test(fundsText) || CARD_MARKER_RE.test(fundsText)) return null;
+    if (!CARD_MARKER_RE.test(cardText) || FUNDS_MARKER_RE.test(cardText)) return null;
+    return { fundsText, cardText };
+  }
+  const between = folded.slice(cardIdx, fundsIdx);
+  const sep = findLastSeparator(between);
+  if (!sep) return null;
+  const cut = cardIdx + sep.index;
+  const cardText = folded.slice(0, cut).trim();
+  const fundsText = folded.slice(cut + sep.length).trim();
+  if (!fundsText || !cardText) return null;
+  if (!CARD_MARKER_RE.test(cardText) || FUNDS_MARKER_RE.test(cardText)) return null;
+  if (!FUNDS_MARKER_RE.test(fundsText) || CARD_MARKER_RE.test(fundsText)) return null;
+  return { fundsText, cardText };
+};
+
+/**
+ * Resolves exactly one account inside its own segment: nominal match, then
+ * specificity narrowing, then full-name + no-unmatched-qualifier checks.
+ * Anything else (zero, ambiguity, partial qualifier) returns null so the
+ * caller clarifies with NO figures.
+ */
+const resolveSingleInSegment = (
+  segment: string,
+  pool: readonly GroundedAccount[],
+): GroundedAccount | null => {
+  const matches = matchAccountsByName(segment, pool);
+  if (matches.length === 0) return null;
+  const { candidates } = selectMostSpecific(segment, matches);
+  if (candidates.length !== 1 || !candidates[0]) return null;
+  const single = candidates[0];
+  if (!isFullyNamed(segment, single)) return null;
+  if (hasUnmatchedQualifier(segment, single)) return null;
+  return single;
+};
+
+/**
+ * Note for an explicitly requested multi-name listing capped at 20:
+ * declares the omitted rows — never a silent truncation — plus a
+ * partiality warning when the read itself was incomplete.
+ */
+const renderMultiListNote = (
+  evidence: AccountsEvidence,
+  listedCount: number,
+  candidateCount: number,
+): string | null => {
+  const notes: string[] = [];
+  if (candidateCount > listedCount) notes.push(`mostrando ${listedCount} de ${candidateCount} (lista parcial)`);
+  if (evidence.partial) notes.push('alguns dados estavam incompletos e não entraram na lista');
+  if (notes.length === 0) return null;
+  return `Observação: ${notes.join('; ')}.`;
+};
+
+const availableNames = (accounts: readonly GroundedAccount[]): string => {
+  const listed = accounts
+    .slice(0, MAX_LISTED_ACCOUNTS)
+    .map((account) => (account.kind === 'credit_card' ? `${account.name} (cartão)` : account.name));
+  const joined = listed.join(', ');
+  if (accounts.length > listed.length) return `${joined} (mostrando ${listed.length} de ${accounts.length})`;
+  return joined;
+};
+
+const partialSuffix = (evidence: AccountsEvidence): string =>
+  evidence.partial ? ' Alguns dados estavam incompletos e não entraram na lista.' : '';
+
+const renderDuplicateClarification = (
+  matches: readonly GroundedAccount[],
+  noun: 'conta' | 'cartão',
+  evidence: AccountsEvidence,
+): string => {
+  const listed = matches.slice(0, MAX_LISTED_ACCOUNTS);
+  const options = listed.map((account) => `- ${account.name} (${kindLabel(account.kind)})`).join('\n');
+  const head =
+    noun === 'cartão'
+      ? 'Encontrei mais de um cartão com esse nome. Qual deles você quer ver?'
+      : 'Encontrei mais de uma conta com esse nome. Qual delas você quer ver?';
+  const body =
+    matches.length > listed.length
+      ? `${head}\n${options}\nMostrando ${listed.length} de ${matches.length} (lista parcial) — refine o nome para ver os demais.`
+      : `${head}\n${options}`;
+  return `${body}${partialSuffix(evidence)}`;
+};
+
+const renderPartialNote = (evidence: AccountsEvidence, listed: number, total: number): string | null => {
+  const notes: string[] = [];
+  if (total > listed) notes.push(`mostrando ${listed} de ${total} contas (lista parcial)`);
+  if (evidence.partial) notes.push('alguns dados estavam incompletos e não entraram na lista');
+  if (notes.length === 0) return null;
+  return `Observação: ${notes.join('; ')}.`;
+};
+
+/**
+ * Deterministic account-balance answer. Returns null when this module
+ * should NOT own the turn (no accounts evidence, or a non-balance query
+ * such as a pure statement/fatura request that the legacy renderers own).
+ */
+export const renderAccountsAnswer = (text: string, evidence: AccountsEvidence | null): string | null => {
+  if (!evidence) return null;
+  const { accounts } = evidence;
+  const negatedCardExclusion = isNegatedCardExclusion(text);
+  const cardQuestion = mentionsCard(text) && !negatedCardExclusion;
+  const balanceQuestion = seeksAccountBalance(text);
+  // Pure fatura/extrato questions without balance words stay with the
+  // legacy statement renderers — never a balance, never a card debt.
+  if (!balanceQuestion) return null;
+  // Unsupported corrente/poupança subtype fail-closes before ANY numeric
+  // answer: the store has only broad bank/cash with no such dimension.
+  if (isUnsupportedSubtypeQuery(text)) {
+    return (
+      `Não consigo separar o saldo de conta corrente ou poupança nesta consulta — ` +
+      `só tenho o tipo amplo (banco/dinheiro), sem distinção entre corrente e poupança, ` +
+      `por isso não apresentei nenhum total. ` +
+      `Contas disponíveis: ${availableNames(accounts)}. ` +
+      `Quer refinar o escopo?${partialSuffix(evidence)}`
+    );
+  }
+  const matched = matchAccountsByName(text, accounts);
+  const creditCards = accounts.filter((account) => account.kind === 'credit_card');
+
+  // Card-scoped resolution (FIX-TED-ACCOUNT-GROUNDING-EDGE-CASES +
+  // FIX-TED-GROUNDING-SEMANTIC-SCOPE + FIX-TED-GROUNDING-SEGMENT-SCOPING):
+  // a card question must never answer with a bank homonym's balance.
+  // Nominal selection is restricted to `credit_card` evidence. The ONLY
+  // exception is an explicitly mixed conta+cartão query that splits
+  // lexically into a funds segment and a card segment, where EACH side
+  // resolves to exactly one fully-named account of the correct kind with
+  // no unmatched qualifier — anything less clarifies with NO figures.
+  if (cardQuestion) {
+    if (mentionsFundsMarker(text)) {
+      const segments = splitMixedSegments(text);
+      if (segments) {
+        const fundsPool = accounts.filter(
+          (account) => account.kind === 'bank' || account.kind === 'cash',
+        );
+        const fundsSingle = resolveSingleInSegment(segments.fundsText, fundsPool);
+        const cardSingle = resolveSingleInSegment(segments.cardText, creditCards);
+        if (fundsSingle && cardSingle) {
+          const mixedMatched = [fundsSingle, cardSingle];
+          const listed = mixedMatched.slice(0, MAX_LISTED_ACCOUNTS);
+          const lines = listed.map(renderAccountLine).join('\n');
+          const note = renderMultiListNote(evidence, listed.length, mixedMatched.length);
+          const scopeNote = 'Valores por conta, sem somar tipos diferentes.';
+          return note ? `${lines}\n${scopeNote}\n${note}` : `${lines}\n${scopeNote}`;
+        }
+      }
+      return (
+        `Não consegui identificar qual conta ou cartão você quer ver. ` +
+        `Contas disponíveis: ${availableNames(accounts)}. ` +
+        `Qual deles você quer ver ou consulte a fatura do cartão?${partialSuffix(evidence)}`
+      );
+    }
+    {
+      if (creditCards.length === 0) {
+        if (accounts.length === 0) {
+          return 'Ainda não consigo mostrar o saldo do cartão nesta consulta. Me diga qual conta você quer ver ou consulte a fatura do cartão.';
+        }
+        return (
+          `Ainda não consigo mostrar o saldo do cartão nesta consulta — só tenho os saldos das contas. ` +
+          `Contas disponíveis: ${availableNames(accounts)}. ` +
+          `Me diga qual delas você quer ver ou consulte a fatura do cartão.${partialSuffix(evidence)}`
+        );
+      }
+      const cardMatches = matchAccountsByName(text, creditCards);
+      if (cardMatches.length > 0) {
+        const { candidates, narrowed } = selectMostSpecific(text, cardMatches);
+        if (candidates.length === 1 && candidates[0]) {
+          // Unmatched qualifier ("Nubank PJ?" with only "Nubank"): the
+          // shorter prefix must NOT answer — clarify with NO figures.
+          // Likewise a card carrying a qualifier the question does not
+          // name ("Nubank?" with only "Nubank PJ" present) never answers
+          // by prefix — clarify with NO figures.
+          if (hasUnmatchedQualifier(text, candidates[0]) || !isFullyNamed(text, candidates[0])) {
+            return (
+              `Não encontrei esse cartão. ` +
+              `Cartões disponíveis: ${availableNames(creditCards)}. ` +
+              `Me diga qual deles você quer ver ou consulte a fatura do cartão.${partialSuffix(evidence)}`
+            );
+          }
+          const single = renderAccountLine(candidates[0]);
+          const note = renderPartialNote(evidence, 1, creditCards.length);
+          return note ? `${single}\n${note}` : single;
+        }
+        const distinctCards = new Set(candidates.map((account) => fold(account.name)));
+        if (candidates.length > 1 && distinctCards.size === 1) {
+          return renderDuplicateClarification(candidates, 'cartão', evidence);
+        }
+        if (candidates.length > 1 && !narrowed) {
+          // Only an explicitly fully-named set publishes figures (capped
+          // at 20 with an explicit note). A shared-prefix ambiguity
+          // ("Nubank?" over "Nubank 01..25") clarifies with names only.
+          if (candidates.every((candidate) => isFullyNamed(text, candidate))) {
+            const listed = candidates.slice(0, MAX_LISTED_ACCOUNTS);
+            const lines = listed.map(renderAccountLine).join('\n');
+            const note = renderMultiListNote(evidence, listed.length, candidates.length);
+            const scopeNote = 'Valores por cartão, sem somar.';
+            return note ? `${lines}\n${scopeNote}\n${note}` : `${lines}\n${scopeNote}`;
+          }
+          return (
+            `Não consegui identificar qual cartão você quer ver. ` +
+            `Cartões disponíveis: ${availableNames(candidates)}. ` +
+            `Me diga qual deles você quer ver ou consulte a fatura do cartão.${partialSuffix(evidence)}`
+          );
+        }
+        // Containment ambiguity that specificity could not narrow to a
+        // single card: clarify with NO figures.
+        return (
+          `Não consegui identificar qual cartão você quer ver. ` +
+          `Cartões disponíveis: ${availableNames(creditCards)}. ` +
+          `Me diga qual deles você quer ver ou consulte a fatura do cartão.${partialSuffix(evidence)}`
+        );
+      }
+      // No card matched: a question naming a SPECIFIC card clarifies with NO
+      // figures; only a genuinely generic plural question lists cards.
+      if (hasSpecificCardName(text)) {
+        return (
+          `Não encontrei esse cartão. ` +
+          `Cartões disponíveis: ${availableNames(creditCards)}. ` +
+          `Me diga qual deles você quer ver ou consulte a fatura do cartão.${partialSuffix(evidence)}`
+        );
+      }
+      const listedCards = creditCards.slice(0, MAX_LISTED_ACCOUNTS);
+      const lines = listedCards.map(renderAccountLine).join('\n');
+      const note = renderPartialNote(evidence, listedCards.length, creditCards.length);
+      if (asksForTotal(text)) {
+        const body = `Saldos por cartão:\n${lines}\nValores por cartão, sem somar.`;
+        return note ? `${body}\n${note}` : body;
+      }
+      const body = listedCards.length === 1 ? lines : `Saldos por cartão:\n${lines}`;
+      return note ? `${body}\n${note}` : body;
+    }
+  }
+
+  // Named selection (non-card turns) with explicit type scoping (a): an
+  // explicit `conta/banco` query resolves ONLY against bank/cash evidence.
+  // A homonym card never answers a funds question; a missing funds name
+  // clarifies with NO figures. A `sem cartão` negation counts as funds
+  // scoping (exclusion, not a card request).
+  const fundsScoped = mentionsFundsMarker(text) || negatedCardExclusion;
+  const fundsPool = accounts.filter((account) => account.kind === 'bank' || account.kind === 'cash');
+  const scopedMatched = fundsScoped ? matchAccountsByName(text, fundsPool) : matched;
+  const scopedPoolSize = fundsScoped ? fundsPool.length : accounts.length;
+  if (scopedMatched.length === 1 && scopedMatched[0]) {
+    // Singular funds selection requires the full name (like cards): a
+    // shorter base ("Nubank?" with only "Nubank PJ" present) clarifies with
+    // NO figures — never a prefix answer.
+    if (hasUnmatchedQualifier(text, scopedMatched[0]) || !isFullyNamed(text, scopedMatched[0])) {
+      return (
+        `Não encontrei essa conta. ` +
+        `Contas disponíveis: ${availableNames(accounts)}. ` +
+        `Qual delas você quer ver?${partialSuffix(evidence)}`
+      );
+    }
+    const single = renderAccountLine(scopedMatched[0]);
+    const note = renderPartialNote(evidence, 1, scopedPoolSize);
+    return note ? `${single}\n${note}` : single;
+  }
+  if (scopedMatched.length > 1) {
+    const { candidates, narrowed } = selectMostSpecific(text, scopedMatched);
+    if (candidates.length === 1 && candidates[0]) {
+      if (hasUnmatchedQualifier(text, candidates[0]) || !isFullyNamed(text, candidates[0])) {
+        return (
+          `Não encontrei essa conta. ` +
+          `Contas disponíveis: ${availableNames(accounts)}. ` +
+          `Qual delas você quer ver?${partialSuffix(evidence)}`
+        );
+      }
+      const single = renderAccountLine(candidates[0]);
+      const note = renderPartialNote(evidence, 1, scopedPoolSize);
+      return note ? `${single}\n${note}` : single;
+    }
+    const distinctNames = new Set(candidates.map((account) => fold(account.name)));
+    if (candidates.length > 1 && distinctNames.size === 1) {
+      return renderDuplicateClarification(candidates, 'conta', evidence);
+    }
+    if (candidates.length > 1 && !narrowed) {
+      // Explicitly mentioned distinct accounts (e.g. "saldo da conta
+      // Itaú e do cartão Nubank"): list them kind-aware capped at 20,
+      // never a merged total — even when together they cover every known
+      // account. A shared-prefix ambiguity clarifies with names only.
+      if (candidates.every((candidate) => isFullyNamed(text, candidate))) {
+        const listed = candidates.slice(0, MAX_LISTED_ACCOUNTS);
+        const lines = listed.map(renderAccountLine).join('\n');
+        const note = renderMultiListNote(evidence, listed.length, candidates.length);
+        const scopeNote = 'Valores por conta, sem somar tipos diferentes.';
+        return note ? `${lines}\n${scopeNote}\n${note}` : `${lines}\n${scopeNote}`;
+      }
+      return (
+        `Não consegui identificar qual conta você quer ver. ` +
+        `Contas disponíveis: ${availableNames(candidates)}. ` +
+        `Qual delas você quer ver?${partialSuffix(evidence)}`
+      );
+    }
+    // Containment ambiguity that specificity could not narrow to a single
+    // account: clarify with NO figures.
+    return (
+      `Não consegui identificar qual conta você quer ver. ` +
+      `Contas disponíveis: ${availableNames(accounts)}. ` +
+      `Qual delas você quer ver?${partialSuffix(evidence)}`
+    );
+  }
+
+  // A singular "conta" marker with no matching name is a MISSING name
+  // (not a generic listing): clarify with NO figures.
+  const foldedText = fold(text);
+  const seeksSpecificAccount = /\bconta\b/.test(foldedText) && !/\bcontas\b/.test(foldedText);
+  if (scopedMatched.length === 0 && seeksSpecificAccount && !cardQuestion) {
+    return (
+      `Não encontrei essa conta. ` +
+      `Contas disponíveis: ${availableNames(accounts)}. ` +
+      `Qual delas você quer ver?${partialSuffix(evidence)}`
+    );
+  }
+
+  // An unmatched specific qualifier WITHOUT the word "conta" (e.g. "saldo
+  // do banco XP?" with only Itaú/Nubank present) is still a MISSING name —
+  // never a generic listing of other accounts' figures. Any leftover
+  // non-generic token means the utterance names something no account
+  // carries, so clarify with NO figures. Genuinely generic questions carry
+  // only generic vocabulary and keep the listing below.
+  if (scopedMatched.length === 0 && !cardQuestion) {
+    const hasSpecificQualifier = tokens(text).some((token) => !isGenericBalanceWord(token));
+    if (hasSpecificQualifier) {
+      return (
+        `Não encontrei essa conta. ` +
+        `Contas disponíveis: ${availableNames(accounts)}. ` +
+        `Qual delas você quer ver?${partialSuffix(evidence)}`
+      );
+    }
+  }
+
+  if (accounts.length === 0) {
+    if (scopedMatched.length === 0 && (cardQuestion || balanceQuestion)) {
+      return 'Não encontrei contas para essa consulta. Me diga qual conta você quer ver.';
+    }
+    return null;
+  }
+
+  // A funds-scoped generic question with no funds evidence clarifies instead
+  // of borrowing card balances — EXCEPT a total over unconfirmed kinds
+  // (FIX-TED-ALL-ACCOUNTS-UNKNOWN-TOTAL): a broad or ambiguous all-accounts
+  // total must withhold with an explicit unconfirmed-type explanation and a
+  // full grounded listing, never a names-only clarification.
+  const hasUnknownForScope = accounts.some((account) => account.kind === 'unknown');
+  if (fundsScoped && fundsPool.length === 0 && !(asksForTotal(text) && hasUnknownForScope)) {
+    return (
+      `Não encontrei essa conta. ` +
+      `Contas disponíveis: ${availableNames(accounts)}. ` +
+      `Qual delas você quer ver?${partialSuffix(evidence)}`
+    );
+  }
+
+  // Generic or scoped listing. A funds-scoped listing shows ONLY the
+  // bank/cash pool with pool-appropriate counts; a truly generic listing
+  // keeps the full accounts pool. Broad `todas/todos/geral/tudo` wins over
+  // the funds filter and always uses the full pool — EXCEPT an explicit
+  // `sem cartão` card exclusion (FIX-TED-ALL-ACCOUNTS-EXCLUDE-CARD), which
+  // prevails over broad language and keeps the scoped bank/cash pool. An
+  // ambiguous funds-scoped listing that would silently drop unknown rows
+  // uses the full pool; an explicitly scoped listing keeps the scoped pool
+  // but must state the omission explicitly.
+  const broadAll = isBroadAllAccountsQuery(text);
+  const explicitFunds = isExplicitFundsOnlyTotal(text);
+  const hasUnknownOverallEarly = accounts.some((account) => account.kind === 'unknown');
+  const useFullPoolForListing =
+    (broadAll && !explicitFunds) || (fundsScoped && hasUnknownOverallEarly && !explicitFunds);
+  const scopedAccounts = useFullPoolForListing
+    ? [...accounts]
+    : fundsScoped
+      ? fundsPool
+      : accounts;
+  const total = asksForTotal(text);
+  const listed = scopedAccounts.slice(0, MAX_LISTED_ACCOUNTS);
+  const lines = listed.map(renderAccountLine).join('\n');
+  const baseNote = renderPartialNote(evidence, listed.length, scopedAccounts.length);
+  const omissionNote =
+    !useFullPoolForListing && fundsScoped && hasUnknownOverallEarly && explicitFunds
+      ? 'O tipo de outra conta não foi confirmado e não entrou neste escopo.'
+      : null;
+  const note = [baseNote, omissionNote].filter((part): part is string => part !== null).join('\n') || null;
+  const kinds = new Set(scopedAccounts.map((account) => account.kind));
+  const homogeneousFunds =
+    kinds.size > 0 && [...kinds].every((kind) => kind === 'bank' || kind === 'cash') && !evidence.partial;
+
+  if (total) {
+    // FIX-TED-ALL-ACCOUNTS-UNKNOWN-TOTAL: a funds-scoped ("conta/contas")
+    // total silently drops unknown rows from `scopedAccounts`, so a broad or
+    // ambiguous total would present a partial bank/cash sum as the complete
+    // all-accounts total. Fail closed: withhold every subtotal, list the full
+    // grounded accounts, and state the unconfirmed type. Only an explicitly
+    // bank/cash-scoped request keeps a NAMED scoped subtotal that declares
+    // the exclusion instead of claiming completeness.
+    const hasUnknownOverall = hasUnknownOverallEarly;
+    const hasCardOverall = accounts.some((account) => account.kind === 'credit_card');
+    // Negated `sem cartão` with any unknown kind: the unknown could itself
+    // be a card, so never sum a partial scoped subset as complete.
+    if (negatedCardExclusion && hasUnknownOverall) {
+      const body =
+        `Saldos por conta:\n${lines}\n` +
+        `Não somei os valores porque o tipo de outra conta não foi confirmado e ela pode ser cartão — ` +
+        `a exclusão de cartão não pode ser garantida. ` +
+        `Quer refinar o escopo ou informar o tipo pendente?`;
+      return note ? `${body}\n${note}` : body;
+    }
+    if (hasUnknownOverall && (broadAll || (fundsScoped && !explicitFunds))) {
+      const fullListed = accounts.slice(0, MAX_LISTED_ACCOUNTS);
+      const fullLines = fullListed.map(renderAccountLine).join('\n');
+      const fullNote = renderPartialNote(evidence, fullListed.length, accounts.length);
+      if (hasCardOverall) {
+        const body =
+          `Saldos por conta:\n${fullLines}\n` +
+          `Não somei os valores porque o tipo de alguma conta não foi confirmado. ` +
+          `Quer refinar o escopo ou informar o tipo pendente?`;
+        return fullNote ? `${body}\n${fullNote}` : body;
+      }
+      const body =
+        `Saldos por conta:\n${fullLines}\n` +
+        `Não somei os valores porque o tipo de alguma conta não foi confirmado e o total não foi apresentado. ` +
+        `Quer o total só das contas ou refinar o escopo?`;
+      return fullNote ? `${body}\n${fullNote}` : body;
+    }
+    if (hasUnknownOverall && fundsScoped && explicitFunds && homogeneousFunds) {
+      if (scopedAccounts.length > MAX_LISTED_ACCOUNTS) {
+        const body =
+          `Saldos por conta:\n${lines}\n` +
+          `Total omitido porque a lista é parcial (mostrando ${listed.length} de ${scopedAccounts.length}). ` +
+          `O tipo de outra conta não foi confirmado e não entrou neste escopo. ` +
+          `Quer refinar o escopo?`;
+        return note ? `${body}\n${note}` : body;
+      }
+      const subtotal = scopedAccounts.reduce((sum, account) => sum + account.balanceCents, 0);
+      const body =
+        `Saldos por conta:\n${lines}\n` +
+        `Total só das contas (banco/dinheiro): ${formatCents(subtotal)}. ` +
+        `O tipo de outra conta não foi confirmado e não entrou neste total.`;
+      return note ? `${body}\n${note}` : body;
+    }
+    // Explicitly scoped homogeneous total (e.g. `sem cartão`, `só das
+    // contas`): declare the scope instead of claiming generic completeness,
+    // even when nothing unconfirmed was omitted.
+    if (explicitFunds && fundsScoped && homogeneousFunds) {
+      if (scopedAccounts.length > MAX_LISTED_ACCOUNTS) {
+        const body =
+          `Saldos por conta:\n${lines}\n` +
+          `Total omitido porque a lista é parcial (mostrando ${listed.length} de ${scopedAccounts.length}). ` +
+          `Quer o total só das contas ou refinar o escopo?`;
+        return note ? `${body}\n${note}` : body;
+      }
+      const subtotal = scopedAccounts.reduce((sum, account) => sum + account.balanceCents, 0);
+      const exclusionNote = hasCardOverall
+        ? `Cartões ficaram fora deste escopo (sem cartão). `
+        : `Excluindo cartões do escopo. `;
+      const body =
+        `Saldos por conta:\n${lines}\n` +
+        `Total só das contas (banco/dinheiro): ${formatCents(subtotal)}. ` +
+        `${exclusionNote}Quer refinar o escopo?`;
+      return note ? `${body}\n${note}` : body;
+    }
+    if (homogeneousFunds) {
+      // Truncated homogeneous list: omit the subtotal instead of pairing a
+      // whole-scope sum with a partial list (contradictory scope).
+      if (scopedAccounts.length > MAX_LISTED_ACCOUNTS) {
+        const body =
+          `Saldos por conta:\n${lines}\n` +
+          `Total omitido porque a lista é parcial (mostrando ${listed.length} de ${scopedAccounts.length}). ` +
+          `Quer o total de todas as ${scopedAccounts.length} contas ou refinar o escopo?`;
+        return note ? `${body}\n${note}` : body;
+      }
+      const subtotal = scopedAccounts.reduce((sum, account) => sum + account.balanceCents, 0);
+      const body =
+        `Saldos por conta:\n${lines}\n` + `Total disponível em contas: ${formatCents(subtotal)}.`;
+      return note ? `${body}\n${note}` : body;
+    }
+    // Mixed, unknown, or partial kinds: per-account figures only, explicit
+    // non-summation, and a scope question — never a merged total. Card debt
+    // is mentioned ONLY when `credit_card` evidence exists; unknown kinds
+    // report the unconfirmed type; partial reads report the incomplete read
+    // without alleging a missing card. FIX-TED-CARD-ONLY-TOTAL-MESSAGE: the
+    // "conta e dívida" wording requires confirmed bank/cash AND a confirmed
+    // card; card-only lists per-card with no sum and no conta claim, and
+    // card+unknown reports the unconfirmed type without alleging funds.
+    if (evidence.partial) {
+      const body =
+        `Saldos por conta:\n${lines}\n` +
+        `Não somei os valores porque a leitura está parcial/incompleta. ` +
+        `Quer refinar o escopo ou tentar de novo?`;
+      return note ? `${body}\n${note}` : body;
+    }
+    const hasFunds = scopedAccounts.some((account) => account.kind === 'bank' || account.kind === 'cash');
+    const hasCard = scopedAccounts.some((account) => account.kind === 'credit_card');
+    if (!hasFunds && hasCard && !kinds.has('unknown')) {
+      const cardLines = listed.map(renderAccountLine).join('\n');
+      const body =
+        `Saldos por cartão:\n${cardLines}\n` +
+        `Valores por cartão, sem somar. A soma financeira total não é feita com dívida de cartão e está fora do escopo disponível. ` +
+        `Quer ver outro cartão ou refinar o escopo?`;
+      return note ? `${body}\n${note}` : body;
+    }
+    if (kinds.has('unknown')) {
+      if (hasCard) {
+        const body =
+          `Saldos por conta:\n${lines}\n` +
+          `Não somei os valores porque o tipo de alguma conta não foi confirmado. ` +
+          `Quer refinar o escopo ou informar o tipo pendente?`;
+        return note ? `${body}\n${note}` : body;
+      }
+      const body =
+        `Saldos por conta:\n${lines}\n` +
+        `Não somei os valores porque o tipo de alguma conta não foi confirmado. ` +
+        `Quer o total só das contas ou refinar o escopo?`;
+      return note ? `${body}\n${note}` : body;
+    }
+    if (hasFunds && hasCard) {
+      const body =
+        `Saldos por conta:\n${lines}\n` +
+        `São tipos diferentes (conta e dívida no cartão), por isso não somei os valores. ` +
+        `Quer o total só das contas ou a dívida do cartão?`;
+      return note ? `${body}\n${note}` : body;
+    }
+    const fallbackBody =
+      `Saldos por conta:\n${lines}\n` +
+      `Não somei os valores para este escopo. ` +
+      `Quer refinar o escopo?`;
+    return note ? `${fallbackBody}\n${note}` : fallbackBody;
+  }
+
+  // Non-total listing that kept the full pool because of unconfirmed kinds:
+  // state the unconfirmed type explicitly instead of a silent subset.
+  if (!total && hasUnknownOverallEarly && useFullPoolForListing) {
+    const fullBody = scopedAccounts.length === 1 ? lines : `Saldos por conta:\n${lines}`;
+    const explain = `Observação: o tipo de alguma conta não foi confirmado.`;
+    return note ? `${fullBody}\n${note}\n${explain}` : `${fullBody}\n${explain}`;
+  }
+
+  const body = scopedAccounts.length === 1 ? lines : `Saldos por conta:\n${lines}`;
+  return note ? `${body}\n${note}` : body;
+};

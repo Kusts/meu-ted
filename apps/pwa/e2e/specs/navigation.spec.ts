@@ -39,22 +39,24 @@ function tid(prefix: string): string {
  * would leave these tests green while detecting less.
  */
 async function setup(page: import("@playwright/test").Page, id: string) {
-  return prepareSpec(page, id, {
+  const guard = await prepareSpec(page, id, {
     baselineAllows: false,
     allow: [{ message: "reading 'waiting'", reason: "SW blocked by functional project" }],
   });
+  return guard;
 }
 
 /** Assert the fixture journal has no unexpected write entries (exclude auth bootstrap). */
 async function assertNoUnexpectedWrites(testId: string): Promise<void> {
   const journal = await getJournal(testId);
-  // Email sign-in + device registration are required bootstrap for every
-  // authenticated spec (AuthGate always runs sign-in first) — exclude both.
+  // Email sign-in, device registration, and the scoped Agent-token mint are
+  // required session-first bootstrap — exclude them from feature writes.
   const writes = journal.filter(
     (e) =>
       e.method !== "GET" &&
       e.path !== "/auth/devices/register" &&
-      e.path !== "/auth/sign-in/email",
+      e.path !== "/auth/sign-in/email" &&
+      e.path !== "/auth/agent-token",
   );
   expect(writes).toHaveLength(0);
 }
@@ -195,6 +197,10 @@ test("[REDIRECT-04] legacy /pending lands on /compromissos?aba=pendencias", asyn
 
 test("[NAV-01] BottomNav Início click navigates to /", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
+  // BottomNav renders only below the `lg` breakpoint (desktop exposes the
+  // same destinations via SidebarRail) — like NAV-05..08, pin a mobile
+  // viewport so the BottomNav buttons under test are actually mounted.
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/registros"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Início" }).click({ timeout: 5000 });
@@ -204,6 +210,7 @@ test("[NAV-01] BottomNav Início click navigates to /", async ({ page }) => {
 
 test("[NAV-02] BottomNav Extrato click navigates to /registros", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Extrato" }).click({ timeout: 5000 });
@@ -213,6 +220,7 @@ test("[NAV-02] BottomNav Extrato click navigates to /registros", async ({ page }
 
 test("[NAV-03] BottomNav Compromissos click navigates to /compromissos", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Compromissos" }).click({ timeout: 5000 });
@@ -220,26 +228,29 @@ test("[NAV-03] BottomNav Compromissos click navigates to /compromissos", async (
   assertNoUndeclaredFailures(guard);
 });
 
-test("[NAV-04] BottomNav Hub click navigates to /hub", async ({ page }) => {
+test("[NAV-04] BottomNav Mais click navigates to /hub", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 
-  await page.getByRole("button", { name: "Hub" }).click({ timeout: 5000 });
+  await page.getByRole("button", { name: "Mais" }).click({ timeout: 5000 });
   await expect(page).toHaveURL(/\/hub$/);
   assertNoUndeclaredFailures(guard);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NAV-05..08: FAB quick menu
+// NAV-05..08: FAB quick-action group
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("[NAV-05] FAB opens the quick menu with 4 actions", async ({ page }) => {
+test("[NAV-05] FAB opens the quick-action group with 4 actions", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Nova transação" }).click({ timeout: 5000 });
-  await expect(page.getByRole("menu", { name: "Novo lançamento" })).toBeVisible({ timeout: 5000 });
+  const actions = page.getByRole("group", { name: "Novo lançamento" });
+  await expect(actions).toBeVisible({ timeout: 5000 });
+  await expect(actions.getByRole("button")).toHaveCount(4);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -249,19 +260,22 @@ test("[NAV-06] quick menu Despesa opens the preselected expense sheet", async ({
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Nova transação" }).click({ timeout: 5000 });
-  await page.getByRole("menuitem", { name: "Despesa" }).click({ timeout: 5000 });
+  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click({ timeout: 5000 });
   await expect(page.getByText("Nova despesa")).toBeVisible({ timeout: 5000 });
   assertNoUndeclaredFailures(guard);
 });
 
-test("[NAV-07] quick menu Ler Comprovante navigates to /capture", async ({ page }) => {
+test("[NAV-07] quick action Ler Comprovante opens the capture expense sheet", async ({ page }) => {
   const id = tid("nav"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Nova transação" }).click({ timeout: 5000 });
-  await page.getByRole("menuitem", { name: "Ler Comprovante" }).click({ timeout: 5000 });
-  await expect(page).toHaveURL(/\/capture/);
+  await page.getByRole("group", { name: "Novo lançamento" }).getByRole("button", { name: "Ler Comprovante", exact: true }).click({ timeout: 5000 });
+  // /capture is a bridge: it opens the prefilled transaction sheet then
+  // replaces the URL back to the canonical home route.
+  await expect(page.getByRole("heading", { name: "Nova despesa" })).toBeVisible({ timeout: 5000 });
+  await expect(page).toHaveURL(/\/$/);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -271,7 +285,7 @@ test("[NAV-08] quick menu Transferência opens the preselected transfer sheet", 
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Nova transação" }).click({ timeout: 5000 });
-  await page.getByRole("menuitem", { name: "Transferência" }).click({ timeout: 5000 });
+  await page.getByRole("group", { name: "Novo lançamento" }).getByRole("button", { name: "Transferência", exact: true }).click({ timeout: 5000 });
   await expect(page.getByText("Nova transferência")).toBeVisible({ timeout: 5000 });
   assertNoUndeclaredFailures(guard);
 });
@@ -285,7 +299,7 @@ async function navigateFromHub(
   label: string,
   expectedPath: RegExp,
 ): Promise<void> {
-  await page.getByRole("button", { name: "Hub" }).click({ timeout: 5000 });
+  await page.getByRole("button", { name: "Mais" }).click({ timeout: 5000 });
   await expect(page).toHaveURL(/\/hub$/);
   await page.getByRole("link", { name: new RegExp(label) }).click({ timeout: 5000 });
   await expect(page).toHaveURL(expectedPath);
@@ -295,7 +309,7 @@ test("[NAV-09] Hub Patrimônio navigates to /hub/patrimonio", async ({ page }) =
   const id = tid("hub"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
-  await navigateFromHub(page, "Patrimônio", /\/hub\/patrimonio$/);
+  await navigateFromHub(page, "Contas e Cartões", /\/hub\/patrimonio$/);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -303,7 +317,7 @@ test("[NAV-10] Hub Planejamento navigates to /hub/planejamento", async ({ page }
   const id = tid("hub"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
-  await navigateFromHub(page, "Planejamento", /\/hub\/planejamento$/);
+  await navigateFromHub(page, "Metas e Orçamento", /\/hub\/planejamento$/);
   assertNoUndeclaredFailures(guard);
 });
 
@@ -327,16 +341,16 @@ test("[NAV-12] Hub Configurações navigates to /hub/configuracoes", async ({ pa
 // NAV-13: Escape closes the quick menu, route preserved
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("[NAV-13] Escape closes the FAB quick menu, route preserved", async ({ page }) => {
+test("[NAV-13] Escape closes the FAB quick-action group, route preserved", async ({ page }) => {
   const id = tid("nav13"); const guard = await setup(page, id);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/"); await registerDevice(page);
 
   await page.getByRole("button", { name: "Nova transação" }).click({ timeout: 5000 });
-  await expect(page.getByRole("menu")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole("group", { name: "Novo lançamento" })).toBeVisible({ timeout: 5000 });
 
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("menu")).toBeHidden();
+  await expect(page.getByRole("group", { name: "Novo lançamento" })).toBeHidden();
   await expect(page).toHaveURL(/\/$/);
   assertNoUndeclaredFailures(guard);
 });

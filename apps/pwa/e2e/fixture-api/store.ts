@@ -138,11 +138,46 @@ export interface ScenarioRule {
   used?: boolean;
 }
 
+/**
+ * One scripted Agent chat reply (TED pending-ops E2E). Served verbatim in
+ * FIFO order; when the queue is empty the fixture answers a deterministic
+ * default turn. Loopback only — never an LLM, never external network.
+ */
+export interface AgentStubChatResponse {
+  status: number;
+  body: Record<string, unknown>;
+}
+
+/**
+ * Deterministic Agent-stub script, testId-scoped. Programmed via
+ * POST /__e2e/agent-script; consumed by the /agents/finance-chat-agent/*
+ * fixture handlers. Reset clears it alongside journal and scenarios.
+ */
+export interface AgentStubScript {
+  chatQueue: AgentStubChatResponse[];
+  decisions: Record<string, AgentStubChatResponse>;
+  activeOps: Array<Record<string, unknown>>;
+}
+
 export interface TestStore {
   seed: SeedData;
   journal: JournalEntry[];
   scenarios: ScenarioRule[];
   nextId: number;
+  /**
+   * Better Auth-modeled cookie session, testId-scoped: each sign-in mints a
+   * distinct unpredictable token (POST /auth/sign-in/email), and only that
+   * token authenticates this testId's session until POST /auth/sign-out
+   * revokes it (null = no active session). A presented cookie is compared
+   * against this token — never against a shared static value.
+   */
+  sessionToken: string | null;
+  /**
+   * Deterministic Agent stub (TED pending-ops E2E): scripted chat replies,
+   * scripted decision outcomes and the active-operations list. Isolated per
+   * testId like journal and scenarios.
+   */
+  agentStub: AgentStubScript;
 }
 
 const FIXED_CLOCK = new Date("2026-07-17T12:00:00.000Z");
@@ -165,6 +200,8 @@ export class StoreManager {
       journal: [],
       scenarios: [],
       nextId: 1000,
+      sessionToken: null,
+      agentStub: { chatQueue: [], decisions: {}, activeOps: [] },
     };
     this.stores.set(testId, store);
     return store;

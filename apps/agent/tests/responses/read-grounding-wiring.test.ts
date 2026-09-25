@@ -27,8 +27,8 @@ const readPlan = () => ({
 const balanceEnvelope: EvidenceEnvelope = {
   version: '1',
   items: [{
-    ref: 'balance',
-    source: 'api.balance',
+    ref: 'account:acc-1',
+    source: 'api.accounts',
     retrievedAt: new Date().toISOString(),
     status: 'ok',
     data: { balanceCents: 12345, accountName: 'Conta principal' },
@@ -96,7 +96,7 @@ describe('AGENT-005 read-path grounding wiring', () => {
       correctionProvider,
       events: (type) => events.push(type),
     });
-    const result = await orchestrator.runTurn(normalizeRestTurn({ text: 'saldo?', intentionId: 'intent-retry' }, identity));
+    const result = await orchestrator.runTurn(normalizeRestTurn({ text: 'resuma', intentionId: 'intent-retry' }, identity));
     expect(correctionProvider).toHaveBeenCalledTimes(1);
     expect(result.response?.text).toMatch(/Não foi possível consultar/);
     expect(result.response?.text).not.toMatch(/999,99|777,77/);

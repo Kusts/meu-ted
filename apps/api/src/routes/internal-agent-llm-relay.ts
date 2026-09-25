@@ -94,11 +94,56 @@ export const createRelayModelResolver = (deps: {
   };
 };
 
+/**
+ * FIX-API-RELAY-MONOTONIC-AND-CANCEL (item6): monotonic clock for the relay
+ * transport deadline. Production default is `performance.now()` (monotonic,
+ * immune to wall-clock jumps); tests may inject a fake via `monotonicNow`.
+ * `now` stays wall-clock for the model-allowlist cache TTL (absolute cache
+ * timestamps, not a deadline). Deadline rechecks MUST use this clock only —
+ * a `Date.now` jump backward must never revive a late body.
+ */
+const defaultRelayMonotonicNow = (): number => {
+  try {
+    const perf = (globalThis as { performance?: { now?: () => number } }).performance;
+    if (perf && typeof perf.now === 'function') return perf.now();
+  } catch {
+    // Fall through to the wall clock below.
+  }
+  return Date.now();
+};
+
+/**
+ * Best-effort upstream body release. Never awaited by the error path (the
+ * timeout rejection must not wait for provider-stream teardown) and never
+ * throws: a locked/consumed/mocked stream is fine to ignore. A returned
+ * promise gets a swallowed catch so a rejecting `cancel()` cannot surface
+ * as an unhandled rejection.
+ */
+const cancelUpstreamBody = (res: unknown): void => {
+  try {
+    const body = (res as Response | null | undefined)?.body as
+      | { cancel?: unknown }
+      | null
+      | undefined;
+    if (body && typeof body.cancel === 'function') {
+      const out = (body.cancel as () => unknown).call(body) as
+        | { catch?: unknown }
+        | undefined;
+      if (out && typeof (out as { catch?: unknown }).catch === 'function') {
+        (out as Promise<unknown>).catch(() => {});
+      }
+    }
+  } catch {
+    // Best effort only.
+  }
+};
 export const registerAgentLlmRelayRoutes = (
   app: FastifyInstance,
   deps: {
     adminToken: string;
     zenApiKey?: string;
+    /** FIX-API-OPENCODE-GO-RELAY-KEY: distinct credential for the opencode-go provider (alias OPENCODE_GO_API_KEY). */
+    opencodeGoApiKey?: string;
     /** H-02: real OpenAI parity — relay executes openai-api upstream instead of only allowlisting it. */
     openaiApiKey?: string;
     /** OpenRouter parity — relay executes openrouter upstream. */
@@ -106,6 +151,8 @@ export const registerAgentLlmRelayRoutes = (
     llmConfigStore?: RelayModelSource;
     cacheTtlMs?: number;
     now?: () => number;
+    /** Monotonic clock for the transport deadline (default performance.now). */
+    monotonicNow?: () => number;
     /** Full upstream budget (headers + body) in ms. Default 60s. */
     requestTimeoutMs?: number;
   },
@@ -132,18 +179,23 @@ export const registerAgentLlmRelayRoutes = (
     // closed before any upstream call.
     const isOpenAi = provider === 'openai-api';
     const isOpenRouter = provider === 'openrouter';
+    const isGo = provider === 'opencode-go';
     const isOpenAiCompatible = isOpenAi || isOpenRouter;
     const providerApiKey = isOpenAi
       ? deps.openaiApiKey
       : isOpenRouter
         ? (deps.openrouterApiKey ?? process.env.OPENROUTER_API_KEY)
-        : deps.zenApiKey;
+        : isGo
+          ? (deps.opencodeGoApiKey ?? process.env.OPENCODE_GO_API_KEY)
+          : deps.zenApiKey;
     if (!providerApiKey) {
       const missingEnv = isOpenAi
         ? 'OPENAI_API_KEY'
         : isOpenRouter
           ? 'OPENROUTER_API_KEY'
-          : 'OPENCODE_ZEN_API_KEY';
+          : isGo
+            ? 'OPENCODE_GO_API_KEY'
+            : 'OPENCODE_ZEN_API_KEY';
       return reply.code(503).send({
         code: 'agent.provider_not_configured',
         message: `${missingEnv} não configurada na API.`,
@@ -199,64 +251,134 @@ export const registerAgentLlmRelayRoutes = (
     const requestTimeoutMs = deps.requestTimeoutMs ?? 60_000;
     const timeoutError = () => Object.assign(new Error('Timeout aguardando provider.'), { name: 'AbortError' });
 
-    // Fase 3-FIX R4-rev: ONE absolute deadline shared by headers and body.
-    // The budget never restarts: after headers resolve, the body races only
-    // the REMAINING time. Expiry aborts the upstream request and rejects as
-    // AbortError; a single timer is cleared in `finally` either way.
-    const startedAt = Date.now();
+    // W2-ITEM6 + FIX-API-RELAY-MONOTONIC-AND-CANCEL: ONE absolute deadline
+    // spans fetch-to-headers + body parse, measured on a MONOTONIC clock
+    // (`performance.now()` by default, injectable via `monotonicNow`).
+    // Wall-clock `Date.now` jumps (NTP, DST, manual set) never move this
+    // deadline. `controller.abort()` fires at the deadline, but the outer
+    // Promise.race below is what guarantees a FINITE response: an upstream
+    // fetch (or a response.json()) that ignores AbortSignal and never
+    // settles cannot hang the relay — the deadline branch rejects as
+    // AbortError instead. A single timer owns the whole operation (no
+    // per-phase budget reset, default budget unchanged) and is cleared in
+    // `finally` on every path. Late success after the deadline is rejected
+    // by the monotonic recheck, never accepted or synthesized as success.
+    // Whenever a response exists at timeout/late-discard time, its body is
+    // released best-effort (`body.cancel()`, never awaited) so the provider
+    // stream does not linger; the error path never waits for teardown.
+    const monotonicNow = deps.monotonicNow ?? defaultRelayMonotonicNow;
+    const startMark = monotonicNow();
+    const isExpired = (): boolean => monotonicNow() - startMark >= requestTimeoutMs;
     try {
       const controller = new AbortController();
-      const deadline = setTimeout(() => controller.abort(), requestTimeoutMs);
+      let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+      // Latest upstream response seen by the fetch branch. Shared with the
+      // timer callback so a response that arrived just before the deadline
+      // is still released, and with the background continuation so a
+      // response resolving AFTER the race settled is canceled on discard.
+      let seenResponse: Response | undefined;
+      const deadlinePromise = new Promise<never>((_, reject) => {
+        deadlineTimer = setTimeout(() => {
+          controller.abort();
+          cancelUpstreamBody(seenResponse);
+          reject(timeoutError());
+        }, requestTimeoutMs);
+      });
       try {
-        const res = await fetch(upstreamUrl, {
-          method: 'POST',
-          headers: upstreamHeaders,
-          body: JSON.stringify(upstreamBody),
-          signal: controller.signal,
-        });
+        const { res, body } = await Promise.race([
+          (async () => {
+            const res = await fetch(upstreamUrl, {
+              method: 'POST',
+              headers: upstreamHeaders,
+              body: JSON.stringify(upstreamBody),
+              signal: controller.signal,
+              // FIX-RELAY-NO-REDIRECT-FOLLOW: never follow an upstream 3xx —
+              // the default fetch behavior would issue a second request to
+              // the redirect target, potentially forwarding Authorization
+              // outside the pinned endpoint. `manual` returns the 3xx
+              // response as-is so the classifier below fails closed (502).
+              redirect: 'manual',
+            });
+            seenResponse = res;
 
-        // FIX R1: o abort acima só vale se o fetch cooperar. Um upstream
-        // (ou mock) que ignore o AbortSignal pode resolver headers após o
-        // budget — verifique o deadline explicitamente antes de aceitar
-        // qualquer byte como resposta válida.
-        if (Date.now() - startedAt >= requestTimeoutMs) throw timeoutError();
+            // An abort-ignoring upstream (or mock) may resolve headers after
+            // the budget — never accept a late byte as a valid response.
+            // Monotonic recheck: immune to wall-clock shifts and to a
+            // delayed timer callback (headers resolving before the callback
+            // runs still fail closed here).
+            if (isExpired()) {
+              cancelUpstreamBody(res);
+              throw timeoutError();
+            }
 
-        let bodyTimer: ReturnType<typeof setTimeout> | undefined;
-        let body: {
-          error?: { type?: string; message?: string };
-          output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
-          choices?: Array<{ message?: { content?: string } }>;
-          cost?: string | number;
-        } | null;
-        try {
-          const remainingMs = Math.max(0, requestTimeoutMs - (Date.now() - startedAt));
-          body = (await Promise.race([
-            res.json().catch(() => null),
-            new Promise<null>((_, reject) => {
-              bodyTimer = setTimeout(() => {
-                controller.abort();
-                reject(timeoutError());
-              }, remainingMs);
-            }),
-          ])) as {
-            error?: { type?: string; message?: string };
-            output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
-            choices?: Array<{ message?: { content?: string } }>;
-            cost?: string | number;
-          } | null;
-        } finally {
-          if (bodyTimer) clearTimeout(bodyTimer);
-        }
+            const body = (await res.json().catch(() => null)) as {
+              error?: { type?: string; message?: string };
+              output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
+              choices?: Array<{ message?: { content?: string } }>;
+              cost?: string | number;
+            } | null;
 
-      // FIX R1 (cont.): mesmo após o race, um body imediato pode ter
-      // vencido um timer de saldo ~0 resolvendo após o prazo — revalide o
-      // deadline antes de aceitar/retornar o body.
-      if (Date.now() - startedAt >= requestTimeoutMs) throw timeoutError();
+            // Same recheck after the body: an immediate body may have settled
+            // just as the deadline fired — it must not win over expiry.
+            if (isExpired()) {
+              cancelUpstreamBody(res);
+              throw timeoutError();
+            }
+
+            return { res, body };
+          })(),
+          deadlinePromise,
+        ]);
 
       if (!res.ok) {
-        const message = body?.error?.message ?? `HTTP ${res.status}`;
-        const code = res.status === 429 ? 'agent.rate_limited' : res.status === 401 ? 'agent.provider_auth' : 'agent.provider_error';
-        return reply.code(res.status === 429 ? 429 : 502).send({ code, message });
+        // FIX-RELAY-NO-REDIRECT-FOLLOW: with `redirect: 'manual'` above,
+        // an upstream 3xx arrives here unfollowed (single pinned request,
+        // no Authorization forwarded to any Location target). Fail closed
+        // with the existing sanitized provider-error contract — same
+        // status/code/message as the generic 5xx branch, never the
+        // Location body.
+        if (res.status >= 300 && res.status < 400) {
+          return reply.code(502).send({
+            code: 'agent.provider_error',
+            message: 'Falha no provider. Tente novamente em instantes.',
+          });
+        }
+        // FIX-API-RELAY-ALL-ERROR-MESSAGES-SAFE (W2 review): EVERY
+        // non-2xx path returns a FIXED safe message keyed by class/status
+        // only. The raw provider body (`body.error.message`) may echo the
+        // prompt/system, leak key material, or carry CRLF/log injection, so
+        // it is never relayed to the caller nor logged. The {code,status}
+        // classifier contract is preserved: 429 stays 429 rate_limited
+        // (fallback-eligible), 401/5xx stay 502 with their codes, other 4xx
+        // stay 502 provider_rejected (item5, inelegível).
+        if (res.status === 429) {
+          return reply.code(429).send({
+            code: 'agent.rate_limited',
+            message: 'Provider com muitas requisições. Tente novamente em instantes.',
+          });
+        }
+        if (res.status === 401) {
+          return reply.code(502).send({
+            code: 'agent.provider_auth',
+            message: 'Falha de autenticação no provider.',
+          });
+        }
+        if (res.status >= 500) {
+          return reply.code(502).send({
+            code: 'agent.provider_error',
+            message: 'Falha no provider. Tente novamente em instantes.',
+          });
+        }
+        if (res.status >= 400) {
+          return reply.code(502).send({
+            code: 'agent.provider_rejected',
+            message: 'Provider rejeitou a requisição (conteúdo ou parâmetros inválidos).',
+          });
+        }
+        return reply.code(502).send({
+          code: 'agent.provider_error',
+          message: 'Falha no provider. Tente novamente em instantes.',
+        });
       }
 
       const text = isOpenAiCompatible
@@ -274,11 +396,19 @@ export const registerAgentLlmRelayRoutes = (
 
         return reply.send({ text, model, cost: body?.cost ?? 0, provider });
       } finally {
-        clearTimeout(deadline);
+        if (deadlineTimer) clearTimeout(deadlineTimer);
       }
     } catch (err) {
+      // FIX-API-RELAY-ALL-ERROR-MESSAGES-SAFE: transport/catch errors keep
+      // the 504 agent.provider_timeout classification but the message is
+      // fixed by class only — `err.message` (fetch internals, URLs,
+      // AbortError text) is never echoed. W2-ITEM6 owns the absolute
+      // transport deadline above and preserves these fixed messages.
       const isAbort = (err as { name?: string })?.name === 'AbortError';
-      return reply.code(504).send({ code: 'agent.provider_timeout', message: isAbort ? 'Timeout aguardando provider.' : (err as Error).message });
+      return reply.code(504).send({
+        code: 'agent.provider_timeout',
+        message: isAbort ? 'Timeout aguardando provider.' : 'Falha de comunicação com o provider.',
+      });
     }
   });
 };

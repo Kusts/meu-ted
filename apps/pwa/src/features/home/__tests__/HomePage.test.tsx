@@ -1294,5 +1294,109 @@ describe("HomePage", () => {
       expect(window.localStorage.getItem(BALANCE_KEY)).toBe("0");
     });
   });
+
+  describe("FIX-PWA-HOME-SNAPSHOT-SUMMARY: snapshot retry also recovers dashboardSummary", () => {
+    function snapshotState(overrides: Partial<AppState> = {}) {
+      return {
+        ...defaultState(),
+        sync: {
+          ...defaultState().sync,
+          accounts: { source: "snapshot", syncedAt: "2026-06-20T10:00:00.000Z" },
+        },
+        readOnly: true,
+        ...overrides,
+      } as AppState;
+    }
+
+    it("calls authoritative strict summary refresh after domain refresh succeeds", async () => {
+      const user = userEvent.setup();
+      const refreshDomains = vi.fn().mockResolvedValue(true);
+      const refreshStrict = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        snapshotState({
+          refreshDomains,
+          refreshDashboardSummary: vi.fn().mockResolvedValue(undefined),
+          refreshDashboardSummaryStrict: refreshStrict,
+        } as unknown as Partial<AppState>),
+      );
+      render(<HomePage />);
+      await user.click(
+        screen.getByRole("button", { name: /tentar novamente/i }),
+      );
+      await waitFor(() =>
+        expect(refreshDomains).toHaveBeenCalledWith(
+          expect.arrayContaining(["accounts"]),
+        ),
+      );
+      await waitFor(() =>
+        expect(refreshStrict).toHaveBeenCalledTimes(1),
+      );
+      expect(mockRouter.refresh).not.toHaveBeenCalled();
+    });
+
+    it("does NOT call summary refresh when domain refresh fails (keeps snapshot read-only)", async () => {
+      const user = userEvent.setup();
+      const refreshDomains = vi.fn().mockResolvedValue(false);
+      const refreshStrict = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        snapshotState({
+          refreshDomains,
+          refreshDashboardSummary: vi.fn().mockResolvedValue(undefined),
+          refreshDashboardSummaryStrict: refreshStrict,
+        } as unknown as Partial<AppState>),
+      );
+      render(<HomePage />);
+      await user.click(
+        screen.getByRole("button", { name: /tentar novamente/i }),
+      );
+      await waitFor(() =>
+        expect(refreshDomains).toHaveBeenCalledTimes(1),
+      );
+      // Give the (non-)hook a tick to prove it never fires on domain failure.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(refreshStrict).not.toHaveBeenCalled();
+      expect(screen.getByTestId("stale-banner")).toBeInTheDocument();
+    });
+
+    it("surfaces an accessible summary error with retry when strict summary fails; retry recovers without reload", async () => {
+      const user = userEvent.setup();
+      const refreshDomains = vi.fn().mockResolvedValue(true);
+      const refreshStrict = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("summary offline"))
+        .mockResolvedValueOnce(undefined);
+      const reloadSpy = vi.fn();
+      Object.defineProperty(window, "location", {
+        value: { ...window.location, reload: reloadSpy },
+        writable: true,
+        configurable: true,
+      });
+      vi.spyOn(appStateModule, "useAppState").mockReturnValue(
+        snapshotState({
+          refreshDomains,
+          refreshDashboardSummary: vi.fn().mockResolvedValue(undefined),
+          refreshDashboardSummaryStrict: refreshStrict,
+        } as unknown as Partial<AppState>),
+      );
+      render(<HomePage />);
+      await user.click(
+        screen.getByRole("button", { name: /tentar novamente/i }),
+      );
+      const summaryAlert = await screen.findByTestId("home-summary-error");
+      expect(summaryAlert).toHaveAttribute("role", "alert");
+      expect(reloadSpy).not.toHaveBeenCalled();
+
+      await user.click(
+        screen.getByRole("button", { name: /tentar atualizar resumo/i }),
+      );
+      await waitFor(() =>
+        expect(refreshStrict).toHaveBeenCalledTimes(2),
+      );
+      await waitFor(() =>
+        expect(screen.queryByTestId("home-summary-error")).not.toBeInTheDocument(),
+      );
+      expect(reloadSpy).not.toHaveBeenCalled();
+    });
+  });
 });
 

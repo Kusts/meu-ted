@@ -19,12 +19,28 @@ async function deploySw(
   );
   expect(response.ok()).toBeTruthy();
 }
-async function registerAndHome(page: Page, testId: string): Promise<void> {
+async function registerAndHome(
+  page: Page,
+  testId: string,
+  initialPath = "/",
+): Promise<void> {
   await applyCspRewrite(page);
   await resetFixture(testId);
   await page.clock.setFixedTime(FIXED_CLOCK);
   await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": testId });
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  // Deep-link-first (WAVE5-FE-SWFIX): land DIRECTLY on the route under test
+  // and authenticate there, keeping a single document for the whole test.
+  // A second full navigation (page.goto) after the SW takes control is NOT
+  // equivalent: SW-served navigations (worker fetch AND navigation preload)
+  // are issued from the SW target and never reach page-target request
+  // interception (proven: the 2nd navigation never hit page.route and the
+  // served document kept the server-original `connect-src 'self'`), so the
+  // harness CSP rewrite that admits the fixture origin cannot apply and the
+  // session probe is CSP-blocked (cookie persisted, journal empty, UI falls
+  // to login). The SW itself is network-only for navigations and never
+  // caches HTML/API (src/sw.ts) — there is no product caching bug to fix.
+  // This mirrors the DIRECT-* navigation specs (deep-link, then register).
+  await page.goto(initialPath, { waitUntil: "domcontentloaded" });
   await authenticate(page, { timeout: 20000 });
 }
 
@@ -44,7 +60,11 @@ async function waitForServiceWorker(page: Page): Promise<void> {
 async function openPushCard(
   page: Page,
 ): Promise<ReturnType<Page["getByRole"]>> {
-  await page.goto("/perfil");
+  // No navigation here: the test deep-links onto /perfil BEFORE authenticating
+  // (see registerAndHome), so the push entry point is already on screen. A
+  // second page.goto under SW control would serve a document whose CSP was
+  // never rewritten for the fixture (see above) and drop the session.
+  await expect(page).toHaveURL(/\/perfil$/);
   await page.getByRole("button", { name: "Notificações" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
@@ -190,17 +210,38 @@ async function installPermissionProbe(page: Page): Promise<void> {
   });
 }
 
+async function installGrantedPermission(page: Page): Promise<void> {
+  // SPEC-CONTROLLED PERMISSION (WAVE5-FE-SWFIX): context.grantPermissions is
+  // a verified no-op in this Chromium — Notification.permission reads
+  // "denied" after both origin-scoped and global grants (probe evidence),
+  // which would force getPushState into "denied" before the flow under test
+  // even starts. The permission STORE is not under test here (PUSH-03 covers
+  // the gesture-gated requestPermission path); pinning "granted" keeps every
+  // downstream assertion real: vapid-key fetch, shimmed PushManager
+  // subscribe, POST /push/subscriptions persistence, and the active UI.
+  // Same addInitScript pattern as PUSH-03's "default" pin.
+  await page.addInitScript(() => {
+    try {
+      Object.defineProperty(Notification, "permission", {
+        configurable: true,
+        get: () => "granted",
+      });
+    } catch {
+      /* non-configurable in this engine — assertion below will surface it */
+    }
+  });
+}
+
 test("[PUSH-01] real PWA registers /sw.js and completes the push UI flow", async ({
   page,
   context,
 }) => {
   await deploySw(context, "current");
-  // Desktop test setup grants permission only to exercise a real PushManager subscription; iOS prompt evidence is external.
-  await context.grantPermissions(["notifications"], {
-    origin: "http://127.0.0.1:3000",
-  });
+  // Desktop setup pins "granted" (see installGrantedPermission): the CDP
+  // grant is a no-op in this Chromium, and iOS prompt evidence is external.
+  await installGrantedPermission(page);
   await installPushSubscriptionShim(page);
-  await registerAndHome(page, "push-runtime");
+  await registerAndHome(page, "push-runtime", "/perfil");
   await waitForServiceWorker(page);
 
   const registration = await page.evaluate(async () => {
@@ -245,14 +286,14 @@ test("[PUSH-02] controlled iOS standalone uses the real UI and permission API", 
     hasTouch: true,
   });
   // Standalone UI path; native iOS prompt is verified on the installed device.
-  await context.grantPermissions(["notifications"], {
-    origin: "http://127.0.0.1:3000",
-  });
+  // Permission pinned "granted" (see installGrantedPermission): the CDP
+  // grant is a no-op in this Chromium.
   const page = await context.newPage();
+  await installGrantedPermission(page);
   await installStandaloneDisplayMode(page);
   await installPushSubscriptionShim(page);
   await deploySw(context, "current");
-  await registerAndHome(page, "push-ios-standalone");
+  await registerAndHome(page, "push-ios-standalone", "/perfil");
   await waitForServiceWorker(page);
   const pushResponses = capturePushResponses(page);
   const dialog = await openPushCard(page);
@@ -288,11 +329,26 @@ test("[PUSH-03] standalone activation invokes the permission API from a user ges
     isMobile: true,
     hasTouch: true,
   });
+  // SPEC-CONTROLLED PERMISSION: Chromium headless reports
+  // Notification.permission as "denied" even in a fresh context, so the spec
+  // pins it to "default" explicitly — the behaviour under test is that the
+  // permission API is invoked from a user gesture, not the ambient default.
+  await context.clearPermissions();
   const page = await context.newPage();
+  await page.addInitScript(() => {
+    try {
+      Object.defineProperty(Notification, "permission", {
+        configurable: true,
+        get: () => "default",
+      });
+    } catch {
+      /* non-configurable in this engine — assertion below will surface it */
+    }
+  });
   await installStandaloneDisplayMode(page);
   await installPermissionProbe(page);
   await deploySw(context, "current");
-  await registerAndHome(page, "push-ios-permission-prompt");
+  await registerAndHome(page, "push-ios-permission-prompt", "/perfil");
   await waitForServiceWorker(page);
 
   await expect(page.evaluate(() => Notification.permission)).resolves.toBe(
@@ -338,13 +394,15 @@ test("[PUSH-04] iOS outside standalone shows installation onboarding before perm
   });
   const page = await context.newPage();
   await deploySw(context, "current");
-  await registerAndHome(page, "push-ios-browser");
+  await registerAndHome(page, "push-ios-browser", "/perfil");
   const dialog = await openPushCard(page);
 
   await expect(dialog.getByText("Adicionar à Tela de Início")).toBeVisible();
   await expect(
     dialog.getByRole("button", { name: "Ativar notificações" }),
   ).toHaveCount(0);
-  await expect(page).toHaveTitle(/Pi Financeiro/i);
+  // Product title since the "Meu Ted" rebrand (src/app/layout.tsx metadata).
+  await expect(page).toHaveTitle(/Meu Ted/i);
   await context.close();
 });
+

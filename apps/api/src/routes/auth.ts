@@ -30,9 +30,34 @@ type AuthRouteOpts = {
 };
 
 /**
+ * Onda 1 item 1: never echo raw infrastructure text to device clients.
+ * Typed store errors (`auth.*`, `validation.*`) carry sanitized messages and
+ * pass through with their status/code; anything else (driver failures,
+ * unknown throws) maps to a generic 500 without `err.message`.
+ */
+const sanitizeAuthRouteError = (e: unknown): { status: number; code: string; message: string } => {
+  const err = e as { statusCode?: number; code?: string; message?: string };
+  const hasCode = typeof err?.code === 'string' && err.code !== '';
+  const code = hasCode ? (err.code as string) : 'auth.error';
+  const typed =
+    hasCode &&
+    (code === 'auth.identity_unavailable' || code.startsWith('auth.') || code.startsWith('validation.'));
+  if (typed) {
+    const status = typeof err?.statusCode === 'number' ? err.statusCode : 500;
+    return { status, code, message: typeof err?.message === 'string' && err.message !== '' ? err.message : 'server error' };
+  }
+  return { status: 500, code: 'auth.error', message: 'server error' };
+};
+
+/**
  * Resolves the Better-Auth session household for device flows (register and
  * rotate share it). Returns `forbidden` when the workspace check denies
  * access, `ctx` when a session authenticates, neither when anonymous.
+ *
+ * Fail-closed: a `null`/absent session is anonymous; any operational throw
+ * (session lookup, membership resolve, workspace list) propagates to the
+ * route boundary, which sanitizes it to 500 `auth.error` — never anonymous,
+ * never a token, never 401/403 invalid-token.
  */
 const resolveSessionDeviceContext = async (
   req: FastifyRequest,
@@ -43,39 +68,34 @@ const resolveSessionDeviceContext = async (
   for (const [key, val] of Object.entries(req.headers)) {
     if (val !== undefined) headers.set(key, Array.isArray(val) ? val.join(', ') : String(val));
   }
-  try {
-    const session = await getBetterAuthSessionContext(opts.auth, headers);
-    if (!session) return {};
-    let sessionHouseholdId: string | undefined;
-    if (opts.workspaceAccess) {
-      const workspaceIdHeader = req.headers['x-workspace-id'];
-      const wsId = Array.isArray(workspaceIdHeader) ? workspaceIdHeader[0] : workspaceIdHeader;
-      if (wsId) {
-        const access = await opts.workspaceAccess.resolve(session.userId, wsId);
-        if (access) {
-          sessionHouseholdId = access.householdId;
-        } else {
-          return { forbidden: true };
-        }
+  const session = await getBetterAuthSessionContext(opts.auth, headers);
+  if (!session) return {};
+  let sessionHouseholdId: string | undefined;
+  if (opts.workspaceAccess) {
+    const workspaceIdHeader = req.headers['x-workspace-id'];
+    const wsId = Array.isArray(workspaceIdHeader) ? workspaceIdHeader[0] : workspaceIdHeader;
+    if (wsId) {
+      const access = await opts.workspaceAccess.resolve(session.userId, wsId);
+      if (access) {
+        sessionHouseholdId = access.householdId;
+      } else {
+        return { forbidden: true };
       }
     }
-    if (!sessionHouseholdId && opts.workspaceStore) {
-      const list = await opts.workspaceStore.list(session.userId);
-      const active = list.find((w) => w.status !== 'archived');
-      if (active) sessionHouseholdId = active.id;
-    }
-    if (!sessionHouseholdId) {
-      if (process.env.NODE_ENV === 'production') {
-        return { noWorkspace: true };
-      }
-      const { DEMO_HOUSEHOLD_ID } = await import('../read-models/demo-data.js');
-      sessionHouseholdId = opts.defaultHouseholdId ?? DEMO_HOUSEHOLD_ID;
-    }
-    return { ctx: { householdId: sessionHouseholdId, userId: session.userId } };
-  } catch {
-    // Session resolution failed, treat as anonymous
-    return {};
   }
+  if (!sessionHouseholdId && opts.workspaceStore) {
+    const list = await opts.workspaceStore.list(session.userId);
+    const active = list.find((w) => w.status !== 'archived');
+    if (active) sessionHouseholdId = active.id;
+  }
+  if (!sessionHouseholdId) {
+    if (process.env.NODE_ENV === 'production') {
+      return { noWorkspace: true };
+    }
+    const { DEMO_HOUSEHOLD_ID } = await import('../read-models/demo-data.js');
+    sessionHouseholdId = opts.defaultHouseholdId ?? DEMO_HOUSEHOLD_ID;
+  }
+  return { ctx: { householdId: sessionHouseholdId, userId: session.userId } };
 };
 
 export const registerAuthRoutes = (
@@ -88,8 +108,11 @@ export const registerAuthRoutes = (
       const ctx = await opts.resolveToken(Array.isArray(token) ? token[0] : token);
       return reply.code(200).send({ deviceId: ctx.deviceId, householdId: ctx.householdId });
     } catch (e) {
-      const err = e as { statusCode?: number; code?: string; message?: string };
-      return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.error', message: err.message ?? 'unauthorized' });
+      // Never echo raw infrastructure text (host/SQL/driver codes) and never
+      // downgrade a server failure to anonymous/invalid-token 401: unknown
+      // throws map to a generic 500, typed auth errors keep their status.
+      const sanitized = sanitizeAuthRouteError(e);
+      return reply.code(sanitized.status).send({ code: sanitized.code, message: sanitized.message });
     }
   });
 
@@ -98,7 +121,15 @@ export const registerAuthRoutes = (
     let sessionUserId: string | undefined;
     let isAuthenticated = false;
 
-    const session = await resolveSessionDeviceContext(req, opts);
+    let session: { ctx?: { householdId: string; userId: string }; forbidden?: boolean; noWorkspace?: boolean };
+    try {
+      session = await resolveSessionDeviceContext(req, opts);
+    } catch (e) {
+      // Operational failure (session lookup, membership, workspace list):
+      // fail closed with sanitized 500 — never anonymous, never a token.
+      const sanitized = sanitizeAuthRouteError(e);
+      return reply.code(sanitized.status).send({ code: sanitized.code, message: sanitized.message });
+    }
     if (session.forbidden) {
       return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Acesso ao workspace proibido.' });
     }
@@ -135,8 +166,8 @@ export const registerAuthRoutes = (
       );
       return reply.code(201).send(result);
     } catch (e) {
-      const err = e as { statusCode?: number; code?: string; message?: string };
-      return reply.code(err.statusCode ?? 500).send({ code: err.code ?? 'auth.error', message: err.message ?? 'server error' });
+      const sanitized = sanitizeAuthRouteError(e);
+      return reply.code(sanitized.status).send({ code: sanitized.code, message: sanitized.message });
     }
   });
 
@@ -151,8 +182,8 @@ export const registerAuthRoutes = (
     try {
       ctx = await opts.resolveToken(headerToken);
     } catch (e) {
-      const err = e as { statusCode?: number; code?: string; message?: string };
-      return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.invalid_token', message: err.message ?? 'unauthorized' });
+      const sanitized = sanitizeAuthRouteError(e);
+      return reply.code(sanitized.status).send({ code: sanitized.code, message: sanitized.message });
     }
 
     const parsed = revokeInput.safeParse(req.body ?? {});
@@ -161,8 +192,8 @@ export const registerAuthRoutes = (
       await opts.tokenStore.revoke(parsed.data.token, ctx.householdId);
       return reply.code(200).send({ ok: true });
     } catch (e) {
-      const err = e as { statusCode?: number; code?: string; message?: string };
-      return reply.code(err.statusCode ?? 500).send({ code: err.code ?? 'auth.error', message: err.message ?? 'server error' });
+      const sanitized = sanitizeAuthRouteError(e);
+      return reply.code(sanitized.status).send({ code: sanitized.code, message: sanitized.message });
     }
   });
 
@@ -202,18 +233,31 @@ export const registerAuthRoutes = (
               ctx.householdId,
             );
           } catch (e) {
-            const authErr = e as { statusCode?: number; code?: string; message?: string };
+            // Membership-store failures are infrastructure failures, not
+            // denials: sanitize so driver text never leaks and an unknown
+            // throw maps to 500 instead of a misleading 403.
+            const sanitized = sanitizeAuthRouteError(e);
             return reply
-              .code(authErr.statusCode ?? 403)
-              .send({ code: authErr.code ?? 'auth.workspace_forbidden', message: authErr.message ?? 'Acesso ao workspace proibido.' });
+              .code(sanitized.status)
+              .send({ code: sanitized.code, message: sanitized.message });
           }
         }
       } catch (e) {
-        const err = e as { statusCode?: number; code?: string; message?: string };
-        return reply.code(err.statusCode ?? 401).send({ code: err.code ?? 'auth.invalid_token', message: err.message ?? 'unauthorized' });
+        const sanitized = sanitizeAuthRouteError(e);
+        return reply.code(sanitized.status).send({ code: sanitized.code, message: sanitized.message });
       }
     } else {
-      const session = await resolveSessionDeviceContext(req, opts);
+      let session: { ctx?: { householdId: string; userId: string }; forbidden?: boolean; noWorkspace?: boolean };
+      try {
+        session = await resolveSessionDeviceContext(req, opts);
+      } catch (e) {
+        // Cookie-path operational failure: sanitized 500, never 401
+        // missing_token and never a rotation.
+        const sanitized = sanitizeAuthRouteError(e);
+        return reply
+          .code(sanitized.status)
+          .send({ code: sanitized.code, message: sanitized.message });
+      }
       if (session.forbidden) {
         return reply.code(403).send({ code: 'auth.workspace_forbidden', message: 'Acesso ao workspace proibido.' });
       }
@@ -249,8 +293,8 @@ export const registerAuthRoutes = (
       );
       return reply.code(201).send(result);
     } catch (e) {
-      const err = e as { statusCode?: number; code?: string; message?: string };
-      return reply.code(err.statusCode ?? 500).send({ code: err.code ?? 'auth.error', message: err.message ?? 'server error' });
+      const sanitized = sanitizeAuthRouteError(e);
+      return reply.code(sanitized.status).send({ code: sanitized.code, message: sanitized.message });
     }
   });
 

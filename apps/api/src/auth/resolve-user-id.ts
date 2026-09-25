@@ -30,3 +30,40 @@ export const resolveApplicationUserId = async (
   }
   return null;
 };
+
+/**
+ * Fail-closed device-boundary identity resolution (Onda 1 item 1): when a
+ * session user id is present, the users row MUST resolve — a missing row or
+ * a rejected SELECT throws a sanitized typed error
+ * (`auth.identity_unavailable`, 503) instead of falling back to NULL.
+ * The message is fixed so driver/SQL text never leaks to callers.
+ * The nullable `resolveApplicationUserId` above is intentionally untouched:
+ * audit lineage in writes/postgres.ts keeps its nullable policy.
+ */
+export const IDENTITY_UNAVAILABLE_CODE = 'auth.identity_unavailable';
+
+export const IDENTITY_UNAVAILABLE_MESSAGE = 'user identity unavailable, try again later';
+
+export const identityUnavailableError = (): Error & { statusCode: number; code: string } =>
+  Object.assign(new Error(IDENTITY_UNAVAILABLE_MESSAGE), {
+    statusCode: 503,
+    code: IDENTITY_UNAVAILABLE_CODE,
+  });
+
+export const resolveRequiredApplicationUserId = async (
+  client: Pool | PoolClient,
+  actorId: string,
+): Promise<string> => {
+  try {
+    const result = await client.query<{ id: string }>(
+      `SELECT id FROM users WHERE auth_user_id = $1 OR id::text = $1 LIMIT 1`,
+      [actorId],
+    );
+    if (result.rowCount === 1 && typeof result.rows[0]!.id === 'string' && result.rows[0]!.id !== '') {
+      return result.rows[0]!.id;
+    }
+  } catch {
+    throw identityUnavailableError();
+  }
+  throw identityUnavailableError();
+};

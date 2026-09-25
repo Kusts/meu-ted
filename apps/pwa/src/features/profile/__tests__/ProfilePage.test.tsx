@@ -2,6 +2,8 @@ import { render, screen, waitFor, waitForElementToBeRemoved } from "@/lib/test-u
 import userEvent from "@testing-library/user-event";
 import ProfilePage from "../ProfilePage";
 import * as appStateModule from "@/lib/state/app-state-context";
+import * as sessionContextModule from "@/lib/auth/session-context";
+import { ApiError } from "@/lib/api/client";
 import type { AppState } from "@/lib/state/app-state-context";
 import type { Profile } from "@/lib/state/types";
 import { mockAccounts, mockCategories, ALL_MOCK_TRANSACTIONS, mockPayables, mockBudgets, mockGoals } from "@/lib/state/mock-data";
@@ -10,6 +12,12 @@ const mockRouter = { push: vi.fn(), refresh: vi.fn() };
 vi.mock("next/navigation", () => ({
   useRouter: () => mockRouter,
 }));
+
+const signOutMock = vi.hoisted(() => ({ signOut: vi.fn() }));
+vi.mock("@/lib/api/auth", async (importOriginal) => {
+  const mod = (await importOriginal()) as Record<string, unknown>;
+  return { ...mod, signOut: signOutMock.signOut };
+});
 
 function fakeState(overrides?: Partial<AppState>): AppState {
   return {
@@ -62,6 +70,11 @@ describe("ProfilePage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(appStateModule, "useAppState").mockReturnValue(fakeState());
+    signOutMock.signOut.mockResolvedValue(undefined);
+    vi.spyOn(sessionContextModule, "useSession").mockReturnValue({
+      expireSession: vi.fn(),
+      session: { status: "unknown" },
+    });
   });
 
   it("renders the page header", () => {
@@ -203,10 +216,77 @@ describe("ProfilePage", () => {
     expect(screen.getByDisplayValue("(11) 99999-9999")).toBeInTheDocument();
   });
 
-  it("logout button triggers navigation", async () => {
+  it("logout revokes the server session before local cleanup and navigation", async () => {
+    const expireSpy = vi.fn();
+    vi.spyOn(sessionContextModule, "useSession").mockReturnValue({
+      expireSession: expireSpy,
+      session: { status: "authenticated", user: { userId: "test-user" } },
+    });
+    signOutMock.signOut.mockResolvedValue(undefined);
     const user = userEvent.setup();
     render(<ProfilePage />);
     await user.click(screen.getByText("Sair da conta"));
+    await waitFor(() => expect(mockRouter.push).toHaveBeenCalledWith("/"));
+    expect(signOutMock.signOut).toHaveBeenCalledTimes(1);
+    expect(expireSpy).toHaveBeenCalledTimes(1);
+    expect(signOutMock.signOut.mock.invocationCallOrder[0]).toBeLessThan(
+      expireSpy.mock.invocationCallOrder[0]!,
+    );
+    expect(expireSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      mockRouter.push.mock.invocationCallOrder[0]!,
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("logout failure (5xx) preserves the local session and shows an error", async () => {
+    const expireSpy = vi.fn();
+    vi.spyOn(sessionContextModule, "useSession").mockReturnValue({
+      expireSession: expireSpy,
+      session: { status: "authenticated", user: { userId: "test-user" } },
+    });
+    signOutMock.signOut.mockRejectedValue(
+      new ApiError(500, "error", "Erro interno do servidor."),
+    );
+    const user = userEvent.setup();
+    render(<ProfilePage />);
+    await user.click(screen.getByText("Sair da conta"));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível sair. Verifique a conexão e tente novamente.");
+    expect(expireSpy).not.toHaveBeenCalled();
+    expect(mockRouter.push).not.toHaveBeenCalled();
+  });
+
+  it("logout failure (403) preserves the local session and shows an error", async () => {
+    const expireSpy = vi.fn();
+    vi.spyOn(sessionContextModule, "useSession").mockReturnValue({
+      expireSession: expireSpy,
+      session: { status: "authenticated", user: { userId: "test-user" } },
+    });
+    signOutMock.signOut.mockRejectedValue(
+      new ApiError(403, "auth.invalid_origin", "Invalid origin"),
+    );
+    const user = userEvent.setup();
+    render(<ProfilePage />);
+    await user.click(screen.getByText("Sair da conta"));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(expireSpy).not.toHaveBeenCalled();
+    expect(mockRouter.push).not.toHaveBeenCalled();
+  });
+
+  it("logout with an already-ended server session (401) completes local cleanup", async () => {
+    const expireSpy = vi.fn();
+    vi.spyOn(sessionContextModule, "useSession").mockReturnValue({
+      expireSession: expireSpy,
+      session: { status: "authenticated", user: { userId: "test-user" } },
+    });
+    signOutMock.signOut.mockRejectedValue(
+      new ApiError(401, "auth.error", "Token inválido"),
+    );
+    const user = userEvent.setup();
+    render(<ProfilePage />);
+    await user.click(screen.getByText("Sair da conta"));
+    await waitFor(() => expect(expireSpy).toHaveBeenCalled());
     expect(mockRouter.push).toHaveBeenCalledWith("/");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

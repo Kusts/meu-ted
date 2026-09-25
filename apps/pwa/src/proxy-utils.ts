@@ -176,14 +176,56 @@ export function resolvePwaOrigin(env?: EnvLike): string {
 }
 
 /**
+ * Strict well-formed HTTP loopback upstream check (pure, no env).
+ *
+ * Accepts ONLY `http://localhost[:port]` or `http://127.0.0.1[:port]` with
+ * no userinfo, no path beyond "/", no query, no fragment. Returns the
+ * normalized origin (`URL.origin`, trailing slash stripped) or null. The
+ * caller still gates on NODE_ENV + ALLOW_LOCAL_ORIGIN; this function alone
+ * never authorizes anything. Port is allowed (local Wrangler binds an
+ * ephemeral port); unlike isExpectedOrigin, which pins production HTTPS
+ * without a port, this is a test-only/local-dev shape check.
+ */
+function parseLoopbackAgentUpstream(value: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:") return null;
+  if (parsed.username !== "" || parsed.password !== "") return null;
+  if (parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") return null;
+  if (parsed.pathname !== "" && parsed.pathname !== "/") return null;
+  if (parsed.search !== "" || parsed.hash !== "") return null;
+  return parsed.origin;
+}
+
+/**
  * Resolves the Agent upstream only when the runtime binding matches the
  * pinned production origin. This keeps the same-origin proxy from forwarding
  * user credentials to a misconfigured target.
+ *
+ * Test-only/local-dev exception (PWA-LOCAL-AGENT-PROXY-GATE): a well-formed
+ * HTTP loopback origin (`localhost` / `127.0.0.1`, no userinfo/path/query/
+ * hash) is returned ONLY when NODE_ENV is exactly `development` or `test`
+ * AND ALLOW_LOCAL_ORIGIN is exactly `1`. Every other case (production or
+ * undefined NODE_ENV, missing flag, malformed/credentialed/path/external
+ * target) falls through to the existing fail-closed path: placeholder
+ * outside production, throw in production. Pinned HTTPS behavior unchanged.
  */
 export function resolveAgentOrigin(env?: AgentProxyEnv): string {
   const override = env?.PWA_AGENT_PROXY_ORIGIN?.trim() || env?.AGENT_ORIGIN?.trim();
   if (override) {
     if (isExpectedOrigin(override, EXPECTED_AGENT_ORIGIN)) return EXPECTED_AGENT_ORIGIN;
+    const loopback = parseLoopbackAgentUpstream(override);
+    if (
+      loopback &&
+      (env?.NODE_ENV === "development" || env?.NODE_ENV === "test") &&
+      env?.ALLOW_LOCAL_ORIGIN === "1"
+    ) {
+      return loopback;
+    }
     console.error("agent-proxy.invalid_upstream_origin");
   } else if (env?.NODE_ENV !== "production") {
     return FALLBACK_AGENT_ORIGIN;

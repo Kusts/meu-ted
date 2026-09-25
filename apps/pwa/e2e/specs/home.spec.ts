@@ -40,6 +40,7 @@ const AUTH_WRITE_PATHS = new Set([
   "/auth/devices/register",
   "/auth/sign-in/email",
   "/auth/sign-in",
+  "/auth/agent-token",
 ]);
 
 async function assertNoUnexpectedWrites(testId: string): Promise<void> {

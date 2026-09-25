@@ -52,6 +52,18 @@ export function TedApprovalCard({ operation, workspaceId, onResolved }: TedAppro
     onResolved?.(resolved);
   };
 
+  const handleRetry = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await resolve("retry");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleApprove = async () => {
     setLoading(true);
     setError(null);
@@ -76,13 +88,64 @@ export function TedApprovalCard({ operation, workspaceId, onResolved }: TedAppro
     }
   };
 
+  // Mandatory presentation (production functional corrections item 4,
+  // SPEC §16 INV-02): Retry re-authorizes money movement, so it may only be
+  // offered next to the actionable hash-bound financial data the user is
+  // re-authorizing. Without it, Retry never renders and retry is never sent.
+  const hasActionablePresentation =
+    presentation !== undefined && isActionablePendingOperationPresentation(presentation);
+
   if (status === "failed") {
+    if (!hasActionablePresentation || !presentation) {
+      return (
+        <div className="my-2 rounded-[14px] border border-danger/30 bg-danger-tint p-3 text-xs text-danger">
+          <strong>Não foi possível concluir a operação — {describePendingOperationStatus("failed")}.</strong>
+          <div className="mt-0.5">Dados da operação incompletos — não é possível tentar novamente. Atualize e refaça a proposta.</div>
+          {error && <div className="mt-1">{error}</div>}
+        </div>
+      );
+    }
     return (
       <div className="my-2 rounded-[14px] border border-danger/30 bg-danger-tint p-3 text-xs text-danger">
         <strong>Não foi possível concluir a operação — {describePendingOperationStatus("failed")}.</strong>
-        <div className="mt-0.5">Você pode tentar novamente pelo mesmo fluxo de aprovação.</div>
+        <div className="mt-1 text-sm font-semibold">⚠️ {presentation.title}</div>
+        {presentation.description && <div className="mt-0.5 font-semibold">{presentation.description}</div>}
+        <dl className="mt-2 space-y-1">
+          {typeof presentation.amountCents === "number" && (
+            <div className="flex justify-between gap-2">
+              <dt className="opacity-70">Valor</dt>
+              <dd className="font-bold">{formatCentsToBRL(presentation.amountCents)}</dd>
+            </div>
+          )}
+          {presentation.account && (
+            <div className="flex justify-between gap-2">
+              <dt className="opacity-70">Conta</dt>
+              <dd className="font-semibold">{presentation.account.label}</dd>
+            </div>
+          )}
+          {presentation.category && (
+            <div className="flex justify-between gap-2">
+              <dt className="opacity-70">Categoria</dt>
+              <dd className="font-semibold">{presentation.category.label}</dd>
+            </div>
+          )}
+          {presentation.date && (
+            <div className="flex justify-between gap-2">
+              <dt className="opacity-70">Data</dt>
+              <dd className="font-semibold">{formatDateToBR(presentation.date)}</dd>
+            </div>
+          )}
+        </dl>
+        {presentation.warnings.length > 0 && (
+          <ul className="mt-2 space-y-0.5">
+            {presentation.warnings.map((warning) => (
+              <li key={warning}>⚠️ {warning}</li>
+            ))}
+          </ul>
+        )}
+        <div className="mt-1">Revise os dados acima — tentar novamente reautoriza esta operação pelo mesmo fluxo de aprovação.</div>
         {error && <div className="mt-1">{error}</div>}
-        <button type="button" disabled={loading} onClick={async () => { setLoading(true); setError(null); try { await resolve("retry"); } catch (e) { setError((e as Error).message); } finally { setLoading(false); } }} className="mt-2 rounded-[10px] border border-danger/30 px-3 py-2 font-bold disabled:opacity-50">{loading ? "Tentando…" : "Tentar novamente"}</button>
+        <button type="button" disabled={loading} onClick={handleRetry} className="mt-2 rounded-[10px] border border-danger/30 px-3 py-2 font-bold disabled:opacity-50">{loading ? "Tentando…" : "Tentar novamente"}</button>
       </div>
     );
   }
@@ -228,15 +291,20 @@ export function TedApprovalCard({ operation, workspaceId, onResolved }: TedAppro
     );
   }
 
-  // Legacy payload (old in-flight op without a presentation): render what
-  // exists with a generic title instead of failing.
+  // Legacy payload (old in-flight op without a presentation): fail closed.
+  // Without the hash-bound presentation there is nothing the user can
+  // review, so Confirm/Aprovar never render. Cancel moves no money and
+  // stays available. Never synthesize a presentation from summary, LLM
+  // text, or cache.
   return (
     <div className="my-2 rounded-[16px] border border-warning/30 bg-warning-tint p-3.5 text-xs shadow-xs">
-      <div className="font-bold text-warning">⚠️ Confirmação Necessária</div>
-      <div className="mt-1 text-text-primary">
-        Ação: <strong>{operationLabel}</strong>
-      </div>
-      <div className="mt-0.5 text-text-muted">Revise os dados antes de confirmar a ação.</div>
+      <div className="font-bold text-warning">⚠️ {title}</div>
+      {operation.summary && (
+        <div className="mt-1 text-text-primary">
+          Ação: <strong>{operation.summary}</strong>
+        </div>
+      )}
+      <div className="mt-2 font-semibold text-warning">Dados da operação incompletos — não é possível confirmar agora. Atualize e tente novamente, ou cancele.</div>
 
       {error && <div className="mt-1 font-semibold text-danger">{error}</div>}
 
@@ -244,18 +312,10 @@ export function TedApprovalCard({ operation, workspaceId, onResolved }: TedAppro
         <button
           type="button"
           disabled={loading}
-          onClick={handleApprove}
-          className="rounded-[10px] bg-primary px-3.5 py-2 font-bold text-white shadow-xs transition-all hover:bg-primary-hover active:scale-95 disabled:opacity-50"
-        >
-          {loading ? "Processando…" : "Aprovar"}
-        </button>
-        <button
-          type="button"
-          disabled={loading}
           onClick={handleReject}
           className="rounded-[10px] border border-border-subtle bg-surface-1 px-3.5 py-2 font-bold text-text-secondary transition-all hover:bg-surface-2 active:scale-95 disabled:opacity-50"
         >
-          Rejeitar
+          Cancelar
         </button>
       </div>
     </div>

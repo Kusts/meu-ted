@@ -327,6 +327,11 @@ describe('FIX-USERID-LINEAGE — rotation inherits predecessor user_id (security
 
   it('postgres: matching session userId verifies and proceeds with the same user', async () => {
     const { pool, txCalls } = mockTxPool(async (sql) => {
+      // Fail-closed contract: the session user resolves in the application
+      // users space; here it is the same user as the predecessor owner.
+      if (sql.includes('auth_user_id')) {
+        return { rowCount: 1, rows: [{ id: PREDECESSOR_USER_ID }] };
+      }
       if (sql.startsWith('SELECT')) {
         return {
           rowCount: 1,
@@ -384,6 +389,55 @@ describe('FIX-USERID-LINEAGE — rotation inherits predecessor user_id (security
     await store.rotate('old-raw-token', 'phone v2', HOUSEHOLD_ID, { userId: SESSION_USER_ID });
     const insert = txCalls.find((c) => c.sql.startsWith('INSERT INTO device_tokens'))!;
     expect(insert.args).toContain(SESSION_USER_ID);
+  });
+
+  it('postgres fail-closed: rotate with an unresolvable session user rejects 503, ROLLBACKs, keeps the predecessor intact and mints no successor', async () => {
+    const { pool, txCalls, client } = mockTxPool(async (sql) => {
+      if (sql.includes('auth_user_id')) {
+        return { rowCount: 0, rows: [] };
+      }
+      if (sql.startsWith('SELECT')) {
+        return {
+          rowCount: 1,
+          rows: [{ device_id: 'dev-old', household_id: HOUSEHOLD_ID, expires_at: null, legacy: false, user_id: PREDECESSOR_USER_ID }],
+        };
+      }
+      return { rowCount: 1, rows: [] };
+    });
+    const store = createPostgresDeviceTokenStore(pool as never);
+
+    await expect(
+      store.rotate('old-raw-token', 'phone v2', HOUSEHOLD_ID, { userId: SESSION_USER_ID }),
+    ).rejects.toMatchObject({ statusCode: 503, code: 'auth.identity_unavailable' });
+    expect(txCalls.some((c) => c.sql.startsWith('INSERT INTO device_tokens'))).toBe(false);
+    expect(txCalls.some((c) => c.sql.startsWith('UPDATE device_tokens SET expires_at'))).toBe(false);
+    expect(txCalls.map((c) => c.sql)).toContain('ROLLBACK');
+    expect(txCalls.map((c) => c.sql)).not.toContain('COMMIT');
+    expect(client.release).toHaveBeenCalled();
+  });
+
+  it('postgres fail-closed: a rejected identity SELECT during rotation rejects 503 sanitized with no successor and no driver leak', async () => {
+    const driverError = new Error('SELECT failed: connection reset by peer 10.0.0.9');
+    const { pool, txCalls } = mockTxPool(async (sql) => {
+      if (sql.includes('auth_user_id')) {
+        throw driverError;
+      }
+      if (sql.startsWith('SELECT')) {
+        return {
+          rowCount: 1,
+          rows: [{ device_id: 'dev-old', household_id: HOUSEHOLD_ID, expires_at: null, legacy: false, user_id: null }],
+        };
+      }
+      return { rowCount: 1, rows: [] };
+    });
+    const store = createPostgresDeviceTokenStore(pool as never);
+
+    const err = await store.rotate('old-raw-token', 'phone v2', HOUSEHOLD_ID, { userId: SESSION_USER_ID }).catch((e) => e);
+    expect(err).toMatchObject({ statusCode: 503, code: 'auth.identity_unavailable' });
+    expect(String(err.message)).not.toContain('10.0.0.9');
+    expect(String(err.message)).not.toContain('connection reset');
+    expect(txCalls.some((c) => c.sql.startsWith('INSERT INTO device_tokens'))).toBe(false);
+    expect(txCalls.map((c) => c.sql)).toContain('ROLLBACK');
   });
 
   it('in-memory: rotate by device token inherits the predecessor user_id', async () => {

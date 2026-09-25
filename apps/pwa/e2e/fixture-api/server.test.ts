@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 /**
  * Protocol tests for the fixture API server.
  * Tests run against an in-memory server instance (port 0 = OS-assigned).
@@ -64,6 +66,25 @@ function request(
 // Extract JSON response data with type safety
 function responseData<T>(res: HttpResponse): T {
   return res.data as T;
+}
+
+const SIGN_IN_CREDENTIALS = { email: "test@example.com", password: "password123" };
+
+/** Sign in a testId and return the `name=value` session cookie it was issued. */
+async function signInCookie(server: http.Server, testId: string): Promise<string> {
+  const res = await request(server, "POST", "/auth/sign-in/email", SIGN_IN_CREDENTIALS, {
+    "x-e2e-test-id": testId,
+  });
+  expect(res.status).toBe(200);
+  const setCookie = res.headers["set-cookie"];
+  const first = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+  const cookie = first?.split(";", 1)[0] ?? "";
+  expect(cookie).toMatch(/^better-auth\.session_token=.+/);
+  return cookie;
+}
+
+function sessionTokenOf(cookie: string): string {
+  return cookie.split("=", 2)[1] ?? "";
 }
 
 // ─── Server lifecycle ────────────────────────────────────────────────────────
@@ -461,6 +482,262 @@ describe("Fixture API protocol", () => {
     expect(res.data).toBeUndefined();
   });
 
+  it("POST /auth/sign-in/email issues a distinct unpredictable HttpOnly session cookie per testId", async () => {
+    await request(server, "POST", "/__e2e/reset", { testId: "cookie-a", seed: "empty" }, { "x-e2e-test-id": "cookie-a" });
+    await request(server, "POST", "/__e2e/reset", { testId: "cookie-b", seed: "empty" }, { "x-e2e-test-id": "cookie-b" });
+
+    const raw = await request(
+      server,
+      "POST",
+      "/auth/sign-in/email",
+      SIGN_IN_CREDENTIALS,
+      { "x-e2e-test-id": "cookie-a" },
+    );
+    expect(raw.status).toBe(200);
+    const rawCookies = raw.headers["set-cookie"];
+    const rawHeader = Array.isArray(rawCookies) ? rawCookies.join("; ") : rawCookies ?? "";
+    expect(rawHeader).toMatch(/better-auth\.session_token=[^;]+/);
+    expect(rawHeader).toMatch(/HttpOnly/i);
+    expect(rawHeader).toMatch(/SameSite=Lax/i);
+
+    const cookieA = await signInCookie(server, "cookie-a");
+    const cookieB = await signInCookie(server, "cookie-b");
+    const tokenA = sessionTokenOf(cookieA);
+    const tokenB = sessionTokenOf(cookieB);
+    expect(tokenA).toBeTruthy();
+    expect(tokenB).toBeTruthy();
+    expect(tokenA).not.toBe("e2e-session-1");
+    expect(tokenA).not.toBe(tokenB);
+  });
+
+  it("GET /auth/session requires the issued cookie and resolves the signed-in user", async () => {
+    const testId = "auth-session";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "empty" }, { "x-e2e-test-id": testId });
+
+    const anonymous = await request(server, "GET", "/auth/session", undefined, { "x-e2e-test-id": testId });
+    expect(anonymous.status).toBe(401);
+
+    const cookie = await signInCookie(server, testId);
+    const token = sessionTokenOf(cookie);
+
+    const authenticated = await request(
+      server,
+      "GET",
+      "/auth/session",
+      undefined,
+      { "x-e2e-test-id": testId, cookie },
+    );
+    expect(authenticated.status).toBe(200);
+    expect(responseData<{ user: { id: string; email: string }; session: { id: string } }>(authenticated)).toMatchObject({
+      user: { id: "e2e-user-1", email: "test@example.com" },
+      session: { id: token },
+    });
+  });
+
+  it("POST /auth/agent-token requires a fixture session and binds the token response to the workspace", async () => {
+    const testId = "auth-agent-token";
+    const workspaceId = "e2e-household-001";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "empty" }, { "x-e2e-test-id": testId });
+
+    const anonymous = await request(
+      server,
+      "POST",
+      "/auth/agent-token",
+      undefined,
+      { "x-e2e-test-id": testId, "x-workspace-id": workspaceId },
+    );
+    expect(anonymous.status).toBe(401);
+
+    const cookie = await signInCookie(server, testId);
+
+    const authenticated = await request(
+      server,
+      "POST",
+      "/auth/agent-token",
+      undefined,
+      { "x-e2e-test-id": testId, "x-workspace-id": workspaceId, cookie },
+    );
+    expect(authenticated.status).toBe(200);
+    expect(responseData<{ token: string; expiresIn: number; workspace: string; role: string }>(authenticated)).toEqual({
+      token: "e2e-agent-connection-token",
+      expiresIn: 120,
+      workspace: workspaceId,
+      role: "owner",
+    });
+  });
+
+  it("GET /auth/session rejects foreign cookies with no sign-in (testId-scoped activation)", async () => {
+    const testId = "auth-session-inactive";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "empty" }, { "x-e2e-test-id": testId });
+
+    // Neither the legacy static value nor a random token authenticates
+    // a testId that never signed in.
+    for (const cookie of [
+      "better-auth.session_token=e2e-session-1",
+      "better-auth.session_token=00000000-0000-4000-8000-000000000000",
+    ]) {
+      const res = await request(server, "GET", "/auth/session", undefined, {
+        "x-e2e-test-id": testId,
+        cookie,
+      });
+      expect(res.status).toBe(401);
+    }
+  });
+
+  it("POST /auth/sign-out revokes the testId session, clears the cookie, and the old cookie gets 401", async () => {
+    const testId = "auth-sign-out";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "empty" }, { "x-e2e-test-id": testId });
+    const cookie = await signInCookie(server, testId);
+    const token = sessionTokenOf(cookie);
+
+    const before = await request(server, "GET", "/auth/session", undefined, {
+      "x-e2e-test-id": testId,
+      cookie,
+    });
+    expect(before.status).toBe(200);
+
+    const signOut = await request(server, "POST", "/auth/sign-out", undefined, {
+      "x-e2e-test-id": testId,
+      cookie,
+    });
+    expect(signOut.status).toBe(200);
+    expect(responseData<{ success: boolean }>(signOut)).toEqual({ success: true });
+    const cookies = signOut.headers["set-cookie"];
+    const clearedCookie = Array.isArray(cookies) ? cookies.join("; ") : cookies ?? "";
+    expect(clearedCookie).toMatch(/better-auth\.session_token=/i);
+    expect(clearedCookie).toMatch(/Max-Age=0|Expires=Thu, 01 Jan 1970/i);
+
+    const after = await request(server, "GET", "/auth/session", undefined, {
+      "x-e2e-test-id": testId,
+      cookie,
+    });
+    expect(after.status).toBe(401);
+
+    // The revocation is journaled as success with boolean cookie evidence
+    // only — never the raw cookie or token value.
+    const journal = responseData<Array<{ method: string; path: string; status: number; body: unknown }>>(
+      await request(server, "GET", "/__e2e/journal?testId=auth-sign-out", undefined, { "x-e2e-test-id": testId }),
+    );
+    const entry = journal.find((e) => e.method === "POST" && e.path === "/auth/sign-out");
+    expect(entry).toMatchObject({ status: 200, body: { hadCookie: true, revoked: true } });
+    expect(JSON.stringify(journal)).not.toContain(token);
+  });
+
+  it("POST /auth/sign-out with a foreign or missing cookie never revokes the active session", async () => {
+    const testId = "auth-sign-out-foreign";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "empty" }, { "x-e2e-test-id": testId });
+    const cookie = await signInCookie(server, testId);
+
+    const foreign = await request(server, "POST", "/auth/sign-out", undefined, {
+      "x-e2e-test-id": testId,
+      cookie: "better-auth.session_token=00000000-0000-4000-8000-000000000000",
+    });
+    expect(foreign.status).toBe(200);
+
+    const missing = await request(server, "POST", "/auth/sign-out", undefined, {
+      "x-e2e-test-id": testId,
+    });
+    expect(missing.status).toBe(200);
+
+    // The active session survives both attempts.
+    const intact = await request(server, "GET", "/auth/session", undefined, {
+      "x-e2e-test-id": testId,
+      cookie,
+    });
+    expect(intact.status).toBe(200);
+
+    const journal = responseData<Array<{ method: string; path: string; status: number; body: unknown }>>(
+      await request(server, "GET", "/__e2e/journal?testId=auth-sign-out-foreign", undefined, { "x-e2e-test-id": testId }),
+    );
+    const entries = journal.filter((e) => e.method === "POST" && e.path === "/auth/sign-out");
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ status: 200, body: { hadCookie: true, revoked: false } });
+    expect(entries[1]).toMatchObject({ status: 200, body: { hadCookie: false, revoked: false } });
+  });
+
+  it("a testId cookie is rejected under another testId; signing out A leaves B authenticated", async () => {
+    await request(server, "POST", "/__e2e/reset", { testId: "rev-a", seed: "empty" }, { "x-e2e-test-id": "rev-a" });
+    await request(server, "POST", "/__e2e/reset", { testId: "rev-b", seed: "empty" }, { "x-e2e-test-id": "rev-b" });
+    const cookieA = await signInCookie(server, "rev-a");
+    const cookieB = await signInCookie(server, "rev-b");
+    expect(sessionTokenOf(cookieA)).not.toBe(sessionTokenOf(cookieB));
+
+    // Cross-testId replay authenticates nothing, both directions.
+    for (const [tid, cookie] of [["rev-a", cookieB], ["rev-b", cookieA]] as const) {
+      const crossed = await request(server, "GET", "/auth/session", undefined, {
+        "x-e2e-test-id": tid,
+        cookie,
+      });
+      expect(crossed.status).toBe(401);
+    }
+
+    await request(server, "POST", "/auth/sign-out", undefined, {
+      "x-e2e-test-id": "rev-a",
+      cookie: cookieA,
+    });
+
+    const revoked = await request(server, "GET", "/auth/session", undefined, {
+      "x-e2e-test-id": "rev-a",
+      cookie: cookieA,
+    });
+    expect(revoked.status).toBe(401);
+
+    const untouched = await request(server, "GET", "/auth/session", undefined, {
+      "x-e2e-test-id": "rev-b",
+      cookie: cookieB,
+    });
+    expect(untouched.status).toBe(200);
+  });
+
+  it("sign-in after sign-out rotates the token: old cookie rejected, new cookie works", async () => {
+    const testId = "auth-resign";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "empty" }, { "x-e2e-test-id": testId });
+
+    const cookie1 = await signInCookie(server, testId);
+    await request(server, "POST", "/auth/sign-out", undefined, {
+      "x-e2e-test-id": testId,
+      cookie: cookie1,
+    });
+    const revoked = await request(server, "GET", "/auth/session", undefined, {
+      "x-e2e-test-id": testId,
+      cookie: cookie1,
+    });
+    expect(revoked.status).toBe(401);
+
+    const cookie2 = await signInCookie(server, testId);
+    expect(sessionTokenOf(cookie2)).not.toBe(sessionTokenOf(cookie1));
+    const reactivated = await request(server, "GET", "/auth/session", undefined, {
+      "x-e2e-test-id": testId,
+      cookie: cookie2,
+    });
+    expect(reactivated.status).toBe(200);
+
+    const stale = await request(server, "GET", "/auth/session", undefined, {
+      "x-e2e-test-id": testId,
+      cookie: cookie1,
+    });
+    expect(stale.status).toBe(401);
+  });
+
+  it("POST /auth/agent-token rejects a revoked fixture session", async () => {
+    const testId = "auth-agent-revoked";
+    const workspaceId = "e2e-household-001";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "empty" }, { "x-e2e-test-id": testId });
+    const cookie = await signInCookie(server, testId);
+
+    await request(server, "POST", "/auth/sign-out", undefined, {
+      "x-e2e-test-id": testId,
+      cookie,
+    });
+
+    const res = await request(server, "POST", "/auth/agent-token", undefined, {
+      "x-e2e-test-id": testId,
+      "x-workspace-id": workspaceId,
+      cookie,
+    });
+    expect(res.status).toBe(401);
+  });
+
   it("POST /auth/devices/register returns {token,deviceId,householdId}", async () => {
     const testId = "auth-reg";
     await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
@@ -486,5 +763,177 @@ describe("Fixture API protocol", () => {
     const res = await request(server, "GET", "/nonexistent/route", undefined, { "x-e2e-test-id": testId });
     expect(res.status).toBe(404);
     expect(responseData<{ error: string }>(res).error).toBe("Not found");
+  });
+
+  // ── Agent stub (TED pending operations, deterministic) ────────────────────
+
+  async function agentJournal(testId: string): Promise<Array<{ method: string; path: string; status: number; body: unknown }>> {
+    const res = await request(server, "GET", `/__e2e/journal?testId=${testId}`, undefined, { "x-e2e-test-id": testId });
+    return responseData<Array<{ method: string; path: string; status: number; body: unknown }>>(res);
+  }
+
+  it("chat without a script answers a deterministic default turn and journals the intentionId", async () => {
+    const testId = "agent-chat-default";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+
+    const res = await request(
+      server, "POST", "/agents/finance-chat-agent/e2e-household-001/rpc/chat",
+      { text: "quanto gastei?", intentionId: "msg-1" },
+      { "x-e2e-test-id": testId },
+    );
+    expect(res.status).toBe(200);
+    const turn = responseData<{ turnId: string; status: string; output: string }>(res);
+    expect(turn.turnId).toBe("turn-fixture-default");
+    expect(turn.status).toBe("completed");
+    expect(typeof turn.output).toBe("string");
+
+    const entries = (await agentJournal(testId)).filter((e) => e.path.endsWith("/rpc/chat"));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      method: "POST",
+      status: 200,
+      body: { text: "quanto gastei?", intentionId: "msg-1" },
+    });
+  });
+
+  it("agent-script programs the chat queue FIFO: 429 then 200, then the default again", async () => {
+    const testId = "agent-chat-queue";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+    const scripted = await request(server, "POST", "/__e2e/agent-script", {
+      testId,
+      chat: [
+        { status: 429, body: { code: "agent.primary_unavailable", message: "primário indisponível" } },
+        { status: 200, body: { turnId: "turn-fallback", status: "completed", output: "via fallback" } },
+      ],
+    }, { "x-e2e-test-id": testId });
+    expect(scripted.status).toBe(200);
+
+    const chatPath = "/agents/finance-chat-agent/e2e-household-001/rpc/chat";
+    const first = await request(server, "POST", chatPath, { intentionId: "m" }, { "x-e2e-test-id": testId });
+    expect(first.status).toBe(429);
+    expect(responseData<{ code: string }>(first)).toMatchObject({ code: "agent.primary_unavailable" });
+
+    const second = await request(server, "POST", chatPath, { intentionId: "m" }, { "x-e2e-test-id": testId });
+    expect(second.status).toBe(200);
+    expect(responseData<{ turnId: string }>(second).turnId).toBe("turn-fallback");
+
+    const third = await request(server, "POST", chatPath, { intentionId: "m" }, { "x-e2e-test-id": testId });
+    expect(third.status).toBe(200);
+    expect(responseData<{ turnId: string }>(third).turnId).toBe("turn-fixture-default");
+
+    const entries = (await agentJournal(testId)).filter((e) => e.path.endsWith("/rpc/chat"));
+    expect(entries.map((e) => e.status)).toEqual([429, 200, 200]);
+  });
+
+  it("agent-script rejects malformed programs with 400 and keeps the previous script", async () => {
+    const testId = "agent-script-bad";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+
+    for (const bad of [
+      { chat: "nope" },
+      { chat: [{ status: "429", body: {} }] },
+      { chat: [{ status: 200, body: [] }] },
+      { decisions: [] },
+      { decisions: { "op:confirm": null } },
+      { active: {} },
+    ]) {
+      const res = await request(server, "POST", "/__e2e/agent-script", { testId, ...bad }, { "x-e2e-test-id": testId });
+      expect(res.status).toBe(400);
+    }
+
+    // Nothing was stored: chat still answers the default.
+    const chatPath = "/agents/finance-chat-agent/e2e-household-001/rpc/chat";
+    const res = await request(server, "POST", chatPath, {}, { "x-e2e-test-id": testId });
+    expect(res.status).toBe(200);
+    expect(responseData<{ turnId: string }>(res).turnId).toBe("turn-fixture-default");
+  });
+
+  it("decision defaults: confirm/retry succeed with a receipt, cancel cancels, unknown is 422", async () => {
+    const testId = "agent-decision-defaults";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+    const decisionPath = (op: string): string =>
+      `/agents/finance-chat-agent/e2e-household-001/rpc/pending-operations/${op}/decision`;
+
+    const confirm = await request(server, "POST", decisionPath("op-1"), { decision: "confirm", requestId: "r1" }, { "x-e2e-test-id": testId });
+    expect(confirm.status).toBe(200);
+    expect(responseData<Record<string, unknown>>(confirm)).toMatchObject({
+      operationId: "op-1",
+      status: "succeeded",
+      receipt: {
+        mutationId: "rcpt-op-1",
+        mutationKind: "transactions.expense.create",
+        status: "succeeded",
+        affectedTargets: ["transactions"],
+        operationId: "op-1",
+      },
+    });
+
+    const retry = await request(server, "POST", decisionPath("op-2"), { decision: "retry", requestId: "r2" }, { "x-e2e-test-id": testId });
+    expect(responseData<Record<string, unknown>>(retry)).toMatchObject({ operationId: "op-2", status: "succeeded" });
+
+    const cancel = await request(server, "POST", decisionPath("op-3"), { decision: "cancel", requestId: "r3" }, { "x-e2e-test-id": testId });
+    expect(responseData<Record<string, unknown>>(cancel)).toEqual({ operationId: "op-3", status: "cancelled" });
+
+    const unknown = await request(server, "POST", decisionPath("op-4"), { decision: "approve", requestId: "r4" }, { "x-e2e-test-id": testId });
+    expect(unknown.status).toBe(422);
+    expect(responseData<{ code: string }>(unknown).code).toBe("agent.unknown_decision");
+
+    const entries = (await agentJournal(testId)).filter((e) => e.path.endsWith("/decision"));
+    expect(entries.map((e) => (e.body as { decision: string }).decision)).toEqual(["confirm", "retry", "cancel", "approve"]);
+    expect(entries.map((e) => e.status)).toEqual([200, 200, 200, 422]);
+  });
+
+  it("scripted decisions override the defaults by <opId>:<decision> key", async () => {
+    const testId = "agent-decision-scripted";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+    await request(server, "POST", "/__e2e/agent-script", {
+      testId,
+      decisions: {
+        "op-9:confirm": { status: 200, body: { operationId: "op-9", status: "failed", retryable: true } },
+      },
+    }, { "x-e2e-test-id": testId });
+
+    const path = "/agents/finance-chat-agent/e2e-household-001/rpc/pending-operations/op-9/decision";
+    const res = await request(server, "POST", path, { decision: "confirm", requestId: "r" }, { "x-e2e-test-id": testId });
+    expect(res.status).toBe(200);
+    expect(responseData<Record<string, unknown>>(res)).toEqual({ operationId: "op-9", status: "failed", retryable: true });
+
+    // Other keys keep the defaults.
+    const other = await request(server, "POST", path, { decision: "cancel", requestId: "r" }, { "x-e2e-test-id": testId });
+    expect(responseData<Record<string, unknown>>(other)).toEqual({ operationId: "op-9", status: "cancelled" });
+  });
+
+  it("active list defaults to empty and serves the scripted ops verbatim", async () => {
+    const testId = "agent-active";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+    const activePath = "/agents/finance-chat-agent/e2e-household-001/rpc/pending-operations/active";
+
+    const empty = await request(server, "GET", activePath, undefined, { "x-e2e-test-id": testId });
+    expect(empty.status).toBe(200);
+    expect(responseData<{ items: unknown[]; total: number }>(empty)).toEqual({ items: [], total: 0 });
+
+    const op = { id: "op-1", status: "proposed", tool: "transactions.expense.create", createdAt: "2026-07-17T12:00:00.000Z", expiresAt: "2026-07-18T12:00:00.000Z" };
+    await request(server, "POST", "/__e2e/agent-script", { testId, active: [op] }, { "x-e2e-test-id": testId });
+    const filled = await request(server, "GET", activePath, undefined, { "x-e2e-test-id": testId });
+    expect(responseData<{ items: unknown[]; total: number }>(filled)).toEqual({ items: [op], total: 1 });
+  });
+
+  it("agent scripts are isolated per testId and cleared by reset", async () => {
+    const chatPath = "/agents/finance-chat-agent/e2e-household-001/rpc/chat";
+    await request(server, "POST", "/__e2e/reset", { testId: "agent-iso-a", seed: "populated" }, { "x-e2e-test-id": "agent-iso-a" });
+    await request(server, "POST", "/__e2e/reset", { testId: "agent-iso-b", seed: "populated" }, { "x-e2e-test-id": "agent-iso-b" });
+    await request(server, "POST", "/__e2e/agent-script", {
+      testId: "agent-iso-a",
+      chat: [{ status: 200, body: { turnId: "turn-a", status: "completed" } }],
+    }, { "x-e2e-test-id": "agent-iso-a" });
+
+    const a = await request(server, "POST", chatPath, {}, { "x-e2e-test-id": "agent-iso-a" });
+    expect(responseData<{ turnId: string }>(a).turnId).toBe("turn-a");
+    const b = await request(server, "POST", chatPath, {}, { "x-e2e-test-id": "agent-iso-b" });
+    expect(responseData<{ turnId: string }>(b).turnId).toBe("turn-fixture-default");
+
+    await request(server, "POST", "/__e2e/reset", { testId: "agent-iso-a", seed: "populated" }, { "x-e2e-test-id": "agent-iso-a" });
+    const cleared = await request(server, "POST", chatPath, {}, { "x-e2e-test-id": "agent-iso-a" });
+    expect(responseData<{ turnId: string }>(cleared).turnId).toBe("turn-fixture-default");
   });
 });
