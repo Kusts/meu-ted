@@ -10,9 +10,16 @@
  *   POST /__e2e/scenario        → {testId,method,pathname,search?,delayMs?,status?,offline?,once?}
  *   GET  /__e2e/journal?testId= → journal entries for that testId
  *   GET  /__e2e/seed?testId=    → current deterministic fixture state
+ *   POST /__e2e/agent-script    → program deterministic Agent-stub replies
+ *                                {testId?, chat?, decisions?, active?}
  *
  * Endpoints (fixture, require X-E2E-Test-ID):
  *   ALL  /*                     → fixture responses or scenario-matched behavior
+ *
+ * Agent stub (deterministic, loopback — no LLM, no external network):
+ *   POST /agents/finance-chat-agent/:ws/rpc/chat
+ *   POST /agents/finance-chat-agent/:ws/rpc/pending-operations/:op/decision
+ *   GET  /agents/finance-chat-agent/:ws/rpc/pending-operations/active
  *
  * CORS: origin http://127.0.0.1:3000
  * Fixed clock: 2026-07-17T12:00:00.000Z
@@ -21,7 +28,7 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { URL } from "node:url";
-import { StoreManager, SEEDS, generateId, type JournalEntry, type ScenarioRule, type TestStore } from "./store";
+import { StoreManager, SEEDS, generateId, type JournalEntry, type ScenarioRule, type TestStore, type AgentStubChatResponse } from "./store";
 
 const ALLOWED_ORIGIN = "http://127.0.0.1:3000";
 const ALLOWED_METHODS = "GET,POST,PATCH,DELETE,OPTIONS";
@@ -222,9 +229,61 @@ function handleE2eRoute(
     return true;
   }
 
+  // Agent-stub script (TED pending-ops E2E): programs the deterministic
+  // replies served by the /agents/finance-chat-agent/* fixture handlers.
+  // Body: { testId?, chat?: [{status?, body?}], decisions?: { "<opId>:<decision>": {status?, body?} }, active?: [...] }.
+  // Shapes are validated lightly (wrong types → 400); payloads are stored
+  // verbatim and served FIFO (chat) or by key (decisions).
+  if (pathname === "/__e2e/agent-script" && req.method === "POST") {
+    const tid = (body?.testId as string | undefined) ?? testId;
+    const store = stores.getOrCreate(tid);
+    if (body && typeof body === "object") {
+      const fail = (msg: string): boolean => {
+        sendJson(res, 400, { error: msg });
+        return true;
+      };
+      const asStubResponse = (value: unknown): AgentStubChatResponse | null => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+        const rec = value as Record<string, unknown>;
+        const status = rec.status === undefined ? 200 : rec.status;
+        const respBody = rec.body === undefined ? {} : rec.body;
+        if (typeof status !== "number" || !Number.isInteger(status)) return null;
+        if (!respBody || typeof respBody !== "object" || Array.isArray(respBody)) return null;
+        return { status, body: respBody as Record<string, unknown> };
+      };
+      if (body.chat !== undefined) {
+        if (!Array.isArray(body.chat)) return fail("agent-script: chat must be an array");
+        const queue: AgentStubChatResponse[] = [];
+        for (const entry of body.chat) {
+          const parsed = asStubResponse(entry);
+          if (!parsed) return fail("agent-script: chat entries must be {status?, body?}");
+          queue.push(parsed);
+        }
+        store.agentStub.chatQueue = queue;
+      }
+      if (body.decisions !== undefined) {
+        if (!body.decisions || typeof body.decisions !== "object" || Array.isArray(body.decisions)) {
+          return fail("agent-script: decisions must be an object");
+        }
+        const mapped: Record<string, AgentStubChatResponse> = {};
+        for (const [key, entry] of Object.entries(body.decisions as Record<string, unknown>)) {
+          const parsed = asStubResponse(entry);
+          if (!parsed) return fail("agent-script: decision entries must be {status?, body?}");
+          mapped[key] = parsed;
+        }
+        store.agentStub.decisions = mapped;
+      }
+      if (body.active !== undefined) {
+        if (!Array.isArray(body.active)) return fail("agent-script: active must be an array");
+        store.agentStub.activeOps = structuredClone(body.active) as Array<Record<string, unknown>>;
+      }
+    }
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
   // Journal read
-  if (pathname === "/__e2e/journal" && req.method === "GET") {
-    const tid = testId;
+  if (pathname === "/__e2e/journal" && req.method === "GET") {    const tid = testId;
     const store = stores.get(tid);
     const journal: JournalEntry[] = store?.journal ?? [];
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -1197,6 +1256,79 @@ async function handleFixtureRequest(
     // e2e failure guard in TX-02/TX-03).
     journalPush(testId, method, pathname, body, 200);
     sendJson(res, 200, { duplicate_detected: false });
+    return;
+  }
+
+  // ── Agent stub (TED pending operations, deterministic) ────────────────────
+  // Loopback stand-in for the Agent Worker behind the PWA /api/agent proxy.
+  // The E2E spec forwards /api/agent/* here per testId and programs replies
+  // via POST /__e2e/agent-script. No LLM, no external network: scripted
+  // replies are served verbatim (FIFO for chat, by "<opId>:<decision>" key
+  // for decisions); unscripted calls get deterministic defaults. Every call
+  // is journaled with method+path+body+status for spec assertions.
+
+  const agentChatMatch = pathname.match(/^\/agents\/finance-chat-agent\/([^/]+)\/rpc\/chat$/);
+  if (agentChatMatch && method === "POST") {
+    const next = store.agentStub.chatQueue.shift();
+    const reply = next ?? {
+      status: 200,
+      body: {
+        turnId: "turn-fixture-default",
+        status: "completed",
+        output: "Resposta determinística da fixture (sem LLM).",
+      },
+    };
+    journalPush(testId, method, pathname, body, reply.status);
+    sendJson(res, reply.status, reply.body);
+    return;
+  }
+
+  const agentDecisionMatch = pathname.match(
+    /^\/agents\/finance-chat-agent\/([^/]+)\/rpc\/pending-operations\/([^/]+)\/decision$/,
+  );
+  if (agentDecisionMatch && method === "POST") {
+    const operationId = agentDecisionMatch[2];
+    const decision = typeof body?.decision === "string" ? body.decision : "";
+    const scripted = store.agentStub.decisions[`${operationId}:${decision}`];
+    if (scripted) {
+      journalPush(testId, method, pathname, body, scripted.status);
+      sendJson(res, scripted.status, scripted.body);
+      return;
+    }
+    if (decision === "cancel") {
+      journalPush(testId, method, pathname, body, 200);
+      sendJson(res, 200, { operationId, status: "cancelled" });
+      return;
+    }
+    if (decision === "confirm" || decision === "retry") {
+      journalPush(testId, method, pathname, body, 200);
+      sendJson(res, 200, {
+        operationId,
+        status: "succeeded",
+        receipt: {
+          mutationId: `rcpt-${operationId}`,
+          mutationKind: "transactions.expense.create",
+          status: "succeeded",
+          affectedTargets: ["transactions"],
+          operationId,
+        },
+      });
+      return;
+    }
+    journalPush(testId, method, pathname, body, 422);
+    sendJson(res, 422, { code: "agent.unknown_decision", message: "Decisão desconhecida." });
+    return;
+  }
+
+  const agentActiveMatch = pathname.match(
+    /^\/agents\/finance-chat-agent\/([^/]+)\/rpc\/pending-operations\/active$/,
+  );
+  if (agentActiveMatch && method === "GET") {
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, {
+      items: store.agentStub.activeOps,
+      total: store.agentStub.activeOps.length,
+    });
     return;
   }
 

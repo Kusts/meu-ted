@@ -764,4 +764,176 @@ describe("Fixture API protocol", () => {
     expect(res.status).toBe(404);
     expect(responseData<{ error: string }>(res).error).toBe("Not found");
   });
+
+  // ── Agent stub (TED pending operations, deterministic) ────────────────────
+
+  async function agentJournal(testId: string): Promise<Array<{ method: string; path: string; status: number; body: unknown }>> {
+    const res = await request(server, "GET", `/__e2e/journal?testId=${testId}`, undefined, { "x-e2e-test-id": testId });
+    return responseData<Array<{ method: string; path: string; status: number; body: unknown }>>(res);
+  }
+
+  it("chat without a script answers a deterministic default turn and journals the intentionId", async () => {
+    const testId = "agent-chat-default";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+
+    const res = await request(
+      server, "POST", "/agents/finance-chat-agent/e2e-household-001/rpc/chat",
+      { text: "quanto gastei?", intentionId: "msg-1" },
+      { "x-e2e-test-id": testId },
+    );
+    expect(res.status).toBe(200);
+    const turn = responseData<{ turnId: string; status: string; output: string }>(res);
+    expect(turn.turnId).toBe("turn-fixture-default");
+    expect(turn.status).toBe("completed");
+    expect(typeof turn.output).toBe("string");
+
+    const entries = (await agentJournal(testId)).filter((e) => e.path.endsWith("/rpc/chat"));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      method: "POST",
+      status: 200,
+      body: { text: "quanto gastei?", intentionId: "msg-1" },
+    });
+  });
+
+  it("agent-script programs the chat queue FIFO: 429 then 200, then the default again", async () => {
+    const testId = "agent-chat-queue";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+    const scripted = await request(server, "POST", "/__e2e/agent-script", {
+      testId,
+      chat: [
+        { status: 429, body: { code: "agent.primary_unavailable", message: "primário indisponível" } },
+        { status: 200, body: { turnId: "turn-fallback", status: "completed", output: "via fallback" } },
+      ],
+    }, { "x-e2e-test-id": testId });
+    expect(scripted.status).toBe(200);
+
+    const chatPath = "/agents/finance-chat-agent/e2e-household-001/rpc/chat";
+    const first = await request(server, "POST", chatPath, { intentionId: "m" }, { "x-e2e-test-id": testId });
+    expect(first.status).toBe(429);
+    expect(responseData<{ code: string }>(first)).toMatchObject({ code: "agent.primary_unavailable" });
+
+    const second = await request(server, "POST", chatPath, { intentionId: "m" }, { "x-e2e-test-id": testId });
+    expect(second.status).toBe(200);
+    expect(responseData<{ turnId: string }>(second).turnId).toBe("turn-fallback");
+
+    const third = await request(server, "POST", chatPath, { intentionId: "m" }, { "x-e2e-test-id": testId });
+    expect(third.status).toBe(200);
+    expect(responseData<{ turnId: string }>(third).turnId).toBe("turn-fixture-default");
+
+    const entries = (await agentJournal(testId)).filter((e) => e.path.endsWith("/rpc/chat"));
+    expect(entries.map((e) => e.status)).toEqual([429, 200, 200]);
+  });
+
+  it("agent-script rejects malformed programs with 400 and keeps the previous script", async () => {
+    const testId = "agent-script-bad";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+
+    for (const bad of [
+      { chat: "nope" },
+      { chat: [{ status: "429", body: {} }] },
+      { chat: [{ status: 200, body: [] }] },
+      { decisions: [] },
+      { decisions: { "op:confirm": null } },
+      { active: {} },
+    ]) {
+      const res = await request(server, "POST", "/__e2e/agent-script", { testId, ...bad }, { "x-e2e-test-id": testId });
+      expect(res.status).toBe(400);
+    }
+
+    // Nothing was stored: chat still answers the default.
+    const chatPath = "/agents/finance-chat-agent/e2e-household-001/rpc/chat";
+    const res = await request(server, "POST", chatPath, {}, { "x-e2e-test-id": testId });
+    expect(res.status).toBe(200);
+    expect(responseData<{ turnId: string }>(res).turnId).toBe("turn-fixture-default");
+  });
+
+  it("decision defaults: confirm/retry succeed with a receipt, cancel cancels, unknown is 422", async () => {
+    const testId = "agent-decision-defaults";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+    const decisionPath = (op: string): string =>
+      `/agents/finance-chat-agent/e2e-household-001/rpc/pending-operations/${op}/decision`;
+
+    const confirm = await request(server, "POST", decisionPath("op-1"), { decision: "confirm", requestId: "r1" }, { "x-e2e-test-id": testId });
+    expect(confirm.status).toBe(200);
+    expect(responseData<Record<string, unknown>>(confirm)).toMatchObject({
+      operationId: "op-1",
+      status: "succeeded",
+      receipt: {
+        mutationId: "rcpt-op-1",
+        mutationKind: "transactions.expense.create",
+        status: "succeeded",
+        affectedTargets: ["transactions"],
+        operationId: "op-1",
+      },
+    });
+
+    const retry = await request(server, "POST", decisionPath("op-2"), { decision: "retry", requestId: "r2" }, { "x-e2e-test-id": testId });
+    expect(responseData<Record<string, unknown>>(retry)).toMatchObject({ operationId: "op-2", status: "succeeded" });
+
+    const cancel = await request(server, "POST", decisionPath("op-3"), { decision: "cancel", requestId: "r3" }, { "x-e2e-test-id": testId });
+    expect(responseData<Record<string, unknown>>(cancel)).toEqual({ operationId: "op-3", status: "cancelled" });
+
+    const unknown = await request(server, "POST", decisionPath("op-4"), { decision: "approve", requestId: "r4" }, { "x-e2e-test-id": testId });
+    expect(unknown.status).toBe(422);
+    expect(responseData<{ code: string }>(unknown).code).toBe("agent.unknown_decision");
+
+    const entries = (await agentJournal(testId)).filter((e) => e.path.endsWith("/decision"));
+    expect(entries.map((e) => (e.body as { decision: string }).decision)).toEqual(["confirm", "retry", "cancel", "approve"]);
+    expect(entries.map((e) => e.status)).toEqual([200, 200, 200, 422]);
+  });
+
+  it("scripted decisions override the defaults by <opId>:<decision> key", async () => {
+    const testId = "agent-decision-scripted";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+    await request(server, "POST", "/__e2e/agent-script", {
+      testId,
+      decisions: {
+        "op-9:confirm": { status: 200, body: { operationId: "op-9", status: "failed", retryable: true } },
+      },
+    }, { "x-e2e-test-id": testId });
+
+    const path = "/agents/finance-chat-agent/e2e-household-001/rpc/pending-operations/op-9/decision";
+    const res = await request(server, "POST", path, { decision: "confirm", requestId: "r" }, { "x-e2e-test-id": testId });
+    expect(res.status).toBe(200);
+    expect(responseData<Record<string, unknown>>(res)).toEqual({ operationId: "op-9", status: "failed", retryable: true });
+
+    // Other keys keep the defaults.
+    const other = await request(server, "POST", path, { decision: "cancel", requestId: "r" }, { "x-e2e-test-id": testId });
+    expect(responseData<Record<string, unknown>>(other)).toEqual({ operationId: "op-9", status: "cancelled" });
+  });
+
+  it("active list defaults to empty and serves the scripted ops verbatim", async () => {
+    const testId = "agent-active";
+    await request(server, "POST", "/__e2e/reset", { testId, seed: "populated" }, { "x-e2e-test-id": testId });
+    const activePath = "/agents/finance-chat-agent/e2e-household-001/rpc/pending-operations/active";
+
+    const empty = await request(server, "GET", activePath, undefined, { "x-e2e-test-id": testId });
+    expect(empty.status).toBe(200);
+    expect(responseData<{ items: unknown[]; total: number }>(empty)).toEqual({ items: [], total: 0 });
+
+    const op = { id: "op-1", status: "proposed", tool: "transactions.expense.create", createdAt: "2026-07-17T12:00:00.000Z", expiresAt: "2026-07-18T12:00:00.000Z" };
+    await request(server, "POST", "/__e2e/agent-script", { testId, active: [op] }, { "x-e2e-test-id": testId });
+    const filled = await request(server, "GET", activePath, undefined, { "x-e2e-test-id": testId });
+    expect(responseData<{ items: unknown[]; total: number }>(filled)).toEqual({ items: [op], total: 1 });
+  });
+
+  it("agent scripts are isolated per testId and cleared by reset", async () => {
+    const chatPath = "/agents/finance-chat-agent/e2e-household-001/rpc/chat";
+    await request(server, "POST", "/__e2e/reset", { testId: "agent-iso-a", seed: "populated" }, { "x-e2e-test-id": "agent-iso-a" });
+    await request(server, "POST", "/__e2e/reset", { testId: "agent-iso-b", seed: "populated" }, { "x-e2e-test-id": "agent-iso-b" });
+    await request(server, "POST", "/__e2e/agent-script", {
+      testId: "agent-iso-a",
+      chat: [{ status: 200, body: { turnId: "turn-a", status: "completed" } }],
+    }, { "x-e2e-test-id": "agent-iso-a" });
+
+    const a = await request(server, "POST", chatPath, {}, { "x-e2e-test-id": "agent-iso-a" });
+    expect(responseData<{ turnId: string }>(a).turnId).toBe("turn-a");
+    const b = await request(server, "POST", chatPath, {}, { "x-e2e-test-id": "agent-iso-b" });
+    expect(responseData<{ turnId: string }>(b).turnId).toBe("turn-fixture-default");
+
+    await request(server, "POST", "/__e2e/reset", { testId: "agent-iso-a", seed: "populated" }, { "x-e2e-test-id": "agent-iso-a" });
+    const cleared = await request(server, "POST", chatPath, {}, { "x-e2e-test-id": "agent-iso-a" });
+    expect(responseData<{ turnId: string }>(cleared).turnId).toBe("turn-fixture-default");
+  });
 });
