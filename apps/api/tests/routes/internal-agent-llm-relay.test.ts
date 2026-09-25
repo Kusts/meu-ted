@@ -22,12 +22,18 @@ describe('Fase 2 item 8 — dynamic relay allowlist (RED)', () => {
     // The missing-credential contract must not depend on a developer or CI
     // process inheriting a real OpenRouter credential.
     delete process.env.OPENROUTER_API_KEY;
+    // Same hermeticity for the opencode-go credential fallback
+    // (deps.opencodeGoApiKey ?? process.env.OPENCODE_GO_API_KEY): the
+    // R7-rev test below passes its go key explicitly, and no test in this
+    // file may inherit an ambient OPENCODE_GO_API_KEY.
+    delete process.env.OPENCODE_GO_API_KEY;
     app = Fastify({ logger: false });
   });
 
   afterEach(async () => {
     delete process.env.RELAY_ALLOWED_MODELS;
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENCODE_GO_API_KEY;
     vi.restoreAllMocks();
     await app.close();
   });
@@ -263,8 +269,12 @@ describe('Fase 2 item 8 — dynamic relay allowlist (RED)', () => {
     }
     // The opencode-go provider goes down: its (go, shared-model) pair must
     // stop being relayable while (zen, shared-model) keeps working.
+    // Both credentials are passed explicitly so the allowlist verdict (403)
+    // never depends on an ambient OPENCODE_GO_API_KEY.
     await store.setProviderEnabled('opencode-go', false);
-    registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, llmConfigStore: store });
+    registerAgentLlmRelayRoutes(app, {
+      adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY, opencodeGoApiKey: 'test-go-key', llmConfigStore: store,
+    });
     await app.ready();
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(upstreamOk()));
 
@@ -460,12 +470,14 @@ describe('FIX-API-RELAY-MONOTONIC-AND-CANCEL — monotonic deadline + body cance
   beforeEach(async () => {
     delete process.env.RELAY_ALLOWED_MODELS;
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENCODE_GO_API_KEY;
     app = Fastify({ logger: false });
   });
 
   afterEach(async () => {
     delete process.env.RELAY_ALLOWED_MODELS;
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENCODE_GO_API_KEY;
     vi.restoreAllMocks();
     await app.close();
   });
@@ -585,6 +597,7 @@ describe('FIX-API-RELAY-ALL-ERROR-MESSAGES-SAFE — fixed safe messages on every
   beforeEach(async () => {
     delete process.env.RELAY_ALLOWED_MODELS;
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENCODE_GO_API_KEY;
     app = Fastify({ logger: false });
     registerAgentLlmRelayRoutes(app, { adminToken: ADMIN_TOKEN, zenApiKey: ZEN_KEY });
     await app.ready();
@@ -593,6 +606,7 @@ describe('FIX-API-RELAY-ALL-ERROR-MESSAGES-SAFE — fixed safe messages on every
   afterEach(async () => {
     delete process.env.RELAY_ALLOWED_MODELS;
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENCODE_GO_API_KEY;
     vi.restoreAllMocks();
     await app.close();
   });
@@ -708,12 +722,14 @@ describe('W2-ITEM6 — absolute transport deadline: fetch/body que ignoram abort
   beforeEach(async () => {
     delete process.env.RELAY_ALLOWED_MODELS;
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENCODE_GO_API_KEY;
     app = Fastify({ logger: false });
   });
 
   afterEach(async () => {
     delete process.env.RELAY_ALLOWED_MODELS;
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENCODE_GO_API_KEY;
     vi.restoreAllMocks();
     await app.close();
   });
