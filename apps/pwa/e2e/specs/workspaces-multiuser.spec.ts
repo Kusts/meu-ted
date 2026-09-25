@@ -5,10 +5,25 @@
  * 1. Owner & Member control isolation in shared workspace
  * 2. Revoked/expired invite rejection & UI error recovery
  * 3. Ownership transfer acceptance exclusively by authenticated target member
+ *
+ * Auth note (WAVE11-CODER-E2EB): the suite runs with the legacy bearer compat
+ * window CLOSED (run-ci.sh exports NEXT_PUBLIC_LEGACY_BEARER_COMPAT=off), so
+ * a localStorage `pi-finance:token` never authenticates — the token-store
+ * drops the read entirely. Every test therefore establishes a REAL cookie
+ * session via the harness authenticate() (fixture sign-in) BEFORE navigating
+ * to /workspaces; the route mocks below only shape the workspace API answers
+ * (strict, schema-adherent) and never the session itself.
+ *
+ * Mock strictness: only the endpoints listed here are stubbed (workspace,
+ * members, invites, ownership transfers + schema-shaped bootstrap empties).
+ * There is deliberately NO generic `/api/** → 200 {}` fallback — an
+ * unexpected call must reach the fixture (or fail loudly), never pass with a
+ * permissive shape that would turn the test falsely green. Owner/member
+ * isolation is enforced per-role in the mocks (member sees no invites).
  */
 
 import { test, expect } from "@playwright/test";
-import { prepareSpec } from "../support/harness";
+import { prepareSpec, authenticate, rewriteCspForFixture } from "../support/harness";
 import { assertNoUndeclaredFailures } from "../support/failure-guard";
 
 // Cross-origin mocked API responses must carry CORS headers: the app calls
@@ -38,41 +53,52 @@ type ApiMockConfig = {
   onAcceptTransfer?: (transferId: string) => { status: number; body: Record<string, unknown> };
 };
 
+/**
+ * Discrete workspace-API mocks, registered AFTER prepareSpec so each pattern
+ * wins over the harness catch-all ONLY for its own URLs. Documents, session
+ * auth (fixture sign-in + cookie probe) and all bootstrap data keep flowing
+ * through the harness handler + the real fixture (populated seed) untouched —
+ * a broad star-star-slash-star catch-all here would shadow the harness CSP
+ * rewrite and break the login it is supposed to precede.
+ */
 async function setupMockApi(page: import("@playwright/test").Page, config: ApiMockConfig) {
-  await page.addInitScript(() => {
-    localStorage.setItem("pi-finance:token", "e2e-auth-token-1");
-  });
-
-  const emptyList = JSON.stringify({ items: [], total: 0 });
-  const emptyArray = JSON.stringify({ items: [] });
-
-  await page.route("**/*", async (route) => {
+  const handleWorkspaces = async (route: import("@playwright/test").Route) => {
     const req = route.request();
     const url = new URL(req.url());
     const pathname = url.pathname;
 
-    // Allow Next.js documents and static assets to load normally
-    if (
-      req.resourceType() === "document" ||
-      req.resourceType() === "stylesheet" ||
-      req.resourceType() === "script" ||
-      req.resourceType() === "font" ||
-      req.resourceType() === "image" ||
-      pathname.startsWith("/_next")
-    ) {
-      return route.continue();
+    // The patterns above also match the /workspaces page navigation itself —
+    // a document must NEVER be answered with JSON. Fetch through with the
+    // fixture-widened CSP (same redirect handling as support/harness.ts).
+    if (req.resourceType() === "document") {
+      try {
+        const response = await route.fetch({ maxRedirects: 0 });
+        if (response.status() >= 300 && response.status() < 400) {
+          const location = response.headers()["location"];
+          if (location) {
+            const dest = new URL(location, req.url()).toString();
+            await route.fulfill({
+              status: 200,
+              contentType: "text/html",
+              headers: {
+                "content-security-policy": "script-src 'self' 'unsafe-inline'; connect-src 'self';",
+              },
+              body: `<!doctype html><html><head><meta charset="utf-8"><title>redirecting</title></head><body><script>location.replace(${JSON.stringify(dest)});</script></body></html>`,
+            });
+            return;
+          }
+        }
+        const headers = { ...response.headers() };
+        const csp = headers["content-security-policy"];
+        if (csp) headers["content-security-policy"] = rewriteCspForFixture(csp);
+        await route.fulfill({ response, headers });
+      } catch {
+        /* route already handled or page closed */
+      }
+      return;
     }
 
-    if (pathname.includes("/auth/devices/me") && req.method() === "GET") {
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        headers: MOCK_CORS_HEADERS,
-        body: JSON.stringify({ deviceId: "dev-1", householdId: config.sharedWsId }),
-      });
-    }
-
-    // Workspaces endpoints
+    // Workspaces endpoints (strict, schema-adherent shapes only)
     if (pathname.includes(`/workspaces/${config.sharedWsId}/members`) && req.method() === "GET") {
       const isOwner = config.getRole() === "owner";
       return route.fulfill({
@@ -110,6 +136,8 @@ async function setupMockApi(page: import("@playwright/test").Page, config: ApiMo
     }
 
     if (pathname.includes(`/workspaces/${config.sharedWsId}/invites`) && req.method() === "GET") {
+      // Isolation: only the owner lists invites — a member answer is
+      // authoritatively empty, never the owner set.
       const items = config.getRole() === "owner" ? (config.invites ?? []) : [];
       return route.fulfill({
         status: 200,
@@ -164,29 +192,43 @@ async function setupMockApi(page: import("@playwright/test").Page, config: ApiMo
       });
     }
 
-    // Bootstrap endpoints for app sync & background polling
-    if (pathname.includes("/transactions")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyList });
-    if (pathname.includes("/accounts")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
-    if (pathname.includes("/categories")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
-    if (pathname.includes("/records")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyList });
-    if (pathname.includes("/cards")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
-    if (pathname.includes("/budgets")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
-    if (pathname.includes("/goals")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
-    if (pathname.includes("/subscriptions")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
-    if (pathname.includes("/payables")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyArray });
-    if (pathname.includes("/pending-operations")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyList });
-    if (pathname.includes("/profile")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: JSON.stringify({ profile: null }) });
-    if (pathname.includes("/alerts/price")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyList });
-    if (pathname.includes("/audit")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: emptyList });
-    if (pathname.includes("/push/vapid-public-key")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: JSON.stringify({ publicKey: "mock-key" }) });
-    if (pathname.includes("/auth/agent-token")) return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: JSON.stringify({ token: "mock-token", expiresIn: 90 }) });
-
-    if (pathname.startsWith("/api/")) {
-      return route.fulfill({ status: 200, contentType: "application/json", headers: MOCK_CORS_HEADERS, body: "{}" });
-    }
-
+    // Anything else under /workspaces* is not part of this flow — let it
+    // reach the fixture instead of inventing a permissive shape.
     return route.continue();
+  };
+  // Both the list endpoint (/workspaces) and every nested route below it.
+  await page.route("**/workspaces", handleWorkspaces);
+  await page.route("**/workspaces/**", handleWorkspaces);
+
+  await page.route("**/auth/devices/me", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: MOCK_CORS_HEADERS,
+      body: JSON.stringify({ deviceId: "dev-1", householdId: config.sharedWsId }),
+    });
   });
+
+  await page.route("**/auth/agent-token", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: MOCK_CORS_HEADERS,
+      body: JSON.stringify({ token: "mock-token", expiresIn: 90 }),
+    });
+  });
+}
+
+/**
+ * Authenticate against the fixture (real cookie session) and land on
+ * /workspaces with the mocks above shaping the workspace API answers.
+ */
+async function gotoWorkspacesAuthenticated(page: import("@playwright/test").Page): Promise<void> {
+  await page.goto("/");
+  await authenticate(page);
+  await page.goto("/workspaces");
+  await page.waitForLoadState("networkidle");
 }
 
 test.describe("Multi-user Workspaces, Invites & Ownership Transfers", () => {
@@ -218,8 +260,7 @@ test.describe("Multi-user Workspaces, Invites & Ownership Transfers", () => {
       ],
     });
 
-    await page.goto("/workspaces");
-    await page.waitForLoadState("networkidle");
+    await gotoWorkspacesAuthenticated(page);
 
     // Owner checks: Sees pending invite, without any raw token or hash leakage
     await expect(page.getByRole("heading", { name: /convites pendentes/i })).toBeVisible({ timeout: 10000 });
@@ -280,8 +321,7 @@ test.describe("Multi-user Workspaces, Invites & Ownership Transfers", () => {
       }),
     });
 
-    await page.goto("/workspaces");
-    await page.waitForLoadState("networkidle");
+    await gotoWorkspacesAuthenticated(page);
 
     // Click revogar and confirm
     await page.getByRole("button", { name: /revogar convite para convidado-expirado@example.test/i }).click();
@@ -349,8 +389,7 @@ test.describe("Multi-user Workspaces, Invites & Ownership Transfers", () => {
       },
     });
 
-    await page.goto("/workspaces");
-    await page.waitForLoadState("networkidle");
+    await gotoWorkspacesAuthenticated(page);
 
     // Member sees proposal card
     await expect(page.getByRole("heading", { name: /proposta de titularidade/i })).toBeVisible({ timeout: 10000 });
