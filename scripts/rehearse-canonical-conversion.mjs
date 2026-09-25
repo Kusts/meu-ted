@@ -98,8 +98,10 @@ const psqlScalar = (query) =>
 
 const apiDbEnv = (extra = {}) => ({
   ...process.env,
-  DATABASE_URL: `postgresql://postgres:${DB_PASSWORD}@127.0.0.1:${PORT}/${DB}?sslmode=disable`,
-  DATABASE_URL_TEST: `postgresql://postgres:${DB_PASSWORD}@127.0.0.1:${PORT}/${DB}?sslmode=disable`,
+  // Trust auth (pg_hba sed below): no password in the URL, matching the
+  // public-safety gate and rehearse-migration.mjs convention.
+  DATABASE_URL: `postgresql://postgres@127.0.0.1:${PORT}/${DB}?sslmode=disable`,
+  DATABASE_URL_TEST: `postgresql://postgres@127.0.0.1:${PORT}/${DB}?sslmode=disable`,
   DB_TEST_MARKER: TEST_MARKER,
   ...extra,
 });
@@ -222,6 +224,11 @@ const main = async () => {
     }
   }
   if (!ready) fail('Postgres did not start in time');
+
+  // Trust auth for host connections (same convention as rehearse-migration.mjs):
+  // the converter CLI runs on the host and connects over TCP without a password.
+  sh(`docker exec ${CONTAINER} sh -c "sed -i 's|host all all all scram-sha-256|host all all 0.0.0.0/0 trust|' /var/lib/postgresql/data/pg_hba.conf"`);
+  sh(`docker exec -u postgres ${CONTAINER} pg_ctl reload -D /var/lib/postgresql/data`);
 
   log('\n=== [2/6] Loading anonymized snapshot + fixture-shape shim ===');
   psql(readFileSync(DUMP_PATH, 'utf8'));
