@@ -1,22 +1,18 @@
 /**
  * Auth E2E tests — IDs AUTH-01, AUTH-02.
  *
- * AUTH-01: register device → assert POST /auth/devices/register 200 in journal,
- * token in localStorage, authenticated home (profile button visible).
+ * AUTH-01: cookie-first email login → session confirmation + device registration,
+ * no bearer persistence, authenticated home.
  *
- * AUTH-02: inject expired token, register scenario for GET /auth/devices/me → 401,
- * assert storage cleared, register screen visible, journal contains 401.
+ * AUTH-02: reject the cookie session with 401 and assert sensitive state is cleared
+ * and the login screen returns.
  */
 
 import { test, expect } from "@playwright/test";
-import { createGuard, attachGuard, assertNoUndeclaredFailures, allowFailure } from "../support/failure-guard";
+import { assertNoUndeclaredFailures } from "../support/failure-guard";
 import { FIXTURE_URL } from "../support/reset";
-// This spec exercises registration itself, so it deliberately does NOT use
-// `authenticate()` — it drives the Registrar button directly. Only the
-// transport-level helpers come from the harness.
-import { applyCspRewrite, resetFixture, getJournal } from "../support/harness";
+import { getJournal, prepareSpec, authenticate } from "../support/harness";
 
-const FIXED_CLOCK = "2026-07-17T12:00:00.000Z";
 const TOKEN_KEY = "pi-finance:token";
 let counter = 0;
 function tid(): string { counter++; return `auth-${counter}`; }
@@ -32,43 +28,32 @@ async function addScenario(testId: string, method: string, pathname: string, sta
   });
 }
 
-// ── AUTH-01: Device registration ────────────────────────────────────────────
+// ── AUTH-01: Session-first login + device registration ──────────────────────
 
-test("[AUTH-01] register device: POST /auth/devices/register 200, token stored, home rendered", async ({ page }) => {
+test("[AUTH-01] cookie-first login confirms session and registers a device", async ({ page }) => {
   const id = tid();
-  const guard = createGuard();
-  attachGuard(page, guard);
-  await applyCspRewrite(page);
-  await resetFixture(id, "populated");
-  await page.clock.setFixedTime(FIXED_CLOCK);
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(guard, { message: "reading 'waiting'", reason: "SW blocked by functional project" });
+  const guard = await prepareSpec(page, id);
 
   await page.goto("/");
-  const emailInput = page.getByLabel("E-mail");
-  const passwordInput = page.getByLabel("Senha");
-  const loginBtn = page.getByRole("button", { name: "Entrar" });
-  const regBtn = page.getByRole("button", { name: "Registrar" });
+  await authenticate(page);
 
-  if (await emailInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await emailInput.fill("test@example.com");
-    await passwordInput.fill("password123");
-    await loginBtn.click();
-  } else if (await regBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await regBtn.click();
-  }
-  await page.waitForLoadState("networkidle");
-
-  // Journal: POST /auth/devices/register → 200
+  // Session cookie is the authority; the candidate build explicitly closes
+  // the legacy bearer window, so neither device nor session tokens persist.
   const journal = await getJournal(id);
+  const signInEntry = journal.find((e) => e.method === "POST" && e.path === "/auth/sign-in/email");
   const regEntry = journal.find((e) => e.method === "POST" && e.path === "/auth/devices/register");
+  const sessionEntry = journal.find((e) => e.method === "GET" && e.path === "/auth/session" && e.status === 200);
+  expect(signInEntry).toBeDefined();
+  expect(signInEntry!.status).toBe(200);
   expect(regEntry).toBeDefined();
   expect(regEntry!.status).toBe(200);
+  expect(sessionEntry).toBeDefined();
 
-  // Token in localStorage
+  // No bearer/device secret is persisted in the cookie-only profile.
   const token = await page.evaluate((key) => localStorage.getItem(key), TOKEN_KEY);
-  expect(token).toBeTruthy();
-  expect((token as string).length).toBeGreaterThan(0);
+  const sessionToken = await page.evaluate(() => localStorage.getItem("pi-finance:session-token"));
+  expect(token).toBeNull();
+  expect(sessionToken).toBeNull();
 
   // Authenticated home
   await expect(page.getByRole("button", { name: /abrir perfil/i })).toBeVisible({ timeout: 10000 });
@@ -76,46 +61,30 @@ test("[AUTH-01] register device: POST /auth/devices/register 200, token stored, 
   assertNoUndeclaredFailures(guard);
 });
 
-// ── AUTH-02: Expired token ──────────────────────────────────────────────────
+// ── AUTH-02: Explicit session rejection ─────────────────────────────────────
 
-test("[AUTH-02] expired token: GET /auth/devices/me 401, storage cleared, register screen", async ({ page }) => {
+test("[AUTH-02] session 401 clears sensitive state and returns to login", async ({ page }) => {
   const id = tid();
-  const guard = createGuard();
-  attachGuard(page, guard);
-  await applyCspRewrite(page);
-  // Use populated seed so fixture has authRegister data for normal flow
-  await resetFixture(id, "populated");
-  await page.clock.setFixedTime(FIXED_CLOCK);
-  await page.context().setExtraHTTPHeaders({ "x-e2e-test-id": id });
-  allowFailure(guard, { status: 401, reason: "Fixture /auth/devices/me 401" });
-  allowFailure(guard, { message: "401 (Unauthorized)", reason: "Fixture /auth/devices/me 401 console" });
-  allowFailure(guard, { message: "reading 'waiting'", reason: "SW blocked by functional project" });
+  const guard = await prepareSpec(page, id);
 
-  // First load: inject bad token, register scenario for 401, reload
   await page.goto("/");
-  await page.waitForLoadState("networkidle");
-
-  // Inject invalid token
-  await page.evaluate((key) => localStorage.setItem(key, "expired-invalid-token-abc"), TOKEN_KEY);
-
-  // Register fixture scenario: GET /auth/devices/me returns 401 (once)
-  await addScenario(id, "GET", "/auth/devices/me", 401);
-
-  // Reload — AuthGate reads bad token → calls /auth/devices/me → 401 → clears storage
+  await authenticate(page);
+  await addScenario(id, "GET", "/auth/session", 401);
   await page.reload();
   await page.waitForLoadState("networkidle");
 
-  // Journal must have GET /auth/devices/me → 401
+  // An explicit cookie-session rejection purges identity and returns to login.
   const journal = await getJournal(id);
-  const meEntry = journal.find((e) => e.method === "GET" && e.path === "/auth/devices/me");
-  expect(meEntry).toBeDefined();
-  expect(meEntry!.status).toBe(401);
+  const rejectedSession = journal.find((e) => e.method === "GET" && e.path === "/auth/session" && e.status === 401);
+  expect(rejectedSession).toBeDefined();
 
-  // Token must be cleared
+  // The candidate uses cookie-only auth and must not retain bearer identity.
   const tokenAfter = await page.evaluate((key) => localStorage.getItem(key), TOKEN_KEY);
   expect(tokenAfter).toBeNull();
+  const sessionTokenAfter = await page.evaluate(() => localStorage.getItem("pi-finance:session-token"));
+  expect(sessionTokenAfter).toBeNull();
 
-  // Register screen must be visible
+  // Login screen must be visible
   const loginOrRegBtn = page.getByRole("button", { name: /Entrar|Registrar/i });
   await expect(loginOrRegBtn).toBeVisible({ timeout: 15000 });
 

@@ -50,7 +50,7 @@ async function setScenario(testId: string, scenario: Record<string, unknown>) {
 
 async function openTransactionSheet(page: import("@playwright/test").Page) {
   await page.getByLabel("Nova transação").click();
-  await page.getByRole("menuitem", { name: "Despesa" }).click();
+  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Nova despesa")).toBeVisible();

@@ -34,9 +34,15 @@ const COMPAT_OFF_VALUES = new Set(["0", "false", "no", "off"]);
  */
 export function isLegacyBearerCompatEnabled(env?: EnvLike): boolean {
   try {
-    const source: EnvLike | undefined =
-      env ?? (typeof process !== "undefined" ? (process.env as EnvLike) : undefined);
-    const raw = source?.["NEXT_PUBLIC_LEGACY_BEARER_COMPAT"];
+    // Keep the browser-bundle reference static: Next replaces direct
+    // `process.env.NEXT_PUBLIC_*` access at build time, but cannot inline a
+    // dynamic `process.env[key]` lookup. Tests may still inject an explicit
+    // env object to exercise the call-time compatibility switch.
+    const raw = env !== undefined
+      ? env["NEXT_PUBLIC_LEGACY_BEARER_COMPAT"]
+      : typeof process !== "undefined"
+        ? process.env.NEXT_PUBLIC_LEGACY_BEARER_COMPAT
+        : undefined;
     if (raw === undefined) return true;
     return !COMPAT_OFF_VALUES.has(raw.trim().toLowerCase());
   } catch {

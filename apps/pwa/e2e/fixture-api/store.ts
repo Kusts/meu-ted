@@ -143,6 +143,14 @@ export interface TestStore {
   journal: JournalEntry[];
   scenarios: ScenarioRule[];
   nextId: number;
+  /**
+   * Better Auth-modeled cookie session, testId-scoped: each sign-in mints a
+   * distinct unpredictable token (POST /auth/sign-in/email), and only that
+   * token authenticates this testId's session until POST /auth/sign-out
+   * revokes it (null = no active session). A presented cookie is compared
+   * against this token — never against a shared static value.
+   */
+  sessionToken: string | null;
 }
 
 const FIXED_CLOCK = new Date("2026-07-17T12:00:00.000Z");
@@ -165,6 +173,7 @@ export class StoreManager {
       journal: [],
       scenarios: [],
       nextId: 1000,
+      sessionToken: null,
     };
     this.stores.set(testId, store);
     return store;

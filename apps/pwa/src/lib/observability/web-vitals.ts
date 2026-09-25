@@ -93,11 +93,17 @@ export function sanitizeEvent(event: Record<string, unknown>): RUMEvent | null {
 const RUM_ENABLED_KEY = "pi-finance:rum";
 
 /**
- * Check if RUM collection is enabled (feature flag).
+ * Check if RUM collection is enabled (feature flag, default OFF).
+ * Fail-closed: inaccessible or throwing storage reads as disabled — RUM
+ * must never break the boot path.
  */
 export function isRUMEnabled(): boolean {
-  if (typeof localStorage === "undefined") return false;
-  return localStorage.getItem(RUM_ENABLED_KEY) === "1";
+  try {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(RUM_ENABLED_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -127,11 +133,42 @@ export async function reportRUM(event: RUMEvent): Promise<void> {
  * Initialize RUM collection (feature-flagged, default OFF).
  * Sets up PerformanceObserver to capture LCP, INP, CLS.
  * Reports sanitized events only; never sends sensitive data.
+ *
+ * Returns a best-effort cleanup that disconnects every created
+ * PerformanceObserver and removes the exact `visibilitychange` listener —
+ * safe to call when init was partial, disabled, or the Observer API is
+ * unavailable (React StrictMode mount/unmount won't retain observers).
  */
-export function initRUM(): void {
-  if (!isRUMEnabled() || typeof window === "undefined") return;
+export function initRUM(): () => void {
+  const observers: PerformanceObserver[] = [];
+  let onVisibilityChange: (() => void) | null = null;
+
+  const cleanup = () => {
+    for (const observer of observers) {
+      try {
+        observer.disconnect();
+      } catch {
+        // Best-effort: one failing observer must not block the rest.
+      }
+    }
+    observers.length = 0;
+    try {
+      if (
+        onVisibilityChange &&
+        typeof window !== "undefined" &&
+        typeof window.removeEventListener === "function"
+      ) {
+        window.removeEventListener("visibilitychange", onVisibilityChange);
+      }
+    } catch {
+      // Best-effort: listener removal must never throw.
+    }
+    onVisibilityChange = null;
+  };
 
   try {
+    if (!isRUMEnabled() || typeof window === "undefined") return cleanup;
+
     // LCP
     const lcpObserver = new PerformanceObserver((list) => {
       const entries = list.getEntries();
@@ -145,6 +182,7 @@ export function initRUM(): void {
         });
       }
     });
+    observers.push(lcpObserver);
     lcpObserver.observe({ type: "largest-contentful-paint", buffered: true });
 
     // INP (first input delay approximation)
@@ -158,6 +196,7 @@ export function initRUM(): void {
         });
       }
     });
+    observers.push(inpObserver);
     inpObserver.observe({ type: "first-input", buffered: true });
 
     // CLS
@@ -168,10 +207,11 @@ export function initRUM(): void {
         if (!(entry as any).hadRecentInput) clsValue += (entry as any).value || 0;
       }
     });
+    observers.push(clsObserver);
     clsObserver.observe({ type: "layout-shift", buffered: true });
 
     // Report CLS on page hide
-    window.addEventListener("visibilitychange", () => {
+    onVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         reportRUM({
           metric: "CLS",
@@ -180,9 +220,16 @@ export function initRUM(): void {
           buildId: undefined,
         });
       }
-    });
+    };
+    window.addEventListener("visibilitychange", onVisibilityChange);
 
   } catch {
-    // PerformanceObserver not available or other error — RUM must never break the app
+    // PerformanceObserver not available or other error — RUM must never break the app.
+    // Best-effort: a later observe() may throw after earlier observers were
+    // created, so disconnect everything created so far before returning.
+    // Cleanup is idempotent, so a later RootProviders unmount call is safe.
+    cleanup();
   }
+
+  return cleanup;
 }

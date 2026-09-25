@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 /**
  * Unit tests for the failure guard.
  * Tests the guard in isolation (no Playwright dependency).
@@ -62,6 +64,32 @@ describe("console error detection", () => {
     expect(() => assertNoUndeclaredFailures(guard)).not.toThrow();
   });
 
+  it("requires both URL and message when a console allowance specifies both", () => {
+    const allowance = {
+      url: "/auth/session",
+      message: "401 (Unauthorized)",
+      status: 401,
+      reason: "expected anonymous cookie-session probe",
+    };
+    const expected = createGuard();
+    allowFailure(expected, allowance);
+    onConsoleMessage(expected, {
+      type: "error",
+      text: "Failed to load resource: 401 (Unauthorized)",
+      url: "http://127.0.0.1:4010/auth/session",
+    });
+    expect(() => assertNoUndeclaredFailures(expected)).not.toThrow();
+
+    const wrongUrl = createGuard();
+    allowFailure(wrongUrl, allowance);
+    onConsoleMessage(wrongUrl, {
+      type: "error",
+      text: "Failed to load resource: 401 (Unauthorized)",
+      url: "http://127.0.0.1:4010/accounts",
+    });
+    expect(() => assertNoUndeclaredFailures(wrongUrl)).toThrow("Undeclared console error");
+  });
+
   it("ignores console.info, log, and warn", () => {
     const guard = createGuard();
     onConsoleMessage(guard, { type: "info", text: "Some info" });
@@ -73,8 +101,9 @@ describe("console error detection", () => {
   it("collects multiple console errors", () => {
     const guard = createGuard();
     onConsoleMessage(guard, { type: "error", text: "Error 1" });
-    onConsoleMessage(guard, { type: "error", text: "Error 2" });
+    onConsoleMessage(guard, { type: "error", text: "Error 2", url: "http://127.0.0.1:4010/auth/session" });
     expect(guard.consoleErrors).toHaveLength(2);
+    expect(guard.consoleErrors[1]?.url).toBe("http://127.0.0.1:4010/auth/session");
   });
 });
 
@@ -173,6 +202,78 @@ describe("HTTP response >=400 detection", () => {
     allowFailure(guard, { url: "example.com/fail", reason: "expected" });
     onResponse(guard, { status: () => 503, url: () => "https://example.com/fail" });
     expect(() => assertNoUndeclaredFailures(guard)).not.toThrow();
+  });
+
+  it("requires both URL and status when a response allowance specifies both", () => {
+    const allowance = {
+      url: "/auth/session",
+      status: 401,
+      reason: "expected anonymous cookie-session probe before login",
+    };
+    const expected = createGuard();
+    allowFailure(expected, allowance);
+    onResponse(expected, { status: () => 401, url: () => "http://127.0.0.1:4010/auth/session" });
+    expect(() => assertNoUndeclaredFailures(expected)).not.toThrow();
+
+    const wrongUrl = createGuard();
+    allowFailure(wrongUrl, allowance);
+    onResponse(wrongUrl, { status: () => 401, url: () => "http://127.0.0.1:4010/accounts" });
+    expect(() => assertNoUndeclaredFailures(wrongUrl)).toThrow("Undeclared HTTP 401 response");
+
+    const wrongStatus = createGuard();
+    allowFailure(wrongStatus, allowance);
+    onResponse(wrongStatus, { status: () => 500, url: () => "http://127.0.0.1:4010/auth/session" });
+    expect(() => assertNoUndeclaredFailures(wrongStatus)).toThrow("Undeclared HTTP 500 response");
+  });
+});
+
+// ── Device-verification contract (FIX-E2E-DEVICE-ME-ALLOWANCE) ─────────────
+
+describe("device verification is never masked by the shared baseline", () => {
+  // Mirrors prepareSpec defaults: only the exact anonymous cookie-session
+  // probe is tolerated. Fixture/browser state is per-test, so a device-check
+  // failure must stay visible to auth/revocation E2E.
+  function guardWithSessionProbeOnly() {
+    const guard = createGuard();
+    allowFailure(guard, {
+      url: "/auth/session",
+      status: 401,
+      message: "401 (Unauthorized)",
+      reason: "expected anonymous cookie-session probe before login",
+    });
+    return guard;
+  }
+
+  it("rejects an undeclared 401 from GET /auth/devices/me", () => {
+    const guard = guardWithSessionProbeOnly();
+    onResponse(guard, { status: () => 401, url: () => "http://127.0.0.1:4010/auth/devices/me" });
+    expect(() => assertNoUndeclaredFailures(guard)).toThrow("Undeclared HTTP 401 response");
+  });
+
+  it("rejects an undeclared 5xx from GET /auth/devices/me", () => {
+    const guard = guardWithSessionProbeOnly();
+    onResponse(guard, { status: () => 500, url: () => "http://127.0.0.1:4010/auth/devices/me" });
+    expect(() => assertNoUndeclaredFailures(guard)).toThrow("Undeclared HTTP 500 response");
+  });
+
+  it("allows a device-check failure only when declared inline for its exact scenario and status", () => {
+    const guard = guardWithSessionProbeOnly();
+    allowFailure(guard, {
+      url: "/auth/devices/me",
+      status: 401,
+      reason: "scenario plants a revoked device token and expects 401",
+    });
+    onResponse(guard, { status: () => 401, url: () => "http://127.0.0.1:4010/auth/devices/me" });
+    expect(() => assertNoUndeclaredFailures(guard)).not.toThrow();
+
+    const wrongStatus = guardWithSessionProbeOnly();
+    allowFailure(wrongStatus, {
+      url: "/auth/devices/me",
+      status: 401,
+      reason: "scenario plants a revoked device token and expects 401",
+    });
+    onResponse(wrongStatus, { status: () => 500, url: () => "http://127.0.0.1:4010/auth/devices/me" });
+    expect(() => assertNoUndeclaredFailures(wrongStatus)).toThrow("Undeclared HTTP 500 response");
   });
 });
 

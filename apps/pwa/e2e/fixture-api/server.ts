@@ -19,12 +19,15 @@
  */
 
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { URL } from "node:url";
-import { StoreManager, SEEDS, generateId, type JournalEntry, type ScenarioRule } from "./store";
+import { StoreManager, SEEDS, generateId, type JournalEntry, type ScenarioRule, type TestStore } from "./store";
 
 const ALLOWED_ORIGIN = "http://127.0.0.1:3000";
 const ALLOWED_METHODS = "GET,POST,PATCH,DELETE,OPTIONS";
 const ALLOWED_HEADERS = "content-type,authorization,x-e2e-test-id,x-device-token,x-workspace-id,idempotency-key";
+const SESSION_COOKIE_NAME = "better-auth.session_token";
+const FIXTURE_USER = { id: "e2e-user-1", email: "test@example.com", name: "Test User" };
 const E2E_VAPID_PUBLIC_KEY = "BP0vRqqie7zJbfocGhxpZlPf02CVjWkO20vRTtjsXkPaRmarPZtNuNI0h8ias5AbmMDaaVLIgnkHBwMp8MmPQ2s";
 const stores = new StoreManager();
 
@@ -55,8 +58,43 @@ function getTestId(req: http.IncomingMessage): string | null {
   return header ?? null;
 }
 
-function sendJson(res: http.ServerResponse, status: number, body: Record<string, unknown>): void {
-  res.writeHead(status, { "Content-Type": "application/json" });
+/**
+ * Extract the presented session token from the Cookie header (name match
+ * only — the value is opaque). Returns null when the cookie is absent.
+ */
+function getSessionCookieToken(req: http.IncomingMessage): string | null {
+  const header = req.headers.cookie;
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === SESSION_COOKIE_NAME) {
+      const value = part.slice(idx + 1).trim();
+      return value ? value : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Better Auth-modeled validity: the presented cookie only authenticates when
+ * it equals this testId's active session token (minted at sign-in, cleared
+ * at sign-out). A foreign, stale, or never-issued token is rejected like an
+ * unknown or expired server session — the holder learns nothing beyond
+ * rejection, and no testId can authenticate with another's cookie.
+ */
+function hasValidFixtureSession(req: http.IncomingMessage, store: TestStore): boolean {
+  const presented = getSessionCookieToken(req);
+  return store.sessionToken !== null && presented === store.sessionToken;
+}
+
+function sendJson(
+  res: http.ServerResponse,
+  status: number,
+  body: Record<string, unknown>,
+  headers: Record<string, string> = {},
+): void {
+  res.writeHead(status, { "Content-Type": "application/json", ...headers });
   res.end(JSON.stringify(body));
 }
 
@@ -282,10 +320,70 @@ async function handleFixtureRequest(
   // ── Auth ──────────────────────────────────────────────────────────────────
 
   if ((pathname === "/auth/sign-in/email" || pathname === "/auth/sign-in") && method === "POST") {
+    // Every sign-in mints a distinct unpredictable token for this testId;
+    // re-sign-in rotates (the previous token stops authenticating).
+    const token = randomUUID();
+    store.sessionToken = token;
     journalPush(testId, method, pathname, body, 200);
     sendJson(res, 200, {
-      user: { id: "e2e-user-1", email: "test@example.com", name: "Test User" },
-      session: { id: "e2e-session-1", userId: "e2e-user-1" },
+      user: FIXTURE_USER,
+      session: { id: token, userId: "e2e-user-1" },
+    }, {
+      "Set-Cookie": `${SESSION_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax`,
+    });
+    return;
+  }
+
+  if (pathname === "/auth/sign-out" && method === "POST") {
+    // Better Auth contract: revocation always succeeds and the response
+    // clears the session cookie (expired attributes), even when the caller
+    // presented no cookie. Only the presented session is revoked: a foreign
+    // or missing token leaves this testId's active session intact (and never
+    // touches another testId's store). The journal records boolean cookie
+    // evidence only — never the raw cookie or token value.
+    const presented = getSessionCookieToken(req);
+    const matched = presented !== null && store.sessionToken !== null && presented === store.sessionToken;
+    if (matched) store.sessionToken = null;
+    journalPush(testId, method, pathname, { hadCookie: presented !== null, revoked: matched }, 200);
+    sendJson(res, 200, { success: true }, {
+      "Set-Cookie": `${SESSION_COOKIE_NAME}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; HttpOnly; SameSite=Lax`,
+    });
+    return;
+  }
+
+  if (pathname === "/auth/session" && method === "GET") {
+    if (!hasValidFixtureSession(req, store)) {
+      journalPush(testId, method, pathname, body, 401);
+      sendJson(res, 401, { code: "auth.missing_session", message: "authenticated session required" });
+      return;
+    }
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, {
+      user: FIXTURE_USER,
+      session: { id: store.sessionToken, userId: FIXTURE_USER.id },
+    });
+    return;
+  }
+
+  if (pathname === "/auth/agent-token" && method === "POST") {
+    if (!hasValidFixtureSession(req, store)) {
+      journalPush(testId, method, pathname, body, 401);
+      sendJson(res, 401, { code: "auth.session_required", message: "Session required" });
+      return;
+    }
+    const workspaceHeader = req.headers["x-workspace-id"];
+    const workspaceId = (Array.isArray(workspaceHeader) ? workspaceHeader[0] : workspaceHeader)?.trim();
+    if (!workspaceId) {
+      journalPush(testId, method, pathname, body, 400);
+      sendJson(res, 400, { code: "auth.workspace_required", message: "Workspace header required" });
+      return;
+    }
+    journalPush(testId, method, pathname, body, 200);
+    sendJson(res, 200, {
+      token: "e2e-agent-connection-token",
+      expiresIn: 120,
+      workspace: workspaceId,
+      role: "owner",
     });
     return;
   }

@@ -28,19 +28,34 @@ export type AuthSignal =
   | { kind: "network-error" }
   | { kind: "offline" };
 
-const REVOCATION_CODE_PATTERN = /forbidden|workspace|membership|revok/i;
+/**
+ * Exact server-contract allowlist for membership revocation. The API emits
+ * `auth.workspace_forbidden` when no active membership exists for the
+ * workspace (device-access resolution, session-context forbidden, request
+ * preHandler, agent revalidation) — the removeMember/leave revocation
+ * signal. Every other 403 code is a permission/scope denial (owner-only
+ * `workspace.forbidden`, `auth.admin_forbidden`, `auth.invite_forbidden`,
+ * delegation/device codes) or an unrelated error: the caller is still a
+ * member, so the offline snapshot must NOT be purged.
+ */
+const MEMBERSHIP_REVOCATION_CODES: ReadonlySet<string> = new Set([
+  "auth.workspace_forbidden",
+]);
 
 /**
  * Membership-revocation signal (D10): the API revokes device/session
- * authorization on removeMember/leave (Phase 1). A 403 carrying a
- * workspace/forbidden code — or a bare 403 on a session/workspace fetch —
- * means the membership is gone: purge the offline snapshot and take the
- * unauthenticated transition.
+ * authorization on removeMember/leave (Phase 1). Only a 403 carrying the
+ * explicit membership-denial code means the membership is gone: purge the
+ * offline snapshot and take the unauthenticated transition. A bare 403
+ * without a code carries no route context here — any permission denial can
+ * produce one — so it must NOT trigger the global purge. Direct 401/403 on
+ * the /auth/session probe is classified separately by fetchSession through
+ * its own contract and is unaffected by this function.
  */
 export function isMembershipRevocation(status: number, code?: string): boolean {
   if (status !== 403) return false;
-  if (code === undefined || code.length === 0) return true;
-  return REVOCATION_CODE_PATTERN.test(code) || code.startsWith("auth.");
+  if (code === undefined || code.length === 0) return false;
+  return MEMBERSHIP_REVOCATION_CODES.has(code);
 }
 
 /**

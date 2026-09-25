@@ -46,6 +46,11 @@ export async function signInWithEmail(credentials: SignInEmailCredentials): Prom
   });
 }
 
+/** Revoke the current server-side cookie session before clearing local state. */
+export async function signOut(): Promise<void> {
+  await apiFetch<{ success?: boolean }>("/auth/sign-out", { method: "POST" });
+}
+
 export async function signUpWithEmail(input: { email: string; password: string; name: string }): Promise<SignInEmailResponse> {
   return apiFetch<SignInEmailResponse>("/auth/sign-up/email", {
     method: "POST",
@@ -89,6 +94,19 @@ export interface SessionProbeResult {
 }
 
 /**
+ * FIX-SESSION-USER-ID: canonical-principal guard for the /auth/session probe.
+ * Better-auth always returns a non-empty string `id` for a valid session
+ * (missing session → 401, see apps/api/src/auth/better-auth-http.ts), so a
+ * 2xx `user` without one is malformed and must fail closed. Trims because a
+ * whitespace-only id carries no principal identity.
+ */
+function isCanonicalSessionUser(user: unknown): user is SessionUser {
+  if (typeof user !== "object" || user === null) return false;
+  const id = (user as { id?: unknown }).id;
+  return typeof id === "string" && id.trim().length > 0;
+}
+
+/**
  * Session probe (cookie-first: `credentials: "include"` in apiFetch, compat
  * bearer only as fallback). Distinguishes 2xx / 401+403 / unreachable via
  * the auth state machine — network errors are NOT collapsed into logout.
@@ -102,13 +120,31 @@ export async function fetchSession(): Promise<SessionProbeResult> {
       method: "GET",
       headers,
     });
-    if (!res.user) return { user: null, status: "unauthenticated" };
+    // FIX-SESSION-USER-ID: a 2xx only proves a session when it carries the
+    // canonical principal — a non-empty string user id. Any truthy-but-shapeless
+    // `user` ({}, missing/non-string/blank id) is an explicit "no session"
+    // rejection (unauthenticated → purge + login), never an unlock.
+    // FIX-SESSION-NULL-ENVELOPE: a 2xx answered-but-empty envelope is an
+    // explicit "no session" — apiFetch resolves undefined for 204 and a JSON
+    // null body parses to null, so `res` itself may be missing/malformed.
+    // Dereferencing `res.user` here would throw into the catch below and be
+    // mapped to unreachable (offline consideration). Fail closed instead:
+    // unauthenticated → purge + login.
+    if (res === null || res === undefined || typeof res !== "object")
+      return { user: null, status: "unauthenticated" };
+    if (!isCanonicalSessionUser(res.user)) return { user: null, status: "unauthenticated" };
     return { user: res.user, status: "authenticated" };
   } catch (e) {
     if (e instanceof ApiError) {
       const state = classifyAuthSignal({ kind: "http", status: e.status, code: e.code });
       return { user: null, status: state === "unauthenticated" ? "unauthenticated" : "unreachable" };
     }
+    // FIX-SESSION-RESPONSE-CLASSIFICATION (B): a 2xx answered-but-unparseable
+    // body means the server responded with no usable session — explicit
+    // "no session" (unauthenticated → purge + login), never offline-unlock.
+    // Only SyntaxError (Response.json parse failure) takes this path;
+    // transport failures (TypeError/Error) and 5xx ApiError stay unreachable.
+    if (e instanceof SyntaxError) return { user: null, status: "unauthenticated" };
     return { user: null, status: "unreachable" };
   }
 }

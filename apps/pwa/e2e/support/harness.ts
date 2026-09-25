@@ -53,7 +53,6 @@ const BASELINE_ALLOWED = [
   { message: "reading 'waiting'", reason: "SW blocked" },
   { url: "/profile", reason: "fixture has no /profile" },
   { url: "/pwa-control", reason: "fixture has no /pwa-control" },
-  { url: "/auth/devices/me", reason: "intermittent cross-test token" },
 ] as const;
 
 /**
@@ -83,9 +82,14 @@ export async function authenticate(
   const passwordInput = page.getByLabel("Senha");
   const loginBtn = page.getByRole("button", { name: "Entrar" });
 
-  if (await emailInput.isVisible({ timeout: 4000 }).catch(() => false)) {
+  const loginFormVisible = await emailInput
+    .waitFor({ state: "visible", timeout })
+    .then(() => true)
+    .catch(() => false);
+  if (loginFormVisible) {
     await emailInput.fill("test@example.com");
     await passwordInput.fill("password123");
+    await expect(loginBtn).toBeEnabled({ timeout });
     await loginBtn.click();
     await page.waitForLoadState("networkidle");
   }
@@ -132,10 +136,24 @@ export async function expectJournal(
   method: string,
   path: string | RegExp,
   status: number,
+  timeout = 8000,
 ): Promise<void> {
+  const pathMatches = (entryPath: string): boolean => {
+    if (typeof path === "string") return entryPath === path;
+    // Strip stateful flags so repeated polling cannot alternate matches via
+    // RegExp.lastIndex when callers pass /g or /y expressions.
+    const matcher = new RegExp(path.source, path.flags.replace(/[gy]/g, ""));
+    return matcher.test(entryPath);
+  };
   await expect
-    .poll(() => getJournal(testId), { timeout: 8000 })
-    .toContainEqual(expect.objectContaining({ method, path, status }));
+    .poll(
+      async () =>
+        (await getJournal(testId)).some(
+          (entry) => entry.method === method && entry.status === status && pathMatches(entry.path),
+        ),
+      { timeout },
+    )
+    .toBe(true);
 }
 
 export type InitOptions = {
@@ -215,8 +233,28 @@ export async function prepareSpec(
 ): Promise<GuardState> {
   const guard = createGuard();
   attachGuard(page, guard);
+  // Every fresh browser context makes an anonymous cookie-session probe before
+  // login. Allow only that exact 401 at the console and HTTP layers; all other
+  // 401s remain visible to the failure guard.
+  allowFailure(guard, {
+    url: "/auth/session",
+    status: 401,
+    message: "401 (Unauthorized)",
+    reason: "expected anonymous cookie-session probe before login",
+  });
 
   await applyCspRewrite(page);
+  // Local functional PWA E2E has no Worker/Agent runtime. Keep background
+  // approval-count refreshes inside the browser fixture instead of allowing
+  // the Next proxy to choose an upstream Agent origin.
+  await page.route(
+    /\/api\/agent\/agents\/finance-chat-agent\/[^/]+\/rpc\/pending-operations\/active(?:\?.*)?$/,
+    async (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [], total: 0 }),
+    }),
+  );
   await resetFixture(testId);
   await page.clock.setFixedTime(FIXED_CLOCK);
   await page.context().setExtraHTTPHeaders({ [E2E_TEST_ID_HEADER]: testId });

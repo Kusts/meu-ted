@@ -1,15 +1,34 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@/lib/test-utils";
 import userEvent from "@testing-library/user-event";
 import { TedApprovalCard } from "../TedApprovalCard";
 import * as agentClient from "@/lib/api/agent-client";
+import type { PendingOperationPresentation } from "@/lib/api/agent-client";
 
 vi.mock("@/lib/api/agent-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/agent-client")>();
   return { ...actual, decidePendingOperation: vi.fn() };
 });
 
+const actionablePresentation = (id: string): PendingOperationPresentation => ({
+  id,
+  status: "proposed",
+  tool: "transactions.expense.create",
+  title: "Confirmar despesa",
+  amountCents: 85000,
+  description: "Mercado",
+  date: "2026-09-14",
+  account: { id: "acc-1", label: "Nubank" },
+  category: { id: "cat-1", label: "Alimentação" },
+  expiresAt: "2026-09-14T13:00:00.000Z",
+  warnings: [],
+});
+
 describe("TedApprovalCard V2", () => {
+  beforeEach(() => {
+    vi.mocked(agentClient.decidePendingOperation).mockClear();
+  });
+
   it("sends only a confirm decision to the authenticated Agent RPC", async () => {
     const user = userEvent.setup();
     vi.mocked(agentClient.decidePendingOperation).mockResolvedValue({
@@ -19,12 +38,17 @@ describe("TedApprovalCard V2", () => {
 
     render(
       <TedApprovalCard
-        operation={{ id: "op-1", status: "proposed", operation: "transactions.expense.create" }}
+        operation={{
+          id: "op-1",
+          status: "proposed",
+          operation: "transactions.expense.create",
+          presentation: actionablePresentation("op-1"),
+        }}
         workspaceId="workspace-1"
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Aprovar" }));
+    await user.click(screen.getByRole("button", { name: /Confirmar R\$ 850,00/ }));
 
     await waitFor(() =>
       expect(agentClient.decidePendingOperation).toHaveBeenCalledWith(
@@ -46,6 +70,7 @@ describe("TedApprovalCard V2", () => {
     );
 
     expect(screen.queryByRole("button", { name: "Aprovar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Confirmar/i })).not.toBeInTheDocument();
   });
 
   it("T3.4 RED: renders Valor/Conta/Categoria/Data from the canonical presentation (INV-02)", () => {
@@ -83,7 +108,13 @@ describe("TedApprovalCard V2", () => {
     expect(screen.getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
   });
 
-  it("T3.4 RED: legacy payload without presentation degrades gracefully with a generic title", () => {
+  it("T3.4 RED: legacy payload without presentation fails closed — warning and Cancel only, never blind approval", async () => {
+    const user = userEvent.setup();
+    vi.mocked(agentClient.decidePendingOperation).mockResolvedValue({
+      operationId: "legacy-2",
+      status: "cancelled",
+    });
+
     render(
       <TedApprovalCard
         operation={{ id: "legacy-2", status: "proposed", operation: "transactions.expense.create", summary: "Mercado" }}
@@ -91,8 +122,22 @@ describe("TedApprovalCard V2", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Aprovar" })).toBeInTheDocument();
-    expect(screen.queryByText("R$")).not.toBeInTheDocument();
+    // Fail-closed: no financial data to authorize, so no Confirm/Aprovar may render.
+    expect(screen.queryByRole("button", { name: "Aprovar" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Confirmar/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/não é possível confirmar/i)).toBeInTheDocument();
+    // Canceling moves no money, so Cancel stays available.
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() =>
+      expect(agentClient.decidePendingOperation).toHaveBeenCalledWith(
+        "workspace-1",
+        "legacy-2",
+        "cancel",
+      ),
+    );
+    expect(
+      vi.mocked(agentClient.decidePendingOperation).mock.calls.every(([, , decision]) => decision !== "confirm"),
+    ).toBe(true);
   });
 
   it("T3.4 RED: shows the executing state without premature success (INV-03)", () => {
@@ -158,18 +203,210 @@ describe("TedApprovalCard V2", () => {
 
     render(
       <TedApprovalCard
-        operation={{ id: "op-1", status: "proposed", operation: "transactions.expense.create" }}
+        operation={{
+          id: "op-1",
+          status: "proposed",
+          operation: "transactions.expense.create",
+          presentation: actionablePresentation("op-1"),
+        }}
         workspaceId="workspace-1"
         onResolved={onResolved}
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Aprovar" }));
+    await user.click(screen.getByRole("button", { name: /Confirmar R\$ 850,00/ }));
 
     await waitFor(() =>
       expect(onResolved).toHaveBeenCalledWith(
         expect.objectContaining({ status: "succeeded", receipt }),
       ),
     );
+  });
+});
+
+describe("TedApprovalCard mandatory presentation (production functional corrections item 4)", () => {
+  beforeEach(() => {
+    vi.mocked(agentClient.decidePendingOperation).mockClear();
+  });
+
+  it("proposed rehydrated operation without actionable presentation shows warning and only Cancel — never confirm", async () => {
+    const user = userEvent.setup();
+    vi.mocked(agentClient.decidePendingOperation).mockResolvedValue({
+      operationId: "rehydrated-proposed-1",
+      status: "cancelled",
+    });
+
+    render(
+      <TedApprovalCard
+        operation={{
+          id: "rehydrated-proposed-1",
+          status: "proposed",
+          operation: "transactions.expense.create",
+          summary: "Rehydrated old pending operation",
+        }}
+        workspaceId="workspace-1"
+      />,
+    );
+
+    expect(screen.getByText(/não é possível confirmar/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Confirmar/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Aprovar" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() =>
+      expect(agentClient.decidePendingOperation).toHaveBeenCalledWith(
+        "workspace-1",
+        "rehydrated-proposed-1",
+        "cancel",
+      ),
+    );
+    expect(
+      vi.mocked(agentClient.decidePendingOperation).mock.calls.every(([, , decision]) => decision !== "confirm"),
+    ).toBe(true);
+  });
+
+  it("failed rehydrated operation without actionable presentation shows no Retry and never calls retry", () => {
+    render(
+      <TedApprovalCard
+        operation={{
+          id: "rehydrated-failed-1",
+          status: "failed",
+          operation: "transactions.expense.create",
+          summary: "Rehydrated old failed operation",
+        }}
+        workspaceId="workspace-1"
+      />,
+    );
+
+    expect(screen.getByText(/não é possível tentar novamente/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Tentar novamente/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Confirmar/i })).not.toBeInTheDocument();
+    expect(agentClient.decidePendingOperation).not.toHaveBeenCalled();
+  });
+
+  it("failed with actionable presentation shows Valor/Conta/Categoria/Data before Retry and retry calls the Agent", async () => {
+    const user = userEvent.setup();
+    vi.mocked(agentClient.decidePendingOperation).mockResolvedValue({
+      operationId: "failed-actionable-1",
+      status: "failed",
+    });
+
+    const { container } = render(
+      <TedApprovalCard
+        operation={{
+          id: "failed-actionable-1",
+          status: "failed",
+          operation: "transactions.expense.create",
+          presentation: actionablePresentation("failed-actionable-1"),
+        }}
+        workspaceId="workspace-1"
+      />,
+    );
+
+    // Same actionable financial data the user is re-authorizing must be visible…
+    expect(screen.getByText("R$ 850,00")).toBeInTheDocument();
+    expect(screen.getByText("Nubank")).toBeInTheDocument();
+    expect(screen.getByText("Alimentação")).toBeInTheDocument();
+    expect(screen.getByText("14/09/2026")).toBeInTheDocument();
+    expect(screen.getByText("Mercado")).toBeInTheDocument();
+
+    // …before the Retry button in reading order.
+    const retry = screen.getByRole("button", { name: /Tentar novamente/i });
+    const amount = screen.getByText("R$ 850,00");
+    expect(amount.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.textContent).toMatch(/R\$ 850,00/);
+
+    await user.click(retry);
+    await waitFor(() =>
+      expect(agentClient.decidePendingOperation).toHaveBeenCalledWith(
+        "workspace-1",
+        "failed-actionable-1",
+        "retry",
+      ),
+    );
+  });
+
+  it("failed with non-actionable presentation shows warning and no Retry", () => {
+    render(
+      <TedApprovalCard
+        operation={{
+          id: "failed-degraded-1",
+          status: "failed",
+          operation: "transactions.expense.create",
+          presentation: {
+            id: "failed-degraded-1",
+            status: "failed",
+            tool: "transactions.expense.create",
+            title: "Confirmar despesa",
+            amountCents: 85000,
+            description: "Mercado",
+            date: "2026-09-14",
+            expiresAt: "2026-09-14T13:00:00.000Z",
+            warnings: ["Dados da conta indisponíveis no momento"],
+          },
+        }}
+        workspaceId="workspace-1"
+      />,
+    );
+
+    expect(screen.getByText(/não é possível tentar novamente/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Tentar novamente/i })).not.toBeInTheDocument();
+    expect(agentClient.decidePendingOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["NaN amount", { amountCents: Number.NaN }],
+    ["empty account label", { account: { id: "acc-1", label: "  " } }],
+    ["missing date", { date: undefined }],
+  ])("proposed with invalid presentation (%s) fails closed — Cancel only", (_label, override) => {
+    render(
+      <TedApprovalCard
+        operation={{
+          id: "invalid-presentation-1",
+          status: "proposed",
+          operation: "transactions.expense.create",
+          presentation: { ...actionablePresentation("invalid-presentation-1"), ...override },
+        }}
+        workspaceId="workspace-1"
+      />,
+    );
+
+    expect(screen.getByText(/não é possível confirmar/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Confirmar/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
+    expect(agentClient.decidePendingOperation).not.toHaveBeenCalled();
+  });
+
+  it("does not synthesize a presentation from the summary — summary-only text never enables Confirm or Retry", () => {
+    const { rerender } = render(
+      <TedApprovalCard
+        operation={{
+          id: "summary-only-1",
+          status: "proposed",
+          operation: "transactions.expense.create",
+          summary: "Mercado R$ 850,00 Nubank 14/09/2026",
+        }}
+        workspaceId="workspace-1"
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /Confirmar/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Aprovar" })).not.toBeInTheDocument();
+
+    rerender(
+      <TedApprovalCard
+        operation={{
+          id: "summary-only-1",
+          status: "failed",
+          operation: "transactions.expense.create",
+          summary: "Mercado R$ 850,00 Nubank 14/09/2026",
+        }}
+        workspaceId="workspace-1"
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /Tentar novamente/i })).not.toBeInTheDocument();
+    expect(agentClient.decidePendingOperation).not.toHaveBeenCalled();
   });
 });

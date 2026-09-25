@@ -161,17 +161,36 @@ export function AuthGate({ children }: Props) {
           await unlockOrLoginForUnreachable();
           return;
         }
-        // Probe explicitly answered "no session" but the scoped device check
-        // passed: preserve today's compat unlock (unknown, no live I/O —
-        // the FIX 1 gate stays closed without `authenticated`).
-        publishSession({ status: "unknown" });
-        if (!cancelled) setState("unlocked");
+        // W1 item 2 (Onda 1): o probe respondeu explicitamente "sem sessão"
+        // mas a verificação do device passou — FAIL CLOSED. Um device token
+        // verificado sozinho nunca concede autoridade de shell: purga a
+        // identidade offline + snapshots (V1/V2/V3) ANTES do login para que
+        // uma indisponibilidade posterior não reabra dados de outro
+        // principal (INV-05), preserva o device recém-verificado e conduz
+        // ao login. Nunca `unknown` com shell liberado.
+        await clearSensitiveSession({
+          clearToken: false,
+          clearV1Snapshot: true,
+          clearProfile: true,
+          clearOfflineIdentity: true,
+        }).catch(() => {});
+        if (cancelled) return;
+        publishSession({ status: "unauthenticated" });
+        if (!cancelled) {
+          setError("Sessão não confirmada. Faça login novamente.");
+          setState("login");
+        }
+        return;
       } catch (e) {
         if (cancelled) return;
         if (e instanceof ApiError && e.status === 401) {
           // Scoped device token expired/rotated/revoked: drop ONLY it. When
-          // the cookie session is still valid the user stays unlocked; only
-          // a missing session falls through to the fail-closed login below.
+          // the cookie session is still valid the user stays unlocked; when
+          // the probe never reached the server (unreachable) the offline
+          // identity + snapshot survive and the V3 route decides (read-only
+          // when valid — unreachability is not a rejection, nothing is
+          // purged). Only an explicit probe rejection falls through to the
+          // fail-closed purge + login below.
           try {
             clearToken();
           } catch {
@@ -184,6 +203,10 @@ export function AuthGate({ children }: Props) {
               user: { userId: sessionUser.id, email: sessionUser.email, name: sessionUser.name },
             });
             if (!cancelled) setState("unlocked");
+            return;
+          }
+          if (probeStatus === "unreachable") {
+            await unlockOrLoginForUnreachable();
             return;
           }
           await clearSensitiveSession({
@@ -201,8 +224,12 @@ export function AuthGate({ children }: Props) {
         }
         // V41C FIX 2: a non-401 verification failure proves nothing. When
         // the cookie probe confirmed a session, that confirmation stands
-        // (device-endpoint flakiness must not kill it); otherwise no unlock
-        // without a validated V3 route — offline read-only only, never live.
+        // (device-endpoint flakiness must not kill it). When the probe never
+        // reached the server, only the validated V3 route may unlock
+        // (offline read-only, never live). When the probe EXPLICITLY
+        // rejected the session (2xx-without-user/401/403), a device-endpoint
+        // failure (e.g. operational 403) never reopens the offline route:
+        // purge as an explicit rejection and conclude login.
         if (sessionUser) {
           bindPrincipal(sessionUser);
           publishSession({
@@ -212,7 +239,22 @@ export function AuthGate({ children }: Props) {
           if (!cancelled) setState("unlocked");
           return;
         }
-        await unlockOrLoginForUnreachable();
+        if (probeStatus === "unreachable") {
+          await unlockOrLoginForUnreachable();
+          return;
+        }
+        await clearSensitiveSession({
+          clearToken: true,
+          clearV1Snapshot: true,
+          clearProfile: true,
+          clearOfflineIdentity: true,
+        }).catch(() => {});
+        if (cancelled) return;
+        publishSession({ status: "unauthenticated" });
+        if (!cancelled) {
+          setError("Sessão não confirmada. Faça login novamente.");
+          setState("login");
+        }
       }
     };
     init();
@@ -244,9 +286,13 @@ export function AuthGate({ children }: Props) {
 
       setToken(res.token);
 
-      // Login succeeded server-side (sign-in + device register both 2xx):
-      // that IS proof of authentication. Confirm identity via the probe;
-      // fall back to the just-authenticated email (non-secret identity).
+      // W1 item 2 (Onda 1): sign-in + device register 2xx provam a
+      // autenticação, mas a IDENTIDADE (principal) só vale quando validada
+      // pelo probe canônico (/auth/session). Sem usuário no probe, falhar
+      // fechado: nunca marcar authenticated nem criar offlinePrincipalId a
+      // partir do e-mail digitado (identidade inventada ligaria o snapshot
+      // V3 ao dono errado). O contrato de signInRes.user não é comprovado
+      // como o ID canônico de /auth/session, então é ignorado.
       try {
         const probe = await fetchSession();
         if (probe.user) {
@@ -255,22 +301,33 @@ export function AuthGate({ children }: Props) {
             status: "authenticated",
             user: { userId: probe.user.id, email: probe.user.email, name: probe.user.name },
           });
-        } else {
-          bindPrincipal({ id: credentials.email });
-          publishSession({
-            status: "authenticated",
-            user: { userId: credentials.email, email: credentials.email },
-          });
+          setState("unlocked");
+          return;
         }
+        if (probe.status === "unreachable") {
+          // O servidor nunca respondeu: indisponibilidade não apaga
+          // snapshot/identidade válidos — permanece no login com erro para
+          // nova tentativa, sem I/O autenticado e sem V3 ligado.
+          publishSession({ status: "unreachable" });
+          setError("Não foi possível confirmar a sessão. Verifique a conexão e tente novamente.");
+          return;
+        }
+        // Rejeição explícita (2xx-sem-usuário/401/403): purge + login, o
+        // mesmo contrato de expireSession — nunca offline e nunca unlock.
+        await clearSensitiveSession({
+          clearToken: true,
+          clearV1Snapshot: true,
+          clearProfile: true,
+          clearOfflineIdentity: true,
+        }).catch(() => {});
+        publishSession({ status: "unauthenticated" });
+        setError("Sessão não confirmada. Faça login novamente.");
       } catch {
-        bindPrincipal({ id: credentials.email });
-        publishSession({
-          status: "authenticated",
-          user: { userId: credentials.email, email: credentials.email },
-        });
+        // fetchSession não rejeita por contrato; defesa residual com a
+        // mesma semântica de indisponibilidade (sem purge).
+        publishSession({ status: "unreachable" });
+        setError("Não foi possível confirmar a sessão. Verifique a conexão e tente novamente.");
       }
-
-      setState("unlocked");
     } catch (e: unknown) {
       if (e instanceof ApiError) {
         if (e.status === 401 || e.status === 400) {

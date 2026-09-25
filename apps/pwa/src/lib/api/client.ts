@@ -273,6 +273,9 @@ export async function apiFetch<T>(
 
   const controller = new AbortController();
   let callerAbortHandler: (() => void) | undefined;
+  // FIX-SESSION-STATUS-BODY-TIMEOUT: status observado nos headers antes do
+  // corpo — alimenta o timeout global para nunca mascarar 401/403 como 408.
+  let observedAuthStatus: 401 | 403 | undefined;
   if (callerSignal) {
     callerAbortHandler = () => controller.abort();
     if (callerSignal.aborted) controller.abort();
@@ -286,10 +289,20 @@ export async function apiFetch<T>(
       credentials: "include",
       headers: requestHeaders,
     });
+    // FIX-SESSION-STATUS-BODY-TIMEOUT: preserve o status assim que os
+    // headers chegam — se `res.json()` travar, o timeout global abaixo
+    // rejeita com este status em vez de 408 (que viraria `unreachable`).
+    if (res.status === 401) observedAuthStatus = 401;
+    else if (res.status === 403) observedAuthStatus = 403;
 
     if (res.status === 401) {
       let body: Record<string, unknown> = {};
-      try { body = await res.json(); } catch { /* noop */ }
+      try {
+        const parsed: unknown = await res.json();
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          body = parsed as Record<string, unknown>;
+        }
+      } catch { /* noop */ }
       closeAllSockets("session expired");
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
@@ -303,7 +316,12 @@ export async function apiFetch<T>(
 
     if (res.status === 403) {
       let body: Record<string, unknown> = {};
-      try { body = await res.json(); } catch { /* noop */ }
+      try {
+        const parsed: unknown = await res.json();
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          body = parsed as Record<string, unknown>;
+        }
+      } catch { /* noop */ }
       const code = (body.code as string) ?? "error";
       const message = (body.message as string) ?? "Acesso restrito";
       // State machine (SPEC §12.1): 403 is an explicit server rejection →
@@ -326,7 +344,12 @@ export async function apiFetch<T>(
 
     if (!res.ok) {
       let body: Record<string, unknown> = {};
-      try { body = await res.json(); } catch { /* noop */ }
+      try {
+        const parsed: unknown = await res.json();
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          body = parsed as Record<string, unknown>;
+        }
+      } catch { /* noop */ }
       throw new ApiError(
         res.status,
         (body.code as string) ?? "error",
@@ -345,6 +368,25 @@ export async function apiFetch<T>(
     return await new Promise<T>((resolve, reject) => {
       timeoutId = setTimeout(() => {
         controller.abort();
+        // FIX-SESSION-STATUS-BODY-TIMEOUT: headers 401/403 já recebidos mas
+        // corpo travado — rejeição tipada no status original (defaults
+        // seguros do caminho normal), nunca 408/unreachable. 401 espelha os
+        // efeitos colaterais do caminho normal (sockets + evento); 403 sem
+        // corpo não carrega código de revogação (isMembershipRevocation
+        // exige código explícito), então só classifica — sem purge/evento.
+        // Demais casos (fetch pendente, 200/5xx travados) seguem 408.
+        if (observedAuthStatus === 401) {
+          closeAllSockets("session expired");
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+          }
+          reject(new ApiError(401, "auth.error", "Token inválido"));
+          return;
+        }
+        if (observedAuthStatus === 403) {
+          reject(new ApiError(403, "error", "Acesso restrito"));
+          return;
+        }
         reject(new ApiError(408, "network.timeout", "Tempo limite de conexão excedido."));
       }, timeoutMs);
       void request().then(resolve, reject);

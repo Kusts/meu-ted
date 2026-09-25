@@ -69,6 +69,31 @@ beforeEach(() => {
   reconcileMutation.mockClear();
 });
 
+/**
+ * Item 4 (SPEC §16 INV-02): o cartão canônico exige a presentation
+ * acionável derivada server-side — sem ela o Confirm nunca renderiza.
+ * As fixtures abaixo carregam a presentation na origem canônica (turn
+ * output e/ou lista ativa), e os botões usam o nome canônico
+ * `Confirmar R$…`.
+ */
+const actionablePresentation = (
+  id: string,
+  overrides?: Partial<agentClient.PendingOperationPresentation>,
+): agentClient.PendingOperationPresentation => ({
+  id,
+  status: "proposed",
+  tool: "transactions.expense.create",
+  title: "Confirmar despesa",
+  amountCents: 85000,
+  description: "Mercado",
+  date: "2026-09-14",
+  account: { id: "acc-1", label: "Nubank" },
+  category: { id: "cat-1", label: "Alimentação" },
+  expiresAt: "2026-09-14T13:00:00.000Z",
+  warnings: [],
+  ...overrides,
+});
+
 describe("TedChat — post-approval reconciliation (T3.3)", () => {
   it("approval success reconciles financial UI AND reloads chat history", async () => {
     const user = userEvent.setup();
@@ -100,6 +125,7 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
         status: "proposed",
         operation: "transactions.expense.create",
         summary: "Mercado",
+        presentation: actionablePresentation("op-1"),
       },
     });
     vi.spyOn(agentClient, "decidePendingOperation").mockResolvedValue({
@@ -117,14 +143,14 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
     );
     await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
     expect(
-      await screen.findByRole("button", { name: "Aprovar" }),
+      await screen.findByRole("button", { name: "Confirmar R$ 850,00" }),
     ).toBeInTheDocument();
     expect(reconcileMutation).not.toHaveBeenCalled();
 
     const historyCallsAfterProposal = historySpy.mock.calls.length;
 
     // Approve: financial UI reconciles, then chat history reloads.
-    await user.click(screen.getByRole("button", { name: "Aprovar" }));
+    await user.click(screen.getByRole("button", { name: "Confirmar R$ 850,00" }));
 
     await waitFor(() =>
       expect(reconcileMutation).toHaveBeenCalledWith({
@@ -141,8 +167,9 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
     // "registrada" state and no error surfaces.
     releaseHistory([]);
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: "Aprovar" })).toBeNull(),
+      expect(screen.queryByRole("button", { name: "Confirmar R$ 850,00" })).toBeNull(),
     );
+    expect(screen.queryByRole("button", { name: "Aprovar" })).toBeNull();
   });
 
   it("real receipt wins: reconciliation consumes the receipt (mutationId dedup), not the kind fallback", async () => {
@@ -178,6 +205,7 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
         createdAt: "2026-09-14T10:00:00.000Z",
         expiresAt: "2026-09-14T13:00:00.000Z",
         description: "Mercado",
+        presentation: actionablePresentation("op-1"),
       },
     ]);
     vi.spyOn(agentClient, "sendAgentMessage").mockResolvedValue({
@@ -188,6 +216,7 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
         status: "proposed",
         operation: "transactions.expense.create",
         summary: "Mercado",
+        presentation: actionablePresentation("op-1"),
       },
     });
     vi.spyOn(agentClient, "decidePendingOperation").mockResolvedValue({
@@ -203,10 +232,10 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
       "registre mercado 850",
     );
     await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
-    expect(await screen.findByRole("button", { name: "Aprovar" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Confirmar R$ 850,00" })).toBeInTheDocument();
     reconcileMutation.mockClear();
 
-    await user.click(screen.getByRole("button", { name: "Aprovar" }));
+    await user.click(screen.getByRole("button", { name: "Confirmar R$ 850,00" }));
 
     // The REAL API-emitted receipt flows to the reconciler: mutationId is
     // present (dedup works), and no fallback kind mapping is used.
@@ -237,6 +266,12 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
         createdAt: "2026-09-14T10:00:00.000Z",
         expiresAt: "2026-09-14T13:00:00.000Z",
         description: "Salário",
+        presentation: actionablePresentation("op-2", {
+          tool: "transactions.income.create",
+          title: "Confirmar receita",
+          amountCents: 200000,
+          description: "Salário",
+        }),
       },
     ]);
     vi.spyOn(agentClient, "fetchAgentHistory").mockImplementation(async () => {
@@ -261,6 +296,12 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
         status: "proposed",
         operation: "transactions.income.create",
         summary: "Salário",
+        presentation: actionablePresentation("op-2", {
+          tool: "transactions.income.create",
+          title: "Confirmar receita",
+          amountCents: 200000,
+          description: "Salário",
+        }),
       },
     });
     vi.spyOn(agentClient, "decidePendingOperation").mockResolvedValue({
@@ -277,11 +318,11 @@ describe("TedChat — post-approval reconciliation (T3.3)", () => {
       "registre salário 2000",
     );
     await user.click(screen.getByRole("button", { name: "Enviar mensagem" }));
-    expect(await screen.findByRole("button", { name: "Aprovar" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Confirmar R$ 2.000,00" })).toBeInTheDocument();
     const callsBeforeApproval = historyCalls;
     reconcileMutation.mockClear();
 
-    await user.click(screen.getByRole("button", { name: "Aprovar" }));
+    await user.click(screen.getByRole("button", { name: "Confirmar R$ 2.000,00" }));
 
     // Reconciliation failed (app-state marks domains stale) but the chat
     // history reload still happens — no rollback, no swallowed reload.

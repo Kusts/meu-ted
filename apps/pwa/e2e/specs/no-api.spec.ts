@@ -19,7 +19,9 @@ function tid(): string {
 async function init(page: import("@playwright/test").Page, id: string) {
   const guard = await initSpec(page, id, {
     baselineAllows: false,
-    allow: [{ message: "reading 'waiting'", reason: "SW blocked" }],
+    allow: [
+      { message: "reading 'waiting'", reason: "SW blocked" },
+    ],
   });
   return guard;
 }
@@ -36,10 +38,8 @@ test("[NOAPI-01] no API rejects write before optimistic success", async ({ page 
   allowFailure(guard, { message: "Failed to load resource", reason: "intentional no-API abort" });
   allowFailure(guard, { url: "transactions/expense", reason: "intentional no-API abort" });
 
-  // Current UX: FAB opens a quick menu — pick Despesa to open the sheet
-  // (same pattern as TX-01's openTransactionSheet helper).
   await page.getByLabel("Nova transação").click();
-  await page.getByRole("menuitem", { name: "Despesa" }).click();
+  await page.getByLabel("Novo lançamento").getByRole("button", { name: "Despesa" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 

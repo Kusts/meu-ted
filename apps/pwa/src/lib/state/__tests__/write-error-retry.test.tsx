@@ -1,7 +1,9 @@
 import "fake-indexeddb/auto";
+import { useLayoutEffect, useRef } from "react";
 import { renderHook, act, waitFor, render, screen, fireEvent } from "@/lib/test-utils";
 import { AppStateProvider, useAppState } from "../app-state-context";
 import { WriteErrorBanner } from "@/components/WriteErrorBanner";
+import { ApiError } from "@/lib/api/client";
 import * as endpoints from "@/lib/api/endpoints";
 import { setOfflineSubjectId } from "@/lib/auth/offline-subject";
 import {
@@ -219,5 +221,149 @@ describe("write-error manual retry with same commandId (DEBT-CODER-RETRYBANNER)"
     expect(
       screen.queryByRole("button", { name: /tentar de novo/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("immediate layout-phase retry reuses the SAME idempotency key", async () => {
+    const apiSpy = vi
+      .spyOn(endpoints, "createExpenseTransaction")
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce({ id: "tx-server-immediate" } as Transaction);
+    function Harness() {
+      const state = useAppState();
+      const firedRef = useRef(false);
+      // Commit/layout-phase probe: fires synchronously after the DOM mutation
+      // that exposes writeError + retryWriteError, before passive useEffect
+      // hooks can synchronize pending-write refs.
+      useLayoutEffect(() => {
+        if (!firedRef.current && state.writeError && state.retryWriteError) {
+          firedRef.current = true;
+          void state.retryWriteError();
+        }
+      });
+      return (
+        <>
+          <span>{state.loading ? "carregando" : "pronto"}</span>
+          <button
+            type="button"
+            onClick={() =>
+              void state.addTransaction(TX).catch(() => {
+                /* surfaced via the banner */
+              })
+            }
+          >
+            add-tx
+          </button>
+          <WriteErrorBanner
+            message={state.writeError}
+            onDismiss={state.clearWriteError}
+            onRetry={state.retryWriteError ?? undefined}
+          />
+        </>
+      );
+    }
+    render(<Harness />, { wrapper: AppStateProvider });
+    await waitFor(() => expect(screen.getByText("pronto")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("add-tx"));
+
+    // Both automatic attempts fail first; the layout-phase probe retries
+    // before passive effects run, so a ref-sync race misses call 3.
+    await waitFor(() => expect(apiSpy).toHaveBeenCalledTimes(3), { timeout: 5000 });
+    expect(keyOf(apiSpy, 0)).toBe(keyOf(apiSpy, 1));
+    expect(typeof keyOf(apiSpy, 0)).toBe("string");
+    expect(keyOf(apiSpy, 2)).toBe(keyOf(apiSpy, 0));
+    await waitFor(() =>
+      expect(screen.queryByTestId("write-error-banner")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("definitive 409 carrying a network.timeout code offers no manual retry (FIX-RETRY-STATUS-PRECEDENCE)", async () => {
+    const apiSpy = vi
+      .spyOn(endpoints, "createExpenseTransaction")
+      .mockRejectedValueOnce(
+        new ApiError(409, "network.timeout", "conflito com código de timeout"),
+      );
+    const { result } = renderHook(() => useAppState(), { wrapper: AppStateProvider });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await expect(result.current.addTransaction(TX)).rejects.toBeInstanceOf(ApiError);
+    });
+
+    // Banner surfaces the definitive error…
+    expect(result.current.writeError).toMatch(/conflito com código de timeout/);
+    // …but a definitive 409 never arms a same-id manual retry, regardless of code.
+    expect(result.current.writeErrorCommandId).toBeNull();
+    expect(result.current.retryWriteError).toBeNull();
+    expect(apiSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("definitive 409 conflict with a commandId offers no manual retry (FIX-DEFINITIVE-WRITE-RETRY-AFFORDANCE)", async () => {
+    const apiSpy = vi
+      .spyOn(endpoints, "createExpenseTransaction")
+      .mockRejectedValueOnce(
+        new ApiError(409, "idempotency.conflict", "conflito de idempotência"),
+      );
+    const { result } = renderHook(() => useAppState(), { wrapper: AppStateProvider });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await expect(result.current.addTransaction(TX)).rejects.toBeInstanceOf(ApiError);
+    });
+
+    // Banner surfaces the definitive error…
+    expect(result.current.writeError).toMatch(/conflito de idempotência/);
+    // …but no manual retry is armed: replaying a definitive 409 could
+    // re-execute instead of replaying the original receipt.
+    expect(result.current.writeErrorCommandId).toBeNull();
+    expect(result.current.retryWriteError).toBeNull();
+    // Definitive 409 is never auto-retried either (single attempt).
+    expect(apiSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("ordinary definitive 400 with a commandId offers no manual retry (FIX-DEFINITIVE-WRITE-RETRY-AFFORDANCE)", async () => {
+    const apiSpy = vi
+      .spyOn(endpoints, "createExpenseTransaction")
+      .mockRejectedValueOnce(
+        new ApiError(400, "validation.error", "requisição inválida"),
+      );
+    function Harness() {
+      const state = useAppState();
+      return (
+        <>
+          <span>{state.loading ? "carregando" : "pronto"}</span>
+          <button
+            type="button"
+            onClick={() =>
+              void state.addTransaction(TX).catch(() => {
+                /* surfaced via the banner */
+              })
+            }
+          >
+            add-tx
+          </button>
+          <WriteErrorBanner
+            message={state.writeError}
+            onDismiss={state.clearWriteError}
+            onRetry={state.retryWriteError ?? undefined}
+          />
+        </>
+      );
+    }
+    render(<Harness />, { wrapper: AppStateProvider });
+    await waitFor(() => expect(screen.getByText("pronto")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("add-tx"));
+
+    const banner = await screen.findByTestId("write-error-banner");
+    expect(banner).toHaveTextContent(/requisição inválida/);
+    // Banner shows the error but offers no manual retry for a definitive 4xx.
+    expect(
+      screen.queryByRole("button", { name: /tentar de novo/i }),
+    ).not.toBeInTheDocument();
+    // Definitive 400 is never auto-retried; and with no retry affordance
+    // there is no manual reissue either.
+    expect(apiSpy).toHaveBeenCalledTimes(1);
   });
 });

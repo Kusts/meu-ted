@@ -8,7 +8,9 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 PWA="$ROOT/apps/pwa"
 RESULT=0
 
-# Point the PWA at the local fixture API. REQUIRED.
+# This runner is fixture-only. Pin every API path before the Next build and
+# clear opt-in live/deployed targets inherited from the caller or dotenv files.
+# The backend proxy otherwise defaults to the production API.
 #
 # src/lib/api/client.ts:baseUrl() returns undefined when this is unset and the
 # host is not the production PWA — which puts the app in mock mode, so the
@@ -16,8 +18,18 @@ RESULT=0
 # getByRole("button", { name: "Registrar" }).
 #
 # NEXT_PUBLIC_* is inlined at build time, so this must be exported before
-# `pnpm build:next:cloudflare`, not only before `next start`.
-export NEXT_PUBLIC_PI_FINANCE_API_BASE_URL="${NEXT_PUBLIC_PI_FINANCE_API_BASE_URL:-http://127.0.0.1:4010}"
+# `pnpm build:next:cloudflare`, not only before starting the runtime.
+export NEXT_PUBLIC_PI_FINANCE_API_BASE_URL="http://127.0.0.1:4010"
+export NEXT_PUBLIC_LEGACY_BEARER_COMPAT="off"
+export PWA_BACKEND_PROXY_ORIGIN="http://127.0.0.1:4010"
+export NEXT_PUBLIC_PI_FINANCE_AGENT_BASE_URL=""
+export PWA_AGENT_PROXY_ORIGIN=""
+export AGENT_ORIGIN=""
+export ALLOW_LOCAL_ORIGIN="0"
+export PWA_LIVE_E2E="0"
+export PWA_LIVE_BASE_URL="http://127.0.0.1:3000"
+export E2E_PRODUCTION_SMOKE="0"
+export E2E_PRODUCTION_URL=""
 echo "[run-ci] API base URL: $NEXT_PUBLIC_PI_FINANCE_API_BASE_URL"
 
 FIXTURE_PID=""
@@ -60,9 +72,9 @@ pushd "$PWA" >/dev/null
 pnpm build:next:cloudflare
 popd >/dev/null
 
-echo "[run-ci] starting Next.js on :3001..."
+echo "[run-ci] starting Next.js standalone on :3001..."
 pushd "$PWA" >/dev/null
-pnpm exec next start --port 3001 &
+PORT=3001 HOSTNAME=127.0.0.1 node e2e/standalone-server.mjs &
 NEXT_PID=$!
 popd >/dev/null
 
@@ -94,7 +106,7 @@ pushd "$PWA" >/dev/null
 pnpm exec playwright test \
   --config=e2e/playwright.config.ts \
   --project=functional-mobile \
-  --workers=2 --retries=1 || RESULT=1
+  --workers=1 --retries=1 || RESULT=1
 popd >/dev/null
 
 # ── Run PWA runtime E2E ────────────────────────────────────────────────────

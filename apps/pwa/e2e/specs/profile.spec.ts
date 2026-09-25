@@ -15,6 +15,7 @@
 import { test, expect } from "@playwright/test";
 import { assertNoUndeclaredFailures } from "../support/failure-guard";
 import { prepareSpec, authenticate, getJournal } from "../support/harness";
+import { FIXTURE_URL } from "../support/reset";
 
 const TOKEN_KEY = "pi-finance:token";
 
@@ -59,7 +60,9 @@ async function init(page: import("@playwright/test").Page, id: string) {
   // registering — both orders are load-bearing.
   const guard = await prepareSpec(page, id, {
     baselineAllows: false,
-    allow: [{ message: "reading 'waiting'", reason: "SW blocked" }],
+    allow: [
+      { message: "reading 'waiting'", reason: "SW blocked" },
+    ],
   });
   await page.addInitScript(() => {
     try {
@@ -194,13 +197,32 @@ test("[PROF-05] dismiss notification → state update", async ({ page }) => {
 
 // ── PROF-06 ────────────────────────────────────────────────────────────────
 
-test("[PROF-06] logout clears token/snapshot → register screen", async ({ page }) => {
+test("[PROF-06] cookie-only logout revokes the session → login gate, no reauth on reload", async ({ page }) => {
   const id = tid();
   const guard = await init(page, id);
+  // Initial session works: the canonical cookie probe confirmed the user.
+  await expect
+    .poll(async () => {
+      const entries = await getJournal(id);
+      return entries.filter(
+        (e) => e.method === "GET" && e.path === "/auth/session" && e.status === 200,
+      );
+    }, { timeout: 10000 })
+    .not.toHaveLength(0);
 
-  // Token present while authenticated
+  // Cookie-only profile (NEXT_PUBLIC_LEGACY_BEARER_COMPAT=off): no bearer
+  // persists — neither the device token nor the session token.
   const tokenBefore = await page.evaluate((k) => localStorage.getItem(k), TOKEN_KEY);
-  expect(tokenBefore).toBeTruthy();
+  expect(tokenBefore).toBeNull();
+  const sessionTokenBefore = await page.evaluate(() => localStorage.getItem("pi-finance:session-token"));
+  expect(sessionTokenBefore).toBeNull();
+
+  // Capture the HttpOnly session cookie before logout (invisible to
+  // document.cookie — the CDP jar is the only faithful handle).
+  const jarBefore = await page.context().cookies();
+  const sessionCookie = jarBefore.find((c) => c.name === "better-auth.session_token");
+  expect(sessionCookie?.value).toBeTruthy();
+  const revokedCookie = `better-auth.session_token=${sessionCookie!.value}`;
 
   await page.getByRole("button", { name: "Sair da conta" }).click();
 
@@ -210,7 +232,72 @@ test("[PROF-06] logout clears token/snapshot → register screen", async ({ page
   });
   await expect(page).toHaveURL(/\/$/);
 
+  // The PWA itself revoked server-side: its own POST /auth/sign-out is
+  // recorded as success. No manual sign-out call here — driving the
+  // revocation from Node would mask a UI that never revoked the session.
+  await expect
+    .poll(async () => {
+      const entries = await getJournal(id);
+      return entries.filter(
+        (e) => e.method === "POST" && e.path === "/auth/sign-out" && e.status === 200,
+      );
+    }, { timeout: 10000 })
+    .not.toHaveLength(0);
+
+  // Boolean cookie evidence only: the server saw the session cookie on the
+  // app's sign-out request and revoked exactly that session (never the raw
+  // value, never another testId's session).
+  const signOutEntries = await getJournal(id);
+  const signOutEntry = signOutEntries
+    .filter((e) => e.method === "POST" && e.path === "/auth/sign-out" && e.status === 200)
+    .at(-1);
+  expect(signOutEntry).toBeDefined();
+  expect(signOutEntry!.body).toEqual({ hadCookie: true, revoked: true });
+
+  // The fixture session cookie is gone from the browser jar — the sign-out
+  // response cleared it (expired attributes). An empty remnant counts as
+  // cleared: it authenticates nothing.
+  await expect
+    .poll(async () => {
+      const jar = await page.context().cookies();
+      const stale = jar.find((c) => c.name === "better-auth.session_token");
+      return stale?.value ? stale.value : null;
+    }, { timeout: 10000 })
+    .toBeNull();
+
+  // The pre-logout cookie cannot authenticate, even when replayed verbatim.
+  const replayRes = await fetch(`${FIXTURE_URL}/auth/session`, {
+    headers: { "x-e2e-test-id": id, Cookie: revokedCookie },
+  });
+  expect(replayRes.status).toBe(401);
+
+  // Reload does not reauthenticate: no session cookie survives, the probe
+  // rejects, and the login gate stays put. Capture the rejected-probe count
+  // first so the post-reload assertion below proves a FRESH browser
+  // GET /auth/session 401 landed in the journal (not a pre-logout entry).
+  const probesBefore = await getJournal(id);
+  const rejectedProbesBefore = probesBefore.filter(
+    (e) => e.method === "GET" && e.path === "/auth/session" && e.status === 401,
+  ).length;
+
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByRole("button", { name: /Entrar|Registrar/i })).toBeVisible({
+    timeout: 15000,
+  });
+
+  await expect
+    .poll(async () => {
+      const entries = await getJournal(id);
+      return entries.filter(
+        (e) => e.method === "GET" && e.path === "/auth/session" && e.status === 401,
+      ).length;
+    }, { timeout: 10000 })
+    .toBeGreaterThan(rejectedProbesBefore);
+
   const tokenAfter = await page.evaluate((k) => localStorage.getItem(k), TOKEN_KEY);
   expect(tokenAfter).toBeNull();
+  const sessionTokenAfter = await page.evaluate(() => localStorage.getItem("pi-finance:session-token"));
+  expect(sessionTokenAfter).toBeNull();
   assertNoUndeclaredFailures(guard);
 });

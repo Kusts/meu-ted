@@ -194,4 +194,234 @@ describe("StaleBanner", () => {
       expect(refreshDomains).toHaveBeenCalledWith(["accounts"]);
     });
   });
+
+  describe("snapshot retry CTA (item 7: refresh por domínio, sem reload)", () => {
+    it("renders a 'Tentar novamente' button on the snapshot banner", () => {
+      stub("snapshot");
+      render(<StaleBanner domains={["accounts"]} />);
+      expect(
+        screen.getByRole("button", { name: /tentar novamente/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("retries via refreshDomains scoped to the snapshotted domains without reloading", async () => {
+      const { refreshDomains } = stub("snapshot");
+      const reloadSpy = stubReload();
+      render(<StaleBanner domains={["accounts"]} />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /tentar novamente/i }),
+      );
+      await waitFor(() =>
+        expect(refreshDomains).toHaveBeenCalledWith(["accounts"]),
+      );
+      expect(reloadSpy).not.toHaveBeenCalled();
+    });
+
+    it("ignores legacy onRetry in snapshot and refreshes snapshotted domains", async () => {
+      const { refreshDomains } = stub("snapshot");
+      const reloadSpy = stubReload();
+      const onRetry = vi.fn();
+      render(<StaleBanner domains={["accounts"]} onRetry={onRetry} />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /tentar novamente/i }),
+      );
+      await waitFor(() =>
+        expect(refreshDomains).toHaveBeenCalledWith(["accounts"]),
+      );
+      expect(onRetry).not.toHaveBeenCalled();
+      expect(reloadSpy).not.toHaveBeenCalled();
+    });
+
+    it("disables the retry button while refreshing (no double submit)", async () => {
+      const { refreshDomains } = stub("snapshot");
+      let resolveRefresh!: (v: boolean) => void;
+      refreshDomains.mockImplementationOnce(
+        () => new Promise<boolean>((res) => (resolveRefresh = res)),
+      );
+      render(<StaleBanner domains={["accounts"]} />);
+      const btn = screen.getByRole("button", { name: /tentar novamente/i });
+      fireEvent.click(btn);
+      fireEvent.click(btn);
+      expect(refreshDomains).toHaveBeenCalledTimes(1);
+      expect(btn).toBeDisabled();
+      resolveRefresh(true);
+      await waitFor(() => expect(btn).not.toBeDisabled());
+    });
+
+    it("shows a clear accessible error without reloading when the refresh reports no live data", async () => {
+      const { refreshDomains } = stub("snapshot");
+      refreshDomains.mockResolvedValueOnce(false);
+      const reloadSpy = stubReload();
+      render(<StaleBanner domains={["accounts"]} />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /tentar novamente/i }),
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toBeInTheDocument(),
+      );
+      expect(reloadSpy).not.toHaveBeenCalled();
+      // snapshot/read-only mode is preserved: banner stays, still read-only copy
+      expect(screen.getByTestId("stale-banner")).toBeInTheDocument();
+      expect(screen.getByText(/modo leitura/i)).toBeInTheDocument();
+    });
+
+    it("shows a clear accessible error without reloading when the refresh rejects (offline)", async () => {
+      const { refreshDomains } = stub("snapshot");
+      refreshDomains.mockRejectedValueOnce(new Error("offline"));
+      const reloadSpy = stubReload();
+      render(<StaleBanner domains={["accounts"]} />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /tentar novamente/i }),
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toBeInTheDocument(),
+      );
+      expect(reloadSpy).not.toHaveBeenCalled();
+      expect(screen.getByTestId("stale-banner")).toBeInTheDocument();
+    });
+
+    it("snapshot with custom onRetry never bypasses domain refresh (explicit contract)", async () => {
+      const { refreshDomains } = stub("snapshot");
+      const reloadSpy = stubReload();
+      const onRetry = vi.fn();
+      render(<StaleBanner domains={["accounts"]} onRetry={onRetry} />);
+      const retryBtn = screen.getByRole("button", {
+        name: /tentar novamente/i,
+      });
+
+      // Success: owns retry via refreshDomains(snapshotted), ignores onRetry.
+      refreshDomains.mockResolvedValueOnce(true);
+      fireEvent.click(retryBtn);
+      await waitFor(() =>
+        expect(refreshDomains).toHaveBeenCalledWith(["accounts"]),
+      );
+      expect(onRetry).not.toHaveBeenCalled();
+      expect(reloadSpy).not.toHaveBeenCalled();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+      // False: surfaces role=alert, keeps read-only banner, still no bypass.
+      refreshDomains.mockResolvedValueOnce(false);
+      fireEvent.click(retryBtn);
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toBeInTheDocument(),
+      );
+      expect(onRetry).not.toHaveBeenCalled();
+      expect(reloadSpy).not.toHaveBeenCalled();
+      expect(screen.getByTestId("stale-banner")).toHaveAttribute(
+        "data-variant",
+        "snapshot",
+      );
+
+      // Reject: same fail-closed contract, onRetry still ignored.
+      refreshDomains.mockRejectedValueOnce(new Error("offline"));
+      fireEvent.click(retryBtn);
+      await waitFor(() =>
+        expect(refreshDomains).toHaveBeenCalledTimes(3),
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toBeInTheDocument(),
+      );
+      expect(onRetry).not.toHaveBeenCalled();
+      expect(reloadSpy).not.toHaveBeenCalled();
+    });
+
+    it("shows no error and never reloads when the refresh succeeds", async () => {
+      const { refreshDomains } = stub("snapshot");
+      refreshDomains.mockResolvedValueOnce(true);
+      const reloadSpy = stubReload();
+      render(<StaleBanner domains={["accounts"]} />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /tentar novamente/i }),
+      );
+      await waitFor(() => expect(refreshDomains).toHaveBeenCalledTimes(1));
+      expect(reloadSpy).not.toHaveBeenCalled();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    describe("onSnapshotRefresh post-domain hook (FIX-PWA-HOME-SNAPSHOT-SUMMARY)", () => {
+      it("calls onSnapshotRefresh after domain refresh succeeds", async () => {
+        const { refreshDomains } = stub("snapshot");
+        refreshDomains.mockResolvedValueOnce(true);
+        stubReload();
+        const onSnapshotRefresh = vi.fn().mockResolvedValue(undefined);
+        render(
+          <StaleBanner
+            domains={["accounts"]}
+            onSnapshotRefresh={onSnapshotRefresh}
+          />,
+        );
+        fireEvent.click(
+          screen.getByRole("button", { name: /tentar novamente/i }),
+        );
+        await waitFor(() =>
+          expect(refreshDomains).toHaveBeenCalledWith(["accounts"]),
+        );
+        await waitFor(() =>
+          expect(onSnapshotRefresh).toHaveBeenCalledTimes(1),
+        );
+      });
+
+      it("does NOT call onSnapshotRefresh when domain refresh reports no live data", async () => {
+        const { refreshDomains } = stub("snapshot");
+        refreshDomains.mockResolvedValueOnce(false);
+        stubReload();
+        const onSnapshotRefresh = vi.fn().mockResolvedValue(undefined);
+        render(
+          <StaleBanner
+            domains={["accounts"]}
+            onSnapshotRefresh={onSnapshotRefresh}
+          />,
+        );
+        fireEvent.click(
+          screen.getByRole("button", { name: /tentar novamente/i }),
+        );
+        await waitFor(() =>
+          expect(screen.getByRole("alert")).toBeInTheDocument(),
+        );
+        expect(onSnapshotRefresh).not.toHaveBeenCalled();
+      });
+
+      it("does NOT call onSnapshotRefresh when domain refresh rejects (offline)", async () => {
+        const { refreshDomains } = stub("snapshot");
+        refreshDomains.mockRejectedValueOnce(new Error("offline"));
+        stubReload();
+        const onSnapshotRefresh = vi.fn().mockResolvedValue(undefined);
+        render(
+          <StaleBanner
+            domains={["accounts"]}
+            onSnapshotRefresh={onSnapshotRefresh}
+          />,
+        );
+        fireEvent.click(
+          screen.getByRole("button", { name: /tentar novamente/i }),
+        );
+        await waitFor(() =>
+          expect(screen.getByRole("alert")).toBeInTheDocument(),
+        );
+        expect(onSnapshotRefresh).not.toHaveBeenCalled();
+      });
+
+      it("never reloads when the post-domain hook rejects (owner surfaces summary error)", async () => {
+        const { refreshDomains } = stub("snapshot");
+        refreshDomains.mockResolvedValueOnce(true);
+        const reloadSpy = stubReload();
+        const onSnapshotRefresh = vi
+          .fn()
+          .mockRejectedValueOnce(new Error("summary offline"));
+        render(
+          <StaleBanner
+            domains={["accounts"]}
+            onSnapshotRefresh={onSnapshotRefresh}
+          />,
+        );
+        fireEvent.click(
+          screen.getByRole("button", { name: /tentar novamente/i }),
+        );
+        await waitFor(() =>
+          expect(onSnapshotRefresh).toHaveBeenCalledTimes(1),
+        );
+        expect(reloadSpy).not.toHaveBeenCalled();
+      });
+    });
+  });
 });

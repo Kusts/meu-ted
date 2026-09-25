@@ -43,6 +43,7 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
     quickInsights,
     dashboardSummary,
     refreshDashboardSummary,
+    refreshDashboardSummaryStrict,
     refreshDomains,
     loading,
     error,
@@ -50,6 +51,33 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
   const profile = useEffectiveProfile();
   const router = useRouter();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+
+  // FIX-PWA-HOME-SNAPSHOT-SUMMARY: Home-owned summary recovery. The snapshot
+  // StaleBanner owns domain retry via refreshDomains and invokes
+  // handleSnapshotSummaryRefresh ONLY after all snapshotted domains go live,
+  // so no optimistic/mock summary is attempted when domains fail/offline.
+  // Failure state lives HERE (not in the banner) so it survives the banner
+  // unmounting to live; retry re-calls the authoritative strict summary
+  // without reload and without touching sync/read-only.
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [summaryRetrying, setSummaryRetrying] = useState(false);
+  const handleSnapshotSummaryRefresh = useCallback(async () => {
+    const fn = refreshDashboardSummaryStrict ?? refreshDashboardSummary;
+    if (typeof fn !== "function") return;
+    setSummaryRetrying(true);
+    try {
+      await fn();
+      setSummaryError(null);
+    } catch {
+      // Fail-closed: keep cached domains + read-only banner state, surface a
+      // dedicated accessible summary error with its own retry.
+      setSummaryError(
+        "Não foi possível atualizar o resumo — tente novamente.",
+      );
+    } finally {
+      setSummaryRetrying(false);
+    }
+  }, [refreshDashboardSummary, refreshDashboardSummaryStrict]);
 
   // T5.3 (H-14, SPEC §22): real pending-approvals count from the
   // authoritative Agent listing, scoped to the active workspace. `null`
@@ -129,7 +157,28 @@ export default function HomePage({ onNewTransaction }: HomePageProps = {}) {
       <StaleBanner
         domains={["accounts", "transactions", "payables", "budgets"]}
         onRetry={() => router.refresh()}
+        onSnapshotRefresh={handleSnapshotSummaryRefresh}
       />
+
+      {summaryError && (
+        <div
+          data-testid="home-summary-error"
+          role="alert"
+          className="mx-5 mt-2 flex items-center justify-between gap-2 rounded-[12px] bg-warning-tint px-4 py-2.5 text-[12px] font-semibold text-warning"
+        >
+          <span className="min-w-0 flex-1">{summaryError}</span>
+          <button
+            type="button"
+            onClick={() => void handleSnapshotSummaryRefresh()}
+            disabled={summaryRetrying}
+            aria-busy={summaryRetrying}
+            aria-label="Tentar atualizar resumo"
+            className="flex-none rounded-[8px] border border-warning/40 bg-surface px-2.5 py-1 text-[11px] font-bold text-warning transition-colors hover:bg-warning/10 disabled:opacity-60"
+          >
+            {summaryRetrying ? "Tentando…" : "Tentar novamente"}
+          </button>
+        </div>
+      )}
 
       {error && (
         <div

@@ -58,7 +58,7 @@ import {
 import { stampLastOnlineAuthenticatedAt } from "@/lib/session";
 import { recordClientEvent } from "@/lib/telemetry/client-events";
 import { createCommands, type Commands, type CommandIdOptions } from "./commands";
-import { getFailedCommandId } from "@/lib/api/command-id";
+import { getFailedCommandId, isRetryableMutationError } from "@/lib/api/command-id";
 import {
   createMutationReconciler,
   extractMutationReceipt,
@@ -98,6 +98,13 @@ export interface AppState {
   }) => Promise<void>;
   refreshProfile: () => Promise<void>;
   refreshDashboardSummary: () => Promise<void>;
+  /**
+   * Strict authoritative summary refresh (FIX-PWA-HOME-SNAPSHOT-SUMMARY):
+   * throws when the API is unusable or the fetch fails, so snapshot-retry
+   * owners (Home) can surface a dedicated retryable error. The lenient
+   * `refreshDashboardSummary` above never throws (nulls the summary).
+   */
+  refreshDashboardSummaryStrict?: () => Promise<void>;
   // Sync / mode
   sync: Record<DomainKey, DomainSync>;
   readOnly: boolean;
@@ -118,15 +125,17 @@ export interface AppState {
   /**
    * Intent id behind the surfaced write error (V4.1 Task 3.9 / Finding 2):
    * the command id the commands layer stamped onto the failed intent. Set
-   * iff the error carries one — the banner retry affordance keys off this.
-   * Null when no failed intent is pending (or its error carries no id).
+   * iff the error carries one AND its outcome may be unknown
+   * (`isRetryableMutationError` — network drop, timeout, 5xx); definitive
+   * 4xx/409 rejections never arm a retry. Null otherwise.
    */
   writeErrorCommandId?: string | null;
   /**
    * Manual retry bound to `writeErrorCommandId`: re-invokes the failed
    * mutation with the SAME command id, so the server replays the original
    * receipt instead of executing a second effect (committed-but-lost
-   * response). Null when the last error carries no command id or captured
+   * response). Set only for unknown-outcome failures; null when the last
+   * error is definitive (4xx/409), carries no command id, or captured
    * no retry inputs. Resolves when the retry settles (success clears the
    * banner; failure re-stores the fresh error); never rejects.
    */
@@ -483,6 +492,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const failedWriteRef = useRef<FailedWriteIntent | null>(null);
   const clearWriteError = useCallback(() => {
     setWriteError(null);
+    // Sync the pending-intent ref in the same tick the banner is cleared so
+    // an immediate retry/read never observes a stale intent (state→ref race).
+    failedWriteRef.current = null;
     setFailedWrite(null);
   }, []);
 
@@ -493,18 +505,29 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         // expire defensively here too, because 401 ApiErrors can also arrive
         // from layers that never touched apiFetch.
         expireSessionRef.current();
+        failedWriteRef.current = null;
         setFailedWrite(null);
         return;
       }
       if (e instanceof Error) setWriteError(e.message);
-      // Finding 2: the intent's command id travels on the surfaced error.
-      // A retry affordance exists iff the error carries an id AND the
-      // failing call site captured a retry thunk for it; anything else
+      // Finding 2 + FIX-DEFINITIVE-WRITE-RETRY-AFFORDANCE: the intent's
+      // command id travels on the surfaced error, but a manual retry is
+      // armed ONLY for unknown-outcome failures (network drop, timeout,
+      // 5xx — `isRetryableMutationError`). Definitive 4xx rejections
+      // (including the 409 idempotency replay/conflict signal) must never
+      // offer a same-id retry: blind-replaying them could re-execute
+      // instead of replaying the original receipt. Anything ineligible
       // clears a stale pending retry so the banner never replays it.
+      // Both state and ref are written synchronously here: the visible
+      // retry callback must not depend on a later passive effect to sync
+      // the ref (layout-phase clicks run before passive effects).
       const commandId = getFailedCommandId(e);
-      if (commandId !== undefined && makeRetry !== undefined) {
-        setFailedWrite({ commandId, retry: makeRetry(commandId) });
+      if (commandId !== undefined && makeRetry !== undefined && isRetryableMutationError(e)) {
+        const intent: FailedWriteIntent = { commandId, retry: makeRetry(commandId) };
+        failedWriteRef.current = intent;
+        setFailedWrite(intent);
       } else {
+        failedWriteRef.current = null;
         setFailedWrite(null);
       }
     },
@@ -512,15 +535,37 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   );
   const handleWriteErrorRef = useRef(handleWriteError);
 
-  const guardReadOnly = useCallback((): boolean => {
+  /**
+   * Central write authority guard (W1 item 2, Onda 1): runs BEFORE any
+   * optimistic update or side-effect in every provider mutator. Online
+   * writes require a server-confirmed `authenticated` session authority —
+   * `unknown` (pre-probe boot, device-verified-but-cookie-refused shell,
+   * mid-form authority transitions), `unauthenticated` and `unreachable`
+   * never produce ghost optimistic state, never touch the network and never
+   * leave a fictive failedWrite retry (there is no failed intent to replay).
+   * The block surfaces an accessible error (WriteErrorBanner renders
+   * writeError with role="alert"). Local/mock mode (API unconfigured) keeps
+   * the legacy local optimistic behavior — there is no server authority to
+   * consult. The stale-snapshot readOnly gate is preserved unchanged.
+   */
+  const guardWrite = useCallback((): boolean => {
+    if (configured) {
+      if (getSessionStatus().status !== "authenticated") {
+        setWriteError("Sessão não confirmada — faça login para salvar alterações.");
+        failedWriteRef.current = null;
+        setFailedWrite(null);
+        return true;
+      }
+    }
     if (readOnlyRef.current) {
       setWriteError("Backend indisponível — modo somente leitura.");
+      failedWriteRef.current = null;
       setFailedWrite(null);
       return true;
     }
     return false;
-  }, []);
-  const guardReadOnlyRef = useRef(guardReadOnly);
+  }, [configured]);
+  const guardWriteRef = useRef(guardWrite);
 
   // Stable fire-and-forget hook for mutators (SPEC §15.2, T3.3): receipt
   // wins, mutationKind fallback. Declared before the mutators so they close
@@ -554,11 +599,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const loadedRef = useRef(false);
 
   // Sync refs with latest state (avoids react-hooks/refs lint)
+  // NOTE: failedWriteRef is intentionally NOT synced here. It is written
+  // synchronously alongside every setFailedWrite call site so the visible
+  // retry callback never depends on a passive effect (layout-phase clicks
+  // run before passive effects; a passive overwrite could also resurrect a
+  // stale intent after an optimistic clear).
   useEffect(() => {
     readOnlyRef.current = readOnly;
     handleWriteErrorRef.current = handleWriteError;
-    guardReadOnlyRef.current = guardReadOnly;
-    failedWriteRef.current = failedWrite;
+    guardWriteRef.current = guardWrite;
     payablesRef.current = payables;
     accountsRef.current = accounts;
     subsRef.current = subscriptions;
@@ -901,7 +950,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // ── Write actions ─────────────────────────────────────────────────
 
   const addTransaction = useCallback(async (tx: Transaction & { idempotencyKey?: string }) => {
-    if (guardReadOnlyRef.current()) return;
+    if (guardWriteRef.current()) return;
     // The intent id is transport-only: it never enters React state.
     const { idempotencyKey: intentId, ...txState } = tx;
     const idOption = intentId !== undefined ? { idempotencyKey: intentId } : {};
@@ -967,7 +1016,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         idempotencyKey?: string;
       },
     ) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const prev = txsRef.current.find((t) => t.id === id);
       if (!prev) return;
 
@@ -1015,7 +1064,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   );
 
   const deleteTransaction = useCallback(async (id: string, options?: CommandIdOptions) => {
-    if (guardReadOnlyRef.current()) return;
+    if (guardWriteRef.current()) return;
     const prev = txsRef.current.find((t) => t.id === id);
     setTransactions((prev) => prev.filter((t) => t.id !== id));
 
@@ -1040,7 +1089,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     id: string,
     options?: CommandIdOptions & { paidDate?: string },
   ) => {
-    if (guardReadOnlyRef.current()) return;
+    if (guardWriteRef.current()) return;
     const prev = payablesRef.current.find((p) => p.id === id);
     const today = options?.paidDate ?? new Date().toISOString().slice(0, 10);
 
@@ -1073,7 +1122,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const updateAccount = useCallback(
     async (id: string, input: { name: string; idempotencyKey?: string }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const prev = accountsRef.current.find((a) => a.id === id);
       if (!prev) return;
 
@@ -1100,7 +1149,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   );
 
   const deactivateAccount = useCallback(async (id: string, options?: CommandIdOptions) => {
-    if (guardReadOnlyRef.current()) return;
+    if (guardWriteRef.current()) return;
     const prev = accountsRef.current.find((a) => a.id === id);
     if (!prev) return;
 
@@ -1125,7 +1174,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const updateCategory = useCallback(
     async (id: string, input: { name?: string; icon?: string | null; color?: string | null; idempotencyKey?: string }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const prev = categoriesRef.current.find((c) => c.id === id);
       if (!prev) return;
 
@@ -1156,7 +1205,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   );
 
   const deactivateCategory = useCallback(async (id: string, options?: CommandIdOptions) => {
-    if (guardReadOnlyRef.current()) return;
+    if (guardWriteRef.current()) return;
     const prev = categoriesRef.current.find((c) => c.id === id);
     if (!prev) return;
 
@@ -1181,7 +1230,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       id: string,
       input: ({ mode: "move"; destinationCategoryId: string } | { mode: "cascade"; confirm: true }) & { idempotencyKey?: string },
     ) => {
-      if (guardReadOnlyRef.current()) return { movedTransactions: 0, softDeletedTransactions: 0 };
+      if (guardWriteRef.current()) return { movedTransactions: 0, softDeletedTransactions: 0 };
       const prev = [...categoriesRef.current];
       const doomed = new Set<string>([id]);
       for (const c of prev) {
@@ -1220,7 +1269,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   );
 
   const applyCategoryDefaults = useCallback(async (options?: CommandIdOptions) => {
-    if (guardReadOnlyRef.current()) return { created: 0, skipped: 0 };
+    if (guardWriteRef.current()) return { created: 0, skipped: 0 };
     if (!apiUsable()) return { created: 0, skipped: 0 };
     try {
       const result = await commandsRef.current!.applyCategoryDefaults(options);
@@ -1243,7 +1292,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       initialBalanceCents: number;
       idempotencyKey?: string;
     }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
       const optimistic: Account = {
         id: optimisticId,
@@ -1283,7 +1332,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       parentId?: string;
       idempotencyKey?: string;
     }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
       const optimistic: Category = {
         id: optimisticId,
@@ -1322,7 +1371,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       dueDay: number;
       idempotencyKey?: string;
     }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
       const optimistic: Account = {
         id: optimisticId,
@@ -1371,7 +1420,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         idempotencyKey?: string;
       },
     ) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const prev = accountsRef.current.find((a) => a.id === id);
       setAccounts((curr) =>
         curr.map((c) =>
@@ -1424,7 +1473,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       paymentMethod: string;
       idempotencyKey?: string;
     }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
       const optimistic: Subscription = {
         id: optimisticId,
@@ -1457,7 +1506,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   );
 
   const cancelSubscription = useCallback(async (id: string, options?: CommandIdOptions) => {
-    if (guardReadOnlyRef.current()) return;
+    if (guardWriteRef.current()) return;
     const prev = subsRef.current.find((s) => s.id === id);
     setSubscriptions((curr) =>
       curr.map((s) =>
@@ -1491,7 +1540,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       idempotencyKey?: string;
     },
   ) => {
-    if (guardReadOnlyRef.current()) return;
+    if (guardWriteRef.current()) return;
     const prev = subsRef.current.find((s) => s.id === id);
     if (!prev) return;
     // Optimistic update — the intent id is transport-only, never state.
@@ -1551,7 +1600,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       toAccountId: string;
       idempotencyKey?: string;
     }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
       const optimisticTx: Transaction = {
         id: optimisticId,
@@ -1616,7 +1665,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // ── Payable create / cancel ─────────────────────────────────
 
   const cancelPayable = useCallback(async (id: string, options?: CommandIdOptions) => {
-    if (guardReadOnlyRef.current()) return;
+    if (guardWriteRef.current()) return;
     const prev = payablesRef.current.find((p) => p.id === id);
 
     setPayables((curr) =>
@@ -1649,7 +1698,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       categoryId?: string;
       idempotencyKey?: string;
     }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const prev = payablesRef.current.find((p) => p.id === id);
       if (!prev) return;
 
@@ -1680,7 +1729,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   );
 
   const undoPayablePayment = useCallback(async (id: string, options?: CommandIdOptions) => {
-    if (guardReadOnlyRef.current()) return;
+    if (guardWriteRef.current()) return;
     const prev = payablesRef.current.find((p) => p.id === id);
     if (!prev) return;
     // V4.1 REVIEWFIX F2: the server requires the linked paidTransactionId
@@ -1725,7 +1774,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       categoryId?: string;
       idempotencyKey?: string;
     }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const optimisticId = `opt-${crypto.randomUUID()}`;
       const optimistic: Payable = {
         id: optimisticId,
@@ -1766,7 +1815,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       startDate: string;
       idempotencyKey?: string;
     }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const optimistic: Budget = {
         id: `opt-${crypto.randomUUID()}`,
         categoryId: input.categoryId,
@@ -1800,7 +1849,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       id: string,
       input: { amountCents?: number; alertThreshold?: number; idempotencyKey?: string },
     ) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const prev = budgetsRef.current.find((b) => b.id === id);
       if (!prev) return;
 
@@ -1844,7 +1893,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       startDate: string;
       idempotencyKey?: string;
     }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const optimistic: Goal = {
         id: `opt-${crypto.randomUUID()}`,
         name: input.name,
@@ -1874,7 +1923,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const contributeToGoal = useCallback(
     async (id: string, input: { amountCents: number; idempotencyKey?: string }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const prev = goalsRef.current.find((g) => g.id === id);
       if (!prev) return;
 
@@ -1908,7 +1957,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   );
 
   const cancelGoal = useCallback(async (id: string, options?: CommandIdOptions) => {
-    if (guardReadOnlyRef.current()) return;
+    if (guardWriteRef.current()) return;
     const prev = goalsRef.current.find((g) => g.id === id);
     if (!prev) return;
 
@@ -1936,7 +1985,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       idempotencyKey?: string;
     },
   ) => {
-    if (guardReadOnlyRef.current()) return;
+    if (guardWriteRef.current()) return;
     const prev = goalsRef.current.find((g) => g.id === id);
     if (!prev) return;
 
@@ -1965,7 +2014,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       statementId: string,
       input: { amountCents: number; fromAccountId: string; idempotencyKey?: string },
     ) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       const prevStmt = stmtsRef.current.find((s) => s.id === statementId);
       const prevAccount = accountsRef.current.find(
         (a) => a.id === input.fromAccountId,
@@ -2042,9 +2091,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       notes?: string;
       idempotencyKey?: string;
     }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       if (!apiUsable()) {
         setWriteError("API não configurada para parcelamentos");
+        failedWriteRef.current = null;
         setFailedWrite(null);
         return;
       }
@@ -2080,9 +2130,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       notes?: string;
       idempotencyKey?: string;
     }) => {
-      if (guardReadOnlyRef.current()) return;
+      if (guardWriteRef.current()) return;
       if (!apiUsable()) {
         setWriteError("API não configurada para compras no cartão");
+        failedWriteRef.current = null;
         setFailedWrite(null);
         return;
       }
@@ -2149,14 +2200,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   /**
    * Manual retry for the banner (Finding 2): re-invokes the failed mutation
-   * with the SAME command id. Cleared optimistically before the attempt so a
-   * swallowed failure re-stores its fresh error via the mutator's own catch
-   * while a success leaves the banner cleared. Never rejects — failures are
-   * already surfaced through `writeError` state by the mutator.
+   * with the SAME command id. The pending intent is consumed synchronously
+   * (ref cleared before the attempt) so a stale/rapid second call cannot
+   * replay an already-consumed intent; a swallowed failure re-stores its
+   * fresh error via the mutator's own catch while a success leaves the
+   * banner cleared. Never rejects — failures are already surfaced through
+   * `writeError` state by the mutator.
    */
   const retryWriteError = useCallback(async (): Promise<unknown> => {
     const pending = failedWriteRef.current;
     if (!pending) return;
+    // Consume before invoking: clears both state and ref in the same tick.
+    failedWriteRef.current = null;
     setWriteError(null);
     setFailedWrite(null);
     return pending.retry().catch(() => {
@@ -2179,6 +2234,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // calls endpoints.patchProfile and returns the server projection; otherwise
   // it applies a local merge with defaults. In both cases setProfile is
   // called with the result.
+  //
+  // FIX-PWA-PROFILE-WRITE-AUTHORITY: the write guard runs FIRST, at call
+  // time via guardWriteRef (a form mounted under `authenticated` must fail
+  // closed when authority later drops to unknown/unreachable — no PATCH, no
+  // local state change, accessible guard error). The adapter is also
+  // resolved fresh at call time: profileAdapter is memoized at mount and
+  // would otherwise keep a mount-captured apiUsable flag (stale in both
+  // directions across authority transitions).
   const saveProfile = useCallback(
     async (input: {
       name?: string;
@@ -2187,15 +2250,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       avatarColor?: string;
       greetingStyle?: Profile["greetingStyle"];
     }) => {
+      if (guardWriteRef.current()) return;
       try {
-        const result = await profileAdapter.save(input, profile);
+        const adapter = createProfileAdapter({ apiUsable: apiUsable() });
+        const result = await adapter.save(input, profile);
         if (!result) return; // keep the previous profile on empty server response
         setProfile((prev) => mergeProfileFlags(prev, result));
       } catch (e) {
         handleWriteErrorRef.current(e);
       }
     },
-    [profile, profileAdapter],
+    [profile],
   );
 
   const refreshProfile = useCallback(async () => {
@@ -2465,6 +2530,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       saveProfile,
       refreshProfile,
       refreshDashboardSummary,
+      refreshDashboardSummaryStrict,
       sync,
       readOnly,
       offlineLocked,
@@ -2529,6 +2595,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       saveProfile,
       refreshProfile,
       refreshDashboardSummary,
+      refreshDashboardSummaryStrict,
       sync,
       readOnly,
       offlineLocked,

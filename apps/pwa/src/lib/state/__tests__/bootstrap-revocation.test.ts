@@ -7,7 +7,7 @@ import { ApiError } from "@/lib/api/client";
 import * as snapshotStore from "../snapshot-store";
 
 /**
- * V4.1 Phase 5 (Task 5.9 + D10): a 403 workspace_forbidden during bootstrap
+ * V4.1 Phase 5 (Task 5.9 + D10): a 403 auth.workspace_forbidden during bootstrap
  * means the membership is gone — the PWA must take the unauthenticated
  * transition (expireSession, which purges the snapshot), never fall back to
  * rendering the stale offline snapshot.
@@ -22,7 +22,7 @@ describe("bootstrap revocation (D10)", () => {
   });
 
   function rejectAllRevoked(): void {
-    const revoked = new ApiError(403, "workspace.forbidden", "Acesso restrito");
+    const revoked = new ApiError(403, "auth.workspace_forbidden", "Acesso restrito");
     vi.spyOn(endpoints, "fetchAccounts").mockRejectedValue(revoked);
     vi.spyOn(endpoints, "fetchCategories").mockRejectedValue(revoked);
     vi.spyOn(endpoints, "fetchTransactions").mockRejectedValue(revoked);
