@@ -139,6 +139,34 @@ export const resolveRerunAction = (input: {
   return 'bootstrap';
 };
 
+/**
+ * REVIEW-R3-F2: shared archive-emptiness rule. `legacy_archive` existing AND
+ * holding relations/functions is evidence of a previous bootstrap (partial
+ * unless a completed marker says otherwise). A stray EMPTY archive schema
+ * alone is not evidence — the archive move is transactional, so an empty
+ * archive next to an intact `public` means no bootstrap happened. The
+ * orchestrator probe (`convert.ts` `detectMarkerlessPartialState`) shares
+ * this exact predicate so both paths agree on what "partial" means.
+ */
+export const archiveHoldsObjects = async (
+  pool: ConversionPool,
+  archiveSchema: string,
+): Promise<boolean> => {
+  const nsRes = await pool.query(`SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1) AS exists`, [
+    archiveSchema,
+  ]);
+  if ((nsRes.rows[0] as Record<string, unknown> | undefined)?.exists !== true) return false;
+  const relRes = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')`,
+    [archiveSchema],
+  );
+  const fnRes = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = $1`,
+    [archiveSchema],
+  );
+  return Number(relRes.rows[0]?.n ?? 0) + Number(fnRes.rows[0]?.n ?? 0) > 0;
+};
+
 const readMarker = async (pool: ConversionPool, schema: string): Promise<ConversionMarker | null> => {
   try {
     const res = await pool.query(
@@ -158,10 +186,10 @@ const detectPartial = async (
   schema: string,
   archiveSchema: string,
 ): Promise<boolean> => {
-  const archive = await pool.query(`SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1) AS exists`, [
-    archiveSchema,
-  ]);
-  if (archive.rows[0]?.exists === true) return true;
+  // REVIEW-R3-F2: an EMPTY pre-existing archive is not partial state (same
+  // rule as the orchestrator markerless probe) — it is reused below by
+  // CREATE SCHEMA IF NOT EXISTS. Only an archive WITH objects refuses.
+  if (await archiveHoldsObjects(pool, archiveSchema)) return true;
   const ledger = await pool.query(
     `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = '_migrations') AS exists`,
     [schema],
