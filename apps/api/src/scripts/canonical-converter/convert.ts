@@ -7,6 +7,7 @@ import {
   CONVERSION_MARKER_TABLE,
   CONVERSION_STATE_COMPLETED,
   CONVERSION_STATE_CONVERTED,
+  archiveHoldsObjects,
   isCompletedState,
   runArchiveAndBootstrap,
 } from './archive-and-bootstrap.js';
@@ -42,9 +43,9 @@ import {
  *   -> restoreAuthIdentity -> import -> materializeIdentity -> runBalancesStep
  *   -> verify + completion marker (`state='completed'`, same backup_id).
  *
- * `--dry-run` executes ONLY the plan and returns the report: no writes, no
- * backup gate (read-only by construction — asserted in the M4 suite by
- * pre/post public snapshots).
+ * `--dry-run` executes the read-only markerless probe plus ONLY the plan and
+ * returns the report: no writes, no backup gate (read-only by construction
+ * — asserted in the M4 suite by pre/post public snapshots).
  *
  * Rerun with the same backup_id re-executes VERIFICATIONS (full canonical
  * ledger, per-entity archive==canonical counts with audit_logs pinned at 0,
@@ -233,6 +234,51 @@ const planProof = (plan: ConversionPlan): ConversionPlanProof => ({
   informational: plan.informational,
   counts: plan.inventory.counts,
 });
+
+/**
+ * REVIEW-R2-M3: a bootstrap failure BEFORE the marker write leaves
+ * `marker === null` while `public` is already partial (relations moved to
+ * `legacy_archive`, canonical half-applied, or `public` emptied). Planning
+ * over such a `public` schema yields a generic NO-GO (or even a misleading
+ * GO/success on a dry-run) that hides the real situation. This probe runs
+ * BEFORE any plan on the markerless path — including `--dry-run`, where it
+ * stays read-only — and reports partial when either holds:
+ * - `legacy_archive` holds relations/functions (via the shared
+ *   `archiveHoldsObjects` rule: a stray EMPTY archive schema alone is not
+ *   evidence — the archive move is transactional, so an empty archive next
+ *   to an intact `public` means no bootstrap happened); or
+ * - `schema` holds none of `accounts`, `transactions`, `_migrations`
+ *   (an intact legacy `public` always carries its ledger + core tables).
+ */
+export const detectMarkerlessPartialState = async (
+  pool: DbPool,
+  schema: string,
+  archiveSchema: string,
+): Promise<{ partial: boolean; reason: string }> => {
+  if (await archiveHoldsObjects(pool, archiveSchema)) {
+    return { partial: true, reason: `"${archiveSchema}" holds archived relation(s)` };
+  }
+  const coreRes = await pool.query(
+    `SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name IN ('accounts', 'transactions', '_migrations')`,
+    [schema],
+  );
+  const present = new Set(coreRes.rows.map((row) => String((row as Record<string, unknown>).table_name)));
+  if (!present.has('accounts') && !present.has('transactions') && !present.has('_migrations')) {
+    return { partial: true, reason: `"${schema}" holds no accounts, transactions or _migrations` };
+  }
+  return { partial: false, reason: 'no markerless partial state detected' };
+};
+
+/**
+ * REVIEW-R3-F1: the markerless-partial refusal, shared by the real path and
+ * the `--dry-run` path (both read-only up to this point: the probe is
+ * SELECT-only, so the dry-run stays write-free).
+ */
+const buildMarkerlessPartialError = (schema: string, reason: string, backupId: string): ConversionError =>
+  new ConversionError(
+    `partial conversion state without a marker (${reason}): the previous run failed between bootstrap and marker recording. ` +
+    `RESTAURE o backup '${backupId}' e reinicie do zero com o mesmo BACKUP_ID; refusing to plan over a partial '${schema}' schema`,
+  );
 
 const tableCount = async (pool: DbPool, schema: string, table: string): Promise<number> => {
   const res = await pool.query(`SELECT COUNT(*)::int AS n FROM ${quoteIdent(schema)}.${quoteIdent(table)}`);
@@ -450,6 +496,16 @@ export const runCanonicalConversion = async (
   const backupId = env.BACKUP_ID?.trim() ?? '';
 
   if (dryRun) {
+    // REVIEW-R3-F1: the markerless probe ALSO runs on the dry-run path
+    // (SELECT-only, so the dry-run stays read-only): diagnosing a
+    // pre-marker failure must orient to RESTORE, not to a generic NO-GO
+    // planned over the ruins — or worse, a misleading success.
+    if (marker === null) {
+      const markerless = await detectMarkerlessPartialState(pool, schema, archiveSchema);
+      if (markerless.partial) {
+        throw buildMarkerlessPartialError(schema, markerless.reason, backupId);
+      }
+    }
     const plan = await collectPlanForSchema(pool, schema);
     return { backupId, status: 'dry-run', plan: planProof(plan), durationMs: Date.now() - startedAt };
   }
@@ -471,6 +527,16 @@ export const runCanonicalConversion = async (
       `partial conversion state recorded (backup_id '${marker.backupId}', ${context}): ` +
       `RESTAURE o backup '${marker.backupId}' e reinicie do zero com o mesmo BACKUP_ID; refusing to continue over partial writes`,
     );
+  }
+
+  // REVIEW-R2-M3: marker === null with a partial `public` (bootstrap failed
+  // before the marker write) must orient to RESTORE, not to a generic NO-GO
+  // planned over the ruins.
+  if (marker === null) {
+    const markerless = await detectMarkerlessPartialState(pool, schema, archiveSchema);
+    if (markerless.partial) {
+      throw buildMarkerlessPartialError(schema, markerless.reason, backupId);
+    }
   }
 
   const legacySchema = marker === null ? schema : archiveSchema;
