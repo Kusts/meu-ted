@@ -146,9 +146,14 @@ export const listRelations = async (pool: ConversionPool, schema: string): Promi
   // STAYS in public — the canonical migrations recreate it with
   // `CREATE EXTENSION IF NOT EXISTS`, which is a no-op when already
   // present, keeping `gen_random_uuid()`/`digest()` resolvable.
-  const extensionOwned = await listExtensionOwnedNames(pool, schema);
+  // REVIEW-R2-M2: the filter matches by OID identity, NEVER by name. A
+  // name match drops an app function that merely shares the extension
+  // member's name with a distinct signature (e.g. app `digest(text)`
+  // vs pgcrypto `digest(text, text)`), and such a function would then
+  // never be archived.
+  const extensionOwned = await listExtensionOwnedOids(pool, schema);
   const res = await pool.query(
-    `SELECT c.relname AS name, c.relkind AS kind
+    `SELECT c.oid::text AS oid, c.relname AS name, c.relkind AS kind
        FROM pg_class c
        JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = $1 AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
@@ -157,13 +162,13 @@ export const listRelations = async (pool: ConversionPool, schema: string): Promi
   );
   const relations: InventoriedRelation[] = [];
   for (const row of res.rows) {
-    if (extensionOwned.has(String(row.name))) continue;
+    if (extensionOwned.relations.has(String(row.oid))) continue;
     const kind = relkindToKind(String(row.name !== undefined ? row.kind : ''));
     if (kind === null) continue;
     relations.push({ name: String(row.name), kind });
   }
   const fns = await pool.query(
-    `SELECT p.proname AS name, pg_get_function_identity_arguments(p.oid) AS args
+    `SELECT p.oid::text AS oid, p.proname AS name, pg_get_function_identity_arguments(p.oid) AS args
        FROM pg_proc p
        JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = $1
@@ -171,18 +176,54 @@ export const listRelations = async (pool: ConversionPool, schema: string): Promi
     [schema],
   );
   for (const row of fns.rows) {
-    if (extensionOwned.has(String(row.name))) continue;
+    if (extensionOwned.functions.has(String(row.oid))) continue;
     relations.push({ name: String(row.name), kind: 'function', identityArguments: String(row.args ?? '') });
   }
   return relations;
 };
 
 /**
+ * OIDs in `schema` owned by an extension (dependency `deptype = 'e'`),
+ * split by object class. Identity-based: two functions sharing a name
+ * with distinct signatures have distinct OIDs, so only the true
+ * extension member is excluded.
+ */
+export const listExtensionOwnedOids = async (
+  pool: ConversionPool,
+  schema: string,
+): Promise<{ relations: Set<string>; functions: Set<string> }> => {
+  const relations = new Set<string>();
+  const classOids = await pool.query(
+    `SELECT d.objid::text AS oid
+       FROM pg_depend d
+       JOIN pg_class c ON c.oid = d.objid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND d.classid = 'pg_class'::regclass AND d.deptype = 'e'`,
+    [schema],
+  );
+  for (const row of classOids.rows) relations.add(String(row.oid));
+  const functions = new Set<string>();
+  const procOids = await pool.query(
+    `SELECT d.objid::text AS oid
+       FROM pg_depend d
+       JOIN pg_proc p ON p.oid = d.objid
+       JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = $1 AND d.classid = 'pg_proc'::regclass AND d.deptype = 'e'`,
+    [schema],
+  );
+  for (const row of procOids.rows) functions.add(String(row.oid));
+  return { relations, functions };
+};
+
+/**
  * Names in `schema` owned by an extension (dependency `deptype = 'e'`),
- * across relations and functions. Used to keep extension members
- * (pgcrypto's `gen_random_uuid`, `digest`, ...) out of the archive
- * inventory: they cannot be moved with `SET SCHEMA` and stay in public
- * by design (see `listRelations`).
+ * across relations and functions.
+ *
+ * @deprecated REVIEW-R2-M2: name-based filtering is UNSOUND for functions —
+ * an app homonym sharing the extension member's name (distinct signature)
+ * would be wrongly excluded. `listRelations` now filters by OID identity
+ * via `listExtensionOwnedOids`. Kept exported for backward compatibility
+ * only; do not use for inventory filtering.
  */
 export const listExtensionOwnedNames = async (pool: ConversionPool, schema: string): Promise<Set<string>> => {
   const owned = new Set<string>();

@@ -547,26 +547,32 @@ export const resolveStatementLinks = async (
 ): Promise<StatementLinkResult> => {
   const schema = opts.schema ?? 'public';
   const archiveSchema = opts.archiveSchema ?? ARCHIVE_SCHEMA;
-  if (!(await tableExists(pool, archiveSchema, 'card_purchases'))) return { backfilled: 0, checked: 0 };
+  // REVIEW-R2-H: no early return when the archive `card_purchases` table is
+  // absent. A transaction flagged `is_credit_card_purchase` with no purchase
+  // table to resolve it must still fail closed below — otherwise it would be
+  // silently debited as a plain expense. An absent table with no flagged
+  // rows keeps the old quiet `{ backfilled: 0, checked: 0 }` result.
+  const archivePurchasesExist = await tableExists(pool, archiveSchema, 'card_purchases');
 
   const params: unknown[] = [];
   // Pre-V032 archives may carry card_purchases without household_id: only
   // scope when the column exists (the link checks below are global then,
   // still fail-closed on orphans and missing statements).
-  const purchasesHaveHousehold =
-    opts.householdId === undefined
-      ? true
-      : await archiveColumnExists(pool, archiveSchema, 'card_purchases', 'household_id');
+  const purchasesHaveHousehold = archivePurchasesExist &&
+    (opts.householdId === undefined ||
+      (await archiveColumnExists(pool, archiveSchema, 'card_purchases', 'household_id')));
   const householdScope = (column: string): string => {
     if (opts.householdId === undefined || !purchasesHaveHousehold) return '';
     params.push(opts.householdId);
     return ` AND ${column} = $${params.length}`;
   };
 
-  const purchasesRes = await pool.query(
-    `SELECT transaction_id, statement_id${purchasesHaveHousehold ? ', household_id' : ''} FROM ${quoteIdent(archiveSchema)}.${quoteIdent('card_purchases')} WHERE transaction_id IS NOT NULL${householdScope('household_id')}`,
-    params,
-  );
+  const purchasesRes = archivePurchasesExist
+    ? await pool.query(
+      `SELECT transaction_id, statement_id${purchasesHaveHousehold ? ', household_id' : ''} FROM ${quoteIdent(archiveSchema)}.${quoteIdent('card_purchases')} WHERE transaction_id IS NOT NULL${householdScope('household_id')}`,
+      params,
+    )
+    : { rows: [] as Row[] };
   const purchases = (purchasesRes.rows as Row[]).map((r) => ({
     transactionId: String(r['transaction_id']),
     statementId: r['statement_id'] === null || r['statement_id'] === undefined ? null : String(r['statement_id']),
@@ -609,8 +615,13 @@ export const resolveStatementLinks = async (
     const linked = new Set(purchases.map((p) => p.transactionId));
     for (const r of flaggedRows) {
       if (!linked.has(String(r['id']))) {
+        // REVIEW-R2-H: without the archive purchase table there is no link
+        // to resolve at all — say so explicitly instead of reusing the
+        // missing-row message.
         throw new BalanceError(
-          `transaction '${String(r['id'])}' is flagged is_credit_card_purchase with no card_purchases row: refusing to debit it as a plain expense`,
+          archivePurchasesExist
+            ? `transaction '${String(r['id'])}' is flagged is_credit_card_purchase with no card_purchases row: refusing to debit it as a plain expense`
+            : `transaction '${String(r['id'])}' is flagged is_credit_card_purchase but archive "${archiveSchema}.card_purchases" is missing: cannot resolve its statement link, refusing to debit it as a plain expense`,
         );
       }
     }
@@ -647,6 +658,48 @@ export const resolveStatementLinks = async (
 
   if (!(await tableExists(pool, schema, 'card_purchases'))) return { backfilled: 0, checked: purchases.length };
   if (purchases.length === 0) return { backfilled: 0, checked: 0 };
+  // REVIEW-R2-M1: the backfill below only fills `statement_id IS NULL` rows.
+  // A transaction that ALREADY carries a statement_id divergent from its
+  // linked purchase row would silently survive with the wrong link (and the
+  // wrong balance effect). Detect that BEFORE the update and fail closed
+  // with a bounded example list plus the total count. Scope is deliberately
+  // narrow — both sides non-NULL and unequal: a NULL purchase statement
+  // next to a copied transaction statement is left for the orphan/flag
+  // checks above, not invented here.
+  const divergentParams: unknown[] = [];
+  const divergentScope = opts.householdId === undefined
+    ? ''
+    : (() => {
+      divergentParams.push(opts.householdId);
+      return ` AND t.household_id = $1`;
+    })();
+  const divergentCount = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM ${quoteIdent(schema)}.${quoteIdent('transactions')} AS t
+        JOIN ${quoteIdent(schema)}.${quoteIdent('card_purchases')} AS cp
+          ON cp.transaction_id = t.id AND cp.household_id = t.household_id
+       WHERE t.statement_id IS NOT NULL AND cp.statement_id IS NOT NULL
+         AND t.statement_id <> cp.statement_id AND t.deleted_at IS NULL${divergentScope}`,
+    divergentParams,
+  );
+  const divergentTotal = Number((divergentCount.rows as Row[])[0]?.n ?? 0);
+  if (divergentTotal > 0) {
+    const divergentExamples = await pool.query(
+      `SELECT t.id AS id, t.statement_id AS current_statement_id, cp.statement_id AS linked_statement_id
+          FROM ${quoteIdent(schema)}.${quoteIdent('transactions')} AS t
+          JOIN ${quoteIdent(schema)}.${quoteIdent('card_purchases')} AS cp
+            ON cp.transaction_id = t.id AND cp.household_id = t.household_id
+         WHERE t.statement_id IS NOT NULL AND cp.statement_id IS NOT NULL
+           AND t.statement_id <> cp.statement_id AND t.deleted_at IS NULL${divergentScope}
+         ORDER BY t.id LIMIT 5`,
+      divergentParams,
+    );
+    const examples = (divergentExamples.rows as Row[])
+      .map((r) => `'${String(r['id'])}' holds '${String(r['current_statement_id'])}' but purchase links '${String(r['linked_statement_id'])}'`)
+      .join('; ');
+    throw new BalanceError(
+      `${divergentTotal} transaction(s) already carry a statement_id divergent from the linked card_purchases row (e.g. ${examples}): refusing to silently keep the pre-existing link`,
+    );
+  }
   const backParams: unknown[] = [];
   const backScope = opts.householdId === undefined
     ? ''

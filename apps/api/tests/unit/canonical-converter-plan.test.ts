@@ -239,22 +239,23 @@ describe('canonical converter plan (M1)', () => {
     // functions (gen_random_uuid, digest, ...) live in public but belong to
     // the extension. They must not be inventoried as app functions —
     // `ALTER FUNCTION ... SET SCHEMA` refuses to move them and the
-    // conversion would abort.
+    // conversion would abort. REVIEW-R2-M2: exclusion is by OID identity,
+    // so the stub carries oids alongside names.
     const pool = stubPool([
       {
         match: (sql: string) => sql.includes('pg_depend') && sql.includes('pg_proc'),
-        rows: [{ name: 'gen_random_uuid' }],
+        rows: [{ oid: '111' }],
       },
       {
         match: (sql: string) => sql.includes('pg_depend'),
         rows: [],
       },
-      { match: includes('pg_class'), rows: legacyRelationsRows() },
+      { match: includes('pg_class'), rows: legacyRelationsRows().map((r, i) => ({ ...r, oid: String(200 + i) })) },
       {
         match: (sql: string) => sql.includes('pg_proc') && !sql.includes('pg_depend'),
         rows: [
-          { name: 'gen_random_uuid', args: '' },
-          { name: 'set_updated_at', args: '' },
+          { oid: '111', name: 'gen_random_uuid', args: '' },
+          { oid: '112', name: 'set_updated_at', args: '' },
         ],
       },
       { match: includes('initial_balance_cents'), rows: [{ count: 0 }] },
