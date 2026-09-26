@@ -59,6 +59,16 @@ describe("reconciliation SQL safety (no database needed)", () => {
     }
   });
 
+  it("projects the V058 anchor on canonical accounts_balance (legacy keeps its own)", () => {
+    const canonical = buildReconciliationQueries("canonical", {}).accounts_balance.text;
+    expect(canonical).toMatch(/a\.initial_balance_cents AS initial_cents/);
+    expect(canonical).not.toMatch(/NULL::bigint AS initial_cents/);
+    expect(canonical).toMatch(/GROUP BY a\.id, a\.household_id, a\.kind, a\.balance_cents, a\.initial_balance_cents/);
+    const legacy = buildReconciliationQueries("legacy", {}).accounts_balance.text;
+    expect(legacy).toMatch(/a\.initial_balance_cents AS initial_cents/);
+    expect(isSelectOnly(canonical)).toBe(true);
+  });
+
   it("rejects multi-statement and write payloads", () => {
     expect(isSelectOnly("SELECT 1; SELECT 2")).toBe(false);
     expect(isSelectOnly("SELECT 1; DROP TABLE accounts")).toBe(false);
@@ -126,9 +136,11 @@ describe("reconciliation against the test database", () => {
         ownerId,
       ]);
       try {
+        // V058 anchor: the canonical derivation is initial + movements, so a
+        // stored balance without movements must be anchored to stay green.
         const account = await db.query(
-          `INSERT INTO accounts (id, household_id, name, kind, balance_cents, status)
-         VALUES (gen_random_uuid(), $1, 'Cash', 'cash', 10000, 'active') RETURNING id`,
+          `INSERT INTO accounts (id, household_id, name, kind, balance_cents, initial_balance_cents, status)
+          VALUES (gen_random_uuid(), $1, 'Cash', 'cash', 10000, 10000, 'active') RETURNING id`,
           [householdId],
         );
         const accountId = account.rows[0]!["id"] as string;

@@ -11,6 +11,7 @@ const completeRows = [
   ['operation_records', 'id'], ['operation_records', 'workspace_id'], ['operation_records', 'actor_type'], ['operation_records', 'actor_id'], ['operation_records', 'status'],
   ['operation_records', 'lease_until'], ['operation_records', 'retry_until'], ['operation_records', 'retention_until'],
   ['audit_logs', 'operation_record_id'], ['audit_logs', 'workspace_id'], ['audit_logs', 'actor_type'], ['audit_logs', 'actor_id'], ['audit_logs', 'event_type'],
+  ['accounts', 'initial_balance_cents'],
 ].map(([table_name, column_name]) => ({ table_name, column_name }));
 
 const legacyRows = [

@@ -34,6 +34,10 @@ const CANONICAL_REQUIRED_COLUMNS: SchemaColumn[] = [
   { table: 'audit_logs', column: 'actor_type' },
   { table: 'audit_logs', column: 'actor_id' },
   { table: 'audit_logs', column: 'event_type' },
+  // V058 anchor for the canonical balance reconciliation (M3 converter):
+  // balance_cents == initial_balance_cents + movements. Fail-closed after
+  // the cutover: a canonical database without the anchor cannot reconcile.
+  { table: 'accounts', column: 'initial_balance_cents' },
 ];
 
 const LEGACY_REQUIRED_COLUMNS: SchemaColumn[] = [

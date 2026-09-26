@@ -22,6 +22,8 @@ Migrar a produção do schema `legacy` para o `canonical` (DB_SCHEMA=canonical),
 > 2. **O conversor legacy→canonical não existe no repositório** — só o `canonical-conversion-preflight.ts` (queries de prontidão) e o rehearse de migrations. A F2 (conversão em cópia) e a F3 (conversão em produção) dependem de **construir e ensaiar o conversor** — projeto próprio, com provas de paridade linha a linha.
 >
 > **Status real: BLOQUEADO na construção do conversor.** Próximo passo executável: projeto "conversor canonical" (spec → implementação → rehearsal em cópia → paridade → então F3/F4 abaixo).
+>
+> **Atualização 2026-09-25:** o conversor foi **implementado** (branch `feat/canonical-converter`, pendente de PR/review/CI): pipeline plan → archive/bootstrap → import → identidade → saldos → verify → marker, com ADR-025 fixando as decisões (arquivamento integral em `legacy_archive`, ledger autêntico, audit só no arquivo, âncora de saldo V058 + reconciliação canônica `âncora + ledger`, bigint exato, fail-closed sem retomada parcial). O ensaio da F2 é executável localmente via `scripts/rehearse-canonical-conversion.mjs` (PostgreSQL descartável + dump anonimizado). Correção de rollback (ADR-025 §Consequências): após o arquivamento, `DB_SCHEMA=legacy` sozinho NÃO restaura produção — restore do dump validado com writes parados é obrigatório.
 
 **F0 — Decisões do owner (bloqueante)** — ✅ concedidas em 2026-09-22 (execução do cutover autorizada; finding `814332c4` resolvido por reclassificação + exceção v2).
 
